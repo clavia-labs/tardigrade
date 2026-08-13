@@ -1,16 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import type { Envelope } from "@flamecast/core"
-import type { ToolSpec } from "./infer"
+import type { NativeToolSpec } from "./infer"
 import type { AgentProgram, Nudge, RenderPlan } from "./program"
 import { WITHDRAW_ALL } from "./program"
-import { modelRequest, renderMessages, systemPrompt, toolSurface } from "./render"
+import { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from "./render"
 
-const lookup: ToolSpec = { name: "lookup_invoice", description: "Look one up.", inputSchema: {} }
-const notify: ToolSpec = { name: "notify", description: "Tell someone.", inputSchema: {} }
+const lookup: NativeToolSpec = { name: "lookup_invoice", description: "Look one up.", inputSchema: {} }
+const notify: NativeToolSpec = { name: "notify", description: "Tell someone.", inputSchema: {} }
 
 const renderOf = (over: Partial<RenderPlan> = {}): RenderPlan => ({
   instructions: [{ id: "base", text: "You are a support agent." }],
-  tools: [lookup, notify],
+  nativeTools: [lookup, notify],
   nudges: [],
   messageTruncateAt: 12_000,
   resultTruncateAt: 6_000,
@@ -65,41 +65,46 @@ describe("nudges", () => {
       id: "budget-wall",
       when: usedLookup,
       text: "Budget spent.",
-      withdraws: ["lookup_invoice"]
+      withdrawsNativeTools: ["lookup_invoice"]
     }
     const render = renderOf({ nudges: [wall] })
-    expect(toolSurface(render, [head]).map((tool) => tool.name)).toEqual([
+    expect(nativeToolSurface(render, [head]).map((tool) => tool.name)).toEqual([
       "lookup_invoice",
       "notify"
     ])
-    expect(toolSurface(render, [head, returned]).map((tool) => tool.name)).toEqual(["notify"])
+    expect(nativeToolSurface(render, [head, returned]).map((tool) => tool.name)).toEqual(["notify"])
   })
 
-  test("the wildcard closes base tools and leaves nudge tools", () => {
-    const answer: ToolSpec = { name: "answer", description: "Finish.", inputSchema: {} }
+  test("the wildcard closes base native tools and leaves nudge native tools", () => {
+    const answer: NativeToolSpec = { name: "answer", description: "Finish.", inputSchema: {} }
     const render = renderOf({
       nudges: [
-        { id: "budget-wall", when: usedLookup, text: "Spent.", withdraws: [WITHDRAW_ALL] },
-        { id: "answer", when: () => true, text: "Answer.", tools: [answer] }
+        {
+          id: "budget-wall",
+          when: usedLookup,
+          text: "Spent.",
+          withdrawsNativeTools: [WITHDRAW_ALL]
+        },
+        { id: "answer", when: () => true, text: "Answer.", nativeTools: [answer] }
       ]
     })
-    expect(toolSurface(render, [head]).map((tool) => tool.name)).toEqual([
+    expect(nativeToolSurface(render, [head]).map((tool) => tool.name)).toEqual([
       "lookup_invoice",
       "notify",
       "answer"
     ])
-    expect(toolSurface(render, [head, returned]).map((tool) => tool.name)).toEqual(["answer"])
+    expect(nativeToolSurface(render, [head, returned]).map((tool) => tool.name)).toEqual(["answer"])
   })
 
   test("can derive a tool schema from the log", () => {
     const render = renderOf({
-      tools: [],
+      nativeTools: [],
       nudges: [
         {
           id: "answer",
           when: (log) => log.some((event) => event.output !== undefined),
           text: "Answer.",
-          tools: (log) => [
+          nativeTools: (log) => [
             {
               name: "answer",
               description: "Finish.",
@@ -110,15 +115,15 @@ describe("nudges", () => {
       ]
     })
     const declared: Envelope = { ...head, output: { type: "object" } }
-    expect(toolSurface(render, [head])).toEqual([])
-    expect(toolSurface(render, [declared])[0]?.inputSchema).toEqual({ type: "object" })
+    expect(nativeToolSurface(render, [head])).toEqual([])
+    expect(nativeToolSurface(render, [declared])[0]?.inputSchema).toEqual({ type: "object" })
   })
 })
 
-describe("module-owned tool descriptions", () => {
+describe("module-owned native tool descriptions", () => {
   test("renders the description supplied by the tool module", () => {
-    expect(toolSurface(renderOf(), [head])[0]?.description).toBe("Look one up.")
-    expect(toolSurface(renderOf(), [head])[1]?.description).toBe("Tell someone.")
+    expect(nativeToolSurface(renderOf(), [head])[0]?.description).toBe("Look one up.")
+    expect(nativeToolSurface(renderOf(), [head])[1]?.description).toBe("Tell someone.")
   })
 })
 

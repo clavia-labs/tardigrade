@@ -39,7 +39,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 | Module | Event types |
 | --- | --- |
 | inference | `MessageReceived`, `ModelCalled`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
-| tools | `ToolCalled`, `ToolReturned` |
+| native-tools | `ToolCalled`, `ToolReturned` |
 | budget | `BudgetExhausted`, `BudgetRequested`, `BudgetGranted`, `BudgetDenied` |
 | contract | `AnswerRejected` |
 | compaction | `CompactionFired`, `CompactionCompleted` |

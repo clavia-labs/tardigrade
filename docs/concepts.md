@@ -1,5 +1,7 @@
 # Concepts
 
+This page defines the small vocabulary the framework builds on.
+
 ## Event
 
 An event is one immutable fact represented by an `Envelope`.
@@ -19,7 +21,13 @@ An event log is the ordered append-only history of one session. It is the source
 
 ## Projection
 
-A projection is a pure function from a log to a value. Examples include the active turn, budget spent, current checkpoint, rendered request, and a module signal.
+A projection is a pure function from a log to a value.
+
+```ts
+type Projection<Value> = (log: ReadonlyArray<Envelope>) => Value
+```
+
+Projections reconstruct current state without adding facts to the log. The active turn, current checkpoint, and rendered model request are projections.
 
 ## Machine
 
@@ -32,9 +40,11 @@ Each state can define one work slot:
 
 `settle` repeatedly folds and runs ready work until the machine rests. `settleAll` reaches a fixpoint across a group of machines.
 
+Use a machine when behavior must append facts, wait for events, or perform effects. A pure projection that changes a request does not need a machine.
+
 ## Module
 
-A module is one typed unit of agent construction.
+A module is one typed unit of construction.
 
 ```ts
 interface Module<Id, Provides, Requires, R> {
@@ -47,68 +57,22 @@ interface Module<Id, Provides, Requires, R> {
 }
 ```
 
-`setup` can contribute event names, machines, static instructions, conditional nudges, tools, and render limits. Configuration stays with the module that owns the behavior.
+Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
 
-Module ids are unique. Signal providers are unique. Machine ids, tool names, and instruction ids are also unique after compilation.
+## Token and Binding
 
-## Signal
-
-A signal is typed state announced by one module and read by another.
+A token names a typed projection dependency. A binding associates that token with its projection.
 
 ```ts
-const inferenceState = signal<"inference.state", InferenceState>("inference.state")
+const inferenceState = token<"inference.state", InferenceState>("inference.state")
+
+provide(inferenceState, selectInferenceState)
 ```
 
-A provider uses `announce(signal, read)`. A consumer lists the signal in `requires` and reads it through its typed `ModuleContext`.
+A consumer lists tokens in `requires` and resolves them through its `ModuleContext`. TypeScript rejects missing dependencies for literal module tuples. Runtime compilation performs the same validation for generated JavaScript.
 
-Tuple construction catches missing signals and duplicate module ids in TypeScript. Runtime validation catches the same errors when generated JavaScript bypasses TypeScript.
+Bindings are deliberately constrained dependency injection. They inject pure projections of the log. Effectful capabilities use ports so replay and observation do not depend on hidden construction state.
 
-## Instruction
+## Port
 
-An instruction is static prompt text owned by a module. Instructions are joined into the stable system prefix in module order.
-
-## Nudge
-
-A nudge is conditional render policy. It has a log predicate, text, and optional tool-surface changes.
-
-A nudge is separate from a machine. A machine changes the log and can perform effects. A nudge reads the log and changes only the next model request.
-
-Nudges default to `placement: "tail"`, which appends them as late system messages and preserves the stable system prefix for provider caching. `placement: "system"` is an explicit opt-in for behavior that must join the prefix.
-
-## Agent Program
-
-`createAgent` compiles modules into an `AgentProgram`.
-
-```ts
-interface AgentProgram<R> {
-  readonly id: string
-  readonly parent?: string
-  readonly modules: ReadonlyArray<ModuleManifest>
-  readonly events: ReadonlyArray<string>
-  readonly machines: ReadonlyArray<Machine<R, never>>
-  readonly render: RenderPlan
-  readonly announcements: ReadonlyArray<Announcement<AnySignal>>
-}
-```
-
-The default id hashes ordered module manifests. Functions do not have a stable source-independent representation, so code-generating systems should pass an explicit id derived from source control, build provenance, or their own candidate identity.
-
-## Rendering
-
-`agent.request(log)` is a pure function. It reconstructs the conversation, applies the latest compaction checkpoint, appends active tail nudges, and projects the current tool surface.
-
-Pure rendering enables request comparison before any model call. [Evolution](evolution.md) uses that property to reuse the longest valid prefix of a recorded run.
-
-## Inference Provider
-
-An `InferenceProvider` announces provider, model, and context window state, then reacts to a rendered request. Provider selection may itself be a pure function of the log.
-
-## Replay, Branch, and Fork
-
-Replay appends recorded events and settles the program. Completed effects are read from their committed events, so replay avoids repeating them.
-
-`agent.branch(recorded, { at })` creates an independent in-memory session from a supplied prefix. `agent.fork({ at })` reads the current session and creates the same kind of branch.
-
-## Runtime
-
-A runtime binds the core ports for one platform. The program stays unchanged when the storage, lock, timer, routing, or deployment environment changes. [Runtimes](runtimes.md) owns the port contract.
+A port is an effectful capability required by a machine, such as event storage, exclusive writing, time, routing, or spill storage. A runtime binds ports for a platform without changing the program.

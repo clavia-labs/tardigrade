@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { conformance, type Envelope } from "@flamecast/core"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
-import { Infer, inferWith, type Action, type ModelRequest, type Tool } from "./infer"
+import { Infer, inferWith, type Action, type ModelRequest, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
 import { createAgent, undeclaredEvents, type AgentServices } from "./module"
 import { defaultPack } from "./pack"
@@ -48,7 +48,7 @@ const run = <A>(
 
 const usage = { promptTokens: 1284, completionTokens: 96, costUsd: 0.0041 }
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by its order id. Returns the total and the status.",
@@ -96,11 +96,11 @@ describe("the smallest agent", () => {
   })
 })
 
-describe("a turn with tools", () => {
+describe("a turn with native tools", () => {
   const agent = createAgent({
     modules: defaultPack({
       inference: { system: "Use lookup_invoice for any question about an order." },
-      tools: [lookupInvoice]
+      nativeTools: [lookupInvoice]
     })
   })
 
@@ -231,7 +231,7 @@ describe("a turn with tools", () => {
       parent: agent.program.id,
       modules: defaultPack({
         inference: { system: "Answer in one sentence." },
-        tools: [lookupInvoice]
+        nativeTools: [lookupInvoice]
       })
     })
     const after = scripted(script)
@@ -296,11 +296,11 @@ describe("a turn with tools", () => {
   })
 
   test("a tool that dies returns the error to the model", async () => {
-    const broken: Tool = {
+    const broken: NativeTool = {
       spec: { name: "lookup_invoice", description: "Look one up.", inputSchema: {} },
       run: () => Effect.die(new Error("the invoice service is down"))
     }
-    const withBroken = createAgent({ modules: defaultPack({ tools: [broken] }) })
+    const withBroken = createAgent({ modules: defaultPack({ nativeTools: [broken] }) })
     const model = scripted(script)
     const log = await run(
       Effect.gen(function* () {

@@ -53,15 +53,15 @@ const inferenceModule = inference({
 })
 ```
 
-Provider selection can be a function of the log. The inference signal and dependent modules observe the selected provider for that same log.
+Provider selection can be a function of the log. The inference module provides its selected state as a projection dependency for other modules.
 
 ## Add Tools Through the Default Pack
 
 ```ts
 import { Effect } from "effect"
-import { createAgent, defaultPack, type Tool } from "@flamecast/harness"
+import { createAgent, defaultPack, type NativeTool } from "@flamecast/harness"
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by order id.",
@@ -79,14 +79,14 @@ const agent = createAgent({
     inference: {
       system: "Use lookup_invoice for order questions."
     },
-    tools: [lookupInvoice],
+    nativeTools: [lookupInvoice],
     budget: { defaultBudget: 24 },
     compaction: { triggerAt: 0.8, keepAt: 0.2 }
   })
 })
 ```
 
-`defaultPack()` returns inference, tools, budget, contract, and compaction modules. Each module owns its own options.
+`defaultPack()` returns inference, native-tool, budget, contract, and compaction modules. Each module owns its own options. `nativeTools` is the provider-native calling default; code mode, MCP, textual commands, and generic RPC can be implemented as alternative modules.
 
 ## Add a Nudge
 
@@ -100,7 +100,7 @@ const citeInvoice = nudge({
 })
 
 const agent = createAgent({
-  modules: [...defaultPack({ tools: [lookupInvoice] }), citeInvoice]
+  modules: [...defaultPack({ nativeTools: [lookupInvoice] }), citeInvoice]
 })
 ```
 
@@ -109,13 +109,13 @@ The nudge appears as a late system message when active. Set `placement: "system"
 ## Add Typed Module State
 
 ```ts
-import { announce, defineModule, signal } from "@flamecast/harness"
+import { defineModule, provide, token } from "@flamecast/harness"
 
-const tenant = signal<"tenant.current", string>("tenant.current")
+const tenant = token<"tenant.current", string>("tenant.current")
 
 const tenantSource = defineModule({
   id: "tenant-source",
-  provides: [announce(tenant, (log) => String(log.findLast((event) => event.tenant)?.tenant ?? "default"))] as const,
+  provides: [provide(tenant, (log) => String(log.findLast((event) => event.tenant)?.tenant ?? "default"))] as const,
   setup: () => ({})
 })
 
@@ -128,7 +128,7 @@ const tenantInstruction = defineModule({
         id: "tenant",
         when: () => true,
         text: "Follow the active tenant policy.",
-        tools: (log) => policyTools(context.read(tenant, log))
+        nativeTools: (log) => policyTools(context.resolve(tenant, log))
       }
     ]
   })
@@ -140,16 +140,16 @@ Leaving out `tenantSource` fails tuple type-checking and runtime validation.
 ## Delegate to Another Agent
 
 ```ts
-import { agentTool, defaultPack } from "@flamecast/harness"
+import { agentNativeTool, defaultPack } from "@flamecast/harness"
 
-const askResearcher = agentTool({
+const askResearcher = agentNativeTool({
   name: "ask_researcher",
   description: "Ask the research agent for supporting evidence.",
   address: "agent:research"
 })
 
 const supervisor = createAgent({
-  modules: defaultPack({ tools: [askResearcher] })
+  modules: defaultPack({ nativeTools: [askResearcher] })
 })
 ```
 

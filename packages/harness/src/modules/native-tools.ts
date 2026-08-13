@@ -1,7 +1,7 @@
 import { Cause, Clock, Effect, Exit } from "effect"
 import { Router, erase, machine, type Envelope } from "@flamecast/core"
 import { EXITS } from "../exits"
-import type { Tool, ToolContext } from "../infer"
+import type { NativeTool, NativeToolContext } from "../infer"
 import { defineModule } from "../module"
 import { canonicalValue } from "../program"
 import { sha256 } from "../sha256"
@@ -16,7 +16,9 @@ interface Call {
 }
 
 const callOf = (context: Partial<Call>): Call => {
-  if (context.callId === undefined) throw new Error("the tools machine is dispatching with no call in context")
+  if (context.callId === undefined) {
+    throw new Error("the native-tools machine is dispatching with no call in context")
+  }
   return context as Call
 }
 
@@ -29,9 +31,9 @@ const WALL_REFUSAL =
   "Tool budget reached. Do not call this tool again. Answer now with your best result from what " +
   "you have already gathered."
 
-const toolsMachine = <R>(handlers: ReadonlyMap<string, Tool<R>>) =>
+const nativeToolsMachine = <R>(handlers: ReadonlyMap<string, NativeTool<R>>) =>
   machine<R, Partial<Call>>({
-    id: "tools",
+    id: "native-tools",
     view: turnView,
     initial: "idle",
     context: {},
@@ -84,30 +86,30 @@ const toolsMachine = <R>(handlers: ReadonlyMap<string, Tool<R>>) =>
     }
   })
 
-export const tools = <R = never>(list: ReadonlyArray<Tool<R>>) => {
+export const nativeTools = <R = never>(list: ReadonlyArray<NativeTool<R>>) => {
   const handlers = new Map(list.map((tool) => [tool.spec.name, tool]))
   return defineModule({
-    id: "tools",
+    id: "native-tools",
     version: "2",
     fingerprint: list.map((tool) => tool.spec),
     setup: () => ({
       events: ["ToolCalled", "ToolReturned"],
-      machines: [erase(toolsMachine(handlers))],
-      tools: list.map((tool) => tool.spec)
+      machines: [erase(nativeToolsMachine(handlers))],
+      nativeTools: list.map((tool) => tool.spec)
     })
   })
 }
 
-export interface AgentToolOptions {
+export interface AgentNativeToolOptions {
   readonly name: string
   readonly description: string
   readonly address: string
   readonly inputSchema?: unknown
   readonly message?: (input: unknown) => string
-  readonly callId?: (input: unknown, context?: ToolContext) => string
+  readonly callId?: (input: unknown, context?: NativeToolContext) => string
 }
 
-export const agentTool = (options: AgentToolOptions): Tool<Router> => ({
+export const agentNativeTool = (options: AgentNativeToolOptions): NativeTool<Router> => ({
   spec: {
     name: options.name,
     description: options.description,

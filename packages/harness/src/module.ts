@@ -13,25 +13,19 @@ import {
   type Machine
 } from "@flamecast/core"
 import { boundaryOf, type CallResult } from "./boundary"
-import { type ModelRequest, type ToolSpec, type Usage } from "./infer"
+import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
 import { keyOf } from "./keys"
 import { modelRequest } from "./render"
 import {
   programId,
-  readSignal,
+  resolve,
   type AgentProgram,
   type Instruction,
   type ModuleManifest,
   type Nudge,
   type RenderPlan
 } from "./program"
-import type {
-  Announcement,
-  AnySignal,
-  ModuleContext,
-  Signal,
-  ValueOf
-} from "./signal"
+import type { AnyToken, Binding, ModuleContext, Token, ValueOf } from "./dependency"
 import { turnHead, usageIn } from "./turns"
 
 export type AgentServices = EventLog | Writer | Wake | Router | Self
@@ -43,14 +37,14 @@ export interface ModulePart<R = never> {
     | ((render: RenderPlan) => ReadonlyArray<Machine<R, never>>)
   readonly instructions?: ReadonlyArray<Instruction>
   readonly nudges?: ReadonlyArray<Nudge>
-  readonly tools?: ReadonlyArray<ToolSpec>
+  readonly nativeTools?: ReadonlyArray<NativeToolSpec>
   readonly render?: Partial<Pick<RenderPlan, "messageTruncateAt" | "resultTruncateAt">>
 }
 
 export interface Module<
   Id extends string = string,
-  Provides extends readonly Announcement<AnySignal>[] = readonly [],
-  Requires extends readonly AnySignal[] = readonly [],
+  Provides extends readonly Binding<AnyToken>[] = readonly [],
+  Requires extends readonly AnyToken[] = readonly [],
   R = never
 > {
   readonly id: Id
@@ -65,8 +59,8 @@ export type AnyModule = Module<string, any, any, any>
 
 export const defineModule = <
   const Id extends string,
-  const Provides extends readonly Announcement<AnySignal>[] = readonly [],
-  const Requires extends readonly AnySignal[] = readonly [],
+  const Provides extends readonly Binding<AnyToken>[] = readonly [],
+  const Requires extends readonly AnyToken[] = readonly [],
   R = never
 >(module: Module<Id, Provides, Requires, R>): Module<Id, Provides, Requires, R> => module
 
@@ -74,19 +68,19 @@ type ModuleId<One> = One extends Module<infer Id, any, any, any>
   ? Id
   : never
 
-type ProvidedSignal<One> = One extends Module<string, infer Provides, any, any>
-  ? Provides[number]["signal"]
+type ProvidedToken<One> = One extends Module<string, infer Provides, any, any>
+  ? Provides[number]["token"]
   : never
 
-type RequiredSignal<One> = One extends Module<string, any, infer Requires, any>
+type RequiredToken<One> = One extends Module<string, any, infer Requires, any>
   ? Requires[number]
   : never
 
-type SignalId<One> = One extends Signal<infer Id, unknown> ? Id : never
+type TokenId<One> = One extends Token<infer Id, unknown> ? Id : never
 
-type MissingSignals<Modules extends readonly unknown[]> = Exclude<
-  SignalId<RequiredSignal<Modules[number]>>,
-  SignalId<ProvidedSignal<Modules[number]>>
+type MissingDependencies<Modules extends readonly unknown[]> = Exclude<
+  TokenId<RequiredToken<Modules[number]>>,
+  TokenId<ProvidedToken<Modules[number]>>
 >
 
 type DuplicateModuleIds<
@@ -103,11 +97,11 @@ type ModuleServices<One> = One extends Module<string, any, any, infer R>
   : never
 
 type ValidModules<Modules extends readonly unknown[]> =
-  [MissingSignals<Modules>] extends [never]
+  [MissingDependencies<Modules>] extends [never]
     ? [DuplicateModuleIds<Modules>] extends [never]
       ? unknown
       : { readonly duplicateModuleIds: DuplicateModuleIds<Modules> }
-    : { readonly missingModuleSignals: MissingSignals<Modules> }
+    : { readonly missingModuleDependencies: MissingDependencies<Modules> }
 
 export interface InboundMessage {
   readonly id: string
@@ -138,7 +132,7 @@ export interface Agent<R = never> {
     recorded: ReadonlyArray<Envelope>
   ) => Effect.Effect<TurnResult, never, R | AgentServices>
   readonly request: (log: ReadonlyArray<Envelope>) => ModelRequest
-  readonly read: <S extends AnySignal>(signal: S, log: ReadonlyArray<Envelope>) => ValueOf<S>
+  readonly resolve: <T extends AnyToken>(token: T, log: ReadonlyArray<Envelope>) => ValueOf<T>
   readonly branch: (recorded: ReadonlyArray<Envelope>, options?: BranchOptions) => Agent<R>
   readonly fork: (
     options?: BranchOptions
@@ -264,7 +258,7 @@ const build = <R>(
         )
       ),
     request: (log) => modelRequest(program, log),
-    read: (signal, log) => readSignal(program, signal, log),
+    resolve: (token, log) => resolve(program, token, log),
     branch,
     fork: (options = {}) => {
       if (bound !== undefined) {
@@ -293,29 +287,29 @@ const compile = <R>(
   options: { readonly id?: string; readonly parent?: string }
 ): AgentProgram<R> => {
   const ids = new Set<string>()
-  const announcements = new Map<string, Announcement<AnySignal>>()
+  const bindings = new Map<string, Binding<AnyToken>>()
   for (const module of modules) {
     if (ids.has(module.id)) throw new Error(`duplicate module id "${module.id}"`)
     ids.add(module.id)
     for (const provided of module.provides ?? []) {
-      if (announcements.has(provided.signal.id)) {
-        throw new Error(`signal "${provided.signal.id}" is announced by more than one module`)
+      if (bindings.has(provided.token.id)) {
+        throw new Error(`token "${provided.token.id}" is provided by more than one module`)
       }
-      announcements.set(provided.signal.id, provided)
+      bindings.set(provided.token.id, provided)
     }
   }
 
   const parts = modules.map((module) => {
     for (const required of module.requires ?? []) {
-      if (!announcements.has(required.id)) {
-        throw new Error(`module "${module.id}" requires missing signal "${required.id}"`)
+      if (!bindings.has(required.id)) {
+        throw new Error(`module "${module.id}" requires missing token "${required.id}"`)
       }
     }
     const context = {
-      read: (signal: AnySignal, log: ReadonlyArray<Envelope>) => {
-        const found = announcements.get(signal.id)
-        if (found === undefined) throw new Error(`no module announces signal "${signal.id}"`)
-        return found.read(log)
+      resolve: (token: AnyToken, log: ReadonlyArray<Envelope>) => {
+        const found = bindings.get(token.id)
+        if (found === undefined) throw new Error(`no module provides token "${token.id}"`)
+        return found.project(log)
       }
     }
     return module.setup(context as ModuleContext<any>)
@@ -324,8 +318,8 @@ const compile = <R>(
   const toolNames = new Set<string>()
   const instructionIds = new Set<string>()
   for (const part of parts) {
-    for (const tool of part.tools ?? []) {
-      if (toolNames.has(tool.name)) throw new Error(`duplicate tool name "${tool.name}"`)
+    for (const tool of part.nativeTools ?? []) {
+      if (toolNames.has(tool.name)) throw new Error(`duplicate native tool name "${tool.name}"`)
       toolNames.add(tool.name)
     }
     for (const instruction of part.instructions ?? []) {
@@ -341,12 +335,12 @@ const compile = <R>(
       ...plan,
       ...part.render,
       instructions: [...plan.instructions, ...(part.instructions ?? [])],
-      tools: [...plan.tools, ...(part.tools ?? [])],
+      nativeTools: [...plan.nativeTools, ...(part.nativeTools ?? [])],
       nudges: [...plan.nudges, ...(part.nudges ?? [])]
     }),
     {
       instructions: [],
-      tools: [],
+      nativeTools: [],
       nudges: [],
       messageTruncateAt: 12_000,
       resultTruncateAt: 6_000
@@ -372,7 +366,7 @@ const compile = <R>(
     events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
     machines: machines as ReadonlyArray<Machine<R, never>>,
     render,
-    announcements: [...announcements.values()]
+    bindings: [...bindings.values()]
   }
 }
 

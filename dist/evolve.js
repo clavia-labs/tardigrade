@@ -1,5 +1,5 @@
 import { f as foldOf } from "./src-BDBJZOcw.js";
-import { X as canonicalValue, rt as usageOf } from "./src-Bae9LKkH.js";
+import { X as canonicalValue, rt as usageOf } from "./src-Sejs7bCE.js";
 import { Effect } from "effect";
 //#region packages/evolve/src/candidate.ts
 const candidate = (id, value, options = {}) => ({
@@ -17,7 +17,7 @@ const observationOf = (agent, log) => ({
 		state: foldOf(machine, log).name,
 		context: foldOf(machine, log).context
 	})),
-	signals: Object.fromEntries(agent.program.announcements.map((announcement) => [announcement.signal.id, announcement.read(log)]))
+	dependencies: Object.fromEntries(agent.program.bindings.map((binding) => [binding.token.id, binding.project(log)]))
 });
 const modelCallPrefixes = (log) => log.flatMap((event, index) => event.type === "ModelCalled" ? [log.slice(0, index)] : []);
 const observationallyEquivalent = (left, right, logs) => logs.every((log) => canonicalValue(observationOf(left, log)) === canonicalValue(observationOf(right, log)));

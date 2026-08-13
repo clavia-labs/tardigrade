@@ -31,10 +31,10 @@ This shows the static system prefix, compacted conversation, active tail nudges,
 ## Inspect Module State
 
 ```ts
-const selected = agent.read(inferenceState, log)
+const selected = agent.resolve(inferenceState, log)
 ```
 
-Signals expose typed module projections. Machine state can be reconstructed with `foldOf(machine, log)`.
+Typed dependency bindings expose module projections. Machine state can be reconstructed with `foldOf(machine, log)`.
 
 ## Replay
 

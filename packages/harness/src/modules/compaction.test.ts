@@ -177,7 +177,7 @@ describe("hysteresis", () => {
     const program = {
       render: {
         instructions: [],
-        tools: [],
+        nativeTools: [],
         nudges: [],
         messageTruncateAt: 12_000,
         resultTruncateAt: 6_000

@@ -1,7 +1,7 @@
 import type { Envelope, Machine } from "@flamecast/core"
-import type { ToolSpec } from "./infer"
+import type { NativeToolSpec } from "./infer"
 import { sha256 } from "./sha256"
-import type { Announcement, AnySignal, ValueOf } from "./signal"
+import type { AnyToken, Binding, ValueOf } from "./dependency"
 
 export interface Instruction {
   readonly id: string
@@ -15,17 +15,17 @@ export interface Nudge {
   readonly when: (log: ReadonlyArray<Envelope>) => boolean
   readonly text: string
   readonly placement?: NudgePlacement
-  readonly tools?:
-    | ReadonlyArray<ToolSpec>
-    | ((log: ReadonlyArray<Envelope>) => ReadonlyArray<ToolSpec>)
-  readonly withdraws?: ReadonlyArray<string>
+  readonly nativeTools?:
+    | ReadonlyArray<NativeToolSpec>
+    | ((log: ReadonlyArray<Envelope>) => ReadonlyArray<NativeToolSpec>)
+  readonly withdrawsNativeTools?: ReadonlyArray<string>
 }
 
 export const WITHDRAW_ALL = "*"
 
 export interface RenderPlan {
   readonly instructions: ReadonlyArray<Instruction>
-  readonly tools: ReadonlyArray<ToolSpec>
+  readonly nativeTools: ReadonlyArray<NativeToolSpec>
   readonly nudges: ReadonlyArray<Nudge>
   readonly messageTruncateAt: number
   readonly resultTruncateAt: number
@@ -44,7 +44,7 @@ export interface AgentProgram<R = never> {
   readonly events: ReadonlyArray<string>
   readonly machines: ReadonlyArray<Machine<R, never>>
   readonly render: RenderPlan
-  readonly announcements: ReadonlyArray<Announcement<AnySignal>>
+  readonly bindings: ReadonlyArray<Binding<AnyToken>>
 }
 
 const canonical = (value: unknown): string => {
@@ -63,14 +63,14 @@ const canonical = (value: unknown): string => {
 export const programId = (modules: ReadonlyArray<ModuleManifest>): string =>
   `sha256:${sha256(canonical(modules))}`
 
-export const readSignal = <S extends AnySignal>(
-  program: Pick<AgentProgram<never>, "announcements">,
-  signal: S,
+export const resolve = <T extends AnyToken>(
+  program: Pick<AgentProgram<never>, "bindings">,
+  token: T,
   log: ReadonlyArray<Envelope>
-): ValueOf<S> => {
-  const found = program.announcements.find((one) => one.signal.id === signal.id)
-  if (found === undefined) throw new Error(`no module announces signal "${signal.id}"`)
-  return found.read(log) as ValueOf<S>
+): ValueOf<T> => {
+  const found = program.bindings.find((one) => one.token.id === token.id)
+  if (found === undefined) throw new Error(`no module provides token "${token.id}"`)
+  return found.project(log) as ValueOf<T>
 }
 
 export const canonicalValue = canonical

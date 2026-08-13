@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  M[Module tuple] --> V[Validate ids and signal dependencies]
+  M[Module tuple] --> V[Validate ids and projection dependencies]
   V --> S[Run module setup]
   S --> R[Merge render contributions]
   R --> K[Build machines with final render plan]
@@ -13,7 +13,7 @@ flowchart LR
 
 Compilation has two jobs. It rejects invalid composition, then it produces the program that serves every turn.
 
-The validation order matters. All signal announcements are collected before any module runs `setup`, so module order does not restrict dependency resolution. Render contributions are merged before machine builders run, so a machine closes over the same render plan that `agent.request(log)` exposes.
+The validation order matters. All projection bindings are collected before any module runs `setup`, so module order does not restrict dependency injection. Render contributions are merged before machine builders run, so a machine closes over the same render plan that `agent.request(log)` exposes.
 
 ## Serve a Turn
 
@@ -48,16 +48,18 @@ The render plan separates static instructions from conditional nudges.
 ```text
 system prefix: module instructions + explicit system nudges
 messages: compacted conversation + active tail nudges
-tools: base tools adjusted by active nudges
+tools: provider-native tools adjusted by active nudges
 ```
 
 This shape keeps common request prefixes stable across turns. Dynamic budget, contract, citation, and workflow reminders stay near the tail unless a module explicitly requests system placement.
 
-## Typed Cross-Module State
+## Typed Projection Injection
 
-Signals form the module dependency graph. A producer announces a projection. A consumer requires the signal and receives a context that can read only its declared dependencies.
+Tokens form the module dependency graph. A producer binds a token to a pure projection. A consumer requires the token and receives a context that can resolve only its declared dependencies.
 
-The compaction module demonstrates the pattern. Inference announces the selected model and context window. Compaction reads that state and computes its default trigger at 80 percent of the current window and its retained tail at 20 percent. A model switch changes thresholds without a global registry or a hidden import.
+The compaction module demonstrates the pattern. Inference provides the selected model and context window. Compaction injects that state and computes its default trigger at 80 percent of the current window and its retained tail at 20 percent. A model switch changes thresholds without a global registry or a hidden import.
+
+Projection injection is deliberately narrower than a general service container. Pure log projections use tokens and bindings. Effectful capabilities use runtime ports. This separation keeps replay and observational comparison independent of mutable construction state.
 
 ## Multi-Agent Orchestration
 
@@ -65,7 +67,7 @@ The framework exposes routing primitives and leaves topology in user code or mod
 
 - `Router.call(address, event)` performs a synchronous, acyclic sub-call and returns the terminal event.
 - `Router.deliver(address, event)` sends asynchronous work.
-- `agentTool()` wraps `Router.call` as an ordinary tool, so the model can delegate through the same surface it already understands.
+- `agentNativeTool()` wraps `Router.call` as a provider-native tool, so compatible models can delegate through the same surface they already understand.
 - `InboundMessage.replyTo` lets a completed turn route its answer to another session.
 
 These primitives support supervisors, peer groups, recursive calls, RLM-style decomposition, and generated orchestration modules. The framework does not install a planner, role taxonomy, or fixed conversation protocol.

@@ -11,7 +11,7 @@ import {
 import { defineModule } from "../module"
 import type { RenderPlan } from "../program"
 import { modelRequest } from "../render"
-import { announce, signal } from "../signal"
+import { provide, token } from "../dependency"
 import { replyView, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
 
@@ -20,7 +20,7 @@ const BASE_SYSTEM =
   "answer the person who wrote to you. When the work is done, reply in plain text: that reply is " +
   "your final answer and it ends the turn."
 
-export const inferenceState = signal<"inference.state", InferenceState>("inference.state")
+export const inferenceState = token<"inference.state", InferenceState>("inference.state")
 
 export interface InferenceOptions {
   readonly provider?: InferenceSelection
@@ -184,7 +184,7 @@ export const inference = (options: InferenceOptions = {}) => {
       resultTruncateAt
     },
     provides: [
-      announce(inferenceState, (log) => {
+      provide(inferenceState, (log) => {
         const provider = selectedInference(selection, log)
         return provider.state(log)
       })

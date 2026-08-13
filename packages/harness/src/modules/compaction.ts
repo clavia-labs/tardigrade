@@ -103,7 +103,7 @@ export const morphCompaction = (options: MorphOptions = {}) => {
     requires: [inferenceState] as const,
     setup: (context) => {
       const thresholds = (log: ReadonlyArray<Envelope>) => {
-        const window = context.read(inferenceState, log).contextWindow
+        const window = context.resolve(inferenceState, log).contextWindow
         return {
           fire: options.fireTokens ?? Math.max(1, Math.floor(window * triggerAt)),
           keep: options.keepTokens ?? Math.max(1, Math.floor(window * keepAt))

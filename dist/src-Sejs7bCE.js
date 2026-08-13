@@ -169,18 +169,18 @@ const canonical = (value) => {
 	return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${canonical(record[key])}`).join(",")}}`;
 };
 const programId = (modules) => `sha256:${sha256(canonical(modules))}`;
-const readSignal = (program, signal, log) => {
-	const found = program.announcements.find((one) => one.signal.id === signal.id);
-	if (found === void 0) throw new Error(`no module announces signal "${signal.id}"`);
-	return found.read(log);
+const resolve = (program, token, log) => {
+	const found = program.bindings.find((one) => one.token.id === token.id);
+	if (found === void 0) throw new Error(`no module provides token "${token.id}"`);
+	return found.project(log);
 };
 const canonicalValue = canonical;
 //#endregion
-//#region packages/harness/src/signal.ts
-const signal = (id) => ({ id });
-const announce = (signal, read) => ({
-	signal,
-	read
+//#region packages/harness/src/dependency.ts
+const token = (id) => ({ id });
+const provide = (token, project) => ({
+	token,
+	project
 });
 //#endregion
 //#region packages/harness/src/boundary.ts
@@ -348,12 +348,12 @@ const transcript = (log) => {
 //#endregion
 //#region packages/harness/src/render.ts
 const truncate = (body, at) => body.length <= at ? body : `${body.slice(0, at)}…[truncated ${body.length} chars]`;
-const nudgeTools = (nudge, log) => typeof nudge.tools === "function" ? nudge.tools(log) : nudge.tools ?? [];
+const nudgeTools = (nudge, log) => typeof nudge.nativeTools === "function" ? nudge.nativeTools(log) : nudge.nativeTools ?? [];
 const activeNudges = (render, log) => render.nudges.filter((nudge) => nudge.when(log));
-const toolSurface = (render, log) => {
+const nativeToolSurface = (render, log) => {
 	const active = activeNudges(render, log);
-	const withdrawn = new Set(active.flatMap((nudge) => nudge.withdraws ?? []));
-	const base = withdrawn.has("*") ? [] : render.tools.filter((tool) => !withdrawn.has(tool.name));
+	const withdrawn = new Set(active.flatMap((nudge) => nudge.withdrawsNativeTools ?? []));
+	const base = withdrawn.has("*") ? [] : render.nativeTools.filter((tool) => !withdrawn.has(tool.name));
 	const offered = active.flatMap((nudge) => nudgeTools(nudge, log));
 	const seen = /* @__PURE__ */ new Set();
 	const surface = [];
@@ -430,7 +430,7 @@ const modelRequest = (program, log) => {
 			...renderMessages(program.render, suffix),
 			...tailNudgeMessages(program.render, log)
 		],
-		tools: toolSurface(program.render, log)
+		tools: nativeToolSurface(program.render, log)
 	};
 };
 //#endregion
@@ -509,7 +509,7 @@ const build = (program, bound) => {
 			return resultOf(log, lastTurnOf(log));
 		}))),
 		request: (log) => modelRequest(program, log),
-		read: (signal, log) => readSignal(program, signal, log),
+		resolve: (token, log) => resolve(program, token, log),
 		branch,
 		fork: (options = {}) => {
 			if (bound !== void 0) return Effect.map(bound.store.read, (recorded) => branch(recorded, {
@@ -529,28 +529,28 @@ const build = (program, bound) => {
 };
 const compile = (modules, options) => {
 	const ids = /* @__PURE__ */ new Set();
-	const announcements = /* @__PURE__ */ new Map();
+	const bindings = /* @__PURE__ */ new Map();
 	for (const module of modules) {
 		if (ids.has(module.id)) throw new Error(`duplicate module id "${module.id}"`);
 		ids.add(module.id);
 		for (const provided of module.provides ?? []) {
-			if (announcements.has(provided.signal.id)) throw new Error(`signal "${provided.signal.id}" is announced by more than one module`);
-			announcements.set(provided.signal.id, provided);
+			if (bindings.has(provided.token.id)) throw new Error(`token "${provided.token.id}" is provided by more than one module`);
+			bindings.set(provided.token.id, provided);
 		}
 	}
 	const parts = modules.map((module) => {
-		for (const required of module.requires ?? []) if (!announcements.has(required.id)) throw new Error(`module "${module.id}" requires missing signal "${required.id}"`);
-		return module.setup({ read: (signal, log) => {
-			const found = announcements.get(signal.id);
-			if (found === void 0) throw new Error(`no module announces signal "${signal.id}"`);
-			return found.read(log);
+		for (const required of module.requires ?? []) if (!bindings.has(required.id)) throw new Error(`module "${module.id}" requires missing token "${required.id}"`);
+		return module.setup({ resolve: (token, log) => {
+			const found = bindings.get(token.id);
+			if (found === void 0) throw new Error(`no module provides token "${token.id}"`);
+			return found.project(log);
 		} });
 	});
 	const toolNames = /* @__PURE__ */ new Set();
 	const instructionIds = /* @__PURE__ */ new Set();
 	for (const part of parts) {
-		for (const tool of part.tools ?? []) {
-			if (toolNames.has(tool.name)) throw new Error(`duplicate tool name "${tool.name}"`);
+		for (const tool of part.nativeTools ?? []) {
+			if (toolNames.has(tool.name)) throw new Error(`duplicate native tool name "${tool.name}"`);
 			toolNames.add(tool.name);
 		}
 		for (const instruction of part.instructions ?? []) {
@@ -562,11 +562,11 @@ const compile = (modules, options) => {
 		...plan,
 		...part.render,
 		instructions: [...plan.instructions, ...part.instructions ?? []],
-		tools: [...plan.tools, ...part.tools ?? []],
+		nativeTools: [...plan.nativeTools, ...part.nativeTools ?? []],
 		nudges: [...plan.nudges, ...part.nudges ?? []]
 	}), {
 		instructions: [],
-		tools: [],
+		nativeTools: [],
 		nudges: [],
 		messageTruncateAt: 12e3,
 		resultTruncateAt: 6e3
@@ -589,7 +589,7 @@ const compile = (modules, options) => {
 		events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
 		machines,
 		render,
-		announcements: [...announcements.values()]
+		bindings: [...bindings.values()]
 	};
 };
 const createAgent = (options) => {
@@ -765,13 +765,13 @@ const budget = (options = {}) => {
 		id: "budget.wall",
 		when: budgetSpent,
 		text: wallText,
-		withdraws: ["*"]
+		withdrawsNativeTools: ["*"]
 	};
 	const escalateNudge = {
 		id: "budget.escalate",
 		when: canRequestBudget,
 		text: escalateText,
-		tools: [requestTool]
+		nativeTools: [requestTool]
 	};
 	return defineModule({
 		id: "budget",
@@ -955,7 +955,7 @@ const vercelGatewayInference = (options = {}) => {
 //#endregion
 //#region packages/harness/src/modules/inference.ts
 const BASE_SYSTEM = "You are an agent. Read the conversation, use the tools you are offered when they help, and answer the person who wrote to you. When the work is done, reply in plain text: that reply is your final answer and it ends the turn.";
-const inferenceState = signal("inference.state");
+const inferenceState = token("inference.state");
 const diedAttempts = (view) => {
 	let died = 0;
 	for (let index = view.length - 1; index >= 0; index--) {
@@ -1109,7 +1109,7 @@ const inference = (options = {}) => {
 			messageTruncateAt,
 			resultTruncateAt
 		},
-		provides: [announce(inferenceState, (log) => {
+		provides: [provide(inferenceState, (log) => {
 			return selectedInference(selection, log).state(log);
 		})],
 		setup: () => ({
@@ -1206,7 +1206,7 @@ const morphCompaction = (options = {}) => {
 		requires: [inferenceState],
 		setup: (context) => {
 			const thresholds = (log) => {
-				const window = context.read(inferenceState, log).contextWindow;
+				const window = context.resolve(inferenceState, log).contextWindow;
 				return {
 					fire: options.fireTokens ?? Math.max(1, Math.floor(window * triggerAt)),
 					keep: options.keepTokens ?? Math.max(1, Math.floor(window * keepAt))
@@ -1380,7 +1380,7 @@ const contract = (options = {}) => {
 		id: "contract.answer",
 		when: declaresOutput,
 		text,
-		tools: (log) => answerTool(log, description)
+		nativeTools: (log) => answerTool(log, description)
 	};
 	return defineModule({
 		id: "contract",
@@ -1397,9 +1397,9 @@ const contract = (options = {}) => {
 	});
 };
 //#endregion
-//#region packages/harness/src/modules/tools.ts
+//#region packages/harness/src/modules/native-tools.ts
 const callOf = (context) => {
-	if (context.callId === void 0) throw new Error("the tools machine is dispatching with no call in context");
+	if (context.callId === void 0) throw new Error("the native-tools machine is dispatching with no call in context");
 	return context;
 };
 const claimable = (log) => {
@@ -1407,8 +1407,8 @@ const claimable = (log) => {
 	return call !== void 0 && !EXITS.has(String(call.name ?? ""));
 };
 const WALL_REFUSAL = "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered.";
-const toolsMachine = (handlers) => machine({
-	id: "tools",
+const nativeToolsMachine = (handlers) => machine({
+	id: "native-tools",
 	view: turnView,
 	initial: "idle",
 	context: {},
@@ -1452,20 +1452,20 @@ const toolsMachine = (handlers) => machine({
 		}
 	}
 });
-const tools = (list) => {
+const nativeTools = (list) => {
 	const handlers = new Map(list.map((tool) => [tool.spec.name, tool]));
 	return defineModule({
-		id: "tools",
+		id: "native-tools",
 		version: "2",
 		fingerprint: list.map((tool) => tool.spec),
 		setup: () => ({
 			events: ["ToolCalled", "ToolReturned"],
-			machines: [erase(toolsMachine(handlers))],
-			tools: list.map((tool) => tool.spec)
+			machines: [erase(nativeToolsMachine(handlers))],
+			nativeTools: list.map((tool) => tool.spec)
 		})
 	});
 };
-const agentTool = (options) => ({
+const agentNativeTool = (options) => ({
 	spec: {
 		name: options.name,
 		description: options.description,
@@ -1492,7 +1492,7 @@ const agentTool = (options) => ({
 //#region packages/harness/src/pack.ts
 const defaultPack = (options = {}) => [
 	inference(options.inference),
-	tools(options.tools ?? []),
+	nativeTools(options.nativeTools ?? []),
 	budget(options.budget),
 	contract(options.contract),
 	morphCompaction(options.compaction)
@@ -1536,9 +1536,9 @@ const nudge = (options) => defineModule({
 		when: options.when,
 		text: options.text,
 		...options.placement === void 0 ? {} : { placement: options.placement },
-		...options.tools === void 0 ? {} : { tools: options.tools },
-		...options.withdraws === void 0 ? {} : { withdraws: options.withdraws }
+		...options.nativeTools === void 0 ? {} : { nativeTools: options.nativeTools },
+		...options.withdrawsNativeTools === void 0 ? {} : { withdrawsNativeTools: options.withdrawsNativeTools }
 	}] })
 });
 //#endregion
-export { Infer as $, modelRequest as A, usageIn as B, usedOf as C, createAgent as D, REQUEST_BUDGET as E, servedLog as F, keyOf as G, estimateTokens as H, transcript as I, signal as J, boundaryOf as K, turnHead as L, systemPrompt as M, toolSurface as N, defineModule as O, replyView as P, readSignal as Q, turnOf as R, escalatableOf as S, EXITS as T, keepUpTo as U, checkpointOf as V, suffixOf as W, canonicalValue as X, WITHDRAW_ALL as Y, programId as Z, budget as _, tools as a, budgetSpent as b, repairText as c, TRIGGER_RATIO as d, customInference as et, morphCompaction as f, vercelGatewayInference as g, inferenceState as h, agentTool as i, renderMessages as j, undeclaredEvents as k, COMPRESSION_RATIO as l, inference as m, cloudflareGatewayInference as n, selectedInference as nt, contract as o, naiveSummary as p, announce as q, defaultPack as r, usageOf$1 as rt, answerErrors as s, nudge as t, inferWith as tt, KEEP_RATIO as u, budgetOf as v, ANSWER as w, canRequestBudget as x, budgetPhase as y, turnView as z };
+export { Infer as $, modelRequest as A, usageIn as B, usedOf as C, createAgent as D, REQUEST_BUDGET as E, servedLog as F, keyOf as G, estimateTokens as H, transcript as I, token as J, boundaryOf as K, turnHead as L, renderMessages as M, systemPrompt as N, defineModule as O, replyView as P, resolve as Q, turnOf as R, escalatableOf as S, EXITS as T, keepUpTo as U, checkpointOf as V, suffixOf as W, canonicalValue as X, WITHDRAW_ALL as Y, programId as Z, budget as _, nativeTools as a, budgetSpent as b, repairText as c, TRIGGER_RATIO as d, customInference as et, morphCompaction as f, vercelGatewayInference as g, inferenceState as h, agentNativeTool as i, nativeToolSurface as j, undeclaredEvents as k, COMPRESSION_RATIO as l, inference as m, cloudflareGatewayInference as n, selectedInference as nt, contract as o, naiveSummary as p, provide as q, defaultPack as r, usageOf$1 as rt, answerErrors as s, nudge as t, inferWith as tt, KEEP_RATIO as u, budgetOf as v, ANSWER as w, canRequestBudget as x, budgetPhase as y, turnView as z };

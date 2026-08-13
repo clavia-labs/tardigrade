@@ -1,6 +1,6 @@
 import { erase, machine, type Envelope } from "@flamecast/core"
 import { ANSWER } from "../exits"
-import type { ToolSpec } from "../infer"
+import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
 import type { Nudge } from "../program"
 import { answerErrors, repairText } from "../schema"
@@ -30,7 +30,7 @@ const ANSWER_DESCRIPTION = "Deliver the final answer for this turn. The argument
 const answerTool = (
   log: ReadonlyArray<Envelope>,
   description: string
-): ReadonlyArray<ToolSpec> => {
+): ReadonlyArray<NativeToolSpec> => {
   const schema = outputSchemaOf(log)
   return schema === undefined
     ? []
@@ -121,7 +121,7 @@ export const contract = (options: ContractOptions = {}) => {
     id: "contract.answer",
     when: declaresOutput,
     text,
-    tools: (log) => answerTool(log, description)
+    nativeTools: (log) => answerTool(log, description)
   }
   return defineModule({
     id: "contract",

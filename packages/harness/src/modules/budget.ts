@@ -1,6 +1,6 @@
 import { erase, machine, type Envelope } from "@flamecast/core"
 import { EXITS, REQUEST_BUDGET } from "../exits"
-import type { ToolSpec } from "../infer"
+import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
 import { WITHDRAW_ALL, type Nudge } from "../program"
 import { turnHead, turnOf, turnView } from "../turns"
@@ -10,7 +10,7 @@ import { turnHead, turnOf, turnView } from "../turns"
 // The wall machine rests while the spend is under the turn's budget, then fires `BudgetExhausted`
 // once when the spend passes it. The count lives in a guard, a pure reducer over the log, so the
 // machine stays resting until the threshold and never ticks. Enforcement is elsewhere: the nudge
-// withdraws the tools that spend, and the tools machine refuses a dispatch after the wall. This
+// withdraws the native tools that spend, and the native-tools machine refuses a dispatch after the wall. This
 // machine only detects.
 
 // A turn with no declared budget takes this, so an unbounded agent is never an accident.
@@ -60,7 +60,7 @@ export const budgetPhase = (log: ReadonlyArray<Envelope>): BudgetPhase => {
 }
 
 // Are the work tools withdrawn for this turn? True once the wall is recorded, until a grant reopens
-// it. This is the one predicate the tool surface and the dispatch gate both read, so they can not
+// it. This is the one predicate the native tool surface and the dispatch gate both read, so they can not
 // disagree about what the log forbids.
 export const budgetSpent = (log: ReadonlyArray<Envelope>): boolean => budgetPhase(log) !== "spending"
 
@@ -223,7 +223,7 @@ const ESCALATE_TEXT =
   "If the work genuinely needs more and the extra spend is worth it, call request-budget with a " +
   "reason and an amount instead of answering. Ask only when it changes the result."
 
-const requestBudgetTool = (description: string): ToolSpec => ({
+const requestBudgetTool = (description: string): NativeToolSpec => ({
   name: REQUEST_BUDGET,
   description,
   inputSchema: {
@@ -260,13 +260,13 @@ export const budget = (options: BudgetOptions = {}) => {
     id: "budget.wall",
     when: budgetSpent,
     text: wallText,
-    withdraws: [WITHDRAW_ALL]
+    withdrawsNativeTools: [WITHDRAW_ALL]
   }
   const escalateNudge: Nudge = {
     id: "budget.escalate",
     when: canRequestBudget,
     text: escalateText,
-    tools: [requestTool]
+    nativeTools: [requestTool]
   }
   return defineModule({
     id: "budget",

@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Envelope } from "@flamecast/core"
-import { customInference, type Tool } from "./infer"
+import { customInference, type NativeTool } from "./infer"
+import { provide, token } from "./dependency"
 import { createAgent, defineModule, undeclaredEvents } from "./module"
 import { morphCompaction } from "./modules/compaction"
 import { inference, inferenceState } from "./modules/inference"
-import { tools } from "./modules/tools"
+import { nativeTools } from "./modules/native-tools"
 import { defaultPack } from "./pack"
-import { announce, signal } from "./signal"
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by its order id.",
@@ -24,7 +24,7 @@ const lookupInvoice: Tool = {
 
 describe("the declared alphabet", () => {
   test("gathers every module's events into one sorted list", () => {
-    const agent = createAgent({ modules: defaultPack({ tools: [lookupInvoice] }) })
+    const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
     expect(agent.program.events).toEqual([...new Set(agent.program.events)].sort())
     expect(agent.program.events).toContain("MessageReceived")
     expect(agent.program.events).toContain("ToolReturned")
@@ -62,13 +62,13 @@ describe("composition", () => {
           system: "You are a support agent.",
           messageTruncateAt: 900
         },
-        tools: [lookupInvoice],
+        nativeTools: [lookupInvoice],
         budget: { defaultBudget: 24 }
       })
     })
     expect(agent.request([]).system).toBe("You are a support agent.")
     expect(agent.program.render.messageTruncateAt).toBe(900)
-    expect(agent.program.render.tools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
+    expect(agent.program.render.nativeTools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
     expect(agent.program.modules.find((module) => module.id === "budget")?.fingerprint).toMatchObject({
       defaultBudget: 24
     })
@@ -91,41 +91,41 @@ describe("composition", () => {
 
   test("rejects duplicate module ids at runtime", () => {
     expect(() =>
-      createAgent({ modules: [tools([]), tools([])] } as never)
-    ).toThrow('duplicate module id "tools"')
+      createAgent({ modules: [nativeTools([]), nativeTools([])] } as never)
+    ).toThrow('duplicate module id "native-tools"')
   })
 
-  test("rejects duplicate tool names at runtime", () => {
+  test("rejects duplicate native tool names at runtime", () => {
     const duplicate = { ...lookupInvoice }
     expect(() =>
-      createAgent({ modules: [tools([lookupInvoice, duplicate])] })
-    ).toThrow('duplicate tool name "lookup_invoice"')
+      createAgent({ modules: [nativeTools([lookupInvoice, duplicate])] })
+    ).toThrow('duplicate native tool name "lookup_invoice"')
   })
 
-  test("rejects duplicate signal owners at runtime", () => {
-    const value = signal<"test.value", number>("test.value")
+  test("rejects duplicate token providers at runtime", () => {
+    const value = token<"test.value", number>("test.value")
     const one = defineModule({
       id: "one",
-      provides: [announce(value, () => 1)] as const,
+      provides: [provide(value, () => 1)] as const,
       setup: () => ({})
     })
     const two = defineModule({
       id: "two",
-      provides: [announce(value, () => 2)] as const,
+      provides: [provide(value, () => 2)] as const,
       setup: () => ({})
     })
     expect(() => createAgent({ modules: [one, two] } as never)).toThrow(
-      'signal "test.value" is announced by more than one module'
+      'token "test.value" is provided by more than one module'
     )
   })
 })
 
-describe("typed module signals", () => {
-  test("lets a consumer read state announced by another module", () => {
-    const count = signal<"test.count", number>("test.count")
+describe("typed module dependencies", () => {
+  test("injects a projection provided by another module", () => {
+    const count = token<"test.count", number>("test.count")
     const source = defineModule({
       id: "source",
-      provides: [announce(count, (log) => log.length)] as const,
+      provides: [provide(count, (log) => log.length)] as const,
       setup: () => ({})
     })
     const seen: Array<number> = []
@@ -137,7 +137,7 @@ describe("typed module signals", () => {
           {
             id: "count",
             when: (log) => {
-              seen.push(context.read(count, log))
+              seen.push(context.resolve(count, log))
               return false
             },
             text: "unused"
@@ -148,7 +148,7 @@ describe("typed module signals", () => {
     const agent = createAgent({ modules: [source, consumer] })
     const log: ReadonlyArray<Envelope> = [{ type: "Observed" }]
     agent.request(log)
-    expect(agent.read(count, log)).toBe(1)
+    expect(agent.resolve(count, log)).toBe(1)
     expect(seen.length).toBeGreaterThan(0)
     expect(seen.every((value) => value === 1)).toBe(true)
   })
@@ -170,13 +170,13 @@ describe("typed module signals", () => {
         morphCompaction()
       ]
     })
-    expect(agent.read(inferenceState, []).contextWindow).toBe(16_000)
-    expect(agent.read(inferenceState, [{ type: "UseLarge" }]).contextWindow).toBe(200_000)
+    expect(agent.resolve(inferenceState, []).contextWindow).toBe(16_000)
+    expect(agent.resolve(inferenceState, [{ type: "UseLarge" }]).contextWindow).toBe(200_000)
   })
 
-  test("rejects missing signal dependencies in generated JavaScript", () => {
+  test("rejects missing token dependencies in generated JavaScript", () => {
     expect(() => createAgent({ modules: [morphCompaction()] } as never)).toThrow(
-      'module "compaction" requires missing signal "inference.state"'
+      'module "compaction" requires missing token "inference.state"'
     )
   })
 
@@ -184,7 +184,7 @@ describe("typed module signals", () => {
     // @ts-expect-error compaction requires inference.state
     createAgent({ modules: [morphCompaction()] })
     // @ts-expect-error module ids must be unique
-    createAgent({ modules: [tools([]), tools([])] })
+    createAgent({ modules: [nativeTools([]), nativeTools([])] })
   }
 
   test("keeps invalid tuples out of callable code", () => {
@@ -201,8 +201,8 @@ describe("program identity", () => {
   })
 
   test("changes when module order changes", () => {
-    const one = createAgent({ modules: [inference(), tools([])] })
-    const two = createAgent({ modules: [tools([]), inference()] })
+    const one = createAgent({ modules: [inference(), nativeTools([])] })
+    const two = createAgent({ modules: [nativeTools([]), inference()] })
     expect(one.program.id).not.toBe(two.program.id)
   })
 
@@ -212,11 +212,11 @@ describe("program identity", () => {
     expect(one.program.id).not.toBe(two.program.id)
   })
 
-  test("changes when tool code configuration changes", () => {
-    const one = createAgent({ modules: [tools([lookupInvoice])] })
+  test("changes when native tool code configuration changes", () => {
+    const one = createAgent({ modules: [nativeTools([lookupInvoice])] })
     const two = createAgent({
       modules: [
-        tools([{ ...lookupInvoice, spec: { ...lookupInvoice.spec, description: "Other." } }])
+        nativeTools([{ ...lookupInvoice, spec: { ...lookupInvoice.spec, description: "Other." } }])
       ]
     })
     expect(one.program.id).not.toBe(two.program.id)

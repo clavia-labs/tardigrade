@@ -11,7 +11,7 @@ import {
   type Infer,
   type InferenceOptions,
   type ModelRequest,
-  type Tool
+  type NativeTool
 } from "@flamecast/harness"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
 import { divergence, rollout } from "./rollout"
@@ -36,7 +36,7 @@ const refuses = inferWith(async () => {
 const usage = { promptTokens: 1284, completionTokens: 96, costUsd: 0.0041 }
 const SYSTEM = "Use the tools for any question about an order."
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by its order id.",
@@ -51,19 +51,19 @@ const lookupInvoice: Tool = {
 
 const LEDGER = "ledger line ".repeat(75)
 
-const fetchLedger: Tool = {
+const fetchLedger: NativeTool = {
   spec: { name: "fetch_ledger", description: "Read the ledger for one account.", inputSchema: {} },
   run: () => Effect.succeed({ lines: LEDGER })
 }
 
 const buildAgent = (
   inferenceOptions: InferenceOptions = {},
-  toolList: ReadonlyArray<Tool> = [lookupInvoice, fetchLedger]
+  toolList: ReadonlyArray<NativeTool> = [lookupInvoice, fetchLedger]
 ) =>
   createAgent({
     modules: defaultPack({
       inference: { system: SYSTEM, ...inferenceOptions },
-      tools: toolList
+      nativeTools: toolList
     })
   })
 

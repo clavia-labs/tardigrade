@@ -1,5 +1,5 @@
 import { j as Envelope } from "./index-HxZ3VQTk.js";
-import { Ht as Usage, et as Agent, nt as AgentServices } from "./index-BmXZ63iJ.js";
+import { Ut as Usage, et as Agent, nt as AgentServices } from "./index-CyN4yol0.js";
 import { Effect } from "effect";
 //#region packages/evolve/src/candidate.d.ts
 interface Candidate<Value> {
@@ -22,7 +22,7 @@ interface ProgramObservation {
     readonly state: string;
     readonly context: unknown;
   }>;
-  readonly signals: Readonly<Record<string, unknown>>;
+  readonly dependencies: Readonly<Record<string, unknown>>;
 }
 declare const observationOf: <R>(agent: Agent<R>, log: ReadonlyArray<Envelope>) => ProgramObservation;
 declare const modelCallPrefixes: (log: ReadonlyArray<Envelope>) => ReadonlyArray<ReadonlyArray<Envelope>>;

@@ -8,14 +8,14 @@ const head: ReadonlyArray<Envelope> = [
 ]
 
 describe("finite program observations", () => {
-  test("captures rendered requests, machine folds, and announced state", () => {
+  test("captures rendered requests, machine folds, and injected projections", () => {
     const agent = createAgent({ modules: [inference()] })
     const observation = observationOf(agent, head)
     expect(observation.request.messages).toEqual([
       { role: "user", content: "What are your hours?" }
     ])
     expect(observation.machines.map((machine) => machine.id)).toEqual(["inference", "reply"])
-    expect(observation.signals["inference.state"]).toMatchObject({
+    expect(observation.dependencies["inference.state"]).toMatchObject({
       provider: "vercel-ai-gateway"
     })
   })

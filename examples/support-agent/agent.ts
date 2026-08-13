@@ -1,6 +1,6 @@
 import type { Envelope } from "@flamecast/core"
 import { createAgent, defaultPack, nudge } from "@flamecast/harness"
-import { lookupInvoice } from "./tools"
+import { lookupInvoice } from "./native-tools"
 
 const usedLookup = (log: ReadonlyArray<Envelope>): boolean =>
   log.some((event) => event.type === "ToolReturned" && event.name === "lookup_invoice")
@@ -19,7 +19,7 @@ export const supportAgent = createAgent({
           "You are a support agent. Use lookup_invoice for any question about an order. " +
           "Answer in plain text and keep answers short."
       },
-      tools: [lookupInvoice],
+      nativeTools: [lookupInvoice],
       budget: { defaultBudget: 24 }
     }),
     citeInvoice

@@ -3,12 +3,12 @@ import { Effect } from "effect"
 import type { Envelope } from "@flamecast/core"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
 import { keyOf } from "../keys"
-import { agentTool } from "./tools"
+import { agentNativeTool } from "./native-tools"
 
-describe("agentTool", () => {
+describe("agentNativeTool", () => {
   test("turns a routed agent into an ordinary tool", async () => {
     const routed: Array<{ readonly address: string; readonly event: Envelope }> = []
-    const delegate = agentTool({
+    const delegate = agentNativeTool({
       name: "ask_researcher",
       description: "Ask the research agent.",
       address: "agent:research"
@@ -39,7 +39,7 @@ describe("agentTool", () => {
 
   test("uses a deterministic call id for the same input", async () => {
     const ids: Array<string> = []
-    const delegate = agentTool({
+    const delegate = agentNativeTool({
       name: "ask_researcher",
       description: "Ask the research agent.",
       address: "agent:research"
@@ -58,7 +58,7 @@ describe("agentTool", () => {
 
   test("names routed work by the parent turn and provider call", async () => {
     const ids: Array<string> = []
-    const delegate = agentTool({
+    const delegate = agentNativeTool({
       name: "ask_researcher",
       description: "Ask the research agent.",
       address: "agent:research"

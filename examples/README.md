@@ -15,7 +15,7 @@ The support agent combines the default pack, one invoice tool, one citation nudg
 Read the files in this order:
 
 1. `invoices.ts` is the fake data layer.
-2. `tools.ts` defines the code-owned tool surface and handler.
+2. `native-tools.ts` defines the code-owned native tool surface and handler.
 3. `model.ts` provides the offline test model and the optional Vercel gateway binding.
 4. `agent.ts` constructs the module tuple.
 5. `main.ts` runs a turn and prints the log.

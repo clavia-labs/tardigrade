@@ -9,21 +9,21 @@ export {
   selectedInference,
   type Action,
   type AgentMessage,
-  type AgentToolCall,
+  type NativeToolCall,
   type CustomInferenceOptions,
   type InferenceProvider,
   type InferenceSelection,
   type InferenceState,
   type ModelRequest,
-  type Tool,
-  type ToolContext,
-  type ToolSpec,
+  type NativeTool,
+  type NativeToolContext,
+  type NativeToolSpec,
   type Usage
 } from "./infer"
 export {
   canonicalValue,
   programId,
-  readSignal,
+  resolve,
   WITHDRAW_ALL,
   type AgentProgram,
   type Instruction,
@@ -31,14 +31,15 @@ export {
   type Nudge
 } from "./program"
 export {
-  announce,
-  signal,
-  type Announcement,
-  type AnySignal,
+  provide,
+  token,
+  type AnyToken,
+  type Binding,
   type ModuleContext,
-  type Signal,
+  type Projection,
+  type Token,
   type ValueOf
-} from "./signal"
+} from "./dependency"
 export {
   createAgent,
   defineModule,
@@ -55,7 +56,7 @@ export {
   type TurnResult
 } from "./module"
 export { defaultPack, type DefaultPackOptions } from "./pack"
-export { modelRequest, renderMessages, systemPrompt, toolSurface } from "./render"
+export { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from "./render"
 export {
   replyView,
   servedLog,
@@ -79,7 +80,11 @@ export {
   type VercelGatewayInferenceOptions
 } from "./providers/vercel-gateway"
 export { inference, inferenceState, type InferenceOptions } from "./modules/inference"
-export { agentTool, tools, type AgentToolOptions } from "./modules/tools"
+export {
+  agentNativeTool,
+  nativeTools,
+  type AgentNativeToolOptions
+} from "./modules/native-tools"
 export {
   budgetOf,
   budgetPhase,

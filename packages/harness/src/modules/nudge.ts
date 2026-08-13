@@ -18,8 +18,10 @@ export const nudge = (options: NudgeOptions) =>
           when: options.when,
           text: options.text,
           ...(options.placement === undefined ? {} : { placement: options.placement }),
-          ...(options.tools === undefined ? {} : { tools: options.tools }),
-          ...(options.withdraws === undefined ? {} : { withdraws: options.withdraws })
+          ...(options.nativeTools === undefined ? {} : { nativeTools: options.nativeTools }),
+          ...(options.withdrawsNativeTools === undefined
+            ? {}
+            : { withdrawsNativeTools: options.withdrawsNativeTools })
         }
       ]
     })

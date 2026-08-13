@@ -35,7 +35,7 @@ This keeps serializable metadata useful for provenance while allowing code to re
 
 - rendered model request
 - folded machine state and context
-- announced module signals
+- injected module projections
 
 `observationallyEquivalent(left, right, logs)` compares those observations on a finite corpus. It is evidence over the supplied logs, not a proof over every possible input or external effect.
 
@@ -73,8 +73,8 @@ The field changes quickly, so algorithm policy remains outside the framework. Re
 
 Generated candidates receive two validation layers:
 
-1. TypeScript rejects missing signal dependencies and duplicate module ids for literal tuples.
-2. Runtime compilation rejects missing signals, duplicate providers, duplicate machines, duplicate tools, and duplicate instructions.
+1. TypeScript rejects missing projection dependencies and duplicate module ids for literal tuples.
+2. Runtime compilation rejects missing bindings, duplicate providers, duplicate machines, duplicate native tools, and duplicate instructions.
 
 Search infrastructure can compile candidates first and avoid spending evaluation budget on invalid programs.
 

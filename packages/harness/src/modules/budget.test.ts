@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
 import { boundaryOf } from "../boundary"
-import { inferWith, type Action, type ModelRequest, type Tool } from "../infer"
+import { inferWith, type Action, type ModelRequest, type NativeTool } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { defaultPack } from "../pack"
@@ -11,7 +11,7 @@ import { budgetOf, budgetPhase, budgetSpent, canRequestBudget, usedOf } from "./
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
-const lookup: Tool = {
+const lookup: NativeTool = {
   spec: { name: "lookup_invoice", description: "Look one up.", inputSchema: {} },
   run: () => Effect.succeed({ invoice: "INV-4182" })
 }
@@ -37,7 +37,7 @@ const call = (callId: string): Action => ({
   usage
 })
 
-const agent = createAgent({ modules: defaultPack({ tools: [lookup] }) })
+const agent = createAgent({ modules: defaultPack({ nativeTools: [lookup] }) })
 
 const head = (over: Record<string, unknown> = {}): Envelope => ({
   type: "MessageReceived",

@@ -25,10 +25,10 @@ import { candidate, rollout } from "flamecast-core/evolve"
 
 ```ts
 import { Effect } from "effect"
-import { createAgent, defaultPack, keyOf, type Tool } from "@flamecast/harness"
+import { createAgent, defaultPack, keyOf, type NativeTool } from "@flamecast/harness"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by order id.",
@@ -46,7 +46,7 @@ const agent = createAgent({
     inference: {
       system: "You are a support agent. Use lookup_invoice for order questions."
     },
-    tools: [lookupInvoice],
+    nativeTools: [lookupInvoice],
     budget: { defaultBudget: 24 }
   })
 })
@@ -70,12 +70,12 @@ bun run examples/replay/main.ts
 
 ## Design
 
-- Modules own their instructions, tools, thresholds, and machines.
-- Typed signals let modules announce state and declare dependencies.
+- Modules own their configuration, projections, and machines.
+- Typed tokens inject pure log projections between modules.
 - Static instructions form the cache-friendly system prefix. Conditional nudges are appended near the request tail by default.
 - `AgentProgram` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit program id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
-- `Router` and `agentTool()` enable multi-agent systems without imposing a planner or topology.
+- `Router` and `agentNativeTool()` enable multi-agent systems without imposing a planner or topology.
 - `@flamecast/evolve` supplies generic candidate, observation, rollout, scoring, and Pareto utilities. Search algorithms remain external.
 
 ## Packages
@@ -83,7 +83,7 @@ bun run examples/replay/main.ts
 | Package | Purpose |
 | --- | --- |
 | `@flamecast/core` | Envelopes, event logs, machines, ports, routing, and conformance |
-| `@flamecast/harness` | Agent programs, modules, rendering, inference providers, tools, budgets, contracts, and compaction |
+| `@flamecast/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
 | `@flamecast/evolve` | Algorithm-neutral candidates, finite observations, forked rollouts, scoring, and Pareto selection |
 | `@flamecast/runtime-memory` | In-process bindings for development, tests, and examples |
 

@@ -15,7 +15,7 @@ import { dedupKey, type DedupKey, type Envelope } from "@flamecast/core"
 // scopes every key to one session, so what is left is the turn. An id the world hands us is unique
 // only inside the response that minted it: a provider numbers its tool calls per response, so turn
 // 2 legitimately opens `call_1` again, and a key of `tr:call_1` would make the store absorb that
-// second result as a redelivery of the first. The tools machine would then never observe its own
+// second result as a redelivery of the first. The native-tools machine would then never observe its own
 // result and the turn would wedge. Every id below that came from outside carries its turn.
 export const keyOf: DedupKey = (event: Envelope) => {
   const field = (name: string) => {

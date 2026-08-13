@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
 import { MemoryRuntime } from "@flamecast/runtime-memory"
-import { Infer, inferWith, type Action, type Tool } from "./infer"
+import { Infer, inferWith, type Action, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
 import { createAgent, type AgentServices } from "./module"
 import { defaultPack } from "./pack"
@@ -14,7 +14,7 @@ import { defaultPack } from "./pack"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
-const lookupInvoice: Tool = {
+const lookupInvoice: NativeTool = {
   spec: {
     name: "lookup_invoice",
     description: "Look up one invoice by its order id.",
@@ -65,7 +65,7 @@ describe("the key of an event the world supplies an id for", () => {
 
 describe("two turns whose model reuses one call id", () => {
   test("both tool results land and both turns complete", async () => {
-    const agent = createAgent({ modules: defaultPack({ tools: [lookupInvoice] }) })
+    const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
     // What a real provider does: tool calls are numbered per response, so turn 2 opens `call_1`
     // again. Nothing about the second call is a redelivery of the first.
     const model = scripted([

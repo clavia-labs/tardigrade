@@ -1,26 +1,26 @@
 import { Context, Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
 
-export interface ToolSpec {
+export interface NativeToolSpec {
   readonly name: string
   readonly description: string
   readonly inputSchema: unknown
 }
 
-export interface ToolContext {
+export interface NativeToolContext {
   readonly turn: string
   readonly callId: string
 }
 
-export interface Tool<R = never> {
-  readonly spec: ToolSpec
+export interface NativeTool<R = never> {
+  readonly spec: NativeToolSpec
   readonly run: (
     input: unknown,
-    context?: ToolContext
+    context?: NativeToolContext
   ) => Effect.Effect<unknown, never, R>
 }
 
-export interface AgentToolCall {
+export interface NativeToolCall {
   readonly id: string
   readonly name: string
   readonly arguments: string
@@ -29,14 +29,14 @@ export interface AgentToolCall {
 export interface AgentMessage {
   readonly role: "system" | "user" | "assistant" | "tool"
   readonly content: string | null
-  readonly toolCalls?: ReadonlyArray<AgentToolCall>
+  readonly toolCalls?: ReadonlyArray<NativeToolCall>
   readonly toolCallId?: string
 }
 
 export interface ModelRequest {
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
-  readonly tools: ReadonlyArray<ToolSpec>
+  readonly tools: ReadonlyArray<NativeToolSpec>
 }
 
 export interface Usage {

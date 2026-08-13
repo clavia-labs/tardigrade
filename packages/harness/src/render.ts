@@ -1,6 +1,6 @@
 import type { Envelope } from "@flamecast/core"
 import { checkpointOf } from "./context"
-import type { AgentMessage, ModelRequest, ToolSpec } from "./infer"
+import type { AgentMessage, ModelRequest, NativeToolSpec } from "./infer"
 import {
   WITHDRAW_ALL,
   type AgentProgram,
@@ -12,26 +12,31 @@ import { servedLog } from "./turns"
 const truncate = (body: string, at: number): string =>
   body.length <= at ? body : `${body.slice(0, at)}…[truncated ${body.length} chars]`
 
-const nudgeTools = (nudge: Nudge, log: ReadonlyArray<Envelope>): ReadonlyArray<ToolSpec> =>
-  typeof nudge.tools === "function" ? nudge.tools(log) : (nudge.tools ?? [])
+const nudgeTools = (
+  nudge: Nudge,
+  log: ReadonlyArray<Envelope>
+): ReadonlyArray<NativeToolSpec> =>
+  typeof nudge.nativeTools === "function"
+    ? nudge.nativeTools(log)
+    : (nudge.nativeTools ?? [])
 
 const activeNudges = (
   render: RenderPlan,
   log: ReadonlyArray<Envelope>
 ): ReadonlyArray<Nudge> => render.nudges.filter((nudge) => nudge.when(log))
 
-export const toolSurface = (
+export const nativeToolSurface = (
   render: RenderPlan,
   log: ReadonlyArray<Envelope>
-): ReadonlyArray<ToolSpec> => {
+): ReadonlyArray<NativeToolSpec> => {
   const active = activeNudges(render, log)
-  const withdrawn = new Set(active.flatMap((nudge) => nudge.withdraws ?? []))
+  const withdrawn = new Set(active.flatMap((nudge) => nudge.withdrawsNativeTools ?? []))
   const base = withdrawn.has(WITHDRAW_ALL)
     ? []
-    : render.tools.filter((tool) => !withdrawn.has(tool.name))
+    : render.nativeTools.filter((tool) => !withdrawn.has(tool.name))
   const offered = active.flatMap((nudge) => nudgeTools(nudge, log))
   const seen = new Set<string>()
-  const surface: Array<ToolSpec> = []
+  const surface: Array<NativeToolSpec> = []
   for (const tool of [...base, ...offered]) {
     if (seen.has(tool.name)) continue
     seen.add(tool.name)
@@ -136,6 +141,6 @@ export const modelRequest = (
       ...renderMessages(program.render, suffix),
       ...tailNudgeMessages(program.render, log)
     ],
-    tools: toolSurface(program.render, log)
+    tools: nativeToolSurface(program.render, log)
   }
 }

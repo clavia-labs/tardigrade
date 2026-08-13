@@ -4,7 +4,7 @@ import type {
   AgentMessage,
   InferenceProvider,
   ModelRequest,
-  ToolSpec,
+  NativeToolSpec,
   Usage
 } from "../infer"
 
@@ -41,7 +41,7 @@ interface ChatResponse {
   readonly error?: { readonly message?: unknown }
 }
 
-const tool = (spec: ToolSpec) => ({
+const tool = (spec: NativeToolSpec) => ({
   type: "function" as const,
   function: {
     name: spec.name,
