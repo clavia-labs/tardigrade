@@ -1,0 +1,29 @@
+name: ci
+
+# The gate runs on every PR and every push to main, and it is the only job: this is a library, there is
+# nothing to deploy. `bun run gate` is the same command run locally (lint, typecheck, tests, knip), so CI
+# green and local green mean the same thing. No secrets are needed, hence read-only permissions.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# checkout is the only thing that touches the repo; nothing writes back.
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      # --frozen-lockfile: a PR that changes deps without committing bun.lock fails here instead of
+      # silently resolving something different from what everyone else installed.
+      - run: bun install --frozen-lockfile
+      - run: bun run gate

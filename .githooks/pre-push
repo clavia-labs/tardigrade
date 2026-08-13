@@ -1,0 +1,4 @@
+#!/bin/sh
+# CI is the gate of record. Keep push cheap so PRs reach GitHub quickly, then
+# watch the checks and reproduce failures locally with the narrowest command.
+exit 0

@@ -1,0 +1,14 @@
+node_modules/
+coverage/
+.DS_Store
+*.log
+.env*
+
+# SQLite files and spill directories the examples write when they run
+examples/.data/
+
+# Reference checkouts and attachments handed to agents, never part of history
+.context/
+
+.claude/*
+!.claude/skills/

@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "exactOptionalPropertyTypes": true,
+    "noUncheckedIndexedAccess": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "target": "es2023",
+    "lib": [
+      "es2023"
+    ],
+    "noEmit": true,
+    "skipLibCheck": true,
+    "types": [
+      "bun"
+    ]
+  }
+}

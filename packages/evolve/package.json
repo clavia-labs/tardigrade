@@ -1,0 +1,22 @@
+{
+  "name": "@flamecast/evolve",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@flamecast/core": "workspace:*",
+    "@flamecast/harness": "workspace:*",
+    "effect": "^3.22.1"
+  },
+  "devDependencies": {
+    "@flamecast/runtime-memory": "workspace:*"
+  }
+}

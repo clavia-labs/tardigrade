@@ -1,0 +1,9 @@
+version: 2
+
+# github-actions only. Dependabot's bun lockfile support is not worth the PR noise on a young repo, so
+# npm/bun deps are bumped by hand for now.
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
