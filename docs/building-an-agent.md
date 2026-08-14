@@ -2,8 +2,12 @@
 
 ## Smallest Useful Agent
 
+With `AI_GATEWAY_API_KEY` set, construct and invoke an agent in one file:
+
 ```ts
-import { createAgent, inference } from "@flamecast/harness"
+import { Effect } from "effect"
+import { createAgent, inference, keyOf } from "@flamecast/harness"
+import { MemoryRuntime } from "@flamecast/runtime-memory"
 
 const agent = createAgent({
   modules: [
@@ -12,9 +16,21 @@ const agent = createAgent({
     })
   ]
 })
+
+const result = await Effect.runPromise(
+  Effect.provide(
+    agent.turn({
+      id: "message-1",
+      text: "Where can I find my latest invoice?"
+    }),
+    MemoryRuntime({ keyOf, session: "user-42" })
+  )
+)
+
+if (result.kind === "completed") console.log(result.output)
 ```
 
-`inference()` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
+`agent.turn(message)` appends the message, settles the agent's machines, and returns the turn boundary. `MemoryRuntime` supplies storage, routing, and the other runtime ports for this process. `inference()` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
 
 ## Default Inference
 
@@ -155,20 +171,7 @@ const supervisor = createAgent({
 
 The runtime decides how `agent:research` resolves. For long-running work, send through `Router.deliver` and set `replyTo` on the inbound message.
 
-## Run a Turn
-
-```ts
-import { Effect } from "effect"
-import { keyOf } from "@flamecast/harness"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
-
-const result = await Effect.runPromise(
-  Effect.provide(
-    agent.turn({ id: "m-1", text: "Find order 4182." }),
-    MemoryRuntime({ keyOf, session: "user-42" })
-  )
-)
-```
+## Test Inference
 
 Tests can override inference with `inferWith(async (request, key) => action)` while production uses the provider configured by the inference module.
 
