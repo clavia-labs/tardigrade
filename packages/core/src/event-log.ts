@@ -28,7 +28,7 @@ export interface EventLogStore {
   readonly head: Effect.Effect<number>
 }
 
-export class EventLog extends Context.Tag("flamecast/EventLog")<EventLog, EventLogStore>() {}
+export class EventLog extends Context.Service<EventLog, EventLogStore>()("flamecast/EventLog") {}
 
 // The dedup key of an event, where one exists. The key is what guarantee 5 absorbs on, and an
 // event with no key always lands.

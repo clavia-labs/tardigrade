@@ -9,8 +9,12 @@ The event log is the source of truth. Modules compile into an agent program. Mac
 Install a pinned Git revision directly from GitHub:
 
 ```sh
-bun add "git+ssh://git@github.com/clavia-inc/flamework.git#<commit>"
+bun add --trust "git+ssh://git@github.com/clavia-inc/flamework.git#<commit>"
 ```
+
+Build output is generated from the pinned source during installation and is not committed. Bun
+requires `--trust` because Git dependencies cannot run lifecycle scripts without the consumer's
+explicit permission.
 
 The root export is the core package. The other packages use subpath exports:
 

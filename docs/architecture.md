@@ -4,7 +4,7 @@
 
 ```mermaid
 flowchart LR
-  M[Module tuple] --> V[Validate ids and projection dependencies]
+  M[Module tuple] --> V[Validate ids and construction services]
   V --> S[Run module setup]
   S --> R[Merge render contributions]
   R --> K[Build machines with final render plan]
@@ -13,7 +13,7 @@ flowchart LR
 
 Compilation has two jobs. It rejects invalid composition, then it produces the program that serves every turn.
 
-The validation order matters. All projection bindings are collected before any module runs `setup`, so module order does not restrict dependency injection. Render contributions are merged before machine builders run, so a machine closes over the same render plan that `agent.request(log)` exposes.
+The validation order matters. All construction services are collected before any module runs `setup`, so module order does not restrict dependency injection. Render contributions are merged before machine builders run, so a machine closes over the same render plan that `agent.request(log)` exposes.
 
 ## Serve a Turn
 
@@ -53,13 +53,13 @@ tools: provider-native tools adjusted by active nudges
 
 This shape keeps common request prefixes stable across turns. Dynamic budget, contract, citation, and workflow reminders stay near the tail unless a module explicitly requests system placement.
 
-## Typed Projection Injection
+## Typed Construction Services
 
-Tokens form the module dependency graph. A producer binds a token to a pure projection. A consumer requires the token and receives a context that can resolve only its declared dependencies.
+Effect service keys form the module dependency graph. A producer contributes a typed `Context`. A consumer declares service keys and receives a context containing only those dependencies.
 
-The compaction module demonstrates the pattern. Inference provides the selected model and context window. Compaction injects that state and computes its default trigger at 80 percent of the current window and its retained tail at 20 percent. A model switch changes thresholds without a global registry or a hidden import.
+The compaction module demonstrates the pattern. Inference provides a pure projection of the selected model and context window. Compaction reads that projection with `Context.get` and computes its thresholds from the current window. A model switch changes thresholds without a global registry or hidden module state.
 
-Projection injection is deliberately narrower than a general service container. Pure log projections use tokens and bindings. Effectful capabilities use runtime ports. This separation keeps replay and observational comparison independent of mutable construction state.
+Pure construction services use Effect `Context` directly. Effectful capabilities use Effect requirements and Layers. Modules separately declare the projections used for observational comparison, so generic service values do not become an accidental serialization format.
 
 ## Multi-Agent Orchestration
 

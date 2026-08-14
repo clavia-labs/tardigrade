@@ -73,8 +73,8 @@ The field changes quickly, so algorithm policy remains outside the framework. Re
 
 Generated candidates receive two validation layers:
 
-1. TypeScript rejects missing projection dependencies and duplicate module ids for literal tuples.
-2. Runtime compilation rejects missing bindings, duplicate providers, duplicate machines, duplicate native tools, and duplicate instructions.
+1. TypeScript rejects missing services, duplicate service providers, and duplicate module ids for literal tuples.
+2. Runtime compilation repeats those checks for generated JavaScript and rejects duplicate projections, machines, native tools, and instructions.
 
 Search infrastructure can compile candidates first and avoid spending evaluation budget on invalid programs.
 

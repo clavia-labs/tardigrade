@@ -47,31 +47,34 @@ Use a machine when behavior must append facts, wait for events, or perform effec
 A module is one typed unit of construction.
 
 ```ts
-interface Module<Id, Provides, Requires, R> {
+interface Module<Id, Services, Requires, R> {
   readonly id: Id
   readonly version?: string
   readonly fingerprint?: unknown
-  readonly provides?: Provides
+  readonly services?: Context.Context<Services>
   readonly requires?: Requires
-  readonly setup: (context: ModuleContext<Requires>) => ModulePart<R>
+  readonly setup: (services: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
 }
 ```
 
 Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
 
-## Token and Binding
+## Service
 
-A token names a typed projection dependency. A binding associates that token with its projection.
+An Effect service names a typed construction dependency. A module provides service implementations in an Effect `Context`.
 
 ```ts
-const inferenceState = token<"inference.state", InferenceState>("inference.state")
+class InferenceStateProjection extends Context.Service<
+  InferenceStateProjection,
+  Projection<InferenceState>
+>()("flamecast/InferenceStateProjection") {}
 
-provide(inferenceState, selectInferenceState)
+const services = Context.make(InferenceStateProjection, selectInferenceState)
 ```
 
-A consumer lists tokens in `requires` and resolves them through its `ModuleContext`. TypeScript rejects missing dependencies for literal module tuples. Runtime compilation performs the same validation for generated JavaScript.
+A consumer lists service keys in `requires` and reads implementations with `Context.get`. TypeScript rejects missing dependencies and duplicate providers for literal module tuples. Runtime compilation performs the same validation for generated JavaScript.
 
-Bindings are deliberately constrained dependency injection. They inject pure projections of the log. Effectful capabilities use ports so replay and observation do not depend on hidden construction state.
+Construction services are already-created, synchronous values. Effectful capabilities and resources use Effect requirements and Layers at execution time. This keeps program construction deterministic and gives resource lifecycles to Effect.
 
 ## Port
 

@@ -13,6 +13,6 @@
   },
   "dependencies": {
     "@flamecast/core": "workspace:*",
-    "effect": "^3.22.1"
+    "effect": "4.0.0-rc.108"
   }
 }

@@ -14,7 +14,7 @@
   "dependencies": {
     "@flamecast/core": "workspace:*",
     "@flamecast/harness": "workspace:*",
-    "effect": "^3.22.1"
+    "effect": "4.0.0-rc.108"
   },
   "devDependencies": {
     "@flamecast/runtime-memory": "workspace:*"

@@ -15,7 +15,7 @@ describe("finite program observations", () => {
       { role: "user", content: "What are your hours?" }
     ])
     expect(observation.machines.map((machine) => machine.id)).toEqual(["inference", "reply"])
-    expect(observation.dependencies["inference.state"]).toMatchObject({
+    expect(observation.projections["flamecast/InferenceStateProjection"]).toMatchObject({
       provider: "vercel-ai-gateway"
     })
   })

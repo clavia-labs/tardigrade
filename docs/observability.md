@@ -31,10 +31,13 @@ This shows the static system prefix, compacted conversation, active tail nudges,
 ## Inspect Module State
 
 ```ts
-const selected = agent.resolve(inferenceState, log)
+import { Context } from "effect"
+import { InferenceStateProjection } from "@flamecast/harness"
+
+const selected = Context.get(agent.services, InferenceStateProjection)(log)
 ```
 
-Typed dependency bindings expose module projections. Machine state can be reconstructed with `foldOf(machine, log)`.
+Effect services expose typed module projections. Machine state can be reconstructed with `foldOf(machine, log)`.
 
 ## Replay
 

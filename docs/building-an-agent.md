@@ -125,29 +125,38 @@ The nudge appears as a late system message when active. Set `placement: "system"
 ## Add Typed Module State
 
 ```ts
-import { defineModule, provide, token } from "@flamecast/harness"
+import { Context } from "effect"
+import { defineModule, type Projection } from "@flamecast/harness"
 
-const tenant = token<"tenant.current", string>("tenant.current")
+class TenantProjection extends Context.Service<
+  TenantProjection,
+  Projection<string>
+>()("example/TenantProjection") {}
 
 const tenantSource = defineModule({
   id: "tenant-source",
-  provides: [provide(tenant, (log) => String(log.findLast((event) => event.tenant)?.tenant ?? "default"))] as const,
+  services: Context.make(TenantProjection, (log) =>
+    String(log.findLast((event) => event.tenant)?.tenant ?? "default")
+  ),
   setup: () => ({})
 })
 
 const tenantInstruction = defineModule({
   id: "tenant-instruction",
-  requires: [tenant] as const,
-  setup: (context) => ({
-    nudges: [
-      {
-        id: "tenant",
-        when: () => true,
-        text: "Follow the active tenant policy.",
-        nativeTools: (log) => policyTools(context.resolve(tenant, log))
-      }
-    ]
-  })
+  requires: [TenantProjection] as const,
+  setup: (services) => {
+    const tenant = Context.get(services, TenantProjection)
+    return {
+      nudges: [
+        {
+          id: "tenant",
+          when: () => true,
+          text: "Follow the active tenant policy.",
+          nativeTools: (log) => policyTools(tenant(log))
+        }
+      ]
+    }
+  }
 })
 ```
 

@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { copyFile, lstat, mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join } from "node:path"
+import { dirname, join, resolve, sep } from "node:path"
 
 const root = join(import.meta.dir, "..")
 const temporary = await mkdtemp(join(tmpdir(), "flamecast-package-"))
@@ -11,27 +11,78 @@ const run = async (command: ReadonlyArray<string>, cwd: string) => {
   if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`)
 }
 
-try {
-  const built = join(temporary, "dist")
-  await run(["bun", "--bun", "node_modules/.bin/tsdown", "--out-dir", built], root)
-  await run(["diff", "-qr", join(root, "dist"), built], root)
-  const packed = Bun.spawnSync(["bun", "pm", "pack", "--ignore-scripts", "--destination", temporary], {
-    cwd: root,
-    stdout: "pipe",
-    stderr: "inherit"
-  })
-  if (packed.exitCode !== 0) throw new Error(`bun pm pack exited ${packed.exitCode}`)
+const outputOf = (command: ReadonlyArray<string>, cwd: string) => {
+  const process = Bun.spawnSync([...command], { cwd, stdout: "pipe", stderr: "inherit" })
+  if (process.exitCode !== 0) throw new Error(`${command.join(" ")} exited ${process.exitCode}`)
+  return new TextDecoder().decode(process.stdout).trim()
+}
 
-  const output = new TextDecoder().decode(packed.stdout).trim()
-  const archive = output.split(/\r?\n/).findLast((line) => line.endsWith(".tgz"))
-  if (archive === undefined) throw new Error(`could not find package archive in output: ${output}`)
-  const archivePath = isAbsolute(archive) ? archive : join(temporary, archive)
+const copySource = async (destination: string) => {
+  const deleted = new Set(
+    outputOf(["git", "ls-files", "--deleted", "-z"], root)
+      .split("\0")
+      .filter((file) => file.length > 0)
+  )
+  const files = outputOf(["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"], root)
+    .split("\0")
+    .filter((file) => file.length > 0 && !deleted.has(file))
+
+  if (files.some((file) => file === "dist" || file.startsWith("dist/"))) {
+    throw new Error("dist must not be tracked or included in a clean source checkout")
+  }
+
+  for (const file of files) {
+    const source = join(root, file)
+    const target = join(destination, file)
+    await mkdir(dirname(target), { recursive: true })
+    const metadata = await lstat(source)
+    if (metadata.isSymbolicLink()) await symlink(await readlink(source), target)
+    else await copyFile(source, target)
+  }
+}
+
+const withGitServer = async (directory: string, use: (url: string) => Promise<void>) => {
+  const root = resolve(directory)
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    async fetch(request) {
+      const path = resolve(root, `.${decodeURIComponent(new URL(request.url).pathname)}`)
+      if (path !== root && !path.startsWith(`${root}${sep}`)) return new Response("not found", { status: 404 })
+      const file = Bun.file(path)
+      if (!(await file.exists())) return new Response("not found", { status: 404 })
+      return new Response(file)
+    }
+  })
+
+  try {
+    await use(`git+http://${server.hostname}:${server.port}/source.git`)
+  } finally {
+    server.stop(true)
+  }
+}
+
+try {
+  const source = join(temporary, "source")
+  await mkdir(source)
+  await copySource(source)
+  await run(["git", "init", "--quiet"], source)
+  await run(["git", "config", "user.email", "package-smoke@flamecast.invalid"], source)
+  await run(["git", "config", "user.name", "Package Smoke"], source)
+  await run(["git", "add", "--all"], source)
+  await run(["git", "commit", "--quiet", "-m", "test: create clean package source"], source)
+  await run(["git", "tag", "package-smoke"], source)
+  const served = join(temporary, "served")
+  await mkdir(served)
+  const repository = join(served, "source.git")
+  await run(["git", "clone", "--quiet", "--bare", source, repository], temporary)
+  await run(["git", "--git-dir", repository, "update-server-info"], temporary)
 
   const consumer = join(temporary, "consumer")
   await mkdir(consumer)
   await writeFile(
     join(consumer, "package.json"),
-    JSON.stringify({ type: "module", dependencies: { "flamecast-core": `file:${archivePath}` } })
+    JSON.stringify({ name: "package-smoke-consumer", private: true, type: "module" })
   )
   await writeFile(
     join(consumer, "index.ts"),
@@ -49,15 +100,26 @@ try {
   )
   await writeFile(
     join(consumer, "tsconfig.json"),
-    JSON.stringify({ compilerOptions: { strict: true, module: "esnext", moduleResolution: "bundler", target: "es2023", noEmit: true } })
+    JSON.stringify({
+      compilerOptions: {
+        strict: true,
+        module: "esnext",
+        moduleResolution: "bundler",
+        target: "es2023",
+        lib: ["es2023", "dom", "esnext.disposable"],
+        noEmit: true
+      }
+    })
   )
 
-  await run(["bun", "install"], consumer)
-  await run(["bun", "--bun", join(root, "node_modules/.bin/tsc"), "--noEmit"], consumer)
-  const result = Bun.spawnSync(["bun", "run", "index.ts"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-  if (result.exitCode !== 0 || new TextDecoder().decode(result.stdout).trim() !== "true") {
-    throw new Error("installed package did not execute successfully")
-  }
+  await withGitServer(served, async (url) => {
+    await run(["bun", "add", "--trust", `${url}#package-smoke`], consumer)
+    await run(["bun", "--bun", join(root, "node_modules/.bin/tsc"), "--noEmit"], consumer)
+    const result = Bun.spawnSync(["bun", "run", "index.ts"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+    if (result.exitCode !== 0 || new TextDecoder().decode(result.stdout).trim() !== "true") {
+      throw new Error("installed package did not execute successfully")
+    }
+  })
 
   const manifest = JSON.parse(await readFile(join(consumer, "node_modules/flamecast-core/package.json"), "utf8")) as {
     exports?: unknown

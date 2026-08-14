@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Context, Effect } from "effect"
 import type { Envelope } from "@flamecast/core"
 import { customInference, type NativeTool } from "./infer"
-import { provide, token } from "./dependency"
 import { createAgent, defineModule, undeclaredEvents } from "./module"
 import { morphCompaction } from "./modules/compaction"
-import { inference, inferenceState } from "./modules/inference"
+import { inference, InferenceStateProjection } from "./modules/inference"
 import { nativeTools } from "./modules/native-tools"
 import { defaultPack } from "./pack"
+import type { Projection } from "./projection"
 
 const lookupInvoice: NativeTool = {
   spec: {
@@ -102,53 +102,62 @@ describe("composition", () => {
     ).toThrow('duplicate native tool name "lookup_invoice"')
   })
 
-  test("rejects duplicate token providers at runtime", () => {
-    const value = token<"test.value", number>("test.value")
+  test("rejects duplicate service providers at runtime", () => {
+    class ValueProjection extends Context.Service<
+      ValueProjection,
+      Projection<number>
+    >()("test/ValueProjection") {}
     const one = defineModule({
       id: "one",
-      provides: [provide(value, () => 1)] as const,
+      services: Context.make(ValueProjection, () => 1),
       setup: () => ({})
     })
     const two = defineModule({
       id: "two",
-      provides: [provide(value, () => 2)] as const,
+      services: Context.make(ValueProjection, () => 2),
       setup: () => ({})
     })
     expect(() => createAgent({ modules: [one, two] } as never)).toThrow(
-      'token "test.value" is provided by more than one module'
+      'service "test/ValueProjection" is provided by more than one module'
     )
   })
 })
 
 describe("typed module dependencies", () => {
   test("injects a projection provided by another module", () => {
-    const count = token<"test.count", number>("test.count")
+    class CountProjection extends Context.Service<
+      CountProjection,
+      Projection<number>
+    >()("test/CountProjection") {}
     const source = defineModule({
       id: "source",
-      provides: [provide(count, (log) => log.length)] as const,
+      services: Context.make(CountProjection, (log) => log.length),
       setup: () => ({})
     })
     const seen: Array<number> = []
     const consumer = defineModule({
       id: "consumer",
-      requires: [count] as const,
-      setup: (context) => ({
-        nudges: [
-          {
-            id: "count",
-            when: (log) => {
-              seen.push(context.resolve(count, log))
-              return false
-            },
-            text: "unused"
-          }
-        ]
-      })
+      requires: [CountProjection] as const,
+      setup: (services) => {
+        const count = Context.get(services, CountProjection)
+        return {
+          nudges: [
+            {
+              id: "count",
+              when: (log) => {
+                seen.push(count(log))
+                return false
+              },
+              text: "unused"
+            }
+          ]
+        }
+      }
     })
     const agent = createAgent({ modules: [source, consumer] })
     const log: ReadonlyArray<Envelope> = [{ type: "Observed" }]
     agent.request(log)
-    expect(agent.resolve(count, log)).toBe(1)
+    expect(Context.get(agent.services, CountProjection)(log)).toBe(1)
     expect(seen.length).toBeGreaterThan(0)
     expect(seen.every((value) => value === 1)).toBe(true)
   })
@@ -170,21 +179,38 @@ describe("typed module dependencies", () => {
         morphCompaction()
       ]
     })
-    expect(agent.resolve(inferenceState, []).contextWindow).toBe(16_000)
-    expect(agent.resolve(inferenceState, [{ type: "UseLarge" }]).contextWindow).toBe(200_000)
+    const state = Context.get(agent.services, InferenceStateProjection)
+    expect(state([]).contextWindow).toBe(16_000)
+    expect(state([{ type: "UseLarge" }]).contextWindow).toBe(200_000)
   })
 
-  test("rejects missing token dependencies in generated JavaScript", () => {
+  test("rejects missing service dependencies in generated JavaScript", () => {
     expect(() => createAgent({ modules: [morphCompaction()] } as never)).toThrow(
-      'module "compaction" requires missing token "inference.state"'
+      'module "compaction" requires missing service "flamecast/InferenceStateProjection"'
     )
   })
 
   const compileTimeChecks = () => {
-    // @ts-expect-error compaction requires inference.state
+    class DuplicateProjection extends Context.Service<
+      DuplicateProjection,
+      Projection<number>
+    >()("test/DuplicateProjection") {}
+    const first = defineModule({
+      id: "first",
+      services: Context.make(DuplicateProjection, () => 1),
+      setup: () => ({})
+    })
+    const second = defineModule({
+      id: "second",
+      services: Context.make(DuplicateProjection, () => 2),
+      setup: () => ({})
+    })
+    // @ts-expect-error compaction requires InferenceStateProjection
     createAgent({ modules: [morphCompaction()] })
     // @ts-expect-error module ids must be unique
     createAgent({ modules: [nativeTools([]), nativeTools([])] })
+    // @ts-expect-error service providers must be unique
+    createAgent({ modules: [first, second] })
   }
 
   test("keeps invalid tuples out of callable code", () => {

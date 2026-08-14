@@ -156,13 +156,13 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
       },
       catch: (error) => (error instanceof Error ? error : new Error(String(error)))
     }).pipe(
-      Effect.catchAll((error) =>
+      Effect.catch((error) =>
         Effect.succeed({
           kind: "fail",
           error: `${options.provider} request failed: ${error.message}`
         } satisfies Action)
       ),
-      Effect.catchAllDefect((defect) =>
+      Effect.catchDefect((defect) =>
         Effect.succeed({
           kind: "fail",
           error: `${options.provider} request failed: ${String(defect)}`

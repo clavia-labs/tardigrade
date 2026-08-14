@@ -25,7 +25,7 @@ const agent = createAgent({
 - provider selection
 - give-up and contract-repair bounds
 - message and tool-result truncation limits
-- the `inference.state` projection binding
+- the `InferenceStateProjection` construction service
 
 Vercel AI Gateway is the default provider. The gateway reads `AI_GATEWAY_API_KEY`, `AI_GATEWAY_MODEL`, and `AI_GATEWAY_CONTEXT_WINDOW`. Explicit options take precedence.
 
@@ -51,7 +51,7 @@ Budget control is event driven. A grant or denial can arrive later through repla
 
 ## compaction
 
-`morphCompaction(options)` injects `inference.state`. Its default trigger is 80 percent of the selected model's context window and its retained tail is 20 percent.
+`morphCompaction(options)` requires `InferenceStateProjection`. Its default trigger is 80 percent of the selected model's context window and its retained tail is 20 percent.
 
 The module appends `CompactionCompleted` with an `upTo` offset and summary. It deletes no events. Rendering substitutes the latest summary for the compacted prefix.
 
@@ -68,13 +68,19 @@ A nudge can depend on machine state. For example, a machine can record `Reminder
 ## Custom Module
 
 ```ts
-const confidence = token<"retrieval.confidence", number>("retrieval.confidence")
+import { Context } from "effect"
+import { defineModule, type Projection } from "@flamecast/harness"
+
+class RetrievalConfidence extends Context.Service<
+  RetrievalConfidence,
+  Projection<number>
+>()("example/RetrievalConfidence") {}
 
 const retrieval = defineModule({
   id: "retrieval",
   version: "3",
   fingerprint: { index: "support-v4" },
-  provides: [provide(confidence, retrievalConfidence)] as const,
+  services: Context.make(RetrievalConfidence, retrievalConfidence),
   setup: () => ({
     events: ["RetrievalCompleted"],
     machines: [retrievalMachine],

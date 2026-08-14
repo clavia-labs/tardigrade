@@ -8,7 +8,7 @@ export interface ProgramObservation {
     readonly state: string
     readonly context: unknown
   }>
-  readonly dependencies: Readonly<Record<string, unknown>>
+  readonly projections: Readonly<Record<string, unknown>>
 }
 
 export const observationOf = <R>(
@@ -21,11 +21,8 @@ export const observationOf = <R>(
     state: foldOf(machine, log).name,
     context: foldOf(machine, log).context
   })),
-  dependencies: Object.fromEntries(
-    agent.program.bindings.map((binding) => [
-      binding.token.id,
-      binding.project(log)
-    ])
+  projections: Object.fromEntries(
+    Object.entries(agent.program.projections).map(([id, project]) => [id, project(log)])
   )
 })
 

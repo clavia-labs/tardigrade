@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Semaphore } from "effect"
 import {
   EventLog,
   Placement,
@@ -50,11 +50,11 @@ export const MemoryRuntime = (options: MemoryOptions) => {
   // lease a Postgres advisory lock or an S3 compare-and-swap gives across processes: a second
   // holder waits rather than interleaving. It is built without a suspension point, so two fibers
   // racing for the first hold on one session still share one lease.
-  const leases = new Map<string, Effect.Semaphore>()
+  const leases = new Map<string, Semaphore.Semaphore>()
   const leaseOf = (address: string) => {
     const held = leases.get(address)
     if (held !== undefined) return held
-    const fresh = Effect.unsafeMakeSemaphore(1)
+    const fresh = Semaphore.makeUnsafe(1)
     leases.set(address, fresh)
     return fresh
   }

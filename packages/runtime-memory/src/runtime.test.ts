@@ -167,15 +167,15 @@ describe("the writer", () => {
     const work = (name: string) =>
       Effect.gen(function* () {
         trace.push(`${name}:in`)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         trace.push(`${name}:out`)
       })
 
     await inRuntime(
       Effect.gen(function* () {
         const writer = yield* Writer
-        const first = yield* Effect.fork(writer.hold("user-42", work("a")))
-        const second = yield* Effect.fork(writer.hold("user-42", work("b")))
+        const first = yield* Effect.forkChild(writer.hold("user-42", work("a")))
+        const second = yield* Effect.forkChild(writer.hold("user-42", work("b")))
         yield* Fiber.join(first)
         yield* Fiber.join(second)
       })
@@ -188,15 +188,15 @@ describe("the writer", () => {
     const work = (name: string) =>
       Effect.gen(function* () {
         trace.push(`${name}:in`)
-        yield* Effect.yieldNow()
+        yield* Effect.yieldNow
         trace.push(`${name}:out`)
       })
 
     await inRuntime(
       Effect.gen(function* () {
         const writer = yield* Writer
-        const first = yield* Effect.fork(writer.hold("user-1", work("a")))
-        const second = yield* Effect.fork(writer.hold("user-2", work("b")))
+        const first = yield* Effect.forkChild(writer.hold("user-1", work("a")))
+        const second = yield* Effect.forkChild(writer.hold("user-2", work("b")))
         yield* Fiber.join(first)
         yield* Fiber.join(second)
       })

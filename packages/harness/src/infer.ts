@@ -100,7 +100,7 @@ export const customInference = (
   }
 }
 
-export class Infer extends Context.Tag("flamecast/Infer")<Infer, InferenceProvider>() {}
+export class Infer extends Context.Service<Infer, InferenceProvider>()("flamecast/Infer") {}
 
 export const inferWith = (
   react: (request: ModelRequest, key: string) => Promise<Action>,

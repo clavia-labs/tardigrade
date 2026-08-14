@@ -13,10 +13,10 @@ import type { Envelope } from "./envelope"
 // Both doors carry Envelopes in and an Envelope out, so the core stays free of domain vocabulary. A
 // turn that ends carries its outcome in the event that ended it, and the harness narrows on `type`
 // to read it. Resuming a session that parked is `deliver` of the event the park waits on.
-export class Router extends Context.Tag("flamecast/Router")<
+export class Router extends Context.Service<
   Router,
   {
     readonly deliver: (address: string, event: Envelope) => Effect.Effect<void>
     readonly call: (address: string, event: Envelope) => Effect.Effect<Envelope>
   }
->() {}
+>()("flamecast/Router") {}

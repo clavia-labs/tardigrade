@@ -23,23 +23,13 @@ export {
 export {
   canonicalValue,
   programId,
-  resolve,
   WITHDRAW_ALL,
   type AgentProgram,
   type Instruction,
   type ModuleManifest,
   type Nudge
 } from "./program"
-export {
-  provide,
-  token,
-  type AnyToken,
-  type Binding,
-  type ModuleContext,
-  type Projection,
-  type Token,
-  type ValueOf
-} from "./dependency"
+export type { Projection } from "./projection"
 export {
   createAgent,
   defineModule,
@@ -79,7 +69,11 @@ export {
   vercelGatewayInference,
   type VercelGatewayInferenceOptions
 } from "./providers/vercel-gateway"
-export { inference, inferenceState, type InferenceOptions } from "./modules/inference"
+export {
+  InferenceStateProjection,
+  inference,
+  type InferenceOptions
+} from "./modules/inference"
 export {
   agentNativeTool,
   nativeTools,

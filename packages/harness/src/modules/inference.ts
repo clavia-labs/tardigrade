@@ -1,4 +1,4 @@
-import { Clock, Effect, Option } from "effect"
+import { Clock, Context, Effect, Option } from "effect"
 import { EventLog, Router, erase, machine, type Envelope, type Machine } from "@flamecast/core"
 import {
   Infer,
@@ -9,9 +9,9 @@ import {
   type InferenceState
 } from "../infer"
 import { defineModule } from "../module"
+import type { Projection } from "../projection"
 import type { RenderPlan } from "../program"
 import { modelRequest } from "../render"
-import { provide, token } from "../dependency"
 import { replyView, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
 
@@ -20,7 +20,10 @@ const BASE_SYSTEM =
   "answer the person who wrote to you. When the work is done, reply in plain text: that reply is " +
   "your final answer and it ends the turn."
 
-export const inferenceState = token<"inference.state", InferenceState>("inference.state")
+export class InferenceStateProjection extends Context.Service<
+  InferenceStateProjection,
+  Projection<InferenceState>
+>()("flamecast/InferenceStateProjection") {}
 
 export interface InferenceOptions {
   readonly provider?: InferenceSelection
@@ -171,6 +174,10 @@ export const inference = (options: InferenceOptions = {}) => {
   const messageTruncateAt = options.messageTruncateAt ?? 12_000
   const resultTruncateAt = options.resultTruncateAt ?? 6_000
   const initial = selectedInference(selection, [])
+  const state: Projection<InferenceState> = (log) => {
+    const provider = selectedInference(selection, log)
+    return provider.state(log)
+  }
   return defineModule({
     id: "inference",
     version: "2",
@@ -183,12 +190,7 @@ export const inference = (options: InferenceOptions = {}) => {
       messageTruncateAt,
       resultTruncateAt
     },
-    provides: [
-      provide(inferenceState, (log) => {
-        const provider = selectedInference(selection, log)
-        return provider.state(log)
-      })
-    ] as const,
+    services: Context.make(InferenceStateProjection, state),
     setup: () => ({
       events: [
         "MessageReceived",
@@ -199,6 +201,7 @@ export const inference = (options: InferenceOptions = {}) => {
         "TurnFailed",
         "ReplyDelivered"
       ],
+      projections: { [InferenceStateProjection.key]: state },
       instructions: [{ id: "inference.system", text: system }],
       render: { messageTruncateAt, resultTruncateAt },
       machines: (render) =>

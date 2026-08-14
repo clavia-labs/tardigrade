@@ -1,10 +1,10 @@
-import { Clock, Effect } from "effect"
+import { Clock, Context, Effect } from "effect"
 import { machine, type Envelope } from "@flamecast/core"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
 import { defineModule } from "../module"
 import { environment } from "../providers/environment"
 import { transcript } from "../turns"
-import { inferenceState } from "./inference"
+import { InferenceStateProjection } from "./inference"
 
 export const TRIGGER_RATIO = 0.8
 export const KEEP_RATIO = 0.2
@@ -71,8 +71,8 @@ const compress = (
     },
     catch: (error) => (error instanceof Error ? error : new Error(String(error)))
   }).pipe(
-    Effect.catchAll(() => Effect.succeed(fallback)),
-    Effect.catchAllDefect(() => Effect.succeed(fallback))
+    Effect.catch(() => Effect.succeed(fallback)),
+    Effect.catchDefect(() => Effect.succeed(fallback))
   )
 }
 
@@ -100,10 +100,11 @@ export const morphCompaction = (options: MorphOptions = {}) => {
       apiUrl: options.apiUrl ?? MORPH_URL,
       morph: (options.apiKey ?? environment("MORPH_API_KEY")) !== undefined
     },
-    requires: [inferenceState] as const,
-    setup: (context) => {
+    requires: [InferenceStateProjection] as const,
+    setup: (services) => {
+      const inferenceState = Context.get(services, InferenceStateProjection)
       const thresholds = (log: ReadonlyArray<Envelope>) => {
-        const window = context.resolve(inferenceState, log).contextWindow
+        const window = inferenceState(log).contextWindow
         return {
           fire: options.fireTokens ?? Math.max(1, Math.floor(window * triggerAt)),
           keep: options.keepTokens ?? Math.max(1, Math.floor(window * keepAt))

@@ -1,0 +1,34 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": [
+      "es2023",
+      "dom"
+    ],
+    "noEmit": false,
+    "types": [],
+    "paths": {
+      "@flamecast/core": [
+        "./packages/core/src/index.ts"
+      ],
+      "@flamecast/evolve": [
+        "./packages/evolve/src/index.ts"
+      ],
+      "@flamecast/harness": [
+        "./packages/harness/src/index.ts"
+      ],
+      "@flamecast/harness/*": [
+        "./packages/harness/src/*"
+      ],
+      "@flamecast/runtime-memory": [
+        "./packages/runtime-memory/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "packages/*/src"
+  ],
+  "exclude": [
+    "**/*.test.ts"
+  ]
+}

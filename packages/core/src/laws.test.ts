@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Exit, FastCheck, Layer } from "effect"
+import { Cause, Effect, Exit, Layer } from "effect"
+import * as FastCheck from "fast-check"
 import { EventLog, dedupKey } from "./event-log"
 import { foldOf, foldStep, machine, settle, settleAll } from "./machine"
 import { actor, send } from "./actor"

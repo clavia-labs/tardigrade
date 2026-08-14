@@ -1,7 +1,8 @@
+import type { Context } from "effect"
 import type { Envelope, Machine } from "@flamecast/core"
 import type { NativeToolSpec } from "./infer"
 import { sha256 } from "./sha256"
-import type { AnyToken, Binding, ValueOf } from "./dependency"
+import type { Projection } from "./projection"
 
 export interface Instruction {
   readonly id: string
@@ -37,14 +38,15 @@ export interface ModuleManifest {
   readonly fingerprint?: unknown
 }
 
-export interface AgentProgram<R = never> {
+export interface AgentProgram<R = never, Services = never> {
   readonly id: string
   readonly parent?: string
   readonly modules: ReadonlyArray<ModuleManifest>
   readonly events: ReadonlyArray<string>
   readonly machines: ReadonlyArray<Machine<R, never>>
   readonly render: RenderPlan
-  readonly bindings: ReadonlyArray<Binding<AnyToken>>
+  readonly services: Context.Context<Services>
+  readonly projections: Readonly<Record<string, Projection<unknown>>>
 }
 
 const canonical = (value: unknown): string => {
@@ -62,15 +64,5 @@ const canonical = (value: unknown): string => {
 
 export const programId = (modules: ReadonlyArray<ModuleManifest>): string =>
   `sha256:${sha256(canonical(modules))}`
-
-export const resolve = <T extends AnyToken>(
-  program: Pick<AgentProgram<never>, "bindings">,
-  token: T,
-  log: ReadonlyArray<Envelope>
-): ValueOf<T> => {
-  const found = program.bindings.find((one) => one.token.id === token.id)
-  if (found === undefined) throw new Error(`no module provides token "${token.id}"`)
-  return found.project(log) as ValueOf<T>
-}
 
 export const canonicalValue = canonical

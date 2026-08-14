@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect"
+import { Clock, Context, Effect } from "effect"
 import {
   EventLog,
   Router,
@@ -18,14 +18,13 @@ import { keyOf } from "./keys"
 import { modelRequest } from "./render"
 import {
   programId,
-  resolve,
   type AgentProgram,
   type Instruction,
   type ModuleManifest,
   type Nudge,
   type RenderPlan
 } from "./program"
-import type { AnyToken, Binding, ModuleContext, Token, ValueOf } from "./dependency"
+import type { Projection } from "./projection"
 import { turnHead, usageIn } from "./turns"
 
 export type AgentServices = EventLog | Writer | Wake | Router | Self
@@ -38,50 +37,66 @@ export interface ModulePart<R = never> {
   readonly instructions?: ReadonlyArray<Instruction>
   readonly nudges?: ReadonlyArray<Nudge>
   readonly nativeTools?: ReadonlyArray<NativeToolSpec>
+  readonly projections?: Readonly<Record<string, Projection<unknown>>>
   readonly render?: Partial<Pick<RenderPlan, "messageTruncateAt" | "resultTruncateAt">>
 }
 
+type AnyService = Context.Service.Any
+type RequiredServices<Requires extends readonly AnyService[]> = Context.Service.Identifier<
+  Requires[number]
+>
+
 export interface Module<
   Id extends string = string,
-  Provides extends readonly Binding<AnyToken>[] = readonly [],
-  Requires extends readonly AnyToken[] = readonly [],
+  Services = never,
+  Requires extends readonly AnyService[] = readonly [],
   R = never
 > {
   readonly id: Id
   readonly version?: string
   readonly fingerprint?: unknown
-  readonly provides?: Provides
+  readonly services?: Context.Context<Services>
   readonly requires?: Requires
-  readonly setup: (context: ModuleContext<Requires>) => ModulePart<R>
+  readonly setup: (context: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
 }
 
-export type AnyModule = Module<string, any, any, any>
+export type AnyModule = Module<string, never, any, any>
 
 export const defineModule = <
   const Id extends string,
-  const Provides extends readonly Binding<AnyToken>[] = readonly [],
-  const Requires extends readonly AnyToken[] = readonly [],
+  Services = never,
+  const Requires extends readonly AnyService[] = readonly [],
   R = never
->(module: Module<Id, Provides, Requires, R>): Module<Id, Provides, Requires, R> => module
+>(module: Module<Id, Services, Requires, R>): Module<Id, Services, Requires, R> => module
 
-type ModuleId<One> = One extends Module<infer Id, any, any, any>
+type ModuleId<One> = One extends Module<infer Id, infer _Services, infer _Requires, infer _R>
   ? Id
   : never
 
-type ProvidedToken<One> = One extends Module<string, infer Provides, any, any>
-  ? Provides[number]["token"]
+type ProvidedServices<One> = One extends Module<infer _Id, infer Services, infer _Requires, infer _R>
+  ? Services
   : never
 
-type RequiredToken<One> = One extends Module<string, any, infer Requires, any>
-  ? Requires[number]
+type RequiredModuleServices<One> = One extends Module<infer _Id, infer _Services, infer Requires, infer _R>
+  ? RequiredServices<Requires>
   : never
-
-type TokenId<One> = One extends Token<infer Id, unknown> ? Id : never
 
 type MissingDependencies<Modules extends readonly unknown[]> = Exclude<
-  TokenId<RequiredToken<Modules[number]>>,
-  TokenId<ProvidedToken<Modules[number]>>
+  RequiredModuleServices<Modules[number]>,
+  ProvidedServices<Modules[number]>
 >
+
+type DuplicateServiceProviders<
+  Modules extends readonly unknown[],
+  Seen = never
+> = Modules extends readonly [infer Head, ...infer Tail]
+  ? | Extract<ProvidedServices<Head>, Seen>
+    | DuplicateServiceProviders<Tail, Seen | ProvidedServices<Head>>
+  : never
+
+type ServiceKey<Service> = Service extends { readonly key: infer Key extends string }
+  ? Key
+  : Service
 
 type DuplicateModuleIds<
   Modules extends readonly unknown[],
@@ -92,16 +107,22 @@ type DuplicateModuleIds<
     : DuplicateModuleIds<Tail, Seen | ModuleId<Head>>
   : never
 
-type ModuleServices<One> = One extends Module<string, any, any, infer R>
+type ModuleServices<One> = One extends Module<infer _Id, infer _Services, infer _Requires, infer R>
   ? R
   : never
+
+type AgentModuleServices<Modules extends readonly unknown[]> = ProvidedServices<Modules[number]>
 
 type ValidModules<Modules extends readonly unknown[]> =
   [MissingDependencies<Modules>] extends [never]
     ? [DuplicateModuleIds<Modules>] extends [never]
-      ? unknown
+      ? [DuplicateServiceProviders<Modules>] extends [never]
+        ? unknown
+        : {
+            readonly duplicateModuleServices: ServiceKey<DuplicateServiceProviders<Modules>>
+          }
       : { readonly duplicateModuleIds: DuplicateModuleIds<Modules> }
-    : { readonly missingModuleDependencies: MissingDependencies<Modules> }
+    : { readonly missingModuleDependencies: ServiceKey<MissingDependencies<Modules>> }
 
 export interface InboundMessage {
   readonly id: string
@@ -124,19 +145,19 @@ export interface BranchOptions {
   readonly id?: string
 }
 
-export interface Agent<R = never> {
-  readonly program: AgentProgram<R>
+export interface Agent<R = never, Services = never> {
+  readonly program: AgentProgram<R, Services>
+  readonly services: Context.Context<Services>
   readonly turn: (message: InboundMessage) => Effect.Effect<TurnResult, never, R | AgentServices>
   readonly log: Effect.Effect<ReadonlyArray<Envelope>, never, EventLog>
   readonly replay: (
     recorded: ReadonlyArray<Envelope>
   ) => Effect.Effect<TurnResult, never, R | AgentServices>
   readonly request: (log: ReadonlyArray<Envelope>) => ModelRequest
-  readonly resolve: <T extends AnyToken>(token: T, log: ReadonlyArray<Envelope>) => ValueOf<T>
-  readonly branch: (recorded: ReadonlyArray<Envelope>, options?: BranchOptions) => Agent<R>
+  readonly branch: (recorded: ReadonlyArray<Envelope>, options?: BranchOptions) => Agent<R, Services>
   readonly fork: (
     options?: BranchOptions
-  ) => Effect.Effect<Agent<R>, never, EventLog | Self>
+  ) => Effect.Effect<Agent<R, Services>, never, EventLog | Self>
 }
 
 export interface AgentOptions<Modules extends readonly AnyModule[]> {
@@ -173,7 +194,7 @@ const privateLog = (seed: ReadonlyArray<Envelope>): EventLogStore => {
   }
 }
 
-const headOf = (message: InboundMessage, program: AgentProgram<unknown>, at: number): Envelope => ({
+const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at: number): Envelope => ({
   type: "MessageReceived",
   id: message.id,
   text: message.text,
@@ -203,10 +224,10 @@ interface BoundSession {
   readonly store: EventLogStore
 }
 
-const build = <R>(
-  program: AgentProgram<R>,
+const build = <R, Services>(
+  program: AgentProgram<R, Services>,
   bound?: BoundSession
-): Agent<R> => {
+): Agent<R, Services> => {
   const machines = actor<R>(program.machines)
   const scoped = <A>(effect: Effect.Effect<A, never, R | AgentServices>) =>
     bound === undefined
@@ -230,6 +251,7 @@ const build = <R>(
   }
   return {
     program,
+    services: program.services,
     turn: (message) =>
       scoped(
         held(
@@ -258,7 +280,6 @@ const build = <R>(
         )
       ),
     request: (log) => modelRequest(program, log),
-    resolve: (token, log) => resolve(program, token, log),
     branch,
     fork: (options = {}) => {
       if (bound !== undefined) {
@@ -282,37 +303,35 @@ const build = <R>(
   }
 }
 
-const compile = <R>(
+const compile = <R, Services>(
   modules: ReadonlyArray<AnyModule>,
   options: { readonly id?: string; readonly parent?: string }
-): AgentProgram<R> => {
+): AgentProgram<R, Services> => {
   const ids = new Set<string>()
-  const bindings = new Map<string, Binding<AnyToken>>()
+  const serviceKeys = new Set<string>()
+  let services: Context.Context<never> = Context.empty()
   for (const module of modules) {
     if (ids.has(module.id)) throw new Error(`duplicate module id "${module.id}"`)
     ids.add(module.id)
-    for (const provided of module.provides ?? []) {
-      if (bindings.has(provided.token.id)) {
-        throw new Error(`token "${provided.token.id}" is provided by more than one module`)
+    for (const key of module.services?.mapUnsafe.keys() ?? []) {
+      if (serviceKeys.has(key)) {
+        throw new Error(`service "${key}" is provided by more than one module`)
       }
-      bindings.set(provided.token.id, provided)
+      serviceKeys.add(key)
+    }
+    if (module.services !== undefined) {
+      services = Context.merge(services, module.services) as Context.Context<never>
     }
   }
 
   const parts = modules.map((module) => {
     for (const required of module.requires ?? []) {
-      if (!bindings.has(required.id)) {
-        throw new Error(`module "${module.id}" requires missing token "${required.id}"`)
+      if (!serviceKeys.has(required.key)) {
+        throw new Error(`module "${module.id}" requires missing service "${required.key}"`)
       }
     }
-    const context = {
-      resolve: (token: AnyToken, log: ReadonlyArray<Envelope>) => {
-        const found = bindings.get(token.id)
-        if (found === undefined) throw new Error(`no module provides token "${token.id}"`)
-        return found.project(log)
-      }
-    }
-    return module.setup(context as ModuleContext<any>)
+    const context = services.pipe(Context.pick(...(module.requires ?? [])))
+    return module.setup(context as unknown as Context.Context<unknown>)
   })
 
   const toolNames = new Set<string>()
@@ -359,6 +378,13 @@ const compile = <R>(
     if (machineIds.has(machine.id)) throw new Error(`duplicate machine id "${machine.id}"`)
     machineIds.add(machine.id)
   }
+  const projections: Record<string, Projection<unknown>> = {}
+  for (const part of parts) {
+    for (const [id, project] of Object.entries(part.projections ?? {})) {
+      if (projections[id] !== undefined) throw new Error(`duplicate projection id "${id}"`)
+      projections[id] = project
+    }
+  }
   return {
     id: options.id ?? programId(manifests),
     ...(options.parent === undefined ? {} : { parent: options.parent }),
@@ -366,7 +392,8 @@ const compile = <R>(
     events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
     machines: machines as ReadonlyArray<Machine<R, never>>,
     render,
-    bindings: [...bindings.values()]
+    services: services as unknown as Context.Context<Services>,
+    projections
   }
 }
 
@@ -374,8 +401,11 @@ export const createAgent = <
   const Modules extends readonly AnyModule[]
 >(
   options: AgentOptions<Modules> & ValidModules<Modules>
-): Agent<ModuleServices<Modules[number]>> => {
+): Agent<ModuleServices<Modules[number]>, AgentModuleServices<Modules>> => {
   const modules = options.modules as ReadonlyArray<AnyModule>
-  const program = compile<ModuleServices<Modules[number]>>(modules, options)
+  const program = compile<
+    ModuleServices<Modules[number]>,
+    AgentModuleServices<Modules>
+  >(modules, options)
   return build(program)
 }

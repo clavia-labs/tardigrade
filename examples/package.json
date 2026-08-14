@@ -13,6 +13,6 @@
     "@flamecast/core": "workspace:*",
     "@flamecast/harness": "workspace:*",
     "@flamecast/runtime-memory": "workspace:*",
-    "effect": "^3.22.1"
+    "effect": "4.0.0-rc.108"
   }
 }

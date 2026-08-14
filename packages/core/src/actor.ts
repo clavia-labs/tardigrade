@@ -10,7 +10,7 @@ import type { Envelope } from "./envelope"
 
 // The session's own address: who "I" am when a machine sends outward. A runtime binds it to the
 // session's durable identity; a test binds a name.
-export class Self extends Context.Tag("flamecast/Self")<Self, string>() {}
+export class Self extends Context.Service<Self, string>()("flamecast/Self") {}
 
 export interface Actor<R = never> {
   readonly machines: ReadonlyArray<Machine<R, never>>
