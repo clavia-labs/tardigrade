@@ -30,11 +30,11 @@ const WALL_REFUSAL =
   "you have already gathered."
 
 const nativeToolsMachine = <R>(handlers: ReadonlyMap<string, NativeTool<R>>) =>
-  machine<R, Partial<Call>>({
+  machine({
     id: "native-tools",
     view: turnView,
     initial: "idle",
-    context: {},
+    context: {} as Partial<Call>,
     states: {
       idle: {
         on: {
