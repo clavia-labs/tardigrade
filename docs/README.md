@@ -13,6 +13,7 @@ flowchart TD
   A --> R[Runtimes]
   A --> Or[Orchestration]
   Or --> Cm[Code mode]
+  Cm --> Sw[Building a swarm]
   A --> O[Observability]
   O --> V[Evolution]
   P[Prior art] --> A
@@ -26,8 +27,9 @@ flowchart TD
 6. [Runtimes](runtimes.md) owns the platform port contract and binding status.
 7. [Orchestration](orchestration.md) covers delegation, the session host, and swarm inspection.
 8. [Code mode](codemode.md) covers capabilities, the sandbox port, and scripts that delegate.
-9. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
-10. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
-11. [Prior art](prior-art.md) records the external systems and research that informed the design.
+9. [Building a swarm](building-a-swarm.md) walks through multiple agents, spawning, and model-written fan-out.
+10. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
+11. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
+12. [Prior art](prior-art.md) records the external systems and research that informed the design.
 
 The repository [README](../README.md) is the package-level entry point.
