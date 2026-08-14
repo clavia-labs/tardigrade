@@ -17,13 +17,13 @@ import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
 import { keyOf } from "./keys"
 import { modelRequest } from "./render"
 import {
-  programId,
-  type AgentProgram,
+  agentId,
+  type AgentDefinition,
   type Instruction,
   type ModuleManifest,
   type Nudge,
   type RenderPlan
-} from "./program"
+} from "./definition"
 import type { Projection } from "./projection"
 import { turnHead, usageIn } from "./turns"
 
@@ -161,7 +161,7 @@ export interface BranchOptions {
 }
 
 export interface Agent<R = never, Services = never> {
-  readonly program: AgentProgram<R, Services>
+  readonly definition: AgentDefinition<R, Services>
   readonly services: Context.Context<Services>
   readonly turn: (message: InboundMessage) => Effect.Effect<TurnResult, never, R | AgentServices>
   readonly log: Effect.Effect<ReadonlyArray<Event>, never, EventLog>
@@ -182,11 +182,11 @@ export interface AgentOptions<Modules extends readonly AnyModule[]> {
 }
 
 export const undeclaredEvents = (
-  program: Pick<AgentProgram<never>, "events">,
+  definition: Pick<AgentDefinition<never>, "events">,
   log: ReadonlyArray<Event>
 ): ReadonlyArray<string> =>
   [...new Set(log.map((event) => event.type))]
-    .filter((type) => !program.events.includes(type))
+    .filter((type) => !definition.events.includes(type))
     .sort()
 
 export const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
@@ -209,11 +209,11 @@ export const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
   }
 }
 
-const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at: number): Event => ({
+const headOf = (message: InboundMessage, definition: AgentDefinition<unknown, any>, at: number): Event => ({
   type: "MessageReceived",
   id: message.id,
   text: message.text,
-  program: program.id,
+  agent: definition.id,
   ...(message.output === undefined ? {} : { output: message.output }),
   ...(message.budget === undefined ? {} : { budget: message.budget }),
   ...(message.escalatable === undefined ? {} : { escalatable: message.escalatable }),
@@ -243,10 +243,10 @@ interface BoundSession {
 }
 
 const build = <R, Services>(
-  program: AgentProgram<R, Services>,
+  definition: AgentDefinition<R, Services>,
   bound?: BoundSession
 ): Agent<R, Services> => {
-  const machines = actor<R>(program.machines)
+  const machines = actor<R>(definition.machines)
   const scoped = <A>(effect: Effect.Effect<A, never, R | AgentServices>) =>
     bound === undefined
       ? effect
@@ -262,21 +262,21 @@ const build = <R, Services>(
   const branch = (recorded: ReadonlyArray<Event>, options: BranchOptions = {}) => {
     const upTo = Math.max(0, Math.min(options.at ?? recorded.length, recorded.length))
     const seed = recorded.slice(0, upTo)
-    return build(program, {
-      id: options.id ?? `branch:${program.id}:${upTo}`,
+    return build(definition, {
+      id: options.id ?? `branch:${definition.id}:${upTo}`,
       store: privateLog(seed)
     })
   }
   return {
-    program,
-    services: program.services,
+    definition,
+    services: definition.services,
     turn: (message) =>
       scoped(
         held(
           Effect.gen(function* () {
             const store = yield* EventLog
             const at = yield* Clock.currentTimeMillis
-            yield* send(machines, headOf(message, program, at))
+            yield* send(machines, headOf(message, definition, at))
             return resultOf(yield* store.read, message.id)
           })
         )
@@ -297,7 +297,7 @@ const build = <R, Services>(
           })
         )
       ),
-    request: (log) => modelRequest(program, log),
+    request: (log) => modelRequest(definition, log),
     branch,
     fork: (options = {}) => {
       if (bound !== undefined) {
@@ -324,7 +324,7 @@ const build = <R, Services>(
 const compile = <R, Services>(
   modules: ReadonlyArray<AnyModule>,
   options: { readonly id?: string; readonly parent?: string }
-): AgentProgram<R, Services> => {
+): AgentDefinition<R, Services> => {
   const ids = new Set<string>()
   const serviceKeys = new Set<string>()
   let services: Context.Context<never> = Context.empty()
@@ -404,7 +404,7 @@ const compile = <R, Services>(
     }
   }
   return {
-    id: options.id ?? programId(manifests),
+    id: options.id ?? agentId(manifests),
     ...(options.parent === undefined ? {} : { parent: options.parent }),
     modules: manifests,
     events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
@@ -421,9 +421,9 @@ export const createAgent = <
   options: AgentOptions<Modules> & ValidModules<Modules>
 ): Agent<ModuleServices<Modules[number]>, AgentModuleServices<Modules>> => {
   const modules = options.modules as ReadonlyArray<AnyModule>
-  const program = compile<
+  const definition = compile<
     ModuleServices<Modules[number]>,
     AgentModuleServices<Modules>
   >(modules, options)
-  return build(program)
+  return build(definition)
 }

@@ -1,5 +1,5 @@
 import { defineModule } from "../module"
-import type { Nudge, NudgePlacement } from "../program"
+import type { Nudge, NudgePlacement } from "../definition"
 
 export interface NudgeOptions extends Omit<Nudge, "placement"> {
   readonly placement?: NudgePlacement

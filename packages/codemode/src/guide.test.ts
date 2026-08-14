@@ -1,16 +1,18 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect } from "effect"
-import { Router, type Event } from "@flamecast/core"
+import { Sessions } from "@flamecast/core"
 import {
   callAgent,
   createAgent,
   customInference,
   defaultPack,
-  host,
+  keyOf,
+  serve,
   treeUsageIn,
   type Action,
   type ModelRequest
 } from "@flamecast/harness"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { inference } from "@flamecast/harness/modules/inference"
 import { subagentTool } from "@flamecast/harness/subagent"
 import { agents } from "./capabilities/agents"
@@ -67,38 +69,62 @@ describe("building a swarm, as the guide tells it", () => {
     const verifier = createAgent({
       modules: [
         inference({
-          provider: scripted("verifier", () => ({ kind: "complete", output: "correct", usage: spent }))
+          provider: scripted("verifier", () => ({
+            kind: "complete",
+            output: "correct",
+            usage: spent
+          }))
         })
       ]
     })
-    const h = host({ programs: { "agent:lead": lead, "agent:verify": verifier } })
+    const runtime = InMemoryRuntime({
+      keyOf,
+      sessions: { "agent:lead": serve(lead), "agent:verify": serve(verifier) }
+    })
 
-    const terminal = await Effect.runPromise(h.call("agent:lead", { id: "m-1", text: "go" }))
-    expect(terminal).toMatchObject({ type: "TurnCompleted", output: "checked" })
+    const ran = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const answer = yield* callAgent("agent:lead", { id: "m-1", text: "go" })
+          const sessions = yield* Sessions
+          return {
+            answer,
+            childLog: yield* sessions.read("agent:verify"),
+            leadLog: yield* sessions.read("agent:lead")
+          }
+        }),
+        runtime
+      )
+    )
 
-    const childLog = await Effect.runPromise(h.log("agent:verify"))
-    const head = childLog.find((event) => event.type === "MessageReceived")
+    expect(ran.answer.output).toBe("checked")
+    const head = ran.childLog.find((event) => event.type === "MessageReceived")
     expect(head?.origin).toMatchObject({ session: "agent:lead", turn: "m-1", call: "c-1" })
-
-    const leadLog = await Effect.runPromise(h.log("agent:lead"))
-    expect(treeUsageIn(leadLog, "m-1")).toEqual(spent)
+    expect(treeUsageIn(ran.leadLog, "m-1")).toEqual(spent)
   })
 
   test("workers spawn by address and fan out from code on Promise.all", async () => {
-    const h = host({ programs: { "worker/*": worker } })
-    const router = {
-      deliver: (address: string, event: Event) => Effect.asVoid(h.route(address, event)),
-      call: h.route
-    }
+    const runtime = InMemoryRuntime({
+      keyOf,
+      sessions: { "worker/*": (address: string) => serve(worker(address)) }
+    })
     const ask = (address: string, id: string, text: string) =>
-      Effect.runPromise(Effect.provideService(callAgent(address, { id, text }), Router, router))
+      Effect.runPromise(Effect.provide(callAgent(address, { id, text }), runtime))
 
     const answers = await Promise.all([
       ask("worker/1", "r-1", "summarize the first half"),
       ask("worker/2", "r-2", "summarize the second half")
     ])
     expect(answers.map((one) => one.output)).toEqual(["worker/1 done", "worker/2 done"])
-    expect(await Effect.runPromise(h.sessions)).toEqual(["worker/1", "worker/2"])
+
+    const listed = await Effect.runPromise(
+      Effect.provide(
+        Effect.flatMap(Sessions, (sessions) => sessions.list),
+        runtime
+      )
+    )
+    expect(listed).toContain("worker/1")
+    expect(listed).toContain("worker/2")
   })
 
   test("the model writes the fan-out and reaches the application's own capability", async () => {
@@ -143,18 +169,32 @@ describe("building a swarm, as the guide tells it", () => {
         nativeTools: [execute]
       })
     })
-    const h = host({
-      programs: { "agent:lead": lead, "worker/*": worker },
+    const runtime = InMemoryRuntime({
+      keyOf,
+      sessions: {
+        "agent:lead": serve(lead),
+        "worker/*": (address: string) => serve(worker(address))
+      },
       services: Context.make(Sandbox, inProcessSandbox())
     })
 
-    const terminal = await Effect.runPromise(h.call("agent:lead", { id: "m-1", text: "go" }))
-    expect(terminal).toMatchObject({ type: "TurnCompleted", output: "gathered" })
-    expect(store.get("summary")).toBe("worker/1 done\nworker/2 done")
+    const ran = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const answer = yield* callAgent("agent:lead", { id: "m-1", text: "go" })
+          return {
+            answer,
+            leadLog: yield* Effect.flatMap(Sessions, (sessions) => sessions.read("agent:lead"))
+          }
+        }),
+        runtime
+      )
+    )
 
+    expect(ran.answer.output).toBe("gathered")
+    expect(store.get("summary")).toBe("worker/1 done\nworker/2 done")
     // One model-written script, two delegations, and the spend folds up the tree regardless.
-    const leadLog = await Effect.runPromise(h.log("agent:lead"))
-    expect(treeUsageIn(leadLog, "m-1").costUsd).toBeCloseTo(0.004, 6)
+    expect(treeUsageIn(ran.leadLog, "m-1").costUsd).toBeCloseTo(0.004, 6)
   })
 
   test("replyTo delivers the answer later as an attributed inbound message", async () => {
@@ -163,11 +203,26 @@ describe("building a swarm, as the guide tells it", () => {
         inference({ provider: scripted("lead", () => ({ kind: "complete", output: "ack" })) })
       ]
     })
-    const h = host({ programs: { "agent:lead": lead, "worker/*": worker } })
-    await Effect.runPromise(
-      h.call("worker/9", { id: "j-1", text: "index the archive", replyTo: "agent:lead" })
+    const runtime = InMemoryRuntime({
+      keyOf,
+      sessions: {
+        "agent:lead": serve(lead),
+        "worker/*": (address: string) => serve(worker(address))
+      }
+    })
+    const inbox = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* callAgent("worker/9", {
+            id: "j-1",
+            text: "index the archive",
+            replyTo: "agent:lead"
+          })
+          return yield* Effect.flatMap(Sessions, (sessions) => sessions.read("agent:lead"))
+        }),
+        runtime
+      )
     )
-    const inbox = await Effect.runPromise(h.log("agent:lead"))
     const reply = inbox.find((event) => event.type === "MessageReceived")
     expect(reply).toMatchObject({
       id: "reply:j-1",

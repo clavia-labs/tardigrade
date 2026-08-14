@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@flamecast/core"
 import type { NativeToolSpec } from "./infer"
-import type { AgentProgram, Nudge, RenderPlan } from "./program"
-import { WITHDRAW_ALL } from "./program"
+import type { AgentDefinition, Nudge, RenderPlan } from "./definition"
+import { WITHDRAW_ALL } from "./definition"
 import { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from "./render"
 
 const lookup: NativeToolSpec = { name: "lookup_invoice", description: "Look one up.", inputSchema: {} }
@@ -17,7 +17,7 @@ const renderOf = (over: Partial<RenderPlan> = {}): RenderPlan => ({
   ...over
 })
 
-const programOf = (render: RenderPlan): Pick<AgentProgram<never>, "render"> => ({ render })
+const programOf = (render: RenderPlan): Pick<AgentDefinition<never>, "render"> => ({ render })
 
 const usedLookup = (log: ReadonlyArray<Event>): boolean =>
   log.some((event) => event.type === "ToolReturned" && event.name === "lookup_invoice")

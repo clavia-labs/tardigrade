@@ -10,7 +10,7 @@ Common fields include:
 - `turn` for turn attribution
 - `callId` for provider or tool intent identity
 - `at` for recorded time
-- `program` for the program that accepted the inbound message
+- `agent` for the agent that accepted the inbound message
 - `origin` for the session, turn, and call that sent a cross-session message
 - `usage` on a cross-session reply for the sender's inclusive spend
 
@@ -46,7 +46,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 | contract | `AnswerRejected` |
 | compaction | `CompactionFired`, `CompactionCompleted` |
 
-Modules declare the event types they own. `agent.program.events` is the sorted union. `undeclaredEvents(program, log)` reports rows outside that declared alphabet.
+Modules declare the event types they own. `agent.definition.events` is the sorted union. `undeclaredEvents(definition, log)` reports rows outside that declared alphabet.
 
 Cross-session delegation adds no event types. A delegation is a `ToolCalled` and `ToolReturned` in the parent log and a `MessageReceived` plus a terminal in the child log, tied together by `origin`. [Orchestration](orchestration.md#the-boundary-contract) covers the fields that cross.
 

@@ -1,6 +1,6 @@
 # Architecture
 
-## Compile Modules Into a Program
+## Compile Modules Into an Agent
 
 ```mermaid
 flowchart LR
@@ -8,10 +8,10 @@ flowchart LR
   V --> S[Run module setup]
   S --> R[Merge render contributions]
   R --> K[Build machines with final render plan]
-  K --> P[AgentProgram]
+  K --> P[AgentDefinition]
 ```
 
-Compilation has two jobs. It rejects invalid composition, then it produces the program that serves every turn.
+Compilation has two jobs. It rejects invalid composition, then it produces the agent that serves every turn.
 
 The validation order matters. All construction services are collected before any module runs `setup`, so module order does not restrict dependency injection. Render contributions are merged before machine builders run, so a machine closes over the same render plan that `agent.request(log)` exposes.
 
@@ -67,7 +67,7 @@ The framework exposes routing primitives and leaves topology in user code or mod
 
 - `Router.call(address, event)` performs a synchronous sub-call and returns the terminal event. `Router.deliver(address, event)` sends asynchronous work.
 - `callAgent(address, message)` is delegation as an awaitable value, and `subagentTool()` is the same call as a provider-native tool.
-- `host({ programs })` resolves addresses to programs, creates or resumes sessions, and guards cycles and depth.
+- `serve(agent)` turns an agent into what a runtime holds at an address, and the runtime's `sessions` registry says who answers where.
 - `InboundMessage.origin` names the sender, replies carry usage, and `InboundMessage.replyTo` routes a completed turn's answer to another session.
 
 These primitives support supervisors, peer groups, recursive calls, RLM-style decomposition, and generated orchestration modules. The framework does not install a planner, role taxonomy, or fixed conversation protocol. [Orchestration](orchestration.md) covers the design.

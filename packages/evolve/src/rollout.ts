@@ -51,12 +51,12 @@ export const rollout = <Baseline, Candidate>(
   Effect.suspend(() => {
     const { baseline, candidate, log } = options
     const head = log.find((event) => event.type === "MessageReceived")
-    const provenance = head?.program === undefined || head.program === baseline.program.id
+    const provenance = head?.agent === undefined || head.agent === baseline.definition.id
     const aligned = provenance
       ? divergence(baseline, candidate, log)
       : { replayed: 0, upTo: marksOf(log)[0] ?? log.length }
     const branch = candidate.branch(log.slice(0, aligned.upTo), {
-      id: `rollout:${candidate.program.id}:${aligned.upTo}`
+      id: `rollout:${candidate.definition.id}:${aligned.upTo}`
     })
     return Effect.gen(function* () {
       const seeded = (yield* branch.log).length

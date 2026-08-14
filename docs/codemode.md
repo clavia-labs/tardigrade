@@ -67,7 +67,7 @@ Layer.succeed(Sandbox, inProcessSandbox())
 Context.make(Sandbox, inProcessSandbox())
 ```
 
-The first binds it for a turn, and the second hands it to a session [host](orchestration.md#session-host). Bind an isolating implementation, such as a worker, an isolate, or a micro-VM, to run source a model wrote against data the model should not reach. The port carries source, names, and an outcome, so an out-of-process sandbox proxies each capability call over its own channel without changing what a program offers.
+The first binds it for a turn, and the second hands it to a runtime through `services`. Bind an isolating implementation, such as a worker, an isolate, or a micro-VM, to run source a model wrote against data the model should not reach. The port carries source, names, and an outcome, so an out-of-process sandbox proxies each capability call over its own channel without changing what an agent offers.
 
 ## Writing a Capability
 

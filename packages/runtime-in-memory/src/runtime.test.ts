@@ -5,6 +5,7 @@ import {
   Placement,
   Router,
   Self,
+  Sessions,
   Sink,
   Spill,
   Wake,
@@ -27,7 +28,7 @@ const ev = (type: string): Event => ({ type })
 // The runtime requires a key policy rather than assuming one. These tests run under the core's
 // own, where an event states its own key, and the file says so once here.
 const inRuntime = <A>(
-  program: Effect.Effect<A, never, EventLog | Writer | Wake | Placement | Spill | Sink | Router | Self>,
+  program: Effect.Effect<A, never, EventLog | Writer | Wake | Placement | Spill | Sink | Router | Self | Sessions>,
   { keyOf = dedupKey, ...options }: Omit<InMemoryOptions, "keyOf"> & { readonly keyOf?: DedupKey } = {}
 ) => Effect.runPromise(Effect.provide(program, InMemoryRuntime({ ...options, keyOf })))
 
@@ -289,16 +290,14 @@ describe("the other ports", () => {
     expect(events).toHaveLength(1)
   })
 
-  test("the router dies on an address it has no route to", async () => {
-    const message = await died(
-      Effect.provide(
-        Effect.gen(function* () {
-          yield* (yield* Router).deliver("ag/other", ev("Ping"))
-        }),
-        InMemoryRuntime({ keyOf: dedupKey })
-      )
+  test("an address no session serves answers, rather than hanging or dying", async () => {
+    const result = await inRuntime(
+      Effect.gen(function* () {
+        return yield* (yield* Router).call("ag/other", { type: "MessageReceived", id: "m-1" })
+      })
     )
-    expect(message).toContain('no route to "ag/other" for "Ping"')
+    expect(result.type).toBe("TurnFailed")
+    expect(String(result.error)).toContain('no session serves "ag/other"')
   })
 
   test("the router carries an event out and an event back", async () => {
@@ -310,14 +309,58 @@ describe("the other ports", () => {
         return yield* router.call("ag/child", ev("Ask"))
       }),
       {
-        route: (address, event) => {
-          seen.push(`${address}:${event.type}`)
-          return Effect.succeed({ type: "TurnCompleted", output: "done" })
+        sessions: {
+          "ag/*": (address: string) => (event: Event) => {
+            seen.push(`${address}:${event.type}`)
+            return Effect.succeed({ type: "TurnCompleted", output: "done" })
+          }
         }
       }
     )
     expect(seen).toEqual(["ag/child:Ping", "ag/child:Ask"])
     expect(result.type).toBe("TurnCompleted")
+  })
+
+  test("a served session gets its own log and its own name", async () => {
+    const result = await inRuntime(
+      Effect.gen(function* () {
+        return yield* (yield* Router).call("ag/child", ev("Ask"))
+      }),
+      {
+        sessions: {
+          "ag/*": () =>
+            Effect.fn(function* (event: Event) {
+              const store = yield* EventLog
+              yield* store.append([event])
+              const rows = yield* store.read
+              return { type: "TurnCompleted", output: `${yield* Self}:${rows.length}` }
+            })
+        }
+      }
+    )
+    // Its own store, so the parent's seeded log is not what it counted, and its own `Self`.
+    expect(result.output).toBe("ag/child:1")
+  })
+
+  test("sessions lists what the runtime serves and reads one session's log", async () => {
+    const listed = await inRuntime(
+      Effect.gen(function* () {
+        yield* (yield* Router).deliver("ag/one", ev("Ping"))
+        const sessions = yield* Sessions
+        return { list: yield* sessions.list, rows: yield* sessions.read("ag/one") }
+      }),
+      {
+        sessions: {
+          "ag/*": () =>
+            Effect.fn(function* (event: Event) {
+              yield* (yield* EventLog).append([event])
+              return { type: "TurnCompleted", output: "ok" }
+            })
+        }
+      }
+    )
+    expect(listed.list).toContain("ag/one")
+    expect(listed.rows.map((row) => row.type)).toEqual(["Ping"])
   })
 })
 

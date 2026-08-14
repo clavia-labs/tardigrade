@@ -38,7 +38,7 @@ export interface ModuleManifest {
   readonly identity?: unknown
 }
 
-export interface AgentProgram<R = never, Services = never> {
+export interface AgentDefinition<R = never, Services = never> {
   readonly id: string
   readonly parent?: string
   readonly modules: ReadonlyArray<ModuleManifest>
@@ -62,7 +62,7 @@ const canonical = (value: unknown): string => {
     .join(",")}}`
 }
 
-export const programId = (modules: ReadonlyArray<ModuleManifest>): string =>
+export const agentId = (modules: ReadonlyArray<ModuleManifest>): string =>
   `sha256:${sha256(canonical(modules))}`
 
 export const canonicalValue = canonical
