@@ -6,8 +6,8 @@ With `AI_GATEWAY_API_KEY` set, construct and invoke an agent in one file:
 
 ```ts
 import { Effect } from "effect"
-import { createAgent, inference, keyOf } from "@flamecast/harness"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { createAgent, inference, keyOf } from "flamecast-core/harness"
+import { MemoryRuntime } from "flamecast-core/runtime-memory"
 
 const agent = createAgent({
   modules: [
@@ -44,7 +44,7 @@ export AI_GATEWAY_MODEL=anthropic/claude-sonnet-4.6
 An explicit key works in any environment:
 
 ```ts
-import { inference, vercelGatewayInference } from "@flamecast/harness"
+import { inference, vercelGatewayInference } from "flamecast-core/harness"
 
 const inferenceModule = inference({
   provider: vercelGatewayInference({
@@ -57,7 +57,7 @@ const inferenceModule = inference({
 Cloudflare AI Gateway uses the same provider interface:
 
 ```ts
-import { cloudflareGatewayInference, inference } from "@flamecast/harness"
+import { cloudflareGatewayInference, inference } from "flamecast-core/harness"
 
 const inferenceModule = inference({
   provider: cloudflareGatewayInference({
@@ -69,13 +69,13 @@ const inferenceModule = inference({
 })
 ```
 
-Provider selection can be a function of the log. The inference module provides its selected state as a projection dependency for other modules.
+Provider selection can be a function of the log. The inference module provides its selected-state projection as an Effect construction service, so dependent modules can consume it through typed dependency injection.
 
 ## Add Tools Through the Default Pack
 
 ```ts
 import { Effect } from "effect"
-import { createAgent, defaultPack, type NativeTool } from "@flamecast/harness"
+import { createAgent, defaultPack, type NativeTool } from "flamecast-core/harness"
 
 const lookupInvoice: NativeTool = {
   spec: {
@@ -107,7 +107,7 @@ const agent = createAgent({
 ## Add a Nudge
 
 ```ts
-import { nudge } from "@flamecast/harness"
+import { nudge } from "flamecast-core/harness"
 
 const citeInvoice = nudge({
   id: "cite-invoice",
@@ -120,13 +120,13 @@ const agent = createAgent({
 })
 ```
 
-The nudge appears as a late system message when active. Set `placement: "system"` only when it must join the static prefix.
+`nudge()` returns a render-only module, not a machine. The nudge appears as a late system message when active. Set `placement: "system"` only when it must join the static prefix.
 
 ## Add Typed Module State
 
 ```ts
 import { Context } from "effect"
-import { defineModule, type Projection } from "@flamecast/harness"
+import { defineModule, type Projection } from "flamecast-core/harness"
 
 class TenantProjection extends Context.Service<
   TenantProjection,
@@ -162,10 +162,12 @@ const tenantInstruction = defineModule({
 
 Leaving out `tenantSource` fails tuple type-checking and runtime validation.
 
+`Context.Service`, `Context.make`, and `Context.get` are Effect's dependency-injection primitives. The harness adds module-graph validation and passes each `setup` function a context containing only its declared requirements.
+
 ## Delegate to Another Agent
 
 ```ts
-import { agentNativeTool, defaultPack } from "@flamecast/harness"
+import { agentNativeTool, defaultPack } from "flamecast-core/harness"
 
 const askResearcher = agentNativeTool({
   name: "ask_researcher",
@@ -198,4 +200,4 @@ await Effect.runPromise(Effect.provide(alternative.replay([]), runtime))
 
 Use `agent.fork({ at })` when the source log is already bound to the current runtime.
 
-The complete runnable construction is in [examples/support-agent](../examples/support-agent). Module details are in [Modules](modules.md).
+Module details are in [Modules](modules.md).

@@ -29,8 +29,7 @@
     }
   },
   "workspaces": [
-    "packages/*",
-    "examples"
+    "packages/*"
   ],
   "scripts": {
     "build": "bun run tools/build.ts",

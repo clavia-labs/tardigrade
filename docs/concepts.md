@@ -76,6 +76,8 @@ A consumer lists service keys in `requires` and reads implementations with `Cont
 
 Construction services are already-created, synchronous values. Effectful capabilities and resources use Effect requirements and Layers at execution time. This keeps program construction deterministic and gives resource lifecycles to Effect.
 
+Services connect modules during construction. A module separately contributes observational projections when evolution or inspection should compare a derived value.
+
 ## Port
 
 A port is an effectful capability required by a machine, such as event storage, exclusive writing, time, routing, or spill storage. A runtime binds ports for a platform without changing the program.

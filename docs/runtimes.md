@@ -19,7 +19,7 @@ The harness turn path directly requires `EventLog`, `Writer`, `Wake`, `Router`, 
 
 ## Memory Runtime
 
-`@flamecast/runtime-memory` is the only implemented binding.
+`flamecast-core/runtime-memory` is the only implemented binding.
 
 ```ts
 const runtime = MemoryRuntime({
@@ -30,7 +30,7 @@ const runtime = MemoryRuntime({
 })
 ```
 
-It uses arrays, maps, a semaphore, and an optional route function. It is intended for tests, examples, local experiments, and bounded in-process runs. Its data disappears with the process.
+It uses arrays, maps, a semaphore, and an optional route function. It is intended for tests, local experiments, and bounded in-process runs. Its data disappears with the process.
 
 ## Planned Bindings
 

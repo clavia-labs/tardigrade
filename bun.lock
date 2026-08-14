@@ -14,16 +14,6 @@
         "oxlint": "^1.69.0",
       },
     },
-    "examples": {
-      "name": "@flamecast/examples",
-      "version": "0.0.0",
-      "dependencies": {
-        "@flamecast/core": "workspace:*",
-        "@flamecast/harness": "workspace:*",
-        "@flamecast/runtime-memory": "workspace:*",
-        "effect": "4.0.0-rc.108",
-      },
-    },
     "packages/core": {
       "name": "@flamecast/core",
       "version": "0.0.0",
@@ -76,8 +66,6 @@
     "@flamecast/core": ["@flamecast/core@workspace:packages/core"],
 
     "@flamecast/evolve": ["@flamecast/evolve@workspace:packages/evolve"],
-
-    "@flamecast/examples": ["@flamecast/examples@workspace:examples"],
 
     "@flamecast/harness": ["@flamecast/harness@workspace:packages/harness"],
 

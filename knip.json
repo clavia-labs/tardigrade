@@ -16,15 +16,6 @@
       "project": [
         "src/**/*.ts"
       ]
-    },
-    "examples": {
-      "entry": [
-        "*/main.ts",
-        "*.test.ts"
-      ],
-      "project": [
-        "**/*.ts"
-      ]
     }
   }
 }

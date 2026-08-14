@@ -87,14 +87,27 @@ try {
   await writeFile(
     join(consumer, "index.ts"),
     [
+      'import { Effect } from "effect"',
       'import { EventLog } from "flamecast-core"',
-      'import { createAgent, inference } from "flamecast-core/harness"',
+      'import { createAgent, inference, inferWith, keyOf } from "flamecast-core/harness"',
       'import { MemoryRuntime } from "flamecast-core/runtime-memory"',
       'import { candidate } from "flamecast-core/evolve"',
       "",
       'const agent = createAgent({ id: "smoke", modules: [inference()] })',
       'const value = candidate("candidate", agent)',
-      'console.log(typeof EventLog === "function" && typeof MemoryRuntime === "function" && value.id === "candidate")',
+      'const result = await Effect.runPromise(',
+      '  agent.turn({ id: "message-1", text: "Say hello." }).pipe(',
+      '    Effect.provide(inferWith(async () => ({ kind: "complete", output: "hello" }))),',
+      '    Effect.provide(MemoryRuntime({ keyOf, session: "smoke" }))',
+      '  )',
+      ')',
+      'console.log(',
+      '  typeof EventLog === "function" &&',
+      '    typeof MemoryRuntime === "function" &&',
+      '    value.id === "candidate" &&',
+      '    result.kind === "completed" &&',
+      '    result.output === "hello"',
+      ')',
       ""
     ].join("\n")
   )

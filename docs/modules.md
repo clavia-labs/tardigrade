@@ -69,7 +69,7 @@ A nudge can depend on machine state. For example, a machine can record `Reminder
 
 ```ts
 import { Context } from "effect"
-import { defineModule, type Projection } from "@flamecast/harness"
+import { defineModule, type Projection } from "flamecast-core/harness"
 
 class RetrievalConfidence extends Context.Service<
   RetrievalConfidence,

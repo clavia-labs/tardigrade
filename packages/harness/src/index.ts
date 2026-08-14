@@ -1,6 +1,6 @@
-// The public surface of @flamecast/harness. This is the one file in the package that re-exports:
-// every doc snippet imports from "@flamecast/harness", and a library owes its consumers one door.
-// Inside the package, a module imports from the file that defines the symbol.
+// The public harness surface. This is the one file in the package that re-exports: a library owes
+// its consumers one door. Inside the package, a module imports from the file that defines the
+// symbol.
 
 export {
   Infer,

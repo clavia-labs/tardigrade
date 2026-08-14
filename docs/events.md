@@ -24,7 +24,7 @@ Unknown fields and event types survive reads and folds.
 
 ## Dedup Keys
 
-The event store receives a `DedupKey` policy. Harness users pass `keyOf` from `@flamecast/harness` to their runtime.
+The event store receives a `DedupKey` policy. Harness users pass `keyOf` from `flamecast-core/harness` to their runtime.
 
 Examples:
 

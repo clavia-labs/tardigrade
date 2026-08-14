@@ -13,7 +13,7 @@ const log = await Effect.runPromise(Effect.provide(agent.log, runtime))
 ## Human Transcript
 
 ```ts
-import { transcript } from "@flamecast/harness"
+import { transcript } from "flamecast-core/harness"
 
 console.log(transcript(log))
 ```
@@ -32,12 +32,12 @@ This shows the static system prefix, compacted conversation, active tail nudges,
 
 ```ts
 import { Context } from "effect"
-import { InferenceStateProjection } from "@flamecast/harness"
+import { InferenceStateProjection } from "flamecast-core/harness"
 
 const selected = Context.get(agent.services, InferenceStateProjection)(log)
 ```
 
-Effect services expose typed module projections. Machine state can be reconstructed with `foldOf(machine, log)`.
+Effect construction services expose typed module values, including projections. Machine state can be reconstructed with `foldOf(machine, log)`.
 
 ## Replay
 
@@ -69,7 +69,7 @@ Fork reads the bound session and creates the same independent branch shape.
 
 ## Compare Programs
 
-`@flamecast/evolve` can compare pure observations on a finite corpus and find the first recorded model-call prefix whose request changes. [Evolution](evolution.md) covers the guarantees and limits.
+`flamecast-core/evolve` can compare pure observations on a finite corpus and find the first recorded model-call prefix whose request changes. [Evolution](evolution.md) covers the guarantees and limits.
 
 ## Telemetry
 

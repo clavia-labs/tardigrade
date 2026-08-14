@@ -35,7 +35,7 @@ This keeps serializable metadata useful for provenance while allowing code to re
 
 - rendered model request
 - folded machine state and context
-- injected module projections
+- declared observational projections
 
 `observationallyEquivalent(left, right, logs)` compares those observations on a finite corpus. It is evidence over the supplied logs, not a proof over every possible input or external effect.
 
@@ -51,7 +51,7 @@ const result = await rollout({
 })
 ```
 
-The rollout verifies the recording's program provenance, compares requests at recorded `ModelCalled` prefixes, branches the candidate at the first divergence, and settles the live suffix.
+The rollout checks the recording's program provenance, compares requests at recorded `ModelCalled` prefixes when the baseline matches, branches the candidate at the first divergence, and settles the live suffix. A provenance mismatch reuses no model calls.
 
 `result.replayed` counts reused model calls. `result.called` counts live candidate calls. `result.log` is the independent branch log.
 

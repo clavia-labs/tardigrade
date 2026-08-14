@@ -6,9 +6,10 @@ The event log is the source of truth. Modules compile into an agent program. Mac
 
 ## Install
 
-Install a pinned Git revision directly from GitHub:
+Install Effect and a pinned Git revision directly from GitHub:
 
 ```sh
+bun add effect@4.0.0-rc.108
 bun add --trust "git+ssh://git@github.com/clavia-inc/flamework.git#<commit>"
 ```
 
@@ -29,8 +30,8 @@ import { candidate, rollout } from "flamecast-core/evolve"
 
 ```ts
 import { Effect } from "effect"
-import { createAgent, defaultPack, keyOf, type NativeTool } from "@flamecast/harness"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { createAgent, defaultPack, keyOf, type NativeTool } from "flamecast-core/harness"
+import { MemoryRuntime } from "flamecast-core/runtime-memory"
 
 const lookupInvoice: NativeTool = {
   spec: {
@@ -42,7 +43,10 @@ const lookupInvoice: NativeTool = {
       required: ["orderId"]
     }
   },
-  run: (input) => Effect.promise(() => db.invoiceForOrder((input as { orderId: string }).orderId))
+  run: (input) =>
+    Effect.succeed({
+      invoiceId: `invoice-${(input as { orderId: string }).orderId}`
+    })
 }
 
 const agent = createAgent({
@@ -61,37 +65,32 @@ const result = await Effect.runPromise(
     MemoryRuntime({ keyOf, session: "user-42" })
   )
 )
+
+if (result.kind === "completed") console.log(result.output)
 ```
 
 `inference()` uses Vercel AI Gateway by default. Set `AI_GATEWAY_API_KEY`, or pass `vercelGatewayInference({ apiKey })`. Cloudflare AI Gateway is available through `cloudflareGatewayInference()`.
 
-For a keyless runnable example, use:
-
-```sh
-bun run examples/support-agent/main.ts
-bun run examples/replay/main.ts
-```
-
 ## Design
 
 - Modules own their configuration, projections, and machines.
-- Typed tokens inject pure log projections between modules.
+- Effect services inject typed construction dependencies between modules.
 - Static instructions form the cache-friendly system prefix. Conditional nudges are appended near the request tail by default.
 - `AgentProgram` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit program id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
 - `Router` and `agentNativeTool()` enable multi-agent systems without imposing a planner or topology.
-- `@flamecast/evolve` supplies generic candidate, observation, rollout, scoring, and Pareto utilities. Search algorithms remain external.
+- `flamecast-core/evolve` supplies generic candidate, observation, rollout, scoring, and Pareto utilities. Search algorithms remain external.
 
-## Packages
+## Public Imports
 
-| Package | Purpose |
+| Import | Purpose |
 | --- | --- |
-| `@flamecast/core` | Envelopes, event logs, machines, ports, routing, and conformance |
-| `@flamecast/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
-| `@flamecast/evolve` | Algorithm-neutral candidates, finite observations, forked rollouts, scoring, and Pareto selection |
-| `@flamecast/runtime-memory` | In-process bindings for development, tests, and examples |
+| `flamecast-core` | Envelopes, event logs, machines, ports, routing, and conformance |
+| `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
+| `flamecast-core/evolve` | Algorithm-neutral candidates, finite observations, forked rollouts, scoring, and Pareto selection |
+| `flamecast-core/runtime-memory` | In-process bindings for development and tests |
 
-The packages are private workspace packages and are not published to npm.
+The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.
 
 ## Documentation
 

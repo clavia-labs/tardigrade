@@ -12,7 +12,6 @@ const core = `${root}packages/core`
 const evolve = `${root}packages/evolve`
 const harness = `${root}packages/harness`
 const runtimeMemory = `${root}packages/runtime-memory`
-const examples = `${root}examples`
 
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
@@ -22,14 +21,10 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:evolve", cwd: evolve, cmd: ["bun", "run", "typecheck"] },
   { id: "typecheck:harness", cwd: harness, cmd: ["bun", "run", "typecheck"] },
   { id: "typecheck:runtime-memory", cwd: runtimeMemory, cmd: ["bun", "run", "typecheck"] },
-  { id: "typecheck:examples", cwd: examples, cmd: ["bun", "run", "typecheck"] },
   { id: "test:core", cwd: core, cmd: ["bun", "test"] },
   { id: "test:evolve", cwd: evolve, cmd: ["bun", "test"] },
   { id: "test:harness", cwd: harness, cmd: ["bun", "test"] },
   { id: "test:runtime-memory", cwd: runtimeMemory, cmd: ["bun", "test"] },
-  // Runs each example as a real process from a clean state and reads its output, so a change that
-  // breaks a teaching artifact fails here rather than in a reader's terminal.
-  { id: "test:examples", cwd: examples, cmd: ["bun", "test"] },
   { id: "test:package", cmd: ["bun", "run", "tools/package-smoke.ts"] },
   { id: "knip", cmd: ["bun", "--bun", "node_modules/.bin/knip"] }
 ]
