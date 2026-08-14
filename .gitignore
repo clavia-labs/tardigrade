@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+
+# Test output and tool caches
+coverage/
+.nyc_output/
+.cache/
+.turbo/
+.vite/
+.eslintcache
+.oxlintcache
+
+# Local files
+.DS_Store
+*.log
+.env*
+
+# SQLite files and spill directories the examples write when they run
+examples/.data/
+
+# Reference checkouts and attachments handed to agents, never part of history
+.context/
+
+.claude/*
+!.claude/skills/

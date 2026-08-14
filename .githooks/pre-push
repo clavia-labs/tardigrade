@@ -1,0 +1,5 @@
+#!/bin/sh
+set -eu
+
+unset $(git rev-parse --local-env-vars)
+bun run gate
