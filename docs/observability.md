@@ -75,16 +75,28 @@ Fork reads the bound session and creates the same independent branch shape.
 ## Cost Projections
 
 ```ts
-import { toolCallsOf, usageIn } from "flamecast-core/harness"
+import { toolCallsOf, treeUsageIn, usageIn } from "flamecast-core/harness"
 
 const usage = usageIn(log, "m-1")
+const total = treeUsageIn(log, "m-1")
 const toolCalls = toolCallsOf(log)
 ```
 
 `usageIn(log, turn)` sums the prompt tokens, completion tokens, and provider cost for one turn. The values come from its `ModelReturned` events.
+
+`treeUsageIn(log, turn)` adds the usage every sub-agent result reported, and a child reports its
+own tree usage, so the sum covers the whole delegation tree from one log.
 
 `toolCallsOf(log)` counts work-tool calls in any log span. It uses the budget rules, so `answer` and `request-budget` calls have zero tool cost.
 
 ## Telemetry
 
 Core defines a `Sink` port, and the in-memory runtime binds a no-op implementation. No harness path currently emits sink records. External telemetry can project the stored log until a sink-producing module or runtime integration is added.
+
+## Across Sessions
+
+A swarm is a set of session logs. The [host](orchestration.md#session-host) exposes them:
+`h.sessions` lists the addresses it serves and `h.log(address)` reads one session's evidence.
+Each inbound head's `origin` names the session, turn, and call that sent it, so the delegation
+tree is a projection over the set of logs, and every single-session view on this page applies per
+session.

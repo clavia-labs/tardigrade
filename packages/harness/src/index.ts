@@ -40,17 +40,28 @@ export {
   type AnyModule,
   type BranchOptions,
   type InboundMessage,
+  type MessageOrigin,
   type Module,
   type ModulePart,
   type TurnOutcome,
   type TurnResult
 } from "./module"
+export {
+  callAgent,
+  subagentResultOf,
+  subagentTool,
+  type CallAgentMessage,
+  type SubagentResult,
+  type SubagentToolOptions
+} from "./subagent"
+export { host, type Host, type HostOptions, type HostedAgent } from "./host"
 export { defaultPack, type DefaultPackOptions } from "./pack"
 export { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from "./render"
 export {
   replyView,
   servedLog,
   transcript,
+  treeUsageIn,
   turnHead,
   turnOf,
   turnView,
@@ -74,11 +85,7 @@ export {
   inference,
   type InferenceOptions
 } from "./modules/inference"
-export {
-  agentNativeTool,
-  nativeTools,
-  type AgentNativeToolOptions
-} from "./modules/native-tools"
+export { nativeTools } from "./modules/native-tools"
 export {
   budgetOf,
   budgetPhase,

@@ -65,12 +65,12 @@ Pure construction services use Effect `Context` directly. Effectful capabilities
 
 The framework exposes routing primitives and leaves topology in user code or model behavior.
 
-- `Router.call(address, event)` performs a synchronous, acyclic sub-call and returns the terminal event.
-- `Router.deliver(address, event)` sends asynchronous work.
-- `agentNativeTool()` wraps `Router.call` as a provider-native tool, so compatible models can delegate through the same surface they already understand.
-- `InboundMessage.replyTo` lets a completed turn route its answer to another session.
+- `Router.call(address, event)` performs a synchronous sub-call and returns the terminal event. `Router.deliver(address, event)` sends asynchronous work.
+- `callAgent(address, message)` is delegation as an awaitable value, and `subagentTool()` is the same call as a provider-native tool.
+- `host({ programs })` resolves addresses to programs, creates or resumes sessions, and guards cycles and depth.
+- `InboundMessage.origin` names the sender, replies carry usage, and `InboundMessage.replyTo` routes a completed turn's answer to another session.
 
-These primitives support supervisors, peer groups, recursive calls, RLM-style decomposition, and generated orchestration modules. The framework does not install a planner, role taxonomy, or fixed conversation protocol.
+These primitives support supervisors, peer groups, recursive calls, RLM-style decomposition, and generated orchestration modules. The framework does not install a planner, role taxonomy, or fixed conversation protocol. [Orchestration](orchestration.md) covers the design.
 
 ## Invariants
 

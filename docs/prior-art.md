@@ -21,6 +21,17 @@ flamecast-core combines ideas from event-sourced systems, typed effect runtimes,
 - [GEPA](https://arxiv.org/abs/2507.19457) motivates reflective search and Pareto selection across tasks.
 - [PopuLoRA](https://arxiv.org/abs/2605.16727v1) motivates separate teacher and student populations, TrueSkill-guided PFSP matchmaking, and periodic population replacement.
 
+## Multi-Agent Evidence
+
+These sources motivate the delegation design in [Orchestration](orchestration.md).
+
+- [Anthropic's guidance on multi-agent systems](https://claude.com/blog/building-multi-agent-systems-when-and-how-to-use-them) motivates splitting work by context boundary and the clean-context verification subagent.
+- [Cognition's production report](https://cognition.com/blog/multi-agents-working) motivates single-threaded writes and manager-to-child delegation. Their earlier [Don't Build Multi-Agents](https://cognition.com/blog/dont-build-multi-agents) argued the opposite a year before, which motivates shipping primitives instead of patterns.
+- [MAST](https://arxiv.org/abs/2503.13657) catalogs fourteen failure modes across seven frameworks and shows most failures are design failures.
+- [Reliability limits of delegated planning](https://arxiv.org/abs/2603.26993) proves a delegation chain that adds no new information loses to one centralized decision maker.
+- [From Spark to Fire](https://arxiv.org/abs/2603.04474) shows one error injected at a hub reaching every downstream agent, which motivates origin fields and provenance projections.
+- [MANTA](https://arxiv.org/abs/2607.28527) motivates trace auditing and treating topology as a searchable artifact.
+
 ## Compaction
 
 - [Morph](https://www.morphllm.com/) supplies the optional remote compaction path. The framework records checkpoints in the log and retains a deterministic local fallback.
