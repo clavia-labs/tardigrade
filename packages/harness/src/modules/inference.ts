@@ -1,5 +1,5 @@
 import { Clock, Context, Effect, Option } from "effect"
-import { EventLog, Router, erase, machine, type Event, type Machine } from "@flamecast/core"
+import { EventLog, Router, Self, erase, machine, type Event, type Machine } from "@flamecast/core"
 import {
   Infer,
   selectedInference,
@@ -12,7 +12,7 @@ import { defineModule } from "../module"
 import type { Projection } from "../projection"
 import type { RenderPlan } from "../program"
 import { modelRequest } from "../render"
-import { replyView, turnView } from "../turns"
+import { replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
 
 const BASE_SYSTEM =
@@ -127,7 +127,7 @@ const inferMachine = (
     }
   })
 
-const replyMachine = machine<Router>({
+const replyMachine = machine<Router | Self>({
   id: "reply",
   view: replyView,
   initial: "idle",
@@ -152,11 +152,16 @@ const replyMachine = machine<Router>({
           if (head.replyTo === undefined) return [{ type: "ReplyDelivered", turn, at }]
           const to = String(head.replyTo)
           const failed = terminal.type === "TurnFailed"
+          const session = yield* Self
+          // The reply names its origin and carries this turn's inclusive usage, so the receiver
+          // can attribute and cost the exchange without reading this session's log.
           yield* (yield* Router).deliver(to, {
             type: "MessageReceived",
             id: `reply:${turn}`,
             text: failed ? `error: ${String(terminal.error ?? "")}` : String(terminal.output ?? ""),
             outcome: failed ? "failed" : "completed",
+            origin: { session, turn },
+            usage: treeUsageIn(log, turn),
             at
           })
           return [{ type: "ReplyDelivered", turn, to, at }]

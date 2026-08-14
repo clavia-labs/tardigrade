@@ -1,10 +1,8 @@
 import { Cause, Clock, Effect, Exit } from "effect"
-import { Router, erase, machine, type Event } from "@flamecast/core"
+import { erase, machine, type Event } from "@flamecast/core"
 import { EXITS } from "../exits"
-import type { NativeTool, NativeToolContext } from "../infer"
+import type { NativeTool } from "../infer"
 import { defineModule } from "../module"
-import { canonicalValue } from "../program"
-import { sha256 } from "../sha256"
 import { turnView } from "../turns"
 import { budgetSpent } from "./budget"
 
@@ -100,45 +98,3 @@ export const nativeTools = <R = never>(list: ReadonlyArray<NativeTool<R>>) => {
   })
 }
 
-export interface AgentNativeToolOptions {
-  readonly name: string
-  readonly description: string
-  readonly address: string
-  readonly inputSchema?: unknown
-  readonly message?: (input: unknown) => string
-  readonly callId?: (input: unknown, context?: NativeToolContext) => string
-}
-
-export const agentNativeTool = (options: AgentNativeToolOptions): NativeTool<Router> => ({
-  spec: {
-    name: options.name,
-    description: options.description,
-    inputSchema:
-      options.inputSchema ?? {
-        type: "object",
-        properties: { message: { type: "string" } },
-        required: ["message"],
-        additionalProperties: false
-      }
-  },
-  run: (input, context) =>
-    Effect.gen(function* () {
-      const router = yield* Router
-      const message =
-        options.message?.(input) ??
-        String((input as { readonly message?: unknown } | undefined)?.message ?? input)
-      const callId =
-        options.callId?.(input, context) ??
-        (context === undefined
-          ? `${options.name}:${sha256(canonicalValue(input)).slice(0, 16)}`
-          : `${options.name}:${context.turn}:${context.callId}`)
-      const terminal = yield* router.call(options.address, {
-        type: "MessageReceived",
-        id: callId,
-        text: message
-      })
-      return terminal.type === "TurnCompleted"
-        ? terminal.output
-        : { error: String(terminal.error ?? `sub-agent ended with ${terminal.type}`) }
-    })
-})

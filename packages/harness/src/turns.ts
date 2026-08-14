@@ -76,19 +76,42 @@ export const servedLog = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   return out
 }
 
+const summed = (parts: ReadonlyArray<Usage>): Usage =>
+  parts.reduce(
+    (total, one) => ({
+      promptTokens: total.promptTokens + one.promptTokens,
+      completionTokens: total.completionTokens + one.completionTokens,
+      costUsd: total.costUsd + one.costUsd
+    }),
+    { promptTokens: 0, completionTokens: 0, costUsd: 0 }
+  )
+
 // What one turn spent on the model.
 export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
-  log
-    .filter((event) => event.type === "ModelReturned" && stampOf(event) === turn)
-    .map((event) => usageOf(event.usage))
-    .reduce(
-      (total, one) => ({
-        promptTokens: total.promptTokens + one.promptTokens,
-        completionTokens: total.completionTokens + one.completionTokens,
-        costUsd: total.costUsd + one.costUsd
-      }),
-      { promptTokens: 0, completionTokens: 0, costUsd: 0 }
-    )
+  summed(
+    log
+      .filter((event) => event.type === "ModelReturned" && stampOf(event) === turn)
+      .map((event) => usageOf(event.usage))
+  )
+
+// A tool result that came back from another agent: it names the agent and carries usage.
+const subagentUsage = (event: Event): Usage | undefined => {
+  if (event.type !== "ToolReturned") return undefined
+  const result = event.result as { readonly agent?: unknown; readonly usage?: unknown } | undefined
+  if (typeof result?.agent !== "string" || result.usage === undefined) return undefined
+  return usageOf(result.usage)
+}
+
+// What one turn spent including every agent it called. A sub-agent result reports the child's own
+// tree usage, so the sum is inclusive over the whole delegation tree without reading child logs.
+export const treeUsageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
+  summed([
+    usageIn(log, turn),
+    ...log
+      .filter((event) => stampOf(event) === turn)
+      .map(subagentUsage)
+      .filter((usage): usage is Usage => usage !== undefined)
+  ])
 
 const quoted = (value: unknown): string => `"${String(value ?? "")}"`
 

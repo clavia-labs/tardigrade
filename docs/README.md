@@ -11,6 +11,7 @@ flowchart TD
   B --> M[Modules]
   A --> E[Events]
   A --> R[Runtimes]
+  A --> Or[Orchestration]
   A --> O[Observability]
   O --> V[Evolution]
   P[Prior art] --> A
@@ -22,8 +23,9 @@ flowchart TD
 4. [Modules](modules.md) documents composition and the built-in module catalog.
 5. [Events](events.md) owns the event alphabet and dedup rules.
 6. [Runtimes](runtimes.md) owns the platform port contract and binding status.
-7. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
-8. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
-9. [Prior art](prior-art.md) records the external systems and research that informed the design.
+7. [Orchestration](orchestration.md) covers delegation, the session host, and swarm inspection.
+8. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
+9. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
+10. [Prior art](prior-art.md) records the external systems and research that informed the design.
 
 The repository [README](../README.md) is the package-level entry point.
