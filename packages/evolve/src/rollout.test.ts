@@ -148,6 +148,12 @@ describe("forked rollouts", () => {
     expect(result.replayed).toBe(3)
     expect(result.called).toBe(0)
     expect(result.usage).toEqual({ promptTokens: 0, completionTokens: 0, costUsd: 0 })
+    expect(result.cost).toEqual({
+      promptTokens: 0,
+      completionTokens: 0,
+      costUsd: 0,
+      toolCalls: 0
+    })
     expect(result.log).toEqual(recorded)
   })
 
@@ -160,6 +166,7 @@ describe("forked rollouts", () => {
     expect(result.called).toBe(3)
     expect(model.seen[0]?.system).toBe("Answer in one sentence.")
     expect(result.usage.costUsd).toBeCloseTo(0.0123, 6)
+    expect(result.cost.toolCalls).toBe(2)
     expect(types(result.log)).toEqual(types(recorded))
   })
 
@@ -240,6 +247,7 @@ describe("forked rollouts", () => {
       replayed: 0,
       called: 0,
       usage: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
+      cost: { promptTokens: 0, completionTokens: 0, costUsd: 0, toolCalls: 0 },
       log: []
     })
   })

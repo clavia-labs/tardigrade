@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import type { Event } from "@flamecast/core"
 import { canonicalValue, type Agent, type AgentServices, type Usage } from "@flamecast/harness"
-import { spendOf } from "./score"
+import { evolutionCostOf, type EvolutionCost } from "./cost"
 
 export interface RolloutOptions<Baseline, Candidate> {
   readonly baseline: Agent<Baseline>
@@ -13,6 +13,7 @@ export interface RolloutResult {
   readonly replayed: number
   readonly called: number
   readonly usage: Usage
+  readonly cost: EvolutionCost
   readonly log: ReadonlyArray<Event>
 }
 
@@ -62,10 +63,16 @@ export const rollout = <Baseline, Candidate>(
       yield* branch.replay([])
       const settled = yield* branch.log
       const tail = settled.slice(seeded)
+      const cost = evolutionCostOf(tail)
       return {
         replayed: aligned.replayed,
         called: tail.filter((event) => event.type === "ModelCalled").length,
-        usage: spendOf(tail),
+        usage: {
+          promptTokens: cost.promptTokens,
+          completionTokens: cost.completionTokens,
+          costUsd: cost.costUsd
+        },
+        cost,
         log: settled
       }
     })

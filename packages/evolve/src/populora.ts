@@ -1,5 +1,11 @@
 import { Effect } from "effect"
 import { candidate, type Candidate } from "./candidate"
+import {
+  sumEvolutionCosts,
+  zeroEvolutionCost,
+  type Costed,
+  type EvolutionCost
+} from "./cost"
 
 export type PopuloraRole = "teacher" | "student"
 
@@ -55,6 +61,7 @@ export interface PopuloraMatch<Evidence = unknown> extends PopuloraRewards {
   readonly expectedStudentSolveRate: number
   readonly outcome: PopuloraMatchOutcome
   readonly trials: ReadonlyArray<PopuloraTrial<Evidence>>
+  readonly cost: EvolutionCost
 }
 
 export interface PopuloraEvolutionContext<Value, Evidence = unknown> {
@@ -73,6 +80,7 @@ export interface PopuloraEvolution {
   readonly replaced: string
   readonly parents: ReadonlyArray<string>
   readonly child?: string
+  readonly cost: EvolutionCost
 }
 
 export interface PopuloraResult<Teacher, Student, Evidence = unknown> {
@@ -80,6 +88,7 @@ export interface PopuloraResult<Teacher, Student, Evidence = unknown> {
   readonly students: ReadonlyArray<PopuloraMember<Student>>
   readonly matches: ReadonlyArray<PopuloraMatch<Evidence>>
   readonly evolutions: ReadonlyArray<PopuloraEvolution>
+  readonly cost: EvolutionCost
 }
 
 export interface PopuloraOptions<
@@ -101,13 +110,25 @@ export interface PopuloraOptions<
   readonly initialRating?: (role: PopuloraRole, candidateId: string) => PopuloraRating
   readonly runMatch: (
     context: PopuloraMatchContext<Teacher, Student>
-  ) => Effect.Effect<ReadonlyArray<PopuloraTrial<Evidence>>, MatchError, MatchRequirements>
+  ) => Effect.Effect<
+    Costed<ReadonlyArray<PopuloraTrial<Evidence>>>,
+    MatchError,
+    MatchRequirements
+  >
   readonly evolveTeacher: (
     context: PopuloraEvolutionContext<Teacher, Evidence>
-  ) => Effect.Effect<Candidate<Teacher> | undefined, EvolutionError, EvolutionRequirements>
+  ) => Effect.Effect<
+    Costed<Candidate<Teacher> | undefined>,
+    EvolutionError,
+    EvolutionRequirements
+  >
   readonly evolveStudent: (
     context: PopuloraEvolutionContext<Student, Evidence>
-  ) => Effect.Effect<Candidate<Student> | undefined, EvolutionError, EvolutionRequirements>
+  ) => Effect.Effect<
+    Costed<Candidate<Student> | undefined>,
+    EvolutionError,
+    EvolutionRequirements
+  >
   readonly random?: () => number
 }
 
@@ -495,6 +516,7 @@ export const populora = <
     const matches: Array<PopuloraMatch<Evidence>> = []
     const evolutions: Array<PopuloraEvolution> = []
     let recentMatches: Array<PopuloraMatch<Evidence>> = []
+    let totalCost = zeroEvolutionCost()
 
     const updateRating = <Value>(
       population: ReadonlyArray<PopuloraMember<Value>>,
@@ -513,7 +535,7 @@ export const populora = <
       evolve: (
         context: PopuloraEvolutionContext<Value, Evidence>
       ) => Effect.Effect<
-        Candidate<Value> | undefined,
+        Costed<Candidate<Value> | undefined>,
         EvolutionError,
         EvolutionRequirements
       >
@@ -537,6 +559,7 @@ export const populora = <
         const replaced = ranked.slice(ranked.length - cullCount)
         const parentPool = population.length === 1 ? ranked : ranked.slice(0, -cullCount)
         let next = [...population]
+        const costs: Array<EvolutionCost> = []
 
         for (const weak of replaced) {
           const useCrossover = parentPool.length > 1 && random() < crossoverRate
@@ -547,7 +570,7 @@ export const populora = <
             parents.push(remaining[randomIndex(remaining.length, random)]!)
           }
           const operator: PopuloraOperator = useCrossover ? "crossover" : "mutation"
-          const proposed = yield* evolve({
+          const evolved = yield* evolve({
             step,
             role,
             operator,
@@ -555,13 +578,16 @@ export const populora = <
             parents,
             matches: recentMatches
           })
+          const proposed = evolved.value
+          costs.push(evolved.cost)
           if (proposed === undefined) {
             evolutions.push({
               step,
               role,
               operator,
               replaced: weak.candidate.id,
-              parents: parents.map((entry) => entry.candidate.id)
+              parents: parents.map((entry) => entry.candidate.id),
+              cost: evolved.cost
             })
             continue
           }
@@ -583,10 +609,11 @@ export const populora = <
             operator,
             replaced: weak.candidate.id,
             parents: member.parents,
-            child: child.id
+            child: child.id,
+            cost: evolved.cost
           })
         }
-        return next
+        return { population: next, cost: sumEvolutionCosts(costs) }
       })
 
     for (let step = 0; step < options.steps; step += 1) {
@@ -616,7 +643,9 @@ export const populora = <
           teacher.rating,
           ratingOptions.beta
         )
-        const trials = yield* options.runMatch({ step, teacher, student })
+        const evaluatedMatch = yield* options.runMatch({ step, teacher, student })
+        const trials = evaluatedMatch.value
+        totalCost = sumEvolutionCosts([totalCost, evaluatedMatch.cost])
         const rewards = populoraRewards(trials)
         const hasValidTrial = trials.some((trial) => trial.valid)
         const outcome: PopuloraMatchOutcome = !hasValidTrial
@@ -654,6 +683,7 @@ export const populora = <
           expectedStudentSolveRate,
           outcome,
           trials,
+          cost: evaluatedMatch.cost,
           ...rewards
         }
         matches.push(match)
@@ -661,20 +691,27 @@ export const populora = <
       }
 
       if ((step + 1) % options.evolutionInterval === 0) {
-        teachers = yield* evolvePopulation(
+        const teacherEvolution = yield* evolvePopulation(
           step,
           "teacher",
           teachers,
           teacherIds,
           options.evolveTeacher
         )
-        students = yield* evolvePopulation(
+        teachers = teacherEvolution.population
+        const studentEvolution = yield* evolvePopulation(
           step,
           "student",
           students,
           studentIds,
           options.evolveStudent
         )
+        students = studentEvolution.population
+        totalCost = sumEvolutionCosts([
+          totalCost,
+          teacherEvolution.cost,
+          studentEvolution.cost
+        ])
         recentMatches = []
       }
     }
@@ -683,7 +720,8 @@ export const populora = <
       teachers,
       students,
       matches,
-      evolutions
+      evolutions,
+      cost: totalCost
     }
     return result
   })

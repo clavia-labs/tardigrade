@@ -72,6 +72,19 @@ Fork reads the bound session and creates the same independent branch shape.
 
 `flamecast-core/evolve` can compare pure observations on a finite corpus and find the first recorded model-call prefix whose request changes. [Evolution](evolution.md) covers the guarantees and limits.
 
+## Cost Projections
+
+```ts
+import { toolCallsOf, usageIn } from "flamecast-core/harness"
+
+const usage = usageIn(log, "m-1")
+const toolCalls = toolCallsOf(log)
+```
+
+`usageIn(log, turn)` sums the prompt tokens, completion tokens, and provider cost for one turn. The values come from its `ModelReturned` events.
+
+`toolCallsOf(log)` counts work-tool calls in any log span. It uses the budget rules, so `answer` and `request-budget` calls have zero tool cost.
+
 ## Telemetry
 
 Core defines a `Sink` port, and the in-memory runtime binds a no-op implementation. No harness path currently emits sink records. External telemetry can project the stored log until a sink-producing module or runtime integration is added.

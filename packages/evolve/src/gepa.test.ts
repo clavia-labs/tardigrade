@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { candidate } from "./candidate"
+import { costed, zeroEvolutionCost } from "./cost"
 import { gepa, type GepaEvaluation } from "./gepa"
 
 interface Harness {
@@ -9,12 +10,23 @@ interface Harness {
 }
 
 const example = (id: string) => ({ id, value: id })
+const free = <Value>(value: Value) => costed(value)
+const priced = <Value>(
+  value: Value,
+  promptTokens: number,
+  completionTokens: number,
+  costUsd: number,
+  toolCalls: number
+) => ({
+  value,
+  cost: { promptTokens, completionTokens, costUsd, toolCalls }
+})
 
 const evaluate = (evaluated: { readonly value: Harness }, task: { readonly id: string }) =>
-  Effect.succeed({
+  Effect.succeed(free({
     score: evaluated.value.scores[task.id] ?? 0,
     trajectory: `${evaluated.value.source}:${task.id}`
-  })
+  }))
 
 describe("the GEPA loop", () => {
   test("returns the seed after its required Pareto evaluation", async () => {
@@ -27,7 +39,7 @@ describe("the GEPA loop", () => {
         minibatchSize: 1,
         maxMetricCalls: 2,
         evaluate,
-        mutate: () => Effect.succeed(undefined)
+        mutate: () => Effect.succeed(free(undefined))
       })
     )
 
@@ -36,10 +48,11 @@ describe("the GEPA loop", () => {
     expect(result.best.average).toBeCloseTo(0.6, 10)
     expect(result.metricCalls).toBe(2)
     expect(result.iterations).toEqual([])
+    expect(result.cost).toEqual(zeroEvolutionCost())
   })
 
   test("accepts strict improvements and records whole-harness lineage", async () => {
-    const seed = candidate("seed", {
+    const seed = candidate<Harness>("seed", {
       source: "seed.ts",
       scores: { f1: 0.2, p1: 0.4, p2: 0.4 }
     })
@@ -54,7 +67,7 @@ describe("the GEPA loop", () => {
         evaluate,
         mutate: ({ iteration, parent, trials }) => {
           expect(trials[0]?.evaluation.trajectory).toBe(`${parent.value.source}:f1`)
-          return Effect.succeed(
+          return Effect.succeed(free(
             iteration === 0
               ? candidate("better", {
                   source: "better.ts",
@@ -64,7 +77,7 @@ describe("the GEPA loop", () => {
                   source: "worse.ts",
                   scores: { f1: 0.1, p1: 1, p2: 1 }
                 })
-          )
+          ))
         }
       })
     )
@@ -80,7 +93,8 @@ describe("the GEPA loop", () => {
         parentAverage: 0.2,
         proposal: "better",
         proposalAverage: 0.8,
-        accepted: true
+        accepted: true,
+        cost: zeroEvolutionCost()
       },
       {
         iteration: 1,
@@ -89,7 +103,8 @@ describe("the GEPA loop", () => {
         parentAverage: 0.8,
         proposal: "worse",
         proposalAverage: 0.1,
-        accepted: false
+        accepted: false,
+        cost: zeroEvolutionCost()
       }
     ])
     expect(result.metricCalls).toBe(8)
@@ -113,7 +128,7 @@ describe("the GEPA loop", () => {
         evaluate,
         mutate: ({ iteration, parent }) => {
           parents.push(parent.id)
-          return Effect.succeed(
+          return Effect.succeed(free(
             iteration === 0
               ? candidate("right", {
                   source: "right.ts",
@@ -123,7 +138,7 @@ describe("the GEPA loop", () => {
                   source: "discarded.ts",
                   scores: { feedback: -1, left: 1, middle: 1, right: 1 }
                 })
-          )
+          ))
         }
       })
     )
@@ -148,14 +163,14 @@ describe("the GEPA loop", () => {
         minibatchSize: 1,
         maxMetricCalls: 4,
         evaluate: (evaluated, task) =>
-          Effect.succeed({
+          Effect.succeed(free({
             score: evaluated.value.scores[task.id] ?? 0,
             trajectory: `${evaluated.id}:${task.id}`,
             reason: "the harness chose the wrong tool"
-          }),
+          })),
         mutate: ({ trials }) => {
           seen.push(...trials.map((trial) => trial.evaluation))
-          return Effect.succeed(undefined)
+          return Effect.succeed(free(undefined))
         }
       })
     )
@@ -169,6 +184,62 @@ describe("the GEPA loop", () => {
     ])
   })
 
+  test("tracks evaluation and mutation cost", async () => {
+    const seed = candidate<Harness>("seed", {
+      source: "seed.ts",
+      scores: { f1: 0.1, p1: 0.1 }
+    })
+    const result = await Effect.runPromise(
+      gepa({
+        seed,
+        feedbackExamples: [example("f1")],
+        paretoExamples: [example("p1")],
+        minibatchSize: 1,
+        maxMetricCalls: 4,
+        evaluate: (evaluated, task) =>
+          Effect.succeed(
+            priced(
+              {
+                score: evaluated.value.scores[task.id] ?? 0,
+                trajectory: `${evaluated.id}:${task.id}`
+              },
+              10,
+              2,
+              0.01,
+              1
+            )
+          ),
+        mutate: () =>
+          Effect.succeed(
+            priced(
+              candidate("better", {
+                source: "better.ts",
+                scores: { f1: 1, p1: 1 }
+              }),
+              5,
+              1,
+              0.005,
+              2
+            )
+          )
+      })
+    )
+
+    expect(result.iterations[0]?.cost).toMatchObject({
+      promptTokens: 35,
+      completionTokens: 7,
+      toolCalls: 5
+    })
+    expect(result.iterations[0]?.cost.costUsd).toBeCloseTo(0.035, 10)
+    expect(result.cost).toMatchObject({
+      promptTokens: 45,
+      completionTokens: 9,
+      toolCalls: 6
+    })
+    expect(result.cost.costUsd).toBeCloseTo(0.045, 10)
+    expect(result.population.map((entry) => entry.cost.toolCalls)).toEqual([1, 1])
+  })
+
   test("requires mutations to preserve the selected parent", async () => {
     const run = Effect.runPromise(
       gepa({
@@ -179,13 +250,13 @@ describe("the GEPA loop", () => {
         maxMetricCalls: 4,
         evaluate,
         mutate: () =>
-          Effect.succeed(
+          Effect.succeed(free(
             candidate(
               "child",
               { source: "child.ts", scores: { f1: 1, p1: 1 } },
               { parent: "someone-else" }
             )
-          )
+          ))
       })
     )
 
