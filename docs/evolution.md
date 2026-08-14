@@ -1,8 +1,8 @@
 # Evolution
 
-Evolution changes the code that constructs an agent. A candidate may rewrite module options, add a module, replace a machine, change orchestration, select another provider, or generate a new source file.
+Evolution changes the code that constructs an agent. A candidate can change modules, machines, orchestration, providers, and source files.
 
-The framework supplies evaluation mechanics. It does not supply a proposer, mutation language, population model, or benchmark policy.
+The framework supplies evaluation mechanics and a GEPA search loop. The caller supplies each mutation, evaluation metric, dataset, and budget.
 
 ## Candidate Values
 
@@ -63,13 +63,45 @@ Changes to static instructions or tool descriptions usually diverge early. Chang
 
 `scoreOf`, `spendOf`, and `verdictsOf` project evaluation facts from logs. Evaluators decide how those values are produced and combined.
 
-`paretoArchive()` is an optional algorithm-neutral utility for retaining candidates that trade off across tasks. It is not the package's search strategy.
+`paretoArchive()` is an algorithm-neutral utility. It retains candidates that trade off across tasks.
 
-## Search Algorithms
+## GEPA Search
 
-GEPA-style prompt search, source-rewriting agents, evolutionary program synthesis, self-play, and co-evolving populations can all consume the same candidate and rollout interfaces.
+`gepa()` implements the reflective-mutation loop from [GEPA](https://arxiv.org/abs/2507.19457). Its mutation unit is a complete `Candidate<Value>`.
 
-The field changes quickly, so algorithm policy remains outside the framework. Relevant examples include [GEPA](https://arxiv.org/abs/2507.19457), [code-writing harness optimization](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html), and [PopuLoRA](https://vmax.ai/roger-creus/populora-co-evolving-llm-populations-for-reasoning-self-play).
+```ts
+const search = gepa({
+  seed: baseline,
+  feedbackExamples,
+  paretoExamples,
+  minibatchSize: 3,
+  maxMetricCalls: 150,
+  evaluate: (entry, example) => evaluateHarness(entry.value, example),
+  mutate: ({ parent, trials }) => rewriteHarness(parent, trials)
+})
+```
+
+The evaluator returns a numeric score and an arbitrary trajectory. The trajectory can contain logs, grader feedback, compiler output, or other evidence.
+
+The mutation reads the parent and its feedback trials. It can replace the complete harness, including its modules, tools, machines, providers, and orchestration.
+
+The loop uses these steps:
+
+1. It scores the seed on every Pareto example.
+2. It finds the best candidates for each Pareto example.
+3. It removes dominated leaders and samples by the number of examples that each candidate leads.
+4. It evaluates the selected parent on a random feedback minibatch.
+5. It asks `mutate` for a new candidate and evaluates that candidate on the same minibatch.
+6. It accepts a candidate when its average minibatch score is higher than its parent's score.
+7. It scores each accepted candidate on every Pareto example.
+
+The result contains the full population, the final frontier, iteration records, and the candidate with the highest Pareto average. GEPA records the selected parent on proposals that omit `parent`.
+
+`maxMetricCalls` counts candidate-example evaluations. The loop starts an iteration when the remaining budget can score an accepted child on the full Pareto set.
+
+The mutation can return `undefined` for an invalid construction. This permits compilation and runtime validation before candidate evaluation.
+
+The generic candidate and rollout interfaces also support source-rewriting search, evolutionary program synthesis, self-play, and co-evolving populations. Related examples include [code-writing harness optimization](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html) and [PopuLoRA](https://vmax.ai/roger-creus/populora-co-evolving-llm-populations-for-reasoning-self-play).
 
 ## Early Rejection
 

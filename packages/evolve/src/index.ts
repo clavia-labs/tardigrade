@@ -2,10 +2,21 @@
 // its consumers one door. Inside the package, a module imports from the file that defines the
 // symbol.
 //
-// The package holds the mechanics of a harness search and none of its judgment. There is no proposer
-// prompt and no metric here, because neither one is portable across domains.
+// The package holds reusable mechanics and policies for harness search. Callers own proposer prompts
+// and metrics because those decisions belong to their domains.
 
 export { candidate, type Candidate, type CandidateOptions } from "./candidate"
+export {
+  gepa,
+  type GepaEvaluation,
+  type GepaExample,
+  type GepaIteration,
+  type GepaMutationContext,
+  type GepaOptions,
+  type GepaPopulationEntry,
+  type GepaResult,
+  type GepaTrial
+} from "./gepa"
 export {
   modelCallPrefixes,
   observationOf,
