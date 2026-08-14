@@ -2,7 +2,7 @@
 
 Evolution changes the code that constructs an agent. A candidate can change modules, machines, orchestration, providers, and source files.
 
-The framework supplies evaluation mechanics and a GEPA search loop. The caller supplies each mutation, evaluation metric, dataset, and budget.
+The framework supplies evaluation mechanics plus GEPA and PopuLoRA search loops. The caller supplies each mutation, evaluation policy, dataset, and budget.
 
 ## Candidate Values
 
@@ -101,7 +101,55 @@ The result contains the full population, the final frontier, iteration records, 
 
 The mutation can return `undefined` for an invalid construction. This permits compilation and runtime validation before candidate evaluation.
 
-The generic candidate and rollout interfaces also support source-rewriting search, evolutionary program synthesis, self-play, and co-evolving populations. Related examples include [code-writing harness optimization](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html) and [PopuLoRA](https://vmax.ai/roger-creus/populora-co-evolving-llm-populations-for-reasoning-self-play).
+## PopuLoRA Search
+
+`populora()` adapts the asymmetric self-play loop from [PopuLoRA](https://arxiv.org/abs/2605.16727v1) to whole-harness evolution. It keeps separate teacher and student populations. Each member is a complete `Candidate<Value>`.
+
+GEPA searches one population against fixed examples. PopuLoRA searches problem-producing and problem-solving harnesses against each other.
+
+```ts
+const search = populora({
+  teachers: teacherSeeds,
+  students: studentSeeds,
+  steps: 200,
+  evolutionInterval: 10,
+  cullFraction: 0.25,
+  runMatch: ({ teacher, student }) =>
+    evaluatePair(teacher.candidate.value, student.candidate.value),
+  evolveTeacher: (context) => rewriteTeacherHarness(context),
+  evolveStudent: (context) => rewriteStudentHarness(context)
+})
+```
+
+The caller runs teacher generation, student attempts, and verification inside `runMatch`. It returns one `PopuloraTrial` for each generated problem. A trial contains verifier validity, student outcomes, and arbitrary evidence for later evolution. An invalid trial has no student outcomes. A valid trial has at least one outcome.
+
+The loop applies the paper's rewards:
+
+- An invalid teacher problem receives `-1`.
+- A valid problem with no correct student outcome receives `0`.
+- Any other valid problem receives `1 - solveRate`.
+- A correct student outcome receives `1`.
+- An incorrect, well-formed outcome receives `-0.5`.
+- A format error receives `-1`.
+
+Each search step follows these phases:
+
+1. TrueSkill estimates the result of each possible teacher and student pairing.
+2. PFSP samples near-balanced pairings with weight `p * (1 - p)`.
+3. `runMatch` generates problems, collects student attempts, and verifies the results.
+4. The aggregate solve rate is compared with its expected value. The result updates both TrueSkill ratings. A match with no valid problem is a student win.
+5. At each evolution interval, the loop ranks each role by `mu - confidence * sigma`.
+6. The loop replaces the lowest-ranked fraction through a mutation or crossover callback.
+
+A mutation receives one top-ranked parent. A crossover receives two distinct top-ranked parents. Both callbacks receive the replaced member and all matches since the last evolution step. They can rewrite modules, tools, machines, providers, source files, and orchestration.
+
+A callback can return `undefined` when it cannot construct a valid child. A new child starts with the configured initial TrueSkill rating. `PopuloraMember.parents` records every parent, while `Candidate.parent` records the primary parent.
+
+The rating options use standard TrueSkill defaults. These include `mu = 25`, `sigma = 25 / 3`, `beta = 25 / 6`, `tau = 25 / 300`, and a draw probability of `0.1`. The lower-confidence multiplier defaults to `3`. `crossoverRate` defaults to `0.5`.
+
+This adaptation uses harness mutation and crossover as the learning operation. It preserves the paper's teacher and student roles, verifier rewards, matchmaking, ratings, and population replacement policy.
+
+The generic candidate and rollout interfaces also support source-rewriting search and evolutionary program synthesis. A related example is [code-writing harness optimization](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html).
 
 ## Early Rejection
 
