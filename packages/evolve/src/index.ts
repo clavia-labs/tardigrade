@@ -7,6 +7,14 @@
 
 export { candidate, type Candidate, type CandidateOptions } from "./candidate"
 export {
+  costed,
+  evolutionCostOf,
+  sumEvolutionCosts,
+  zeroEvolutionCost,
+  type Costed,
+  type EvolutionCost
+} from "./cost"
+export {
   gepa,
   type GepaEvaluation,
   type GepaExample,

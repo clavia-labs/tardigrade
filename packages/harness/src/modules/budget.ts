@@ -32,11 +32,14 @@ export const budgetOf = (
   )
 }
 
-// The tool calls the turn has spent. The exits are not work, so they never draw the budget down.
-export const usedOf = (log: ReadonlyArray<Event>): number =>
-  turnView(log).filter(
+// The work-tool calls in any log span. The exits are not work, so they never draw the budget down.
+export const toolCallsOf = (log: ReadonlyArray<Event>): number =>
+  log.filter(
     (event) => event.type === "ToolCalled" && !EXITS.has(String(event.name ?? ""))
   ).length
+
+// The tool calls the current turn has spent.
+export const usedOf = (log: ReadonlyArray<Event>): number => toolCallsOf(turnView(log))
 
 // Whether the turn head permits escalation at its budget wall.
 export const escalatableOf = (log: ReadonlyArray<Event>): boolean =>

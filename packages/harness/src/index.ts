@@ -86,6 +86,7 @@ export {
   budget,
   canRequestBudget,
   escalatableOf,
+  toolCallsOf,
   usedOf,
   type BudgetOptions,
   type BudgetPhase

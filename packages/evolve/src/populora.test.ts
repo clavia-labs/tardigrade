@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { candidate } from "./candidate"
+import { costed } from "./cost"
 import {
   populora,
   populoraConservativeScore,
@@ -15,7 +16,18 @@ const trial = <Evidence>(
   evidence: Evidence
 ): PopuloraTrial<Evidence> => ({ valid, outcomes, evidence })
 
-const noEvolution = () => Effect.succeed(undefined)
+const free = <Value>(value: Value) => costed(value)
+const priced = <Value>(
+  value: Value,
+  promptTokens: number,
+  completionTokens: number,
+  costUsd: number,
+  toolCalls: number
+) => ({
+  value,
+  cost: { promptTokens, completionTokens, costUsd, toolCalls }
+})
+const noEvolution = () => Effect.succeed(free(undefined))
 
 describe("PopuLoRA rewards and ratings", () => {
   test("implements the verifier reward equations", () => {
@@ -60,10 +72,10 @@ describe("the PopuLoRA loop", () => {
         evolutionInterval: 10,
         cullFraction: 0.25,
         runMatch: () =>
-          Effect.succeed([
+          Effect.succeed(free([
             trial(false, [], "invalid problem"),
             trial(true, ["correct", "incorrect", "format-error"], "valid problem")
-          ]),
+          ])),
         evolveTeacher: noEvolution,
         evolveStudent: noEvolution
       })
@@ -98,7 +110,7 @@ describe("the PopuLoRA loop", () => {
           role === "student" && id === "mismatch"
             ? { mu: 100, sigma: 1 }
             : { mu: 25, sigma: 1 },
-        runMatch: () => Effect.succeed([trial(true, ["correct"], null)]),
+        runMatch: () => Effect.succeed(free([trial(true, ["correct"], null)])),
         evolveTeacher: noEvolution,
         evolveStudent: noEvolution
       })
@@ -115,7 +127,8 @@ describe("the PopuLoRA loop", () => {
         steps: 1,
         evolutionInterval: 10,
         cullFraction: 0.25,
-        runMatch: () => Effect.succeed([trial(true, ["correct", "incorrect"], null)]),
+        runMatch: () =>
+          Effect.succeed(free([trial(true, ["correct", "incorrect"], null)])),
         evolveTeacher: noEvolution,
         evolveStudent: noEvolution
       })
@@ -136,7 +149,7 @@ describe("the PopuLoRA loop", () => {
         steps: 1,
         evolutionInterval: 10,
         cullFraction: 0.25,
-        runMatch: () => Effect.succeed([trial(true, ["correct"], null)]),
+        runMatch: () => Effect.succeed(free([trial(true, ["correct"], null)])),
         evolveTeacher: noEvolution,
         evolveStudent: noEvolution
       })
@@ -182,9 +195,9 @@ describe("the PopuLoRA loop", () => {
         random: () => 0.5,
         initialRating,
         runMatch: ({ teacher, student }) =>
-          Effect.succeed([
+          Effect.succeed(free([
             trial(true, ["correct"], `${teacher.candidate.id}:${student.candidate.id}`)
-          ]),
+          ])),
         evolveTeacher: (context) => {
           teacherContexts.push({
             replaced: context.replaced.candidate.id,
@@ -192,7 +205,9 @@ describe("the PopuLoRA loop", () => {
             matches: context.matches.length
           })
           expect(context.operator).toBe("crossover")
-          return Effect.succeed(candidate("teacher-child", { role: "teacher", rank: "child" }))
+          return Effect.succeed(
+            free(candidate("teacher-child", { role: "teacher", rank: "child" }))
+          )
         },
         evolveStudent: (context) => {
           studentContexts.push({
@@ -201,7 +216,9 @@ describe("the PopuLoRA loop", () => {
             matches: context.matches.length
           })
           expect(context.operator).toBe("crossover")
-          return Effect.succeed(candidate("student-child", { role: "student", rank: "child" }))
+          return Effect.succeed(
+            free(candidate("student-child", { role: "student", rank: "child" }))
+          )
         }
       })
     )
@@ -240,14 +257,14 @@ describe("the PopuLoRA loop", () => {
         evolutionInterval: 1,
         cullFraction: 1,
         crossoverRate: 1,
-        runMatch: () => Effect.succeed([trial(true, ["correct"], null)]),
+        runMatch: () => Effect.succeed(free([trial(true, ["correct"], null)])),
         evolveTeacher: (context) => {
           operators.push(context.operator)
-          return Effect.succeed(candidate("teacher-child", "teacher-child"))
+          return Effect.succeed(free(candidate("teacher-child", "teacher-child")))
         },
         evolveStudent: (context) => {
           operators.push(context.operator)
-          return Effect.succeed(candidate("student-child", "student-child"))
+          return Effect.succeed(free(candidate("student-child", "student-child")))
         }
       })
     )
@@ -255,6 +272,42 @@ describe("the PopuLoRA loop", () => {
     expect(operators).toEqual(["mutation", "mutation"])
     expect(result.teachers[0]?.parents).toEqual(["teacher"])
     expect(result.students[0]?.parents).toEqual(["student"])
+  })
+
+  test("tracks match and evolution cost", async () => {
+    const result = await Effect.runPromise(
+      populora({
+        teachers: [candidate("teacher", "teacher")],
+        students: [candidate("student", "student")],
+        steps: 1,
+        evolutionInterval: 1,
+        cullFraction: 1,
+        runMatch: () =>
+          Effect.succeed(priced([trial(true, ["correct"], null)], 10, 2, 0.01, 1)),
+        evolveTeacher: () =>
+          Effect.succeed(
+            priced(candidate("teacher-child", "teacher-child"), 5, 1, 0.005, 2)
+          ),
+        evolveStudent: () =>
+          Effect.succeed(
+            priced(candidate("student-child", "student-child"), 7, 1, 0.007, 1)
+          )
+      })
+    )
+
+    expect(result.matches[0]?.cost).toEqual({
+      promptTokens: 10,
+      completionTokens: 2,
+      costUsd: 0.01,
+      toolCalls: 1
+    })
+    expect(result.evolutions.map((entry) => entry.cost.toolCalls)).toEqual([2, 1])
+    expect(result.cost).toEqual({
+      promptTokens: 22,
+      completionTokens: 4,
+      costUsd: 0.022,
+      toolCalls: 4
+    })
   })
 
   test("rejects verifier output that violates a trial invariant", async () => {
@@ -265,7 +318,7 @@ describe("the PopuLoRA loop", () => {
         steps: 1,
         evolutionInterval: 2,
         cullFraction: 0.25,
-        runMatch: () => Effect.succeed([trial(false, ["correct"], null)]),
+        runMatch: () => Effect.succeed(free([trial(false, ["correct"], null)])),
         evolveTeacher: noEvolution,
         evolveStudent: noEvolution
       })
