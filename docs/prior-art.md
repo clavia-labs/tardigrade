@@ -11,6 +11,7 @@ flamecast-core combines ideas from event-sourced systems, typed effect runtimes,
 ## Extensible Harnesses
 
 - [Pi](https://pi.dev/) demonstrates a small coding-agent core with extension-first behavior, session trees, and explicit context handling. flamecast-core shares the preference for minimal primitives while using typed module dependencies and event-sourced machines.
+- [flamecast's package system](https://github.com/clavia-inc/flamecast) demonstrates SDKs injected by name into a code sandbox, so arbitrary tools reach the model as callable objects. Codemode [capabilities](codemode.md#writing-a-capability) keep that injection and leave out the catalog, install lifecycle, and discovery machinery.
 - [Anthropic's multi-agent research system](https://www.anthropic.com/research/multiagent-systems) demonstrates parallel delegation and coordinator-worker patterns.
 - [Recursive language model harnesses](https://alexzhang13.github.io/blog/2026/harness/) motivate leaving orchestration open to generated code and runtime routing.
 

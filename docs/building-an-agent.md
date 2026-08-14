@@ -225,4 +225,4 @@ await Effect.runPromise(Effect.provide(alternative.replay([]), runtime))
 
 Use `agent.fork({ at })` when the source log is already bound to the current runtime.
 
-Module details are in [Modules](modules.md).
+Module details are in [Modules](modules.md). [Building a swarm](building-a-swarm.md) continues into multiple agents.
