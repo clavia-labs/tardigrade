@@ -19,7 +19,7 @@ flamecast-core combines ideas from event-sourced systems, typed effect runtimes,
 - [Don't Train the Model, Evolve the Harness](https://huggingface.co/spaces/joelniklaus/harness-optimization) motivates optimizing the code and control structure around a frozen model.
 - [Let the Model Write the Code](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html) motivates source-level candidates instead of a closed parameter table.
 - [GEPA](https://arxiv.org/abs/2507.19457) motivates reflective search and Pareto selection across tasks.
-- [PopuLoRA](https://vmax.ai/roger-creus/populora-co-evolving-llm-populations-for-reasoning-self-play) is an example of a different population-based direction that should fit the same evaluation substrate.
+- [PopuLoRA](https://arxiv.org/abs/2605.16727v1) motivates separate teacher and student populations, TrueSkill-guided PFSP matchmaking, and periodic population replacement.
 
 ## Compaction
 
