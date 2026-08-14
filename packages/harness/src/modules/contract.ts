@@ -51,11 +51,13 @@ const answerOf = (context: Partial<Answer>): Answer => {
 const isAnswer = (log: ReadonlyArray<Event>): boolean =>
   String(log[log.length - 1]?.name ?? "") === ANSWER
 
-const contractMachine = machine<never, Partial<Answer>>({
+const contractMachine = machine({
   id: "contract",
   view: turnView,
   initial: "idle",
-  context: {},
+  // The context type is annotated on the value, not applied as a type argument, so the state names
+  // stay inferred and a transition to an undeclared state fails to compile.
+  context: {} as Partial<Answer>,
   states: {
     idle: {
       on: {

@@ -56,6 +56,52 @@ describe("the malformed machine", () => {
       })
     ).toThrow('machine "both" malformed: the state "a" defines both decide and act')
   })
+
+  // The type tier catches these when a machine is written by hand. The runtime tier is what a
+  // machine that arrives as generated source gets, so both checks run over the values too.
+  test("a transition to an undeclared state is rejected at definition time", () => {
+    const generated = {
+      id: "typo",
+      initial: "idle",
+      states: { idle: { on: { Ping: "wating" } }, waiting: {} }
+    } as unknown as Parameters<typeof machine>[0]
+    expect(() => machine(generated)).toThrow(
+      'machine "typo" malformed: the state "idle" transitions on "Ping" to the undeclared state "wating"'
+    )
+  })
+
+  test("a guarded transition to an undeclared state is rejected the same way", () => {
+    const generated = {
+      id: "guarded",
+      initial: "idle",
+      states: { idle: { on: { Ping: { target: "gone", when: () => true } } } }
+    } as unknown as Parameters<typeof machine>[0]
+    expect(() => machine(generated)).toThrow(
+      'machine "guarded" malformed: the state "idle" transitions on "Ping" to the undeclared state "gone"'
+    )
+  })
+
+  test("an initial state that is not declared is rejected at definition time", () => {
+    const generated = {
+      id: "start",
+      initial: "nowhere",
+      states: { idle: {} }
+    } as unknown as Parameters<typeof machine>[0]
+    expect(() => machine(generated)).toThrow(
+      'machine "start" malformed: the initial state "nowhere" is not declared'
+    )
+  })
+
+  // A typo'd target would otherwise fold to a state with no definition, and `settle` reads a
+  // missing state as resting, so the machine would go silent instead of failing.
+  test("the check is what keeps a typo from resting forever", () => {
+    const sound = machine({
+      id: "sound",
+      initial: "idle",
+      states: { idle: { on: { Ping: "waiting" } }, waiting: {} }
+    })
+    expect(stateOf(sound, [{ type: "Ping" }])).toBe("waiting")
+  })
 })
 
 describe("decide purity", () => {

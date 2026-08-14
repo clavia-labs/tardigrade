@@ -40,15 +40,18 @@ import type { Event } from "./event"
 // is not assignable to `Machine<R, never>` because context is invariant. Defaulting to `never` lets
 // a plain machine join an agent's list directly, and keeps `erase` for the machines that really do
 // carry a context.
-export type Transition<C = never> =
-  | string
+// `S` is the machine's state names. It defaults to `string`, so a value that only reads a machine
+// stays unconstrained, and the `machine` constructor narrows it to the keys of the states record so
+// a target that names no state fails to compile.
+export type Transition<C = never, S extends string = string> =
+  | S
   | {
-      readonly target: string
+      readonly target: S
       readonly when?: (log: ReadonlyArray<Event>) => boolean
       readonly assign?: (context: C, event: Event) => C
     }
 
-export interface StateDef<R, C = never> {
+export interface StateDef<R, C = never, S extends string = string> {
   // Derive new events from the record. A decide is pure: the log, `now`, and the folded context
   // fully determine its output, so a re-run after a crash rewrites the same events. `now` is the
   // one clock read, taken by the runtime, so the decide itself stays a plain function the
@@ -70,14 +73,14 @@ export interface StateDef<R, C = never> {
   // When event X, go to state T. A guarded transition only fires when its `when` holds, so a state
   // can stay resting and silent until a computed threshold over the log trips. Unknown event types
   // fall through: tolerant reads.
-  readonly on?: Readonly<Record<string, Transition<C>>>
+  readonly on?: Readonly<Record<string, Transition<C, S>>>
 }
 
-export interface Machine<R = never, C = never> {
-  // The machine's stable name, used by conformance failures and program observations.
+export interface Machine<R = never, C = never, S extends string = string> {
+  // The machine's stable name, used by conformance failures and agent observations.
   readonly id: string
-  readonly initial: string
-  readonly states: Readonly<Record<string, StateDef<R, C>>>
+  readonly initial: S
+  readonly states: Readonly<Record<S, StateDef<R, C, S>>>
   // The context an empty view folds to. Context is private to the machine: machines compose over
   // event names on the shared log, never over each other's context.
   readonly context?: C
@@ -102,17 +105,47 @@ export interface Fold<C> {
 // layer that binds it.
 export const erase = <R, C>(m: Machine<R, C>): Machine<R, never> => m as unknown as Machine<R, never>
 
-// The constructor checks the one structural rule: a state decides or acts, never both. Throwing at
-// definition time is honest about the bug; the machine is malformed before any log exists.
-export const machine = <R = never, C = never>(definition: Machine<R, C>): Machine<R, C> => {
-  for (const [name, state] of Object.entries(definition.states)) {
+// The constructor is the definition-time gate, and it checks in two tiers because machines arrive
+// two ways.
+//
+// The TYPE tier serves a machine written by hand. `S` infers from the keys of the states record and
+// every other position is `NoInfer`, so `initial` and every `target` must name a declared state or
+// the call does not compile. That check earns its keep: an undeclared target folds to a state with
+// no definition, every later event falls through the tolerant read, and `settle` sees a missing
+// state as resting, so a typo is a machine that silently never runs again rather than one that
+// fails.
+//
+// The RUNTIME tier serves a machine that arrives as generated source, where no compiler ran. It
+// repeats the same two checks over the values, plus the structural rule that a state decides or
+// acts and never both. Throwing here is honest about the bug: the machine is malformed before any
+// log exists, so an evolution candidate that names a state it does not declare dies at
+// construction instead of resting forever mid-rollout.
+export const machine = <R = never, C = never, const S extends string = string>(definition: {
+  readonly id: string
+  readonly initial: NoInfer<S>
+  readonly states: Readonly<Record<S, StateDef<R, C, NoInfer<S>>>>
+  readonly context?: C
+  readonly view?: (log: ReadonlyArray<Event>) => ReadonlyArray<Event>
+}): Machine<R, C, S> => {
+  const declared = new Set(Object.keys(definition.states))
+  const malformed = (detail: string) => {
+    throw new Error(`machine "${definition.id}" malformed: ${detail}`)
+  }
+  if (!declared.has(definition.initial)) {
+    malformed(`the initial state "${definition.initial}" is not declared`)
+  }
+  for (const [name, state] of Object.entries<StateDef<R, C, S>>(definition.states)) {
     if (state.decide !== undefined && state.act !== undefined) {
-      throw new Error(
-        `machine "${definition.id}" malformed: the state "${name}" defines both decide and act`
-      )
+      malformed(`the state "${name}" defines both decide and act`)
+    }
+    for (const [type, rule] of Object.entries(state.on ?? {})) {
+      const target = typeof rule === "string" ? rule : rule.target
+      if (!declared.has(target)) {
+        malformed(`the state "${name}" transitions on "${type}" to the undeclared state "${target}"`)
+      }
     }
   }
-  return definition
+  return definition as Machine<R, C, S>
 }
 
 const viewOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Event>) => m.view?.(log) ?? log
