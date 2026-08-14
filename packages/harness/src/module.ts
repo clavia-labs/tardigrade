@@ -1,0 +1,411 @@
+import { Clock, Context, Effect } from "effect"
+import {
+  EventLog,
+  Router,
+  Self,
+  Wake,
+  Writer,
+  actor,
+  send,
+  settleAll,
+  type Event,
+  type EventLogStore,
+  type Machine
+} from "@flamecast/core"
+import { boundaryOf, type CallResult } from "./boundary"
+import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
+import { keyOf } from "./keys"
+import { modelRequest } from "./render"
+import {
+  programId,
+  type AgentProgram,
+  type Instruction,
+  type ModuleManifest,
+  type Nudge,
+  type RenderPlan
+} from "./program"
+import type { Projection } from "./projection"
+import { turnHead, usageIn } from "./turns"
+
+export type AgentServices = EventLog | Writer | Wake | Router | Self
+
+export interface ModulePart<R = never> {
+  readonly events?: ReadonlyArray<string>
+  readonly machines?:
+    | ReadonlyArray<Machine<R, never>>
+    | ((render: RenderPlan) => ReadonlyArray<Machine<R, never>>)
+  readonly instructions?: ReadonlyArray<Instruction>
+  readonly nudges?: ReadonlyArray<Nudge>
+  readonly nativeTools?: ReadonlyArray<NativeToolSpec>
+  readonly projections?: Readonly<Record<string, Projection<unknown>>>
+  readonly render?: Partial<Pick<RenderPlan, "messageTruncateAt" | "resultTruncateAt">>
+}
+
+type AnyService = Context.Service.Any
+type RequiredServices<Requires extends readonly AnyService[]> = Context.Service.Identifier<
+  Requires[number]
+>
+
+export interface Module<
+  Id extends string = string,
+  Services = never,
+  Requires extends readonly AnyService[] = readonly [],
+  R = never
+> {
+  readonly id: Id
+  readonly version?: string
+  readonly identity?: unknown
+  readonly services?: Context.Context<Services>
+  readonly requires?: Requires
+  readonly setup: (context: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
+}
+
+export type AnyModule = Module<string, never, any, any>
+
+export const defineModule = <
+  const Id extends string,
+  Services = never,
+  const Requires extends readonly AnyService[] = readonly [],
+  R = never
+>(module: Module<Id, Services, Requires, R>): Module<Id, Services, Requires, R> => module
+
+type ModuleId<One> = One extends Module<infer Id, infer _Services, infer _Requires, infer _R>
+  ? Id
+  : never
+
+type ProvidedServices<One> = One extends Module<infer _Id, infer Services, infer _Requires, infer _R>
+  ? Services
+  : never
+
+type RequiredModuleServices<One> = One extends Module<infer _Id, infer _Services, infer Requires, infer _R>
+  ? RequiredServices<Requires>
+  : never
+
+type MissingDependencies<Modules extends readonly unknown[]> = Exclude<
+  RequiredModuleServices<Modules[number]>,
+  ProvidedServices<Modules[number]>
+>
+
+type DuplicateServiceProviders<
+  Modules extends readonly unknown[],
+  Seen = never
+> = Modules extends readonly [infer Head, ...infer Tail]
+  ? | Extract<ProvidedServices<Head>, Seen>
+    | DuplicateServiceProviders<Tail, Seen | ProvidedServices<Head>>
+  : never
+
+type ServiceKey<Service> = Service extends { readonly key: infer Key extends string }
+  ? Key
+  : Service
+
+type DuplicateModuleIds<
+  Modules extends readonly unknown[],
+  Seen extends string = never
+> = Modules extends readonly [infer Head, ...infer Tail]
+  ? ModuleId<Head> extends Seen
+    ? ModuleId<Head>
+    : DuplicateModuleIds<Tail, Seen | ModuleId<Head>>
+  : never
+
+type ModuleServices<One> = One extends Module<infer _Id, infer _Services, infer _Requires, infer R>
+  ? R
+  : never
+
+type AgentModuleServices<Modules extends readonly unknown[]> = ProvidedServices<Modules[number]>
+
+type ValidModules<Modules extends readonly unknown[]> =
+  [MissingDependencies<Modules>] extends [never]
+    ? [DuplicateModuleIds<Modules>] extends [never]
+      ? [DuplicateServiceProviders<Modules>] extends [never]
+        ? unknown
+        : {
+            readonly duplicateModuleServices: ServiceKey<DuplicateServiceProviders<Modules>>
+          }
+      : { readonly duplicateModuleIds: DuplicateModuleIds<Modules> }
+    : { readonly missingModuleDependencies: ServiceKey<MissingDependencies<Modules>> }
+
+export interface InboundMessage {
+  readonly id: string
+  readonly text: string
+  readonly output?: unknown
+  readonly budget?: number
+  readonly escalatable?: boolean
+  readonly replyTo?: string
+}
+
+export type TurnOutcome = CallResult | { readonly kind: "open" }
+
+export type TurnResult = TurnOutcome & {
+  readonly turn: string
+  readonly usage: Usage
+}
+
+export interface BranchOptions {
+  readonly at?: number
+  readonly id?: string
+}
+
+export interface Agent<R = never, Services = never> {
+  readonly program: AgentProgram<R, Services>
+  readonly services: Context.Context<Services>
+  readonly turn: (message: InboundMessage) => Effect.Effect<TurnResult, never, R | AgentServices>
+  readonly log: Effect.Effect<ReadonlyArray<Event>, never, EventLog>
+  readonly replay: (
+    recorded: ReadonlyArray<Event>
+  ) => Effect.Effect<TurnResult, never, R | AgentServices>
+  readonly request: (log: ReadonlyArray<Event>) => ModelRequest
+  readonly branch: (recorded: ReadonlyArray<Event>, options?: BranchOptions) => Agent<R, Services>
+  readonly fork: (
+    options?: BranchOptions
+  ) => Effect.Effect<Agent<R, Services>, never, EventLog | Self>
+}
+
+export interface AgentOptions<Modules extends readonly AnyModule[]> {
+  readonly id?: string
+  readonly parent?: string
+  readonly modules: Modules
+}
+
+export const undeclaredEvents = (
+  program: Pick<AgentProgram<never>, "events">,
+  log: ReadonlyArray<Event>
+): ReadonlyArray<string> =>
+  [...new Set(log.map((event) => event.type))]
+    .filter((type) => !program.events.includes(type))
+    .sort()
+
+const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
+  const rows: Array<Event> = []
+  const keys = new Set<string>()
+  const put = (events: ReadonlyArray<Event>) => {
+    for (const event of events) {
+      const key = keyOf(event)
+      if (key !== undefined && keys.has(key)) continue
+      if (key !== undefined) keys.add(key)
+      rows.push(event)
+    }
+  }
+  put(seed)
+  return {
+    append: (events) => Effect.sync(() => put(events)),
+    read: Effect.sync((): ReadonlyArray<Event> => [...rows]),
+    readFrom: (from) => Effect.sync((): ReadonlyArray<Event> => rows.slice(from)),
+    head: Effect.sync(() => rows.length)
+  }
+}
+
+const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at: number): Event => ({
+  type: "MessageReceived",
+  id: message.id,
+  text: message.text,
+  program: program.id,
+  ...(message.output === undefined ? {} : { output: message.output }),
+  ...(message.budget === undefined ? {} : { budget: message.budget }),
+  ...(message.escalatable === undefined ? {} : { escalatable: message.escalatable }),
+  ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
+  at
+})
+
+const resultOf = (log: ReadonlyArray<Event>, turn: string): TurnResult => ({
+  ...(boundaryOf(log, turn) ?? { kind: "open" }),
+  turn,
+  usage: usageIn(log, turn)
+})
+
+const lastTurnOf = (log: ReadonlyArray<Event>): string => {
+  const open = turnHead(log)
+  if (open !== undefined) return String(open.id ?? "")
+  const heads = log.filter((event) => event.type === "MessageReceived")
+  return String(heads[heads.length - 1]?.id ?? "")
+}
+
+interface BoundSession {
+  readonly id: string
+  readonly store: EventLogStore
+}
+
+const build = <R, Services>(
+  program: AgentProgram<R, Services>,
+  bound?: BoundSession
+): Agent<R, Services> => {
+  const machines = actor<R>(program.machines)
+  const scoped = <A>(effect: Effect.Effect<A, never, R | AgentServices>) =>
+    bound === undefined
+      ? effect
+      : effect.pipe(
+          Effect.provideService(EventLog, bound.store),
+          Effect.provideService(Self, bound.id)
+        )
+  const held = <A>(work: Effect.Effect<A, never, R | AgentServices>) =>
+    Effect.gen(function* () {
+      const writer = yield* Writer
+      return yield* writer.hold(yield* Self, work)
+    })
+  const branch = (recorded: ReadonlyArray<Event>, options: BranchOptions = {}) => {
+    const upTo = Math.max(0, Math.min(options.at ?? recorded.length, recorded.length))
+    const seed = recorded.slice(0, upTo)
+    return build(program, {
+      id: options.id ?? `branch:${program.id}:${upTo}`,
+      store: privateLog(seed)
+    })
+  }
+  return {
+    program,
+    services: program.services,
+    turn: (message) =>
+      scoped(
+        held(
+          Effect.gen(function* () {
+            const store = yield* EventLog
+            const at = yield* Clock.currentTimeMillis
+            yield* send(machines, headOf(message, program, at))
+            return resultOf(yield* store.read, message.id)
+          })
+        )
+      ),
+    log:
+      bound === undefined
+        ? Effect.flatMap(EventLog, (store) => store.read)
+        : bound.store.read,
+    replay: (recorded) =>
+      scoped(
+        held(
+          Effect.gen(function* () {
+            const store = yield* EventLog
+            yield* store.append(recorded)
+            yield* settleAll(machines.machines)
+            const log = yield* store.read
+            return resultOf(log, lastTurnOf(log))
+          })
+        )
+      ),
+    request: (log) => modelRequest(program, log),
+    branch,
+    fork: (options = {}) => {
+      if (bound !== undefined) {
+        return Effect.map(bound.store.read, (recorded) =>
+          branch(recorded, {
+            ...options,
+            id: options.id ?? `${bound.id}:fork:${options.at ?? recorded.length}`
+          })
+        )
+      }
+      return Effect.gen(function* () {
+        const store = yield* EventLog
+        const recorded = yield* store.read
+        const session = yield* Self
+        return branch(recorded, {
+          ...options,
+          id: options.id ?? `${session}:fork:${options.at ?? recorded.length}`
+        })
+      })
+    }
+  }
+}
+
+const compile = <R, Services>(
+  modules: ReadonlyArray<AnyModule>,
+  options: { readonly id?: string; readonly parent?: string }
+): AgentProgram<R, Services> => {
+  const ids = new Set<string>()
+  const serviceKeys = new Set<string>()
+  let services: Context.Context<never> = Context.empty()
+  for (const module of modules) {
+    if (ids.has(module.id)) throw new Error(`duplicate module id "${module.id}"`)
+    ids.add(module.id)
+    for (const key of module.services?.mapUnsafe.keys() ?? []) {
+      if (serviceKeys.has(key)) {
+        throw new Error(`service "${key}" is provided by more than one module`)
+      }
+      serviceKeys.add(key)
+    }
+    if (module.services !== undefined) {
+      services = Context.merge(services, module.services) as Context.Context<never>
+    }
+  }
+
+  const parts = modules.map((module) => {
+    for (const required of module.requires ?? []) {
+      if (!serviceKeys.has(required.key)) {
+        throw new Error(`module "${module.id}" requires missing service "${required.key}"`)
+      }
+    }
+    const context = services.pipe(Context.pick(...(module.requires ?? [])))
+    return module.setup(context as unknown as Context.Context<unknown>)
+  })
+
+  const toolNames = new Set<string>()
+  const instructionIds = new Set<string>()
+  for (const part of parts) {
+    for (const tool of part.nativeTools ?? []) {
+      if (toolNames.has(tool.name)) throw new Error(`duplicate native tool name "${tool.name}"`)
+      toolNames.add(tool.name)
+    }
+    for (const instruction of part.instructions ?? []) {
+      if (instructionIds.has(instruction.id)) {
+        throw new Error(`duplicate instruction id "${instruction.id}"`)
+      }
+      instructionIds.add(instruction.id)
+    }
+  }
+
+  const render = parts.reduce<RenderPlan>(
+    (plan, part) => ({
+      ...plan,
+      ...part.render,
+      instructions: [...plan.instructions, ...(part.instructions ?? [])],
+      nativeTools: [...plan.nativeTools, ...(part.nativeTools ?? [])],
+      nudges: [...plan.nudges, ...(part.nudges ?? [])]
+    }),
+    {
+      instructions: [],
+      nativeTools: [],
+      nudges: [],
+      messageTruncateAt: 12_000,
+      resultTruncateAt: 6_000
+    } satisfies RenderPlan
+  )
+  const manifests: ReadonlyArray<ModuleManifest> = modules.map((module) => ({
+    id: module.id,
+    version: module.version ?? "1",
+    ...(module.identity === undefined ? {} : { identity: module.identity })
+  }))
+  const machines = parts.flatMap((part) =>
+    typeof part.machines === "function" ? part.machines(render) : (part.machines ?? [])
+  )
+  const machineIds = new Set<string>()
+  for (const machine of machines) {
+    if (machineIds.has(machine.id)) throw new Error(`duplicate machine id "${machine.id}"`)
+    machineIds.add(machine.id)
+  }
+  const projections: Record<string, Projection<unknown>> = {}
+  for (const part of parts) {
+    for (const [id, project] of Object.entries(part.projections ?? {})) {
+      if (projections[id] !== undefined) throw new Error(`duplicate projection id "${id}"`)
+      projections[id] = project
+    }
+  }
+  return {
+    id: options.id ?? programId(manifests),
+    ...(options.parent === undefined ? {} : { parent: options.parent }),
+    modules: manifests,
+    events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
+    machines: machines as ReadonlyArray<Machine<R, never>>,
+    render,
+    services: services as unknown as Context.Context<Services>,
+    projections
+  }
+}
+
+export const createAgent = <
+  const Modules extends readonly AnyModule[]
+>(
+  options: AgentOptions<Modules> & ValidModules<Modules>
+): Agent<ModuleServices<Modules[number]>, AgentModuleServices<Modules>> => {
+  const modules = options.modules as ReadonlyArray<AnyModule>
+  const program = compile<
+    ModuleServices<Modules[number]>,
+    AgentModuleServices<Modules>
+  >(modules, options)
+  return build(program)
+}

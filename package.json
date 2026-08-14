@@ -1,0 +1,54 @@
+{
+  "name": "flamecast-core",
+  "version": "0.0.0",
+  "type": "module",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./core": {
+      "types": "./dist/core.d.ts",
+      "import": "./dist/core.js"
+    },
+    "./harness": {
+      "types": "./dist/harness.d.ts",
+      "import": "./dist/harness.js"
+    },
+    "./runtime-in-memory": {
+      "types": "./dist/runtime-in-memory.d.ts",
+      "import": "./dist/runtime-in-memory.js"
+    },
+    "./evolve": {
+      "types": "./dist/evolve.d.ts",
+      "import": "./dist/evolve.js"
+    }
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "bun run tools/build.ts",
+    "gate": "bun run tools/gate.ts",
+    "lint": "oxlint",
+    "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
+    "test": "bun run --filter './packages/*' test",
+    "knip": "knip",
+    "prepare": "bun run build",
+    "setup": "git config core.hooksPath .githooks"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.108",
+    "tsdown": "0.22.14",
+    "typescript": "6.0.3"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.3.4",
+    "knip": "^6.15.0",
+    "oxlint": "^1.69.0"
+  }
+}

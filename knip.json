@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignoreDependencies": [
+    "tsdown"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "tools/*.ts"
+      ],
+      "project": [
+        "tools/**/*.ts"
+      ]
+    },
+    "packages/*": {
+      "project": [
+        "src/**/*.ts"
+      ]
+    }
+  }
+}

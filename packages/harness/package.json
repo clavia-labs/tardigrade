@@ -1,0 +1,21 @@
+{
+  "name": "@flamecast/harness",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@flamecast/core": "workspace:*",
+    "effect": "4.0.0-rc.108"
+  },
+  "devDependencies": {
+    "@flamecast/runtime-in-memory": "workspace:*"
+  }
+}
