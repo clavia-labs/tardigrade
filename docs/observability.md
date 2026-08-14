@@ -8,8 +8,7 @@ The event log contains the evidence needed to understand a session. Derived view
 const log = await Effect.runPromise(Effect.provide(agent.log, runtime))
 ```
 
-`runtime-in-memory` exposes the currently bound process-local session. Durable session discovery
-across process restarts requires a persistent runtime.
+`runtime-in-memory` exposes the currently bound process-local session. Durable session discovery across process restarts requires a persistent runtime.
 
 ## Human Transcript
 
@@ -84,8 +83,7 @@ const toolCalls = toolCallsOf(log)
 
 `usageIn(log, turn)` sums the prompt tokens, completion tokens, and provider cost for one turn. The values come from its `ModelReturned` events.
 
-`treeUsageIn(log, turn)` adds the usage every sub-agent result reported, and a child reports its
-own tree usage, so the sum covers the whole delegation tree from one log.
+`treeUsageIn(log, turn)` adds the usage every sub-agent result reported, and a child reports its own tree usage, so the sum covers the whole delegation tree from one log.
 
 `toolCallsOf(log)` counts work-tool calls in any log span. It uses the budget rules, so `answer` and `request-budget` calls have zero tool cost.
 
@@ -95,8 +93,4 @@ Core defines a `Sink` port, and the in-memory runtime binds a no-op implementati
 
 ## Across Sessions
 
-A swarm is a set of session logs. The [host](orchestration.md#session-host) exposes them:
-`h.sessions` lists the addresses it serves and `h.log(address)` reads one session's evidence.
-Each inbound head's `origin` names the session, turn, and call that sent it, so the delegation
-tree is a projection over the set of logs, and every single-session view on this page applies per
-session.
+A swarm is a set of session logs. The [host](orchestration.md#session-host) exposes them: `h.sessions` lists the addresses it serves and `h.log(address)` reads one session's evidence. Each inbound head's `origin` names the session, turn, and call that sent it, so the delegation tree is a projection over the set of logs, and every single-session view on this page applies per session.

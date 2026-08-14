@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+# Prose rules cost milliseconds to check, so they run before the commit message is written rather
+# than at push time, where the whole gate runs. A commit that touches no markdown skips the check,
+# so a code-only commit stays instant.
+if git diff --cached --name-only --diff-filter=ACM | grep -q '\.md$'; then
+  unset $(git rev-parse --local-env-vars)
+  bun run gate --only=lint:docs
+fi

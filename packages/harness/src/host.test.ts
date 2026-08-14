@@ -230,4 +230,15 @@ describe("host", () => {
     expect(terminal.type).toBe("TurnFailed")
     expect(String(terminal.error)).toContain('no program at "agent:ghost"')
   })
+
+  test("an inherited name is not a program", async () => {
+    // A spawn pattern lets a model choose the address, and every plain object answers to
+    // `constructor` and `toString`. Resolving one would call it as a program factory.
+    const h = host({ programs: {} })
+    for (const address of ["constructor", "toString", "valueOf", "hasOwnProperty"]) {
+      const terminal = await Effect.runPromise(h.call(address, { id: "m-1", text: "hi" }))
+      expect(terminal.type).toBe("TurnFailed")
+      expect(String(terminal.error)).toContain(`no program at "${address}"`)
+    }
+  })
 })

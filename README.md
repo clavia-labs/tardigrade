@@ -13,9 +13,7 @@ bun add effect@4.0.0-rc.108
 bun add --trust "git+ssh://git@github.com/clavia-inc/flamework.git#<commit>"
 ```
 
-Build output is generated from the pinned source during installation and is not committed. Bun
-requires `--trust` because Git dependencies cannot run lifecycle scripts without the consumer's
-explicit permission.
+Build output is generated from the pinned source during installation and is not committed. Bun requires `--trust` because Git dependencies cannot run lifecycle scripts without the consumer's explicit permission.
 
 The root export is the core package. The other packages use subpath exports:
 
@@ -79,6 +77,7 @@ if (result.kind === "completed") console.log(result.output)
 - `AgentProgram` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit program id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
 - `callAgent()`, `subagentTool()`, and `host()` enable multi-agent systems without imposing a planner or topology. Origin and usage cross the session boundary, so provenance and cost trees are derived from logs.
+- `flamecast-core/codemode` is optional. It lets the model write a script over capabilities the harness developer chose, and fan-out becomes `Promise.all`.
 - `flamecast-core/evolve` supplies candidates, observations, cost tracking, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. Callers provide costed mutation and evaluation policy.
 
 ## Public Imports
@@ -86,7 +85,8 @@ if (result.kind === "completed") console.log(result.output)
 | Import | Purpose |
 | --- | --- |
 | `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
-| `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
+| `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, compaction, delegation, and session hosting |
+| `flamecast-core/codemode` | Capabilities, the sandbox port, and the tool that runs model-written scripts |
 | `flamecast-core/evolve` | Candidates, finite observations, costed callbacks, forked rollouts, scoring, Pareto selection, GEPA search, and PopuLoRA co-evolution |
 | `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
 

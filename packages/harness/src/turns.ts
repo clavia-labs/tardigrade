@@ -94,22 +94,25 @@ export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
       .map((event) => usageOf(event.usage))
   )
 
-// A tool result that came back from another agent: it names the agent and carries usage.
-const subagentUsage = (event: Event): Usage | undefined => {
+// A tool result that reports what it spent. A sub-agent reports its own tree usage, and so does a
+// tool that reached a model by another route, such as a script that delegated inside a sandbox.
+// Reporting usage is the whole contract: a tool that reports it is counted, and one that does not
+// spend has nothing to report.
+const reportedUsage = (event: Event): Usage | undefined => {
   if (event.type !== "ToolReturned") return undefined
-  const result = event.result as { readonly agent?: unknown; readonly usage?: unknown } | undefined
-  if (typeof result?.agent !== "string" || result.usage === undefined) return undefined
+  const result = event.result as { readonly usage?: unknown } | undefined
+  if (result === null || typeof result !== "object" || result.usage === undefined) return undefined
   return usageOf(result.usage)
 }
 
-// What one turn spent including every agent it called. A sub-agent result reports the child's own
-// tree usage, so the sum is inclusive over the whole delegation tree without reading child logs.
+// What one turn spent including everything it reached. The sum is inclusive over the whole
+// delegation tree without reading another session's log.
 export const treeUsageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   summed([
     usageIn(log, turn),
     ...log
       .filter((event) => stampOf(event) === turn)
-      .map(subagentUsage)
+      .map(reportedUsage)
       .filter((usage): usage is Usage => usage !== undefined)
   ])
 

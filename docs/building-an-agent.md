@@ -191,14 +191,21 @@ const h = host({
 const terminal = await Effect.runPromise(h.call("agent:supervisor", { id: "m-1", text: "go" }))
 ```
 
-Each program picks its own model through its `inference` module. The tool result carries the
-child's output and inclusive usage, and the child's log records who asked through `origin`.
+Each program picks its own model through its `inference` module. The tool result carries the child's output and inclusive usage, and the child's log records who asked through `origin`.
 
-Code can delegate without a model in the loop through `callAgent(address, message)`, and several
-concurrent calls joined by `await` are a fan-out. For long-running work, send through
-`Router.deliver` and set `replyTo` on the inbound message; the reply arrives as a new message
-stamped with `origin`, `outcome`, and `usage`. [Orchestration](orchestration.md) covers the
-design.
+Code can delegate without a model in the loop through `callAgent(address, message)`, and several concurrent calls joined by `await` are a fan-out. For long-running work, send through `Router.deliver` and set `replyTo` on the inbound message; the reply arrives as a new message stamped with `origin`, `outcome`, and `usage`. [Orchestration](orchestration.md) covers the design.
+
+## Let the Model Write the Orchestration
+
+```ts
+import { agents, codemode } from "flamecast-core/codemode"
+
+const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
+
+const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
+```
+
+The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a host through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.
 
 ## Test Inference
 

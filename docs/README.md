@@ -12,6 +12,7 @@ flowchart TD
   A --> E[Events]
   A --> R[Runtimes]
   A --> Or[Orchestration]
+  Or --> Cm[Code mode]
   A --> O[Observability]
   O --> V[Evolution]
   P[Prior art] --> A
@@ -24,8 +25,9 @@ flowchart TD
 5. [Events](events.md) owns the event alphabet and dedup rules.
 6. [Runtimes](runtimes.md) owns the platform port contract and binding status.
 7. [Orchestration](orchestration.md) covers delegation, the session host, and swarm inspection.
-8. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
-9. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
-10. [Prior art](prior-art.md) records the external systems and research that informed the design.
+8. [Code mode](codemode.md) covers capabilities, the sandbox port, and scripts that delegate.
+9. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.
+10. [Evolution](evolution.md) covers code candidates, finite equivalence, evaluation, and search integration.
+11. [Prior art](prior-art.md) records the external systems and research that informed the design.
 
 The repository [README](../README.md) is the package-level entry point.
