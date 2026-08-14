@@ -11,7 +11,7 @@ bun install
 bun run setup
 ```
 
-`bun run setup` points git at the tracked hooks directory (`git config core.hooksPath .githooks`). The `pre-push` hook runs the same gate as CI. Use narrow gate commands while you iterate. The hook catches local failures before the remote round trip. `git push --no-verify` bypasses the hook for exceptional workflows.
+`bun run setup` points git at the tracked hooks directory (`git config core.hooksPath .githooks`). Two hooks run there. `pre-commit` checks the prose rules when a commit touches markdown, which takes milliseconds and catches a wrapped paragraph before you write the commit message. `pre-push` runs the same gate as CI, so a local failure surfaces before the remote round trip. Use narrow gate commands while you iterate. `--no-verify` bypasses either hook for exceptional workflows.
 
 ## Before you open a PR
 
