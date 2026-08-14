@@ -30,31 +30,22 @@ const runtime = InMemoryRuntime({
 })
 ```
 
-It uses arrays, maps, a semaphore, and an optional route function. Agents, routing, wake tracking,
-spill storage, replay, and concurrent sessions all run without external services. State lives for
-the lifetime of the layer and disappears with the process.
+It uses arrays, maps, a semaphore, and an optional route function. Agents, routing, wake tracking, spill storage, replay, and concurrent sessions all run without external services. State lives for the lifetime of the layer and disappears with the process.
 
 ## Planned Bindings
 
 `runtime-cf` and `runtime-celld` are design targets and have no package in the repository.
 
-- `runtime-cf` is the durable reference target. It can map a session to a Durable Object, wakes
-  to alarms, spill to R2, and routing to worker calls, with `wrangler` serving the local
-  development loop. On that platform the address itself names the session's host, so it replaces
-  the in-process [session host](orchestration.md#session-host) wholesale.
+- `runtime-cf` is the durable reference target. It can map a session to a Durable Object, wakes to alarms, spill to R2, and routing to worker calls, with `wrangler` serving the local development loop. On that platform the address itself names the session's host, so it replaces the in-process [session host](orchestration.md#session-host) wholesale.
 - A celld binding can map each session to a self-hosted cell with a local database and distributed lease.
 
 Durable read APIs, session listing, and cross-process replay depend on one of those bindings being implemented.
 
 ## Router Semantics
 
-`Router.call` waits for a terminal event and returns it to the caller, which is what an awaited
-delegation needs. `Router.deliver` is the asynchronous door: the receiving session appends the
-event and settles independently, and a later reply can target the caller through `replyTo`.
+`Router.call` waits for a terminal event and returns it to the caller, which is what an awaited delegation needs. `Router.deliver` is the asynchronous door: the receiving session appends the event and settles independently, and a later reply can target the caller through `replyTo`.
 
-A call cycle would deadlock on writer leases, so the harness [host](orchestration.md#session-host)
-refuses cycles and bounds depth before running the target. A runtime without the host owes its
-own guard or its route functions must stay acyclic.
+A call cycle would deadlock on writer leases, so the harness [host](orchestration.md#session-host) refuses cycles and bounds depth before running the target. A runtime without the host owes its own guard or its route functions must stay acyclic.
 
 ## Implementing a Runtime
 

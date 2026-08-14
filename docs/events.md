@@ -48,9 +48,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 
 Modules declare the event types they own. `agent.program.events` is the sorted union. `undeclaredEvents(program, log)` reports rows outside that declared alphabet.
 
-Cross-session delegation adds no event types. A delegation is a `ToolCalled` and `ToolReturned`
-in the parent log and a `MessageReceived` plus a terminal in the child log, tied together by
-`origin`. [Orchestration](orchestration.md#the-boundary-contract) covers the fields that cross.
+Cross-session delegation adds no event types. A delegation is a `ToolCalled` and `ToolReturned` in the parent log and a `MessageReceived` plus a terminal in the child log, tied together by `origin`. [Orchestration](orchestration.md#the-boundary-contract) covers the fields that cross.
 
 ## Custom Events
 
