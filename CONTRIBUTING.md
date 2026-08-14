@@ -32,7 +32,9 @@ any dependency change.
 
 ## PR expectations
 
-- Conventional Commits: `type(scope): message`. One commit is one conceptual move.
+- PR titles are validated in CI as Conventional Commits: `type(scope): message`. One commit is one
+  conceptual move. Squash merging uses that title as the default commit title. The
+  [validation workflow](.github/workflows/conventional-commits.yml) defines the accepted types.
 - The PR body is read cold. State the change and the reason, then one bullet per conceptual
   change, then how you verified it.
 - Read [AGENTS.md](AGENTS.md) first. It carries the house rules for TypeScript, the architecture
