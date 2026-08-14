@@ -43,7 +43,7 @@ Native tool calling is one interface policy. A module can instead expose code mo
 
 `budget(options)` projects tool spend, emits the wall event, withdraws spending tools, and optionally exposes a budget-request tool. The default budget and all wall text belong to this module.
 
-Budget control is event driven. A grant or denial can arrive later through replay or routing, which lets parked work resume without a waiting process.
+Budget control is event driven. A grant or denial can arrive later through replay or routing, which lets parked work resume without a waiting process. [Cost projections](observability.md#cost-projections) expose the tool spend.
 
 ## contract
 

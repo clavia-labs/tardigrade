@@ -55,13 +55,21 @@ const result = await rollout({
 
 The rollout checks the recording's program provenance, compares requests at recorded `ModelCalled` prefixes when the baseline matches, branches the candidate at the first divergence, and settles the live suffix. A provenance mismatch reuses no model calls.
 
-`result.replayed` counts reused model calls. `result.called` counts live candidate calls. `result.log` is the independent branch log.
+`result.replayed` counts reused model calls. `result.called` counts live candidate calls. `result.log` is the independent branch log. `result.cost` contains the cost of the live suffix.
 
 Changes to static instructions or tool descriptions usually diverge early. Changes to truncation can diverge later. Internal code changes that preserve every recorded request can reuse the full recording.
 
 ## Scoring and Selection
 
 `scoreOf`, `spendOf`, and `verdictsOf` project evaluation facts from logs. Evaluators decide how those values are produced and combined.
+
+`evolutionCostOf(...logs)` combines the harness [cost projections](observability.md#cost-projections). Its result contains prompt tokens, completion tokens, provider cost, and work-tool calls.
+
+It counts every supplied event. Pass only live log spans when a recording contains a replayed prefix.
+
+`costed(value, ...logs)` attaches this cost to a callback value. GEPA and PopuLoRA require a `Costed` result from each effectful callback.
+
+Each operation record contains its own cost. Each search result contains the sum for the complete optimization run. Replayed rollout prefixes add zero cost.
 
 `paretoArchive()` is an algorithm-neutral utility. It retains candidates that trade off across tasks.
 
@@ -76,14 +84,22 @@ const search = gepa({
   paretoExamples,
   minibatchSize: 3,
   maxMetricCalls: 150,
-  evaluate: (entry, example) => evaluateHarness(entry.value, example),
-  mutate: ({ parent, trials }) => rewriteHarness(parent, trials)
+  evaluate: (entry, example) =>
+    runEvaluation(entry.value, example).pipe(
+      Effect.map(({ score, log }) =>
+        costed({ score, trajectory: log }, log)
+      )
+    ),
+  mutate: ({ parent, trials }) =>
+    runMutation(parent, trials).pipe(
+      Effect.map(({ proposal, log }) => costed(proposal, log))
+    )
 })
 ```
 
-The evaluator returns a numeric score and an arbitrary trajectory. The trajectory can contain logs, grader feedback, compiler output, or other evidence.
+The evaluator returns a costed evaluation with a numeric score and an arbitrary trajectory. The trajectory can contain logs, grader feedback, compiler output, or other evidence.
 
-The mutation reads the parent and its feedback trials. It can replace the complete harness, including its modules, tools, machines, providers, and orchestration.
+The mutation reads the parent and its feedback trials. It returns a costed candidate and can replace the complete harness.
 
 The loop uses these steps:
 
@@ -95,11 +111,13 @@ The loop uses these steps:
 6. It accepts a candidate when its average minibatch score is higher than its parent's score.
 7. It scores each accepted candidate on every Pareto example.
 
-The result contains the full population, the final frontier, iteration records, and the candidate with the highest Pareto average. GEPA records the selected parent on proposals that omit `parent`.
+The result contains the population, frontier, iteration records, total cost, and candidate with the highest Pareto average. Each iteration contains its combined cost.
+
+GEPA records the selected parent on proposals that omit `parent`. Each population entry records the cost of its Pareto evaluation.
 
 `maxMetricCalls` counts candidate-example evaluations. The loop starts an iteration when the remaining budget can score an accepted child on the full Pareto set.
 
-The mutation can return `undefined` for an invalid construction. This permits compilation and runtime validation before candidate evaluation.
+The mutation can return `costed(undefined, mutationLog)` for an invalid construction. This records the mutation cost and prevents candidate evaluation.
 
 ## PopuLoRA Search
 
@@ -116,12 +134,14 @@ const search = populora({
   cullFraction: 0.25,
   runMatch: ({ teacher, student }) =>
     evaluatePair(teacher.candidate.value, student.candidate.value),
-  evolveTeacher: (context) => rewriteTeacherHarness(context),
-  evolveStudent: (context) => rewriteStudentHarness(context)
+  evolveTeacher: (context) => evolveTeacherHarness(context),
+  evolveStudent: (context) => evolveStudentHarness(context)
 })
 ```
 
-The caller runs teacher generation, student attempts, and verification inside `runMatch`. It returns one `PopuloraTrial` for each generated problem. A trial contains verifier validity, student outcomes, and arbitrary evidence for later evolution. An invalid trial has no student outcomes. A valid trial has at least one outcome.
+The caller runs teacher generation, student attempts, and verification inside `runMatch`. It returns a costed array with one trial for each generated problem.
+
+A trial contains verifier validity, student outcomes, and evidence for later evolution. An invalid trial has no student outcomes. A valid trial has outcomes.
 
 The loop applies the paper's rewards:
 
@@ -141,9 +161,13 @@ Each search step follows these phases:
 5. At each evolution interval, the loop ranks each role by `mu - confidence * sigma`.
 6. The loop replaces the lowest-ranked fraction through a mutation or crossover callback.
 
-A mutation receives one top-ranked parent. A crossover receives two distinct top-ranked parents. Both callbacks receive the replaced member and all matches since the last evolution step. They can rewrite modules, tools, machines, providers, source files, and orchestration.
+A mutation receives one top-ranked parent. A crossover receives two distinct top-ranked parents. Both callbacks receive the replaced member and recent matches.
 
-A callback can return `undefined` when it cannot construct a valid child. A new child starts with the configured initial TrueSkill rating. `PopuloraMember.parents` records every parent, while `Candidate.parent` records the primary parent.
+Each callback returns a costed candidate. The candidate can rewrite modules, tools, machines, providers, source files, and orchestration.
+
+A callback can return a costed `undefined` value when it cannot construct a child. The loop records this cost and keeps the replaced member.
+
+A new child starts with the configured initial TrueSkill rating. `PopuloraMember.parents` records every parent. `Candidate.parent` records the primary parent.
 
 The rating options use standard TrueSkill defaults. These include `mu = 25`, `sigma = 25 / 3`, `beta = 25 / 6`, `tau = 25 / 300`, and a draw probability of `0.1`. The lower-confidence multiplier defaults to `3`. `crossoverRate` defaults to `0.5`.
 

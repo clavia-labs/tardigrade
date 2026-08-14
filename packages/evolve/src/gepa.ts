@@ -1,5 +1,10 @@
 import { Effect } from "effect"
 import { candidate, type Candidate } from "./candidate"
+import {
+  sumEvolutionCosts,
+  type Costed,
+  type EvolutionCost
+} from "./cost"
 import type { Scores } from "./pareto"
 
 export interface GepaExample<Value> {
@@ -15,6 +20,7 @@ export interface GepaEvaluation<Trajectory = unknown> {
 export interface GepaTrial<Example, Evaluation extends GepaEvaluation> {
   readonly example: GepaExample<Example>
   readonly evaluation: Evaluation
+  readonly cost: EvolutionCost
 }
 
 export interface GepaMutationContext<Value, Example, Evaluation extends GepaEvaluation> {
@@ -27,6 +33,7 @@ export interface GepaPopulationEntry<Value> {
   readonly candidate: Candidate<Value>
   readonly scores: Scores
   readonly average: number
+  readonly cost: EvolutionCost
 }
 
 export interface GepaIteration {
@@ -37,6 +44,7 @@ export interface GepaIteration {
   readonly proposal?: string
   readonly proposalAverage?: number
   readonly accepted: boolean
+  readonly cost: EvolutionCost
 }
 
 export interface GepaResult<Value> {
@@ -45,6 +53,7 @@ export interface GepaResult<Value> {
   readonly front: ReadonlyArray<GepaPopulationEntry<Value>>
   readonly iterations: ReadonlyArray<GepaIteration>
   readonly metricCalls: number
+  readonly cost: EvolutionCost
 }
 
 export interface GepaOptions<
@@ -64,10 +73,14 @@ export interface GepaOptions<
   readonly evaluate: (
     candidate: Candidate<Value>,
     example: GepaExample<Example>
-  ) => Effect.Effect<Evaluation, EvaluationError, EvaluationRequirements>
+  ) => Effect.Effect<Costed<Evaluation>, EvaluationError, EvaluationRequirements>
   readonly mutate: (
     context: GepaMutationContext<Value, Example, Evaluation>
-  ) => Effect.Effect<Candidate<Value> | undefined, MutationError, MutationRequirements>
+  ) => Effect.Effect<
+    Costed<Candidate<Value> | undefined>,
+    MutationError,
+    MutationRequirements
+  >
   readonly random?: () => number
 }
 
@@ -248,32 +261,38 @@ export const gepa = <
     ) =>
       Effect.gen(function* () {
         const trials: Array<GepaTrial<Example, Evaluation>> = []
+        const costs: Array<EvolutionCost> = []
         for (const example of examples) {
-          const evaluation = yield* options.evaluate(evaluated, example)
+          const evaluatedExample = yield* options.evaluate(evaluated, example)
+          const evaluation = evaluatedExample.value
           metricCalls += 1
           if (!Number.isFinite(evaluation.score)) {
             throw new Error(
               `GEPA evaluator returned a non-finite score for example "${example.id}"`
             )
           }
-          trials.push({ example, evaluation })
+          trials.push({ example, evaluation, cost: evaluatedExample.cost })
+          costs.push(evaluatedExample.cost)
         }
-        return trials
+        return { trials, cost: sumEvolutionCosts(costs) }
       })
 
     const scoreOnPareto = (evaluated: Candidate<Value>) =>
-      Effect.map(evaluate(evaluated, options.paretoExamples), (trials) => {
+      Effect.map(evaluate(evaluated, options.paretoExamples), ({ trials, cost }) => {
         const scores = Object.fromEntries(
           trials.map((trial) => [trial.example.id, trial.evaluation.score])
         )
         return {
           candidate: evaluated,
           scores,
-          average: averageOf(trials.map((trial) => trial.evaluation.score))
+          average: averageOf(trials.map((trial) => trial.evaluation.score)),
+          cost
         } satisfies GepaPopulationEntry<Value>
       })
 
-    const population: Array<GepaPopulationEntry<Value>> = [yield* scoreOnPareto(options.seed)]
+    const seed = yield* scoreOnPareto(options.seed)
+    let totalCost = seed.cost
+    const population: Array<GepaPopulationEntry<Value>> = [seed]
     const iterations: Array<GepaIteration> = []
     const exampleIds = options.paretoExamples.map((example) => example.id)
     const callsForAcceptableIteration =
@@ -283,23 +302,29 @@ export const gepa = <
       const iteration = iterations.length
       const parent = selectParent(population, exampleIds, random)
       const batch = sampleBatch(options.feedbackExamples, options.minibatchSize, random)
-      const parentTrials = yield* evaluate(parent.candidate, batch)
+      const parentEvaluation = yield* evaluate(parent.candidate, batch)
+      const parentTrials = parentEvaluation.trials
       const parentAverage = averageOf(
         parentTrials.map((trial) => trial.evaluation.score)
       )
-      const proposed = yield* options.mutate({
+      const mutation = yield* options.mutate({
         iteration,
         parent: parent.candidate,
         trials: parentTrials
       })
+      const proposed = mutation.value
+      const iterationCosts: Array<EvolutionCost> = [parentEvaluation.cost, mutation.cost]
 
       if (proposed === undefined) {
+        const cost = sumEvolutionCosts(iterationCosts)
+        totalCost = sumEvolutionCosts([totalCost, cost])
         iterations.push({
           iteration,
           parent: parent.candidate.id,
           batch: batch.map((example) => example.id),
           parentAverage,
-          accepted: false
+          accepted: false,
+          cost
         })
         continue
       }
@@ -308,12 +333,20 @@ export const gepa = <
       if (population.some((entry) => entry.candidate.id === proposal.id)) {
         throw new Error(`GEPA proposal id "${proposal.id}" already exists in the population`)
       }
-      const proposalTrials = yield* evaluate(proposal, batch)
+      const proposalEvaluation = yield* evaluate(proposal, batch)
+      iterationCosts.push(proposalEvaluation.cost)
+      const proposalTrials = proposalEvaluation.trials
       const proposalAverage = averageOf(
         proposalTrials.map((trial) => trial.evaluation.score)
       )
       const accepted = proposalAverage > parentAverage
-      if (accepted) population.push(yield* scoreOnPareto(proposal))
+      if (accepted) {
+        const entry = yield* scoreOnPareto(proposal)
+        population.push(entry)
+        iterationCosts.push(entry.cost)
+      }
+      const cost = sumEvolutionCosts(iterationCosts)
+      totalCost = sumEvolutionCosts([totalCost, cost])
       iterations.push({
         iteration,
         parent: parent.candidate.id,
@@ -321,7 +354,8 @@ export const gepa = <
         parentAverage,
         proposal: proposal.id,
         proposalAverage,
-        accepted
+        accepted,
+        cost
       })
     }
 
@@ -333,7 +367,8 @@ export const gepa = <
       population,
       front: frontOf(population, exampleIds),
       iterations,
-      metricCalls
+      metricCalls,
+      cost: totalCost
     }
     return result
   })

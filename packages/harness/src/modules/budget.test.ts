@@ -7,7 +7,14 @@ import { inferWith, type Action, type ModelRequest, type NativeTool } from "../i
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { defaultPack } from "../pack"
-import { budgetOf, budgetPhase, budgetSpent, canRequestBudget, usedOf } from "./budget"
+import {
+  budgetOf,
+  budgetPhase,
+  budgetSpent,
+  canRequestBudget,
+  toolCallsOf,
+  usedOf
+} from "./budget"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
@@ -73,6 +80,18 @@ describe("the budget projections", () => {
   test("only work draws the budget down", () => {
     const log = [head(), called("c-1"), called("c-2", "answer"), called("c-3", "request-budget")]
     expect(usedOf(log)).toBe(1)
+  })
+
+  test("work can be counted across turns", () => {
+    const log: ReadonlyArray<Event> = [
+      head(),
+      called("c-1"),
+      { type: "TurnCompleted", turn: "m-1", output: "done", at: 3 },
+      { type: "MessageReceived", id: "m-2", text: "next", at: 4 },
+      { type: "ToolCalled", turn: "m-2", callId: "c-2", name: "lookup_invoice", arguments: {}, at: 5 },
+      { type: "ToolCalled", turn: "m-2", callId: "c-3", name: "answer", arguments: {}, at: 6 }
+    ]
+    expect(toolCallsOf(log)).toBe(2)
   })
 
   test("the phase is scoped to the turn, so an earlier wall does not leak", () => {
