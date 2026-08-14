@@ -23,7 +23,7 @@ The root export is the core package. The other packages use subpath exports:
 import { EventLog } from "flamecast-core"
 import { createAgent, inference } from "flamecast-core/harness"
 import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
-import { candidate, gepa, rollout } from "flamecast-core/evolve"
+import { candidate, gepa, populora, rollout } from "flamecast-core/evolve"
 ```
 
 ## Quick Start
@@ -79,7 +79,7 @@ if (result.kind === "completed") console.log(result.output)
 - `AgentProgram` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit program id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
 - `Router` and `agentNativeTool()` enable multi-agent systems without imposing a planner or topology.
-- `flamecast-core/evolve` supplies candidates, observations, rollouts, scoring, Pareto utilities, and a GEPA search loop. Callers provide mutation and evaluation policy.
+- `flamecast-core/evolve` supplies candidates, observations, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. Callers provide mutation and evaluation policy.
 
 ## Public Imports
 
@@ -87,7 +87,7 @@ if (result.kind === "completed") console.log(result.output)
 | --- | --- |
 | `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
 | `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
-| `flamecast-core/evolve` | Candidates, finite observations, forked rollouts, scoring, Pareto selection, and GEPA search |
+| `flamecast-core/evolve` | Candidates, finite observations, forked rollouts, scoring, Pareto selection, GEPA search, and PopuLoRA co-evolution |
 | `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
 
 The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.

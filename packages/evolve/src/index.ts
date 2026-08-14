@@ -24,6 +24,27 @@ export {
   type ProgramObservation
 } from "./observe"
 export {
+  populora,
+  populoraConservativeScore,
+  populoraRewards,
+  populoraWinProbability,
+  type PopuloraEvolution,
+  type PopuloraEvolutionContext,
+  type PopuloraMatch,
+  type PopuloraMatchContext,
+  type PopuloraMatchOutcome,
+  type PopuloraMember,
+  type PopuloraOperator,
+  type PopuloraOptions,
+  type PopuloraRating,
+  type PopuloraRatingOptions,
+  type PopuloraResult,
+  type PopuloraRewards,
+  type PopuloraRole,
+  type PopuloraSolveOutcome,
+  type PopuloraTrial
+} from "./populora"
+export {
   divergence,
   rollout,
   type Divergence,
