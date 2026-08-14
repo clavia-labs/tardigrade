@@ -97,10 +97,16 @@ export const host = <R = never>(options: HostOptions<R>): Host => {
 
   // Exact address first, then the longest `prefix/*` pattern. A factory builds the program once
   // per address, so a spawned session keeps one program identity for its lifetime.
+  //
+  // The exact lookup asks for an own property. A plain object inherits `constructor` and `toString`,
+  // and a spawn pattern lets a model choose the address, so a plain index would resolve those names
+  // to inherited functions and call one as a factory.
   const programOf = (address: string): HostedAgent<R> | undefined => {
     const built = agents.get(address)
     if (built !== undefined) return built
-    const exact = options.programs[address]
+    const exact = Object.hasOwn(options.programs, address)
+      ? options.programs[address]
+      : undefined
     const entry =
       exact ??
       Object.entries(options.programs)
