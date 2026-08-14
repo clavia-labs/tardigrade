@@ -167,20 +167,38 @@ Leaving out `tenantSource` fails tuple type-checking and runtime validation.
 ## Delegate to Another Agent
 
 ```ts
-import { agentNativeTool, defaultPack } from "flamecast-core/harness"
-
-const askResearcher = agentNativeTool({
-  name: "ask_researcher",
-  description: "Ask the research agent for supporting evidence.",
-  address: "agent:research"
-})
+import { createAgent, defaultPack, host, subagentTool } from "flamecast-core/harness"
 
 const supervisor = createAgent({
-  modules: defaultPack({ nativeTools: [askResearcher] })
+  modules: defaultPack({
+    nativeTools: [
+      subagentTool({
+        name: "ask_researcher",
+        description: "Ask the research agent for supporting evidence.",
+        address: "agent:research"
+      })
+    ]
+  })
 })
+
+const h = host({
+  programs: {
+    "agent:supervisor": supervisor,
+    "agent:research": researcher
+  }
+})
+
+const terminal = await Effect.runPromise(h.call("agent:supervisor", { id: "m-1", text: "go" }))
 ```
 
-The runtime decides how `agent:research` resolves. For long-running work, send through `Router.deliver` and set `replyTo` on the inbound message.
+Each program picks its own model through its `inference` module. The tool result carries the
+child's output and inclusive usage, and the child's log records who asked through `origin`.
+
+Code can delegate without a model in the loop through `callAgent(address, message)`, and several
+concurrent calls joined by `await` are a fan-out. For long-running work, send through
+`Router.deliver` and set `replyTo` on the inbound message; the reply arrives as a new message
+stamped with `origin`, `outcome`, and `usage`. [Orchestration](orchestration.md) covers the
+design.
 
 ## Test Inference
 

@@ -124,6 +124,16 @@ type ValidModules<Modules extends readonly unknown[]> =
       : { readonly duplicateModuleIds: DuplicateModuleIds<Modules> }
     : { readonly missingModuleDependencies: ServiceKey<MissingDependencies<Modules>> }
 
+// Where a cross-session message came from: the sending session, and, when the send happened while
+// serving a turn, the turn and the tool call that asked. It is the one carried provenance fact.
+// Everything else about a swarm, the delegation tree, ancestry, blast radius, is derived by
+// walking logs through these fields.
+export interface MessageOrigin {
+  readonly session: string
+  readonly turn?: string
+  readonly call?: string
+}
+
 export interface InboundMessage {
   readonly id: string
   readonly text: string
@@ -131,6 +141,11 @@ export interface InboundMessage {
   readonly budget?: number
   readonly escalatable?: boolean
   readonly replyTo?: string
+  readonly origin?: MessageOrigin
+  // A reply from another session states how that session's turn ended and what it spent. Both
+  // ride the message so the receiver attributes and costs the exchange from its own log alone.
+  readonly outcome?: "completed" | "failed"
+  readonly usage?: Usage
 }
 
 export type TurnOutcome = CallResult | { readonly kind: "open" }
@@ -174,7 +189,7 @@ export const undeclaredEvents = (
     .filter((type) => !program.events.includes(type))
     .sort()
 
-const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
+export const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
   const rows: Array<Event> = []
   const keys = new Set<string>()
   const put = (events: ReadonlyArray<Event>) => {
@@ -203,6 +218,9 @@ const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at
   ...(message.budget === undefined ? {} : { budget: message.budget }),
   ...(message.escalatable === undefined ? {} : { escalatable: message.escalatable }),
   ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo }),
+  ...(message.origin === undefined ? {} : { origin: message.origin }),
+  ...(message.outcome === undefined ? {} : { outcome: message.outcome }),
+  ...(message.usage === undefined ? {} : { usage: message.usage }),
   at
 })
 

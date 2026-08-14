@@ -78,7 +78,7 @@ if (result.kind === "completed") console.log(result.output)
 - Static instructions form the cache-friendly system prefix. Conditional nudges are appended near the request tail by default.
 - `AgentProgram` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit program id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
-- `Router` and `agentNativeTool()` enable multi-agent systems without imposing a planner or topology.
+- `callAgent()`, `subagentTool()`, and `host()` enable multi-agent systems without imposing a planner or topology. Origin and usage cross the session boundary, so provenance and cost trees are derived from logs.
 - `flamecast-core/evolve` supplies candidates, observations, cost tracking, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. Callers provide costed mutation and evaluation policy.
 
 ## Public Imports
