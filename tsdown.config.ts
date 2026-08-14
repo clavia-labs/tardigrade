@@ -12,7 +12,7 @@ export default {
   entry: {
     core: "packages/core/src/index.ts",
     harness: "packages/harness/src/index.ts",
-    "runtime-memory": "packages/runtime-memory/src/index.ts",
+    "runtime-in-memory": "packages/runtime-in-memory/src/index.ts",
     evolve: "packages/evolve/src/index.ts"
   },
   format: "esm",

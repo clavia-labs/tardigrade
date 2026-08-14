@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { Infer, inferWith, type Action, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
 import { createAgent, type AgentServices } from "./module"
@@ -36,7 +36,7 @@ const scripted = (actions: ReadonlyArray<Action>) => {
 
 const run = <A>(program: Effect.Effect<A, never, AgentServices>, model: Layer.Layer<Infer>) =>
   Effect.runPromise(
-    Effect.provide(program, Layer.merge(MemoryRuntime({ keyOf, session: "user-42" }), model))
+    Effect.provide(program, Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model))
   )
 
 describe("the key of an event the world supplies an id for", () => {

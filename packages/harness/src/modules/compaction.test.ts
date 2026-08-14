@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
 import { inferWith } from "../infer"
 import { keyOf } from "../keys"
@@ -33,7 +33,7 @@ const compacted = (options: MorphOptions, seed: ReadonlyArray<Envelope>) => {
         yield* agent.replay(seed)
         return yield* agent.log
       }),
-      Layer.merge(MemoryRuntime({ keyOf }), refuses)
+      Layer.merge(InMemoryRuntime({ keyOf }), refuses)
     )
   )
 }

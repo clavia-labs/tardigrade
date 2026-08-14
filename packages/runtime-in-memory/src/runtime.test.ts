@@ -17,7 +17,7 @@ import {
   type DedupKey,
   type Envelope
 } from "@flamecast/core"
-import { MemoryRuntime, type MemoryOptions } from "./runtime"
+import { InMemoryRuntime, type InMemoryOptions } from "./runtime"
 
 // The runtime owes eight ports and six log guarantees. These tests read each guarantee back through
 // the port, because a runtime is trusted for what the core can observe through the seam.
@@ -28,8 +28,8 @@ const ev = (type: string): Envelope => ({ type })
 // own, where an event states its own key, and the file says so once here.
 const inRuntime = <A>(
   program: Effect.Effect<A, never, EventLog | Writer | Wake | Placement | Spill | Sink | Router | Self>,
-  { keyOf = dedupKey, ...options }: Omit<MemoryOptions, "keyOf"> & { readonly keyOf?: DedupKey } = {}
-) => Effect.runPromise(Effect.provide(program, MemoryRuntime({ ...options, keyOf })))
+  { keyOf = dedupKey, ...options }: Omit<InMemoryOptions, "keyOf"> & { readonly keyOf?: DedupKey } = {}
+) => Effect.runPromise(Effect.provide(program, InMemoryRuntime({ ...options, keyOf })))
 
 const died = async (program: Effect.Effect<unknown, never, never>) => {
   const exit = await Effect.runPromiseExit(program)
@@ -271,7 +271,7 @@ describe("the other ports", () => {
         Effect.gen(function* () {
           return yield* (yield* Spill).get("spill:404")
         }),
-        MemoryRuntime({ keyOf: dedupKey })
+        InMemoryRuntime({ keyOf: dedupKey })
       )
     )
     expect(message).toContain('no spilled value at "spill:404"')
@@ -295,7 +295,7 @@ describe("the other ports", () => {
         Effect.gen(function* () {
           yield* (yield* Router).deliver("ag/other", ev("Ping"))
         }),
-        MemoryRuntime({ keyOf: dedupKey })
+        InMemoryRuntime({ keyOf: dedupKey })
       )
     )
     expect(message).toContain('no route to "ag/other" for "Ping"')
@@ -378,7 +378,7 @@ describe("machines over the runtime", () => {
         conformance({ machines: [answering], logs: [], keyOf: dedupKey }),
         // A store that derives no key from anything absorbs nothing, which is the failure the kit
         // exists to name.
-        MemoryRuntime({ keyOf: () => undefined })
+        InMemoryRuntime({ keyOf: () => undefined })
       )
     )
     expect(report.dedup.ok).toBe(false)

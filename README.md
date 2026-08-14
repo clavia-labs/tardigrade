@@ -22,7 +22,7 @@ The root export is the core package. The other packages use subpath exports:
 ```ts
 import { EventLog } from "flamecast-core"
 import { createAgent, inference } from "flamecast-core/harness"
-import { MemoryRuntime } from "flamecast-core/runtime-memory"
+import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 import { candidate, rollout } from "flamecast-core/evolve"
 ```
 
@@ -31,7 +31,7 @@ import { candidate, rollout } from "flamecast-core/evolve"
 ```ts
 import { Effect } from "effect"
 import { createAgent, defaultPack, keyOf, type NativeTool } from "flamecast-core/harness"
-import { MemoryRuntime } from "flamecast-core/runtime-memory"
+import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
 const lookupInvoice: NativeTool = {
   spec: {
@@ -62,7 +62,7 @@ const agent = createAgent({
 const result = await Effect.runPromise(
   Effect.provide(
     agent.turn({ id: "m-1", text: "Find the invoice for order 4182." }),
-    MemoryRuntime({ keyOf, session: "user-42" })
+    InMemoryRuntime({ keyOf, session: "user-42" })
   )
 )
 
@@ -88,7 +88,7 @@ if (result.kind === "completed") console.log(result.output)
 | `flamecast-core` | Envelopes, event logs, machines, ports, routing, and conformance |
 | `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
 | `flamecast-core/evolve` | Algorithm-neutral candidates, finite observations, forked rollouts, scoring, and Pareto selection |
-| `flamecast-core/runtime-memory` | In-process bindings for development and tests |
+| `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
 
 The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.
 

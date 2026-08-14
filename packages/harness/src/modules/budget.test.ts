@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Envelope } from "@flamecast/core"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { boundaryOf } from "../boundary"
 import { inferWith, type Action, type ModelRequest, type NativeTool } from "../infer"
 import { keyOf } from "../keys"
@@ -112,7 +112,7 @@ describe("the wall", () => {
           yield* agent.turn({ id: "m-1", text: "Find order 4182.", budget: 1 })
           return yield* agent.log
         }),
-        Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+        Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
       )
     )
 
@@ -145,7 +145,7 @@ describe("the wall", () => {
           yield* agent.turn({ id: "m-1", text: "Find order 4182.", budget: 1 })
           return yield* agent.log
         }),
-        Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+        Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
       )
     )
     const refused = log.filter((event) => event.type === "ToolReturned").at(-1)
@@ -168,7 +168,7 @@ describe("the escalation", () => {
       call("c-4"),
       { kind: "complete", output: "All three invoices are in.", usage }
     ])
-    const layer = Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+    const layer = Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
 
     const parked = await Effect.runPromise(
       Effect.provide(
@@ -237,7 +237,7 @@ describe("the escalation", () => {
       },
       { kind: "complete", output: "Here is what I have.", usage }
     ])
-    const layer = Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+    const layer = Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
 
     await Effect.runPromise(
       Effect.provide(
@@ -277,7 +277,7 @@ describe("the escalation", () => {
         usage
       }
     ])
-    const layer = Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+    const layer = Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
 
     const outcomes = await Effect.runPromise(
       Effect.provide(

@@ -1,5 +1,5 @@
 {
-  "name": "@flamecast/runtime-memory",
+  "name": "@flamecast/runtime-in-memory",
   "version": "0.0.0",
   "private": true,
   "type": "module",

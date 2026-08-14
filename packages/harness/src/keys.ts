@@ -5,7 +5,7 @@ import { dedupKey, type DedupKey, type Envelope } from "@flamecast/core"
 //
 // The policy lives here because the harness owns the alphabet: a store that held this table would
 // have to know `ToolReturned` and `RunFired`, and a store knows no domain. Bind a runtime with
-// `MemoryRuntime({ keyOf })` and hand the same function to the conformance kit, so the kit reads
+// `InMemoryRuntime({ keyOf })` and hand the same function to the conformance kit, so the kit reads
 // the log the way the store does.
 //
 // An event type absent from the table has no key and always lands. That is deliberate for a mark:

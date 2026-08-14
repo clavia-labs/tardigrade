@@ -8,7 +8,8 @@ The event log contains the evidence needed to understand a session. Derived view
 const log = await Effect.runPromise(Effect.provide(agent.log, runtime))
 ```
 
-`runtime-memory` exposes only the currently bound in-process session. Durable session discovery is waiting on a persistent runtime.
+`runtime-in-memory` exposes the currently bound process-local session. Durable session discovery
+across process restarts requires a persistent runtime.
 
 ## Human Transcript
 
@@ -73,4 +74,4 @@ Fork reads the bound session and creates the same independent branch shape.
 
 ## Telemetry
 
-Core defines a `Sink` port, and the memory runtime binds a no-op implementation. No harness path currently emits sink records. External telemetry can project the stored log until a sink-producing module or runtime integration is added.
+Core defines a `Sink` port, and the in-memory runtime binds a no-op implementation. No harness path currently emits sink records. External telemetry can project the stored log until a sink-producing module or runtime integration is added.

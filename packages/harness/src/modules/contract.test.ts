@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { inferWith, type Action, type ModelRequest } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
@@ -53,7 +53,7 @@ const runTurn = (model: ReturnType<typeof scripted>) =>
         })
         return { result, log: yield* agent.log }
       }),
-      Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+      Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
     )
   )
 
@@ -163,7 +163,7 @@ describe("the contract in a turn", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         patient.turn({ id: "m-1", text: "Find it.", output: schema }),
-        Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+        Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
       )
     )
     expect(result).toMatchObject({
@@ -178,7 +178,7 @@ describe("the contract in a turn", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         agent.turn({ id: "m-1", text: "What are your hours?" }),
-        Layer.merge(MemoryRuntime({ keyOf }), model.layer)
+        Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
       )
     )
     expect(result).toMatchObject({ kind: "completed", output: "We are open 9 to 5." })

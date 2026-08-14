@@ -17,6 +17,6 @@
     "effect": "4.0.0-rc.108"
   },
   "devDependencies": {
-    "@flamecast/runtime-memory": "workspace:*"
+    "@flamecast/runtime-in-memory": "workspace:*"
   }
 }

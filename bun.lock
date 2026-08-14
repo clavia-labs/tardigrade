@@ -33,7 +33,7 @@
         "effect": "4.0.0-rc.108",
       },
       "devDependencies": {
-        "@flamecast/runtime-memory": "workspace:*",
+        "@flamecast/runtime-in-memory": "workspace:*",
       },
     },
     "packages/harness": {
@@ -44,11 +44,11 @@
         "effect": "4.0.0-rc.108",
       },
       "devDependencies": {
-        "@flamecast/runtime-memory": "workspace:*",
+        "@flamecast/runtime-in-memory": "workspace:*",
       },
     },
-    "packages/runtime-memory": {
-      "name": "@flamecast/runtime-memory",
+    "packages/runtime-in-memory": {
+      "name": "@flamecast/runtime-in-memory",
       "version": "0.0.0",
       "dependencies": {
         "@flamecast/core": "workspace:*",
@@ -69,7 +69,7 @@
 
     "@flamecast/harness": ["@flamecast/harness@workspace:packages/harness"],
 
-    "@flamecast/runtime-memory": ["@flamecast/runtime-memory@workspace:packages/runtime-memory"],
+    "@flamecast/runtime-in-memory": ["@flamecast/runtime-in-memory@workspace:packages/runtime-in-memory"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ=="],
 

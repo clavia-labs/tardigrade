@@ -13,7 +13,7 @@ import {
   type ModelRequest,
   type NativeTool
 } from "@flamecast/harness"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { divergence, rollout } from "./rollout"
 
 const scripted = (actions: ReadonlyArray<Action>) => {
@@ -84,7 +84,7 @@ const run = <A>(
     Effect.provide(
       program,
       Layer.merge(
-        MemoryRuntime({ keyOf, session: "user-42", ...(seed === undefined ? {} : { seed }) }),
+        InMemoryRuntime({ keyOf, session: "user-42", ...(seed === undefined ? {} : { seed }) }),
         model
       )
     )

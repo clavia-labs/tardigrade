@@ -11,7 +11,7 @@ import type { Envelope } from "./envelope"
 // is what makes compaction sound, and idempotence is what makes a crashed turn safe to re-drive.
 //
 // The log these tests settle over is a small array binding declared here rather than imported from
-// @flamecast/runtime-memory. The dependency runs one way: a runtime imports the core, so the core's
+// @flamecast/runtime-in-memory. The dependency runs one way: a runtime imports the core, so the core's
 // own tests can not import a runtime. The binding below is the shortest honest store that keeps the
 // six guarantees the port asks for.
 const testLog = (seed: ReadonlyArray<Envelope> = []) => {

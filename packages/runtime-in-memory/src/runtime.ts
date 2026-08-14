@@ -11,19 +11,17 @@ import {
   type DedupKey,
   type Envelope
 } from "@flamecast/core"
-import { memoryEventLog } from "./event-log"
+import { inMemoryEventLog } from "./event-log"
 
-// The memory runtime: every port bound in one process, with arrays and maps behind them.
-//
-// It exists so the rest of the framework is testable with no files, no keys, and no cloud account.
-// A runtime that binds the same eight ports against a real platform is proved by the same
-// conformance kit that proves this one, and that is what portability means here.
+// The complete process-local runtime: every port is bound with arrays, maps, and a semaphore.
+// Its state remains available for the lifetime of the layer and requires no external services.
+// Durable runtimes preserve the same contracts across processes and restarts.
 //
 // One layer serves one session, because a session is the unit of concurrency and the unit of
 // storage. Two programs provided the same layer value share one log, which is what makes a crash
 // and resume test possible: build the layer, settle, drop the program, settle again.
 
-export interface MemoryOptions {
+export interface InMemoryOptions {
   // The dedup key policy the store absorbs redeliveries on, and the one required option.
   //
   // Guarantee 5 of the log port is only real once a policy names the key, and the policy belongs to
@@ -42,9 +40,9 @@ export interface MemoryOptions {
   readonly route?: (address: string, event: Envelope) => Effect.Effect<Envelope>
 }
 
-export const MemoryRuntime = (options: MemoryOptions) => {
-  const session = options.session ?? "memory"
-  const log = memoryEventLog(options)
+export const InMemoryRuntime = (options: InMemoryOptions) => {
+  const session = options.session ?? "in-memory"
+  const log = inMemoryEventLog(options)
 
   // The single writer, per session address. A semaphore of one permit is the in-process form of the
   // lease a Postgres advisory lock or an S3 compare-and-swap gives across processes: a second
@@ -69,7 +67,7 @@ export const MemoryRuntime = (options: MemoryOptions) => {
   const routed = (address: string, event: Envelope) =>
     Effect.suspend(() =>
       options.route?.(address, event) ??
-        Effect.die(new Error(`memory runtime: no route to "${address}" for "${event.type}"`))
+        Effect.die(new Error(`in-memory runtime: no route to "${address}" for "${event.type}"`))
     )
 
   return Layer.mergeAll(
@@ -99,11 +97,11 @@ export const MemoryRuntime = (options: MemoryOptions) => {
         Effect.suspend(() => {
           const value = blobs.get(ref)
           return value === undefined
-            ? Effect.die(new Error(`memory runtime: no spilled value at "${ref}"`))
+            ? Effect.die(new Error(`in-memory runtime: no spilled value at "${ref}"`))
             : Effect.succeed(value)
         })
     }),
-    // Telemetry is optional and the stored log is complete without it, so the memory sink
+    // Telemetry is optional and the stored log is complete without it, so the in-memory sink
     // drops what it is given.
     Layer.succeed(Sink, { write: () => Effect.void }),
     Layer.succeed(Router, {

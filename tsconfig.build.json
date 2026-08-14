@@ -20,8 +20,8 @@
       "@flamecast/harness/*": [
         "./packages/harness/src/*"
       ],
-      "@flamecast/runtime-memory": [
-        "./packages/runtime-memory/src/index.ts"
+      "@flamecast/runtime-in-memory": [
+        "./packages/runtime-in-memory/src/index.ts"
       ]
     }
   },

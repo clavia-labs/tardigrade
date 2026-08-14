@@ -17,12 +17,12 @@ A runtime binds platform services. Agent modules and machines stay unchanged acr
 
 The harness turn path directly requires `EventLog`, `Writer`, `Wake`, `Router`, and `Self`. A complete runtime binds the full port set so modules can use the remaining capabilities without changing deployment wiring.
 
-## Memory Runtime
+## In-Memory Runtime
 
-`flamecast-core/runtime-memory` is the only implemented binding.
+`flamecast-core/runtime-in-memory` completely binds every runtime port for process-local sessions.
 
 ```ts
-const runtime = MemoryRuntime({
+const runtime = InMemoryRuntime({
   keyOf,
   session: "user-42",
   seed: recorded,
@@ -30,7 +30,9 @@ const runtime = MemoryRuntime({
 })
 ```
 
-It uses arrays, maps, a semaphore, and an optional route function. It is intended for tests, local experiments, and bounded in-process runs. Its data disappears with the process.
+It uses arrays, maps, a semaphore, and an optional route function. Agents, routing, wake tracking,
+spill storage, replay, and concurrent sessions all run without external services. State lives for
+the lifetime of the layer and disappears with the process.
 
 ## Planned Bindings
 

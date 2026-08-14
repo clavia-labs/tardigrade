@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Envelope } from "@flamecast/core"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { keyOf } from "../keys"
 import { agentNativeTool } from "./native-tools"
 
@@ -16,7 +16,7 @@ describe("agentNativeTool", () => {
     const result = await Effect.runPromise(
       Effect.provide(
         delegate.run({ message: "Find the refund policy." }),
-        MemoryRuntime({
+        InMemoryRuntime({
           keyOf,
           route: (address, event) => {
             routed.push({ address, event })
@@ -44,7 +44,7 @@ describe("agentNativeTool", () => {
       description: "Ask the research agent.",
       address: "agent:research"
     })
-    const layer = MemoryRuntime({
+    const layer = InMemoryRuntime({
       keyOf,
       route: (_, event) => {
         ids.push(String(event.id))
@@ -63,7 +63,7 @@ describe("agentNativeTool", () => {
       description: "Ask the research agent.",
       address: "agent:research"
     })
-    const layer = MemoryRuntime({
+    const layer = InMemoryRuntime({
       keyOf,
       route: (_, event) => {
         ids.push(String(event.id))

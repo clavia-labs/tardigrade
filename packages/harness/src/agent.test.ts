@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { conformance, type Envelope } from "@flamecast/core"
-import { MemoryRuntime } from "@flamecast/runtime-memory"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { Infer, inferWith, type Action, type ModelRequest, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
 import { createAgent, undeclaredEvents, type AgentServices } from "./module"
 import { defaultPack } from "./pack"
 import { inference } from "./modules/inference"
 
-// The end to end proof: the documented agents run against the memory runtime with a stub model, the
+// The end to end proof: the documented agents run against the in-memory runtime with a stub model, the
 // log is exactly the documented one, and a replay of that log calls nothing.
 
 const scripted = (actions: ReadonlyArray<Action>) => {
@@ -40,7 +40,7 @@ const run = <A>(
     Effect.provide(
       program,
       Layer.merge(
-        MemoryRuntime({ keyOf, session: "user-42", ...(seed === undefined ? {} : { seed }) }),
+        InMemoryRuntime({ keyOf, session: "user-42", ...(seed === undefined ? {} : { seed }) }),
         model
       )
     )

@@ -17,7 +17,7 @@ import type { DedupKey, Envelope } from "@flamecast/core"
 // 5. Dedup by key. A key that already landed absorbs its redelivery, inside one batch and across
 //    batches. An event with no key always lands, which is why a repeated mark stays as evidence.
 // 6. Watermark reads. `readFrom(seq)` returns the tail after `seq`.
-export const memoryEventLog = (options: {
+export const inMemoryEventLog = (options: {
   readonly seed?: ReadonlyArray<Envelope>
   readonly keyOf: DedupKey
 }) => {

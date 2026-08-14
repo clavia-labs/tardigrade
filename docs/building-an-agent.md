@@ -7,7 +7,7 @@ With `AI_GATEWAY_API_KEY` set, construct and invoke an agent in one file:
 ```ts
 import { Effect } from "effect"
 import { createAgent, inference, keyOf } from "flamecast-core/harness"
-import { MemoryRuntime } from "flamecast-core/runtime-memory"
+import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
 const agent = createAgent({
   modules: [
@@ -23,14 +23,14 @@ const result = await Effect.runPromise(
       id: "message-1",
       text: "Where can I find my latest invoice?"
     }),
-    MemoryRuntime({ keyOf, session: "user-42" })
+    InMemoryRuntime({ keyOf, session: "user-42" })
   )
 )
 
 if (result.kind === "completed") console.log(result.output)
 ```
 
-`agent.turn(message)` appends the message, settles the agent's machines, and returns the turn boundary. `MemoryRuntime` supplies storage, routing, and the other runtime ports for this process. `inference()` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
+`agent.turn(message)` appends the message, settles the agent's machines, and returns the turn boundary. `InMemoryRuntime` supplies storage, routing, and the other runtime ports for this process. `inference()` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
 
 ## Default Inference
 
