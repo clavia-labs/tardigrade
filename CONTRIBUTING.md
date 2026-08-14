@@ -13,8 +13,9 @@ bun run setup
 ```
 
 `bun run setup` points git at the tracked hooks directory (`git config core.hooksPath .githooks`).
-The `pre-push` hook is deliberately empty: CI is the gate of record, and a cheap push gets a PR to
-CI sooner.
+The `pre-push` hook runs the same gate as CI. Use narrow gate commands while you iterate. The hook
+catches local failures before the remote round trip. `git push --no-verify` bypasses the hook for
+exceptional workflows.
 
 ## Before you open a PR
 
@@ -24,7 +25,7 @@ bun run gate
 
 The gate runs lint (oxlint), typecheck (every package plus root tools), tests (`bun test` per
 package), and dead-code analysis (knip) in parallel. It must exit 0. Narrow it with
-`bun run gate --only=typecheck` while iterating, and run the whole thing before you push.
+`bun run gate --only=typecheck` while iterating. The pre-push hook runs the whole gate.
 
 CI runs `bun install --frozen-lockfile` and then the same `bun run gate`. There is no second list
 of checks to keep in sync, so a green gate locally is a green gate in CI. Commit `bun.lock` with

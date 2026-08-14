@@ -4,15 +4,35 @@ import { dirname, join, resolve, sep } from "node:path"
 
 const root = join(import.meta.dir, "..")
 const temporary = await mkdtemp(join(tmpdir(), "flamecast-package-"))
+const localGitEnvironment = Bun.spawnSync(["git", "rev-parse", "--local-env-vars"], {
+  cwd: root,
+  stdout: "pipe",
+  stderr: "inherit"
+})
+if (localGitEnvironment.exitCode !== 0) throw new Error("could not read the local Git environment")
+const environment = { ...process.env }
+for (const name of new TextDecoder().decode(localGitEnvironment.stdout).trim().split("\n")) {
+  if (name !== "") delete environment[name]
+}
 
 const run = async (command: ReadonlyArray<string>, cwd: string) => {
-  const process = Bun.spawn([...command], { cwd, stdout: "inherit", stderr: "inherit" })
+  const process = Bun.spawn([...command], {
+    cwd,
+    env: environment,
+    stdout: "inherit",
+    stderr: "inherit"
+  })
   const code = await process.exited
   if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`)
 }
 
 const outputOf = (command: ReadonlyArray<string>, cwd: string) => {
-  const process = Bun.spawnSync([...command], { cwd, stdout: "pipe", stderr: "inherit" })
+  const process = Bun.spawnSync([...command], {
+    cwd,
+    env: environment,
+    stdout: "pipe",
+    stderr: "inherit"
+  })
   if (process.exitCode !== 0) throw new Error(`${command.join(" ")} exited ${process.exitCode}`)
   return new TextDecoder().decode(process.stdout).trim()
 }
@@ -128,8 +148,7 @@ try {
   await withGitServer(served, async (url) => {
     await run(["bun", "add", "--trust", `${url}#package-smoke`], consumer)
     await run(["bun", "--bun", join(root, "node_modules/.bin/tsc"), "--noEmit"], consumer)
-    const result = Bun.spawnSync(["bun", "run", "index.ts"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
-    if (result.exitCode !== 0 || new TextDecoder().decode(result.stdout).trim() !== "true") {
+    if (outputOf(["bun", "run", "index.ts"], consumer) !== "true") {
       throw new Error("installed package did not execute successfully")
     }
   })
