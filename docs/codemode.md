@@ -60,7 +60,7 @@ A script is one call at the budget wall, so two limits keep it honest. `maxCalls
 
 ## Binding a Sandbox
 
-`inProcessSandbox()` returns a service value that runs source in this process with the host's globals reachable. It is an execution surface rather than a security boundary, and it suits development, tests, and source that is already trusted.
+`inProcessSandbox()` returns a service value that runs source in this process with the surrounding globals reachable. It is an execution surface rather than a security boundary, and it suits development, tests, and source that is already trusted.
 
 ```ts
 Layer.succeed(Sandbox, inProcessSandbox())
@@ -89,4 +89,4 @@ const invoices = capability({
 })
 ```
 
-A method returns an Effect, so it reaches services the same way a machine does. The requirements of every capability become the requirements of the tool, and the host or the runtime provides them.
+A method returns an Effect, so it reaches services the same way a machine does. The requirements of every capability become the requirements of the tool, and the runtime provides them through `services`.

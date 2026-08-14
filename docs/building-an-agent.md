@@ -210,7 +210,7 @@ const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
 const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
 ```
 
-The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a host through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.
+The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a runtime through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.
 
 ## Test Inference
 
