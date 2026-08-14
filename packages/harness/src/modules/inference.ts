@@ -63,7 +63,7 @@ const inferMachine = (
   giveUpAfter: number,
   repairAtMost: number
 ) =>
-  machine<EventLog, { readonly turn: string }>({
+  machine({
     id: "inference",
     initial: "idle",
     context: { turn: "" },
@@ -127,7 +127,7 @@ const inferMachine = (
     }
   })
 
-const replyMachine = machine<Router | Self>({
+const replyMachine = machine({
   id: "reply",
   view: replyView,
   initial: "idle",

@@ -40,6 +40,8 @@ Each state can define one work slot:
 
 `settle` repeatedly folds and runs ready work until the machine rests. `settleAll` reaches a fixpoint across a group of machines.
 
+State names are checked in two tiers, because a transition to a state that does not exist is silent otherwise: the fold lands on a name with no definition, later events fall through the tolerant read, and `settle` reads a missing state as resting. For a machine written by hand, the state names are inferred from the keys of the states record, so an undeclared `initial` or `target` fails to compile. For a machine that arrives as generated source, `machine()` repeats both checks over the values and throws at construction, before any log exists.
+
 Use a machine when behavior must append facts, wait for events, or perform effects. A pure projection that changes a request does not need a machine.
 
 ## Module

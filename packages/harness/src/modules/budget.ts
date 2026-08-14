@@ -126,11 +126,11 @@ const isEscalation = (log: ReadonlyArray<Event>): boolean =>
 // The escalation machine: record the ask, park, and answer the call when the parent decides. No
 // `ToolReturned` follows the ask, so the model loop rests and the turn is durably paused. A parent
 // reads the park through `boundaryOf` and delivers a grant or a denial, which wakes the turn.
-const escalationMachine = machine<never, Partial<Ask>>({
+const escalationMachine = machine({
   id: "escalation",
   view: turnView,
   initial: "idle",
-  context: {},
+  context: {} as Partial<Ask>,
   states: {
     idle: {
       on: {
