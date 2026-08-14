@@ -8,6 +8,9 @@
     "noEmit": false,
     "types": [],
     "paths": {
+      "@flamecast/codemode": [
+        "./packages/codemode/src/index.ts"
+      ],
       "@flamecast/core": [
         "./packages/core/src/index.ts"
       ],

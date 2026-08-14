@@ -35,7 +35,7 @@ Vercel AI Gateway is the default provider. The gateway reads `AI_GATEWAY_API_KEY
 
 `nativeTools(list)` implements the model provider's native tool-calling interface. It contributes schemas and a dispatch machine. A handler success or failure becomes a `ToolReturned` event, so the model can observe the outcome and replay can reuse it.
 
-Native tool calling is one interface policy. A module can instead expose code mode, MCP, textual commands, one generic RPC operation, or another protocol. Those alternatives can use their own request projection and machines without changing the event-log or module primitives.
+Native tool calling is one interface policy. MCP, textual commands, one generic RPC operation, or another protocol can use its own request projection and machines without changing the event-log or module primitives. [Code mode](codemode.md) is the policy that ships, in its own package.
 
 `subagentTool(options)` adapts `callAgent` to a `NativeTool`, so a model delegates to another agent through the same surface it already understands. [Orchestration](orchestration.md) covers the delegation surface.
 

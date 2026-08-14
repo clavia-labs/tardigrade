@@ -19,6 +19,10 @@
       "types": "./dist/harness.d.ts",
       "import": "./dist/harness.js"
     },
+    "./codemode": {
+      "types": "./dist/codemode.d.ts",
+      "import": "./dist/codemode.js"
+    },
     "./runtime-in-memory": {
       "types": "./dist/runtime-in-memory.d.ts",
       "import": "./dist/runtime-in-memory.js"

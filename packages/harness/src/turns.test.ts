@@ -1,6 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@flamecast/core"
-import { replyView, servedLog, transcript, turnHead, turnOf, turnView, usageIn } from "./turns"
+import {
+  replyView,
+  servedLog,
+  transcript,
+  treeUsageIn,
+  turnHead,
+  turnOf,
+  turnView,
+  usageIn
+} from "./turns"
 
 const message = (id: string, at: number): Event => ({ type: "MessageReceived", id, text: id, at })
 const stamped = (type: string, turn: string, at: number): Event => ({ type, turn, at })
@@ -150,6 +159,50 @@ describe("usageIn", () => {
       completionTokens: 0,
       costUsd: 0
     })
+  })
+})
+
+describe("treeUsageIn", () => {
+  const spent = (promptTokens: number, completionTokens: number, costUsd: number) => ({
+    promptTokens,
+    completionTokens,
+    costUsd
+  })
+
+  // Reporting usage is the whole contract. A sub-agent reports its own tree, and so does any other
+  // tool that reached a model, including a script that delegated from inside a sandbox.
+  const log: ReadonlyArray<Event> = [
+    message("m-1", 1),
+    { type: "ModelReturned", turn: "m-1", callId: "k-0", usage: spent(10, 5, 0.01), at: 2 },
+    {
+      type: "ToolReturned",
+      turn: "m-1",
+      callId: "c-1",
+      result: { agent: "worker/1", usage: spent(4, 2, 0.004) },
+      at: 3
+    },
+    {
+      type: "ToolReturned",
+      turn: "m-1",
+      callId: "c-2",
+      result: { value: "done", usage: spent(1, 1, 0.002) },
+      at: 4
+    },
+    { type: "ToolReturned", turn: "m-1", callId: "c-3", result: { rows: 12 }, at: 5 },
+    { type: "ToolReturned", turn: "m-1", callId: "c-4", result: null, at: 6 },
+    { type: "ModelReturned", turn: "m-2", callId: "k-0", usage: spent(999, 99, 9), at: 7 }
+  ]
+
+  test("folds in every tool result that reports spend", () => {
+    expect(treeUsageIn(log, "m-1")).toEqual(spent(15, 8, 0.016))
+  })
+
+  test("leaves a tool that spent nothing out of the total", () => {
+    expect(usageIn(log, "m-1")).toEqual(spent(10, 5, 0.01))
+  })
+
+  test("reads zero from a turn with nothing recorded", () => {
+    expect(treeUsageIn(log, "m-9")).toEqual(spent(0, 0, 0))
   })
 })
 

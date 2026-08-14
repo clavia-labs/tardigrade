@@ -1,4 +1,4 @@
-import { Effect, Semaphore } from "effect"
+import { Context, Effect, Semaphore } from "effect"
 import {
   EventLog,
   Router,
@@ -33,13 +33,17 @@ import { treeUsageIn } from "./turns"
 // durable object or a cell, and hosting is the platform's job. This one exists so a swarm runs in
 // one process with nothing bound but a `route`.
 
-// A program the host can serve: its requirements are the session services the host provides.
-export type HostedAgent = Agent<AgentServices, any>
+// A program the host can serve. The host binds the session services itself, and `R` names whatever
+// else the program's modules require, such as a sandbox or an application's own services.
+export type HostedAgent<R = never> = Agent<AgentServices | R, any>
 
-export interface HostOptions {
+export interface HostOptions<R = never> {
   readonly programs: Readonly<
-    Record<string, HostedAgent | ((address: string) => HostedAgent)>
+    Record<string, HostedAgent<R> | ((address: string) => HostedAgent<R>)>
   >
+  // What the hosted programs require beyond the session services. The host holds it as a value
+  // rather than a layer, because a router hop hands the target a context that is already built.
+  readonly services?: Context.Context<R>
   // The recursion bound. The chain is derived by walking heads through their origins, so the cap
   // needs no carried counter and an application cannot forget to decrement it.
   readonly maxDepth?: number
@@ -68,11 +72,12 @@ const messageOf = (event: Event): InboundMessage => ({
   ...(event.usage === undefined ? {} : { usage: usageOf(event.usage) })
 })
 
-export const host = (options: HostOptions): Host => {
+export const host = <R = never>(options: HostOptions<R>): Host => {
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH
+  const services = options.services ?? (Context.empty() as Context.Context<R>)
   const stores = new Map<string, EventLogStore>()
   const leases = new Map<string, Semaphore.Semaphore>()
-  const agents = new Map<string, HostedAgent>()
+  const agents = new Map<string, HostedAgent<R>>()
 
   const storeOf = (address: string): EventLogStore => {
     const held = stores.get(address)
@@ -92,10 +97,16 @@ export const host = (options: HostOptions): Host => {
 
   // Exact address first, then the longest `prefix/*` pattern. A factory builds the program once
   // per address, so a spawned session keeps one program identity for its lifetime.
-  const programOf = (address: string): HostedAgent | undefined => {
+  //
+  // The exact lookup asks for an own property. A plain object inherits `constructor` and `toString`,
+  // and a spawn pattern lets a model choose the address, so a plain index would resolve those names
+  // to inherited functions and call one as a factory.
+  const programOf = (address: string): HostedAgent<R> | undefined => {
     const built = agents.get(address)
     if (built !== undefined) return built
-    const exact = options.programs[address]
+    const exact = Object.hasOwn(options.programs, address)
+      ? options.programs[address]
+      : undefined
     const entry =
       exact ??
       Object.entries(options.programs)
@@ -177,8 +188,9 @@ export const host = (options: HostOptions): Host => {
         }
       }
       const store = storeOf(address)
-      const provided = <A>(work: Effect.Effect<A, never, AgentServices>) =>
+      const provided = <A>(work: Effect.Effect<A, never, AgentServices | R>) =>
         work.pipe(
+          Effect.provideContext(services),
           Effect.provideService(EventLog, store),
           Effect.provideService(Self, address),
           Effect.provideService(Writer, {
