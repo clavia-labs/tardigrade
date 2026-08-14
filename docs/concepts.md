@@ -61,6 +61,20 @@ Modules own their configuration and can contribute machines or projections. Modu
 
 `identity` contributes behavior-affecting configuration to the default program id. [Program Identity](evolution.md#program-identity) explains the identity rules.
 
+## Program
+
+A program is compiled agent behavior: the machines, render plan, projections, and identity that `createAgent` builds from a module tuple.
+
+A program is a value with no state of its own, the way an executable on disk is a value with no memory of its own. Its `turn` effect asks for a log, an address, and the other [ports](#port) through Effect requirements, so one program value can serve any number of independent conversations.
+
+The word names the compiled agent, never source that a model writes. A model-written orchestration in [code mode](codemode.md) is a script, and the program is what offered the tool that runs it.
+
+## Session
+
+A session is one running conversation: one address, one event log, one writer lease. A program runs in a session the way an executable runs as a process, and the same program can run in many sessions at once without any shared state.
+
+Behavior comes from the program and identity comes from the session. A [host](orchestration.md#session-host) or a runtime marries the two by resolving an address to a program and providing that session's log and services.
+
 ## Service
 
 An Effect service names a typed construction dependency. A module provides service implementations in an Effect `Context`.

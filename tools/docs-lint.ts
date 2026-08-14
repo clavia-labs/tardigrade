@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises"
+import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 // The markdown gate. The house rules for prose are as mechanical as the ones for code, so they are
@@ -13,24 +13,15 @@ import { join } from "node:path"
 
 const root = join(import.meta.dir, "..")
 
+// Every page in docs/ is found rather than listed, so a new page cannot escape the check.
+const pages = (await readdir(join(root, "docs"))).filter((name) => name.endsWith(".md"))
 const files = [
   "README.md",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
   ".github/PULL_REQUEST_TEMPLATE.md",
-  "docs/README.md",
-  "docs/architecture.md",
-  "docs/building-an-agent.md",
-  "docs/codemode.md",
-  "docs/concepts.md",
-  "docs/events.md",
-  "docs/evolution.md",
-  "docs/modules.md",
-  "docs/observability.md",
-  "docs/orchestration.md",
-  "docs/prior-art.md",
-  "docs/runtimes.md"
+  ...pages.map((name) => `docs/${name}`)
 ]
 
 interface Problem {
