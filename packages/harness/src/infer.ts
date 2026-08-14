@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 
 export interface NativeToolSpec {
   readonly name: string
@@ -65,17 +65,17 @@ export interface InferenceState {
 
 export interface InferenceProvider {
   readonly id: string
-  readonly state: (log: ReadonlyArray<Envelope>) => InferenceState
+  readonly state: (log: ReadonlyArray<Event>) => InferenceState
   readonly react: (request: ModelRequest, key: string) => Effect.Effect<Action>
 }
 
 export type InferenceSelection =
   | InferenceProvider
-  | ((log: ReadonlyArray<Envelope>) => InferenceProvider)
+  | ((log: ReadonlyArray<Event>) => InferenceProvider)
 
 export const selectedInference = (
   selection: InferenceSelection,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): InferenceProvider => (typeof selection === "function" ? selection(log) : selection)
 
 export interface CustomInferenceOptions {

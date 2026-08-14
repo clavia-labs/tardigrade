@@ -1,5 +1,5 @@
 import { Clock, Context, Effect } from "effect"
-import { machine, type Envelope } from "@flamecast/core"
+import { machine, type Event } from "@flamecast/core"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
 import { defineModule } from "../module"
 import { environment } from "../providers/environment"
@@ -76,7 +76,7 @@ const compress = (
   )
 }
 
-const lastQuestion = (log: ReadonlyArray<Envelope>): string => {
+const lastQuestion = (log: ReadonlyArray<Event>): string => {
   for (let index = log.length - 1; index >= 0; index--) {
     const event = log[index]
     if (event?.type === "MessageReceived") return String(event.text ?? "")
@@ -91,7 +91,7 @@ export const morphCompaction = (options: MorphOptions = {}) => {
   return defineModule({
     id: "compaction",
     version: "2",
-    fingerprint: {
+    identity: {
       triggerAt,
       keepAt,
       fireTokens: options.fireTokens,
@@ -103,14 +103,14 @@ export const morphCompaction = (options: MorphOptions = {}) => {
     requires: [InferenceStateProjection] as const,
     setup: (services) => {
       const inferenceState = Context.get(services, InferenceStateProjection)
-      const thresholds = (log: ReadonlyArray<Envelope>) => {
+      const thresholds = (log: ReadonlyArray<Event>) => {
         const window = inferenceState(log).contextWindow
         return {
           fire: options.fireTokens ?? Math.max(1, Math.floor(window * triggerAt)),
           keep: options.keepTokens ?? Math.max(1, Math.floor(window * keepAt))
         }
       }
-      const overContext = (log: ReadonlyArray<Envelope>): boolean =>
+      const overContext = (log: ReadonlyArray<Event>): boolean =>
         estimateTokens(suffixOf(log)) > thresholds(log).fire
       const compactionMachine = machine({
         id: "compaction",

@@ -4,10 +4,10 @@ This page defines the small vocabulary the framework builds on.
 
 ## Event
 
-An event is one immutable fact represented by an `Envelope`.
+An event is one immutable fact with a required type and module-defined fields.
 
 ```ts
-interface Envelope {
+interface Event {
   readonly type: string
   readonly [key: string]: unknown
 }
@@ -24,7 +24,7 @@ An event log is the ordered append-only history of one session. It is the source
 A projection is a pure function from a log to a value.
 
 ```ts
-type Projection<Value> = (log: ReadonlyArray<Envelope>) => Value
+type Projection<Value> = (log: ReadonlyArray<Event>) => Value
 ```
 
 Projections reconstruct current state without adding facts to the log. The active turn, current checkpoint, and rendered model request are projections.
@@ -50,7 +50,7 @@ A module is one typed unit of construction.
 interface Module<Id, Services, Requires, R> {
   readonly id: Id
   readonly version?: string
-  readonly fingerprint?: unknown
+  readonly identity?: unknown
   readonly services?: Context.Context<Services>
   readonly requires?: Requires
   readonly setup: (services: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
@@ -58,6 +58,8 @@ interface Module<Id, Services, Requires, R> {
 ```
 
 Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
+
+`identity` contributes behavior-affecting configuration to the default program id. [Program Identity](evolution.md#program-identity) explains the identity rules.
 
 ## Service
 

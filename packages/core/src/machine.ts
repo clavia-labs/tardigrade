@@ -1,6 +1,6 @@
 import { Clock, Effect } from "effect"
 import { EventLog } from "./event-log"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The machine: the core primitive. A consumer defines its domain events, its transitions, and what
 // each active state does; the core folds the log into a state and discharges that state's slot.
@@ -44,8 +44,8 @@ export type Transition<C = never> =
   | string
   | {
       readonly target: string
-      readonly when?: (log: ReadonlyArray<Envelope>) => boolean
-      readonly assign?: (context: C, event: Envelope) => C
+      readonly when?: (log: ReadonlyArray<Event>) => boolean
+      readonly assign?: (context: C, event: Event) => C
     }
 
 export interface StateDef<R, C = never> {
@@ -55,18 +55,18 @@ export interface StateDef<R, C = never> {
   // conformance kit can call twice and compare. Appending is the runtime's job, so a decide's only
   // way onto the record is its return value.
   readonly decide?: (
-    log: ReadonlyArray<Envelope>,
+    log: ReadonlyArray<Event>,
     now: number,
     context: C
-  ) => ReadonlyArray<Envelope>
+  ) => ReadonlyArray<Event>
   // Do something in the world, then record it. The act is where all nondeterminism lives: the
   // model, the sandbox, the network. It reads time through Effect's Clock, never `Date.now`. Its
   // returned events are the committed outcome; a re-run re-does the work, which is why acts declare
   // idempotent intents.
   readonly act?: (
-    log: ReadonlyArray<Envelope>,
+    log: ReadonlyArray<Event>,
     context: C
-  ) => Effect.Effect<ReadonlyArray<Envelope>, never, R>
+  ) => Effect.Effect<ReadonlyArray<Event>, never, R>
   // When event X, go to state T. A guarded transition only fires when its `when` holds, so a state
   // can stay resting and silent until a computed threshold over the log trips. Unknown event types
   // fall through: tolerant reads.
@@ -84,7 +84,7 @@ export interface Machine<R = never, C = never> {
   // The log view the states fold over. Absent, the machine folds the whole log. A machine that
   // serves one turn at a time declares the current turn's slice here; an empty view folds to
   // `initial`, and that is quiescence. Decides and acts always receive the whole log.
-  readonly view?: (log: ReadonlyArray<Envelope>) => ReadonlyArray<Envelope>
+  readonly view?: (log: ReadonlyArray<Event>) => ReadonlyArray<Event>
 }
 
 // The result of a fold: where the machine sits, and what its transitions remembered on the way.
@@ -115,7 +115,7 @@ export const machine = <R = never, C = never>(definition: Machine<R, C>): Machin
   return definition
 }
 
-const viewOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Envelope>) => m.view?.(log) ?? log
+const viewOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Event>) => m.view?.(log) ?? log
 
 // One step of the fold: apply the event at `index` to the state the machine is in. The guard reads
 // the view up to and including its own event, so a state can count or threshold over the past
@@ -127,7 +127,7 @@ const viewOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Envelope>) => m.view?
 export const foldStep = <R, C>(
   m: Machine<R, C>,
   at: Fold<C>,
-  view: ReadonlyArray<Envelope>,
+  view: ReadonlyArray<Event>,
   index: number
 ): Fold<C> => {
   const event = view[index]
@@ -149,7 +149,7 @@ export const foldStep = <R, C>(
 // `m.context as C` is the second deliberate cast. A machine that declares a context type states its
 // zero value in `context`; a machine that declares none folds `undefined`, which is the only
 // inhabitant its states can read.
-const fold = <R, C>(m: Machine<R, C>, view: ReadonlyArray<Envelope>): Fold<C> => {
+const fold = <R, C>(m: Machine<R, C>, view: ReadonlyArray<Event>): Fold<C> => {
   let at: Fold<C> = { name: m.initial, context: m.context as C }
   for (let index = 0; index < view.length; index++) at = foldStep(m, at, view, index)
   return at
@@ -157,14 +157,14 @@ const fold = <R, C>(m: Machine<R, C>, view: ReadonlyArray<Envelope>): Fold<C> =>
 
 // The whole fold result: the state name plus the machine's private context. Context is rebuilt from
 // the log on every call and never stored, so replay and recovery rebuild it the same way.
-export const foldOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Envelope>): Fold<C> =>
+export const foldOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Event>): Fold<C> =>
   fold(m, viewOf(m, log))
 
-export const stateOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Envelope>) => foldOf(m, log).name
+export const stateOf = <R, C>(m: Machine<R, C>, log: ReadonlyArray<Event>) => foldOf(m, log).name
 
 // A view's incarnation: its head's identity. A viewed machine re-entering the same state name under
 // a new head is the next instance starting, never a wedge.
-const incarnationOf = (view: ReadonlyArray<Envelope>): string => {
+const incarnationOf = (view: ReadonlyArray<Event>): string => {
   const head = view[0]
   if (head === undefined) return ""
   return String(head.id ?? head.runId ?? "")
@@ -188,7 +188,7 @@ export const settle = <R, C>(m: Machine<R, C>): Effect.Effect<void, never, Event
       const { name, context } = fold(m, seen)
       const definition = m.states[name]
       const slot = definition?.decide !== undefined ? "decide" : "act"
-      let emitted: ReadonlyArray<Envelope>
+      let emitted: ReadonlyArray<Event>
       if (definition?.decide !== undefined) {
         emitted = definition.decide(log, yield* Clock.currentTimeMillis, context)
       } else if (definition?.act !== undefined) {
@@ -220,7 +220,7 @@ export const settle = <R, C>(m: Machine<R, C>): Effect.Effect<void, never, Event
 // wake is still owed.
 export const resting = <R>(
   machines: ReadonlyArray<Machine<R, never>>,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ) =>
   machines.every((m) => {
     const state = m.states[stateOf(m, log)]

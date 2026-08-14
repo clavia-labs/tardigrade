@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import type { NativeToolSpec } from "./infer"
 import type { AgentProgram, Nudge, RenderPlan } from "./program"
 import { WITHDRAW_ALL } from "./program"
@@ -19,7 +19,7 @@ const renderOf = (over: Partial<RenderPlan> = {}): RenderPlan => ({
 
 const programOf = (render: RenderPlan): Pick<AgentProgram<never>, "render"> => ({ render })
 
-const usedLookup = (log: ReadonlyArray<Envelope>): boolean =>
+const usedLookup = (log: ReadonlyArray<Event>): boolean =>
   log.some((event) => event.type === "ToolReturned" && event.name === "lookup_invoice")
 
 const citeInvoice: Nudge = {
@@ -28,8 +28,8 @@ const citeInvoice: Nudge = {
   text: "You read an invoice this turn. Name the invoice id in your answer."
 }
 
-const head: Envelope = { type: "MessageReceived", id: "m-1", text: "Find order 4182.", at: 1 }
-const returned: Envelope = {
+const head: Event = { type: "MessageReceived", id: "m-1", text: "Find order 4182.", at: 1 }
+const returned: Event = {
   type: "ToolReturned",
   turn: "m-1",
   callId: "c-1",
@@ -114,7 +114,7 @@ describe("nudges", () => {
         }
       ]
     })
-    const declared: Envelope = { ...head, output: { type: "object" } }
+    const declared: Event = { ...head, output: { type: "object" } }
     expect(nativeToolSurface(render, [head])).toEqual([])
     expect(nativeToolSurface(render, [declared])[0]?.inputSchema).toEqual({ type: "object" })
   })
@@ -130,7 +130,7 @@ describe("module-owned native tool descriptions", () => {
 describe("truncation", () => {
   test("honors messageTruncateAt", () => {
     const render = renderOf({ messageTruncateAt: 10 })
-    const long: Envelope = { type: "MessageReceived", id: "m-1", text: "x".repeat(40), at: 1 }
+    const long: Event = { type: "MessageReceived", id: "m-1", text: "x".repeat(40), at: 1 }
     expect(renderMessages(render, [long])[0]?.content).toBe(
       `${"x".repeat(10)}…[truncated 40 chars]`
     )
@@ -138,7 +138,7 @@ describe("truncation", () => {
 
   test("honors resultTruncateAt", () => {
     const render = renderOf({ resultTruncateAt: 12 })
-    const big: Envelope = { ...returned, result: { body: "y".repeat(40) } }
+    const big: Event = { ...returned, result: { body: "y".repeat(40) } }
     expect(renderMessages(render, [big])[0]?.content).toBe(`{"body":"yyy…[truncated 51 chars]`)
   })
 
@@ -155,7 +155,7 @@ describe("modelRequest", () => {
   })
 
   test("rebuilds the conversation from the record", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       head,
       { type: "ModelCalled", turn: "m-1", callId: "k-0", at: 2 },
       { type: "TextReturned", turn: "m-1", text: "Looking it up.", at: 3 },
@@ -183,7 +183,7 @@ describe("modelRequest", () => {
   })
 
   test("renders from the checkpoint summary and live suffix", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       head,
       { type: "TurnCompleted", turn: "m-1", output: "old", at: 2 },
       { type: "CompactionCompleted", upTo: 2, summary: "Order 4182 was discussed.", at: 3 },

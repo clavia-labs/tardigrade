@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { usageOf, type Usage } from "@flamecast/harness/infer"
 
 // What a search reads off a stored log. Every function here is a pure projection over an
@@ -15,7 +15,7 @@ export interface Verdict {
   readonly reason: string
 }
 
-export const verdictsOf = (log: ReadonlyArray<Envelope>): ReadonlyArray<Verdict> =>
+export const verdictsOf = (log: ReadonlyArray<Event>): ReadonlyArray<Verdict> =>
   log
     .filter((event) => event.type === "RewardGranted")
     .map((event) => ({
@@ -23,13 +23,13 @@ export const verdictsOf = (log: ReadonlyArray<Envelope>): ReadonlyArray<Verdict>
       reason: event.reason === undefined ? "" : String(event.reason)
     }))
 
-export const scoreOf = (log: ReadonlyArray<Envelope>): number =>
+export const scoreOf = (log: ReadonlyArray<Event>): number =>
   verdictsOf(log).reduce((total, verdict) => total + verdict.score, 0)
 
 // What a slice of the record spent on the model. `usageIn` in the harness answers this for one turn;
 // this one answers it for whatever span you hand it, which is what a rollout needs when it reports
 // the cost of the part it actually ran.
-export const spendOf = (log: ReadonlyArray<Envelope>): Usage =>
+export const spendOf = (log: ReadonlyArray<Event>): Usage =>
   log
     .filter((event) => event.type === "ModelReturned")
     .map((event) => usageOf(event.usage))

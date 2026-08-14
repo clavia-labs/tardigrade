@@ -85,7 +85,7 @@ if (result.kind === "completed") console.log(result.output)
 
 | Import | Purpose |
 | --- | --- |
-| `flamecast-core` | Envelopes, event logs, machines, ports, routing, and conformance |
+| `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
 | `flamecast-core/harness` | Agent programs, modules, rendering, inference providers, native tools, budgets, contracts, and compaction |
 | `flamecast-core/evolve` | Algorithm-neutral candidates, finite observations, forked rollouts, scoring, and Pareto selection |
 | `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |

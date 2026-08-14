@@ -1,3 +1,3 @@
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 
-export type Projection<Value> = (log: ReadonlyArray<Envelope>) => Value
+export type Projection<Value> = (log: ReadonlyArray<Event>) => Value

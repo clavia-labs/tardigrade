@@ -1,5 +1,5 @@
 import type { Context } from "effect"
-import type { Envelope, Machine } from "@flamecast/core"
+import type { Event, Machine } from "@flamecast/core"
 import type { NativeToolSpec } from "./infer"
 import { sha256 } from "./sha256"
 import type { Projection } from "./projection"
@@ -13,12 +13,12 @@ export type NudgePlacement = "tail" | "system"
 
 export interface Nudge {
   readonly id: string
-  readonly when: (log: ReadonlyArray<Envelope>) => boolean
+  readonly when: (log: ReadonlyArray<Event>) => boolean
   readonly text: string
   readonly placement?: NudgePlacement
   readonly nativeTools?:
     | ReadonlyArray<NativeToolSpec>
-    | ((log: ReadonlyArray<Envelope>) => ReadonlyArray<NativeToolSpec>)
+    | ((log: ReadonlyArray<Event>) => ReadonlyArray<NativeToolSpec>)
   readonly withdrawsNativeTools?: ReadonlyArray<string>
 }
 
@@ -35,7 +35,7 @@ export interface RenderPlan {
 export interface ModuleManifest {
   readonly id: string
   readonly version: string
-  readonly fingerprint?: unknown
+  readonly identity?: unknown
 }
 
 export interface AgentProgram<R = never, Services = never> {

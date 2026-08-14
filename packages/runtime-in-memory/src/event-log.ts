@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { DedupKey, Envelope } from "@flamecast/core"
+import type { DedupKey, Event } from "@flamecast/core"
 
 // The event log as an array. It is the store the conformance kit runs against, and it needs no
 // files and no keys.
@@ -18,16 +18,16 @@ import type { DedupKey, Envelope } from "@flamecast/core"
 //    batches. An event with no key always lands, which is why a repeated mark stays as evidence.
 // 6. Watermark reads. `readFrom(seq)` returns the tail after `seq`.
 export const inMemoryEventLog = (options: {
-  readonly seed?: ReadonlyArray<Envelope>
+  readonly seed?: ReadonlyArray<Event>
   readonly keyOf: DedupKey
 }) => {
   const keyOf = options.keyOf
-  const rows: Array<{ readonly seq: number; readonly event: Envelope }> = []
+  const rows: Array<{ readonly seq: number; readonly event: Event }> = []
   const keys = new Set<string>()
   let seq = 0
 
-  const put = (events: ReadonlyArray<Envelope>) => {
-    const landing: Array<{ readonly key: string | undefined; readonly event: Envelope }> = []
+  const put = (events: ReadonlyArray<Event>) => {
+    const landing: Array<{ readonly key: string | undefined; readonly event: Event }> = []
     const batch = new Set<string>()
     for (const event of events) {
       const key = keyOf(event)
@@ -45,7 +45,7 @@ export const inMemoryEventLog = (options: {
   put(options.seed ?? [])
 
   return {
-    append: (events: ReadonlyArray<Envelope>) => Effect.sync(() => put(events)),
+    append: (events: ReadonlyArray<Event>) => Effect.sync(() => put(events)),
     // A fresh array on every read: the log hands out its history, never its storage.
     read: Effect.sync(() => rows.map((row) => row.event)),
     readFrom: (from: number) =>

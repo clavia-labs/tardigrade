@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import {
   createAgent,
   defaultPack,
@@ -78,7 +78,7 @@ const script: ReadonlyArray<Action> = [
 const run = <A>(
   program: Effect.Effect<A, never, AgentServices>,
   model: Layer.Layer<Infer>,
-  seed?: ReadonlyArray<Envelope>
+  seed?: ReadonlyArray<Event>
 ) =>
   Effect.runPromise(
     Effect.provide(
@@ -101,7 +101,7 @@ const record = async () => {
   )
 }
 
-const types = (log: ReadonlyArray<Envelope>) => log.map((event) => event.type)
+const types = (log: ReadonlyArray<Event>) => log.map((event) => event.type)
 
 describe("a recorded turn", () => {
   test("has three model calls and a terminal", async () => {
@@ -277,7 +277,7 @@ describe("the pure divergence guard", () => {
   })
 
   test("has no divergence point when the log has no model call", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m-1", text: "hi", at: 1 }
     ]
     expect(divergence(agent, buildAgent(), log)).toEqual({ replayed: 0, upTo: 1 })

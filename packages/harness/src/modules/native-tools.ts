@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Exit } from "effect"
-import { Router, erase, machine, type Envelope } from "@flamecast/core"
+import { Router, erase, machine, type Event } from "@flamecast/core"
 import { EXITS } from "../exits"
 import type { NativeTool, NativeToolContext } from "../infer"
 import { defineModule } from "../module"
@@ -22,7 +22,7 @@ const callOf = (context: Partial<Call>): Call => {
   return context as Call
 }
 
-const claimable = (log: ReadonlyArray<Envelope>): boolean => {
+const claimable = (log: ReadonlyArray<Event>): boolean => {
   const call = log[log.length - 1]
   return call !== undefined && !EXITS.has(String(call.name ?? ""))
 }
@@ -67,7 +67,7 @@ const nativeToolsMachine = <R>(handlers: ReadonlyMap<string, NativeTool<R>>) =>
               }
             ]
             const at = yield* Clock.currentTimeMillis
-            const stamped = (events: ReadonlyArray<Envelope>) =>
+            const stamped = (events: ReadonlyArray<Event>) =>
               events.map((event) => ({ ...event, at }))
             if (budgetSpent(log)) return stamped(answer(null, WALL_REFUSAL))
             const tool = handlers.get(call.name)
@@ -91,7 +91,7 @@ export const nativeTools = <R = never>(list: ReadonlyArray<NativeTool<R>>) => {
   return defineModule({
     id: "native-tools",
     version: "2",
-    fingerprint: list.map((tool) => tool.spec),
+    identity: list.map((tool) => tool.spec),
     setup: () => ({
       events: ["ToolCalled", "ToolReturned"],
       machines: [erase(nativeToolsMachine(handlers))],

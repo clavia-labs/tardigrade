@@ -1,4 +1,4 @@
-import { foldOf, type Envelope } from "@flamecast/core"
+import { foldOf, type Event } from "@flamecast/core"
 import { canonicalValue, type Agent } from "@flamecast/harness"
 
 export interface ProgramObservation {
@@ -13,7 +13,7 @@ export interface ProgramObservation {
 
 export const observationOf = <R>(
   agent: Agent<R>,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ProgramObservation => ({
   request: agent.request(log),
   machines: agent.program.machines.map((machine) => ({
@@ -27,14 +27,14 @@ export const observationOf = <R>(
 })
 
 export const modelCallPrefixes = (
-  log: ReadonlyArray<Envelope>
-): ReadonlyArray<ReadonlyArray<Envelope>> =>
+  log: ReadonlyArray<Event>
+): ReadonlyArray<ReadonlyArray<Event>> =>
   log.flatMap((event, index) => (event.type === "ModelCalled" ? [log.slice(0, index)] : []))
 
 export const observationallyEquivalent = <Left, Right>(
   left: Agent<Left>,
   right: Agent<Right>,
-  logs: ReadonlyArray<ReadonlyArray<Envelope>>
+  logs: ReadonlyArray<ReadonlyArray<Event>>
 ): boolean =>
   logs.every(
     (log) => canonicalValue(observationOf(left, log)) === canonicalValue(observationOf(right, log))

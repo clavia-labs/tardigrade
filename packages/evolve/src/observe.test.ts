@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { createAgent, customInference, inference } from "@flamecast/harness"
 import { modelCallPrefixes, observationOf, observationallyEquivalent } from "./observe"
 
-const head: ReadonlyArray<Envelope> = [
+const head: ReadonlyArray<Event> = [
   { type: "MessageReceived", id: "m-1", text: "What are your hours?", at: 1 }
 ]
 
@@ -47,7 +47,7 @@ describe("finite program observations", () => {
   })
 
   test("extracts the exact prefixes that produced recorded model calls", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       ...head,
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
       { type: "ModelReturned", turn: "m-1", callId: "m-1/infer/0", at: 3 },

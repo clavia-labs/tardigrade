@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The platform seams that are not the log. Each one is a guarantee every runtime owes and no
 // runtime owes twice: the core names what it needs, and one layer binds the set. A port here holds
@@ -48,7 +48,7 @@ export class Spill extends Context.Service<
 >()("flamecast/Spill") {}
 
 // One outbound record is one event, plus the session and the turn it belongs to.
-export type SinkRecord = Envelope & { readonly session: string; readonly turn?: string }
+export type SinkRecord = Event & { readonly session: string; readonly turn?: string }
 
 // Outbound events and spans. Telemetry is optional and the binding decides where it goes. The
 // stored log is complete whichever sink you bind, so a silent sink loses no evidence.

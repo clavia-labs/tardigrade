@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { foldOf, machine, resting, stateOf } from "./machine"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // Guarded transitions and fold purity. A guard is the fold's predicate: pure, total, and a function
 // of the log up to its triggering event. These tests pin both the mechanic and the purity.
 
-const ev = (type: string): Envelope => ({ type })
+const ev = (type: string): Event => ({ type })
 
 describe("guarded transitions", () => {
   const m = machine({
@@ -126,7 +126,7 @@ describe("assigned context", () => {
   })
 
   test("a firing transition assigns, and the context accumulates across transitions", () => {
-    const log: Array<Envelope> = [
+    const log: Array<Event> = [
       { type: "Called", callId: "c9" },
       { type: "Settled", result: 42 }
     ]
@@ -134,13 +134,13 @@ describe("assigned context", () => {
   })
 
   test("an unmatched event changes neither the name nor the context", () => {
-    const log: Array<Envelope> = [{ type: "Called", callId: "c9" }, { type: "Noise" }]
+    const log: Array<Event> = [{ type: "Called", callId: "c9" }, { type: "Noise" }]
     expect(foldOf(m, log)).toEqual({ name: "serving", context: { callId: "c9" } })
   })
 
   test("a transition with no assign keeps the context, and an empty log folds to the initial one", () => {
     expect(foldOf(m, [])).toEqual({ name: "idle", context: { callId: "" } })
-    const reset: Array<Envelope> = [{ type: "Called", callId: "c9" }, { type: "Reset" }]
+    const reset: Array<Event> = [{ type: "Called", callId: "c9" }, { type: "Reset" }]
     expect(foldOf(m, reset)).toEqual({ name: "idle", context: { callId: "c9" } })
   })
 })
@@ -148,7 +148,7 @@ describe("assigned context", () => {
 describe("views", () => {
   // A view narrows the log a machine folds. A turn-scoped machine sees one turn, so a count resets
   // when the next turn opens.
-  const lastTurn = (log: ReadonlyArray<Envelope>) => {
+  const lastTurn = (log: ReadonlyArray<Event>) => {
     const turn = log.filter((e) => e.type === "TurnOpened").at(-1)
     if (turn === undefined) return []
     return log.slice(log.lastIndexOf(turn))

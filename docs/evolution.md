@@ -23,9 +23,11 @@ const next = candidate(nextAgent.program.id, nextAgent, {
 
 ## Program Identity
 
-The default `AgentProgram.id` hashes ordered module manifests. Each manifest contains module id, version, and optional fingerprint.
+The default `AgentProgram.id` hashes ordered module manifests. Each manifest contains a module id, a version, and an optional identity value.
 
-Function source is excluded because closures do not have a stable portable representation. Code-generating systems should provide an explicit id from source control or build provenance. `parent` records lineage.
+A module uses `identity` for behavior-affecting configuration, such as prompts, limits, provider state, and tool schemas. A module version identifies source-level behavior changes.
+
+JavaScript closures have no stable portable representation. Code-generating systems can provide an explicit id from source control or build provenance. `parent` records lineage.
 
 This keeps serializable metadata useful for provenance while allowing code to remain the primary evolutionary medium.
 

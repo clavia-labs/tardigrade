@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { keyOf } from "../keys"
 import { agentNativeTool } from "./native-tools"
 
 describe("agentNativeTool", () => {
   test("turns a routed agent into an ordinary tool", async () => {
-    const routed: Array<{ readonly address: string; readonly event: Envelope }> = []
+    const routed: Array<{ readonly address: string; readonly event: Event }> = []
     const delegate = agentNativeTool({
       name: "ask_researcher",
       description: "Ask the research agent.",

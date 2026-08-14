@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { usageOf, type Usage } from "./infer"
 
 // Turn attribution. A turn is headed by one `MessageReceived`, and every event emitted while
@@ -9,43 +9,43 @@ import { usageOf, type Usage } from "./infer"
 // The views here are what the agent machines fold over. An empty view folds to the machine's
 // initial state, and that is quiescence.
 
-const idOf = (event: Envelope): string => String(event.id ?? "")
+const idOf = (event: Event): string => String(event.id ?? "")
 
-const stampOf = (event: Envelope): string | undefined =>
+const stampOf = (event: Event): string | undefined =>
   event.turn === undefined ? undefined : String(event.turn)
 
-const stamped = (log: ReadonlyArray<Envelope>, id: string): ReadonlyArray<Envelope> =>
+const stamped = (log: ReadonlyArray<Event>, id: string): ReadonlyArray<Event> =>
   log.filter((event) => stampOf(event) === id)
 
-const hasStamped = (log: ReadonlyArray<Envelope>, id: string, types: ReadonlyArray<string>): boolean =>
+const hasStamped = (log: ReadonlyArray<Event>, id: string, types: ReadonlyArray<string>): boolean =>
   log.some((event) => types.includes(event.type) && stampOf(event) === id)
 
-const heads = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope> =>
+const heads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
   log.filter((event) => event.type === "MessageReceived")
 
 const TERMINALS = ["TurnCompleted", "TurnFailed"]
 
 // The current turn's head: the earliest message with no stamped terminal.
-export const turnHead = (log: ReadonlyArray<Envelope>): Envelope | undefined =>
+export const turnHead = (log: ReadonlyArray<Event>): Event | undefined =>
   heads(log).find((head) => !hasStamped(log, idOf(head), TERMINALS))
 
 // The current turn's id, or the empty string when no turn is open. A decide reads the whole log and
 // stamps what it emits with this, so every event names the turn it served.
-export const turnOf = (log: ReadonlyArray<Envelope>): string => {
+export const turnOf = (log: ReadonlyArray<Event>): string => {
   const head = turnHead(log)
   return head === undefined ? "" : idOf(head)
 }
 
 // The current turn's slice: its head plus its stamped events, in log order. This is the view a
 // turn-scoped machine folds, so a queued next message can not open a second turn early.
-export const turnView = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope> => {
+export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const head = turnHead(log)
   return head === undefined ? [] : [head, ...stamped(log, idOf(head))]
 }
 
 // The turn owed a reply: terminal stamped, reply not. It lags one stage behind `turnView` on
 // purpose, so a queued next turn never steals a finished turn's reply.
-export const replyView = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope> => {
+export const replyView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const head = heads(log).find(
     (candidate) =>
       hasStamped(log, idOf(candidate), TERMINALS) && !hasStamped(log, idOf(candidate), ["ReplyDelivered"])
@@ -57,11 +57,11 @@ export const replyView = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope>
 // stamped event, queued unserved messages excluded, unstamped events (compaction checkpoints,
 // fires) passing through in place. This is the conversation as it was served, never as it happened
 // to interleave at ingress.
-export const servedLog = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope> => {
+export const servedLog = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const current = turnHead(log)
   const emitted = new Set<string>()
   const byId = new Map(heads(log).map((head) => [idOf(head), head]))
-  const out: Array<Envelope> = []
+  const out: Array<Event> = []
   for (const event of log) {
     if (event.type === "MessageReceived") continue
     const stamp = stampOf(event)
@@ -77,7 +77,7 @@ export const servedLog = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope>
 }
 
 // What one turn spent on the model.
-export const usageIn = (log: ReadonlyArray<Envelope>, turn: string): Usage =>
+export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   log
     .filter((event) => event.type === "ModelReturned" && stampOf(event) === turn)
     .map((event) => usageOf(event.usage))
@@ -115,7 +115,7 @@ const CALL_WIDTH = 7
 const widthOf = (values: ReadonlyArray<string>, minimum: number): number =>
   Math.max(minimum, ...values.map((value) => (value === "" ? 0 : value.length + 3)))
 
-const detailOf = (event: Envelope, callWidth: number): string => {
+const detailOf = (event: Event, callWidth: number): string => {
   const call = (rest: string) => `${String(event.callId ?? "").padEnd(callWidth)}${rest}`
   switch (event.type) {
     case "MessageReceived":
@@ -162,12 +162,12 @@ const detailOf = (event: Envelope, callWidth: number): string => {
 }
 
 // Who the line belongs to: the message id on a head, the turn stamp on everything else.
-const whoOf = (event: Envelope): string =>
+const whoOf = (event: Event): string =>
   event.type === "MessageReceived" ? idOf(event) : (stampOf(event) ?? "")
 
 // The log as text, one line per event. It is the readable form of the record, and it is also
 // what a model-written compaction summarizes.
-export const transcript = (log: ReadonlyArray<Envelope>): string => {
+export const transcript = (log: ReadonlyArray<Event>): string => {
   const typeWidth = widthOf(log.map((event) => event.type), TYPE_WIDTH)
   const whoWidth = widthOf(log.map(whoOf), WHO_WIDTH)
   const callWidth = widthOf(log.map((event) => String(event.callId ?? "")), CALL_WIDTH)

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import { conformance, type Envelope } from "@flamecast/core"
+import { conformance, type Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { Infer, inferWith, type Action, type ModelRequest, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
@@ -34,7 +34,7 @@ const refuses = inferWith(async () => {
 const run = <A>(
   program: Effect.Effect<A, never, AgentServices>,
   model: Layer.Layer<Infer>,
-  seed?: ReadonlyArray<Envelope>
+  seed?: ReadonlyArray<Event>
 ) =>
   Effect.runPromise(
     Effect.provide(
@@ -349,7 +349,7 @@ describe("the give-up policy", () => {
     const agent = createAgent({ modules: [inference()] })
     // A log whose last three events are attempts that died: the model call never landed a
     // consequence. Replay reads that as the crash loop it is.
-    const seeded: ReadonlyArray<Envelope> = [
+    const seeded: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 3 },

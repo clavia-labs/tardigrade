@@ -9,7 +9,7 @@ import {
   Wake,
   Writer,
   type DedupKey,
-  type Envelope
+  type Event
 } from "@flamecast/core"
 import { inMemoryEventLog } from "./event-log"
 
@@ -34,10 +34,10 @@ export interface InMemoryOptions {
   // The address of this session. `Self` carries it, and `Wake` reports its owed alarms under it.
   readonly session?: string
   // The events the log starts from. A recorded run seeds the log and a settle resumes it.
-  readonly seed?: ReadonlyArray<Envelope>
+  readonly seed?: ReadonlyArray<Event>
   // Where the Router sends. A test that needs a sub-agent binds a function; the default runtime has
   // one session and no route, and it says so rather than dropping an event in silence.
-  readonly route?: (address: string, event: Envelope) => Effect.Effect<Envelope>
+  readonly route?: (address: string, event: Event) => Effect.Effect<Event>
 }
 
 export const InMemoryRuntime = (options: InMemoryOptions) => {
@@ -64,7 +64,7 @@ export const InMemoryRuntime = (options: InMemoryOptions) => {
   const blobs = new Map<string, Uint8Array>()
   let spilled = 0
 
-  const routed = (address: string, event: Envelope) =>
+  const routed = (address: string, event: Event) =>
     Effect.suspend(() =>
       options.route?.(address, event) ??
         Effect.die(new Error(`in-memory runtime: no route to "${address}" for "${event.type}"`))

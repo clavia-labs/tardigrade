@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { checkpointOf } from "./context"
 import type { AgentMessage, ModelRequest, NativeToolSpec } from "./infer"
 import {
@@ -14,7 +14,7 @@ const truncate = (body: string, at: number): string =>
 
 const nudgeTools = (
   nudge: Nudge,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<NativeToolSpec> =>
   typeof nudge.nativeTools === "function"
     ? nudge.nativeTools(log)
@@ -22,12 +22,12 @@ const nudgeTools = (
 
 const activeNudges = (
   render: RenderPlan,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<Nudge> => render.nudges.filter((nudge) => nudge.when(log))
 
 export const nativeToolSurface = (
   render: RenderPlan,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<NativeToolSpec> => {
   const active = activeNudges(render, log)
   const withdrawn = new Set(active.flatMap((nudge) => nudge.withdrawsNativeTools ?? []))
@@ -45,7 +45,7 @@ export const nativeToolSurface = (
   return surface
 }
 
-export const systemPrompt = (render: RenderPlan, log: ReadonlyArray<Envelope>): string =>
+export const systemPrompt = (render: RenderPlan, log: ReadonlyArray<Event>): string =>
   [
     ...render.instructions.map((instruction) => instruction.text),
     ...activeNudges(render, log)
@@ -57,7 +57,7 @@ export const systemPrompt = (render: RenderPlan, log: ReadonlyArray<Envelope>): 
 
 const tailNudgeMessages = (
   render: RenderPlan,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<AgentMessage> =>
   activeNudges(render, log)
     .filter((nudge) => nudge.placement !== "system")
@@ -65,7 +65,7 @@ const tailNudgeMessages = (
 
 export const renderMessages = (
   render: RenderPlan,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<AgentMessage> => {
   const messages: Array<AgentMessage> = []
   let pendingText: string | null = null
@@ -126,7 +126,7 @@ export const renderMessages = (
 
 export const modelRequest = (
   program: Pick<AgentProgram<never>, "render">,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ModelRequest => {
   const checkpoint = checkpointOf(log)
   const suffix = servedLog(log.slice(checkpoint.upTo))

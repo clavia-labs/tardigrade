@@ -1,4 +1,4 @@
-import { erase, machine, type Envelope } from "@flamecast/core"
+import { erase, machine, type Event } from "@flamecast/core"
 import { EXITS, REQUEST_BUDGET } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
@@ -16,11 +16,10 @@ import { turnHead, turnOf, turnView } from "../turns"
 // A turn with no declared budget takes this, so an unbounded agent is never an accident.
 export const DEFAULT_BUDGET = 40
 
-// The turn's budget: the head's `budget` plus every grant, or the default. It rides the head
-// envelope, so it is read off the raw event rather than a strict schema, and a turn keeps the
-// budget it started under when the harness moves on.
+// The turn head stores its budget. Each grant increases it. A turn keeps its initial budget after
+// the harness starts another turn.
 export const budgetOf = (
-  log: ReadonlyArray<Envelope>,
+  log: ReadonlyArray<Event>,
   fallback: number = DEFAULT_BUDGET
 ): number => {
   const view = turnView(log)
@@ -34,20 +33,20 @@ export const budgetOf = (
 }
 
 // The tool calls the turn has spent. The exits are not work, so they never draw the budget down.
-export const usedOf = (log: ReadonlyArray<Envelope>): number =>
+export const usedOf = (log: ReadonlyArray<Event>): number =>
   turnView(log).filter(
     (event) => event.type === "ToolCalled" && !EXITS.has(String(event.name ?? ""))
   ).length
 
-// Whether the turn's head lets it escalate at its wall. Rides the envelope like `budget`.
-export const escalatableOf = (log: ReadonlyArray<Envelope>): boolean =>
+// Whether the turn head permits escalation at its budget wall.
+export const escalatableOf = (log: ReadonlyArray<Event>): boolean =>
   turnHead(turnView(log))?.escalatable === true
 
 // The budget phase of the current turn, read from the most recent marker scanning back. Scoped to
 // the turn, so an earlier turn's wall does not leak into this one.
 export type BudgetPhase = "spending" | "exhausted" | "denied"
 
-export const budgetPhase = (log: ReadonlyArray<Envelope>): BudgetPhase => {
+export const budgetPhase = (log: ReadonlyArray<Event>): BudgetPhase => {
   const view = turnView(log)
   for (let index = view.length - 1; index >= 0; index--) {
     const type = view[index]?.type
@@ -62,11 +61,11 @@ export const budgetPhase = (log: ReadonlyArray<Envelope>): BudgetPhase => {
 // Are the work tools withdrawn for this turn? True once the wall is recorded, until a grant reopens
 // it. This is the one predicate the native tool surface and the dispatch gate both read, so they can not
 // disagree about what the log forbids.
-export const budgetSpent = (log: ReadonlyArray<Envelope>): boolean => budgetPhase(log) !== "spending"
+export const budgetSpent = (log: ReadonlyArray<Event>): boolean => budgetPhase(log) !== "spending"
 
 // May the model ask for more? Only while the wall is up, only when no denial has closed it, and
 // only when the turn's head made it escalatable. A denied turn answers; it does not ask again.
-export const canRequestBudget = (log: ReadonlyArray<Envelope>): boolean =>
+export const canRequestBudget = (log: ReadonlyArray<Event>): boolean =>
   budgetPhase(log) === "exhausted" && escalatableOf(log)
 
 // The guard. Off by exactly one on purpose: `used > budget` fires on the call after the last
@@ -118,7 +117,7 @@ const askOf = (context: Partial<Ask>): Ask => {
   return context as Ask
 }
 
-const isEscalation = (log: ReadonlyArray<Envelope>): boolean =>
+const isEscalation = (log: ReadonlyArray<Event>): boolean =>
   String(log[log.length - 1]?.name ?? "") === REQUEST_BUDGET
 
 // The escalation machine: record the ask, park, and answer the call when the parent decides. No
@@ -271,7 +270,7 @@ export const budget = (options: BudgetOptions = {}) => {
   return defineModule({
     id: "budget",
     version: "2",
-    fingerprint: { defaultBudget, wallText, escalateText, requestTool },
+    identity: { defaultBudget, wallText, escalateText, requestTool },
     setup: () => ({
       events: ["BudgetExhausted", "BudgetRequested", "BudgetGranted", "BudgetDenied"],
       machines: [budgetMachine(defaultBudget), erase(escalationMachine)],

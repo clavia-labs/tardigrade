@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The router: how one session reaches another. An address names a session; the runtime resolves it
 // to that session's log and machines. Delivery is at-least-once, and every receiver dedups on its
@@ -10,13 +10,13 @@ import type { Envelope } from "./envelope"
 // quick, acyclic sub-calls; a call cycle deadlocks on the single writer per session, and long work
 // goes through `deliver` with the answer coming home as an inbound event.
 //
-// Both doors carry Envelopes in and an Envelope out, so the core stays free of domain vocabulary. A
+// Both doors carry Events in and an Event out, so the core stays free of domain vocabulary. A
 // turn that ends carries its outcome in the event that ended it, and the harness narrows on `type`
 // to read it. Resuming a session that parked is `deliver` of the event the park waits on.
 export class Router extends Context.Service<
   Router,
   {
-    readonly deliver: (address: string, event: Envelope) => Effect.Effect<void>
-    readonly call: (address: string, event: Envelope) => Effect.Effect<Envelope>
+    readonly deliver: (address: string, event: Event) => Effect.Effect<void>
+    readonly call: (address: string, event: Event) => Effect.Effect<Event>
   }
 >()("flamecast/Router") {}

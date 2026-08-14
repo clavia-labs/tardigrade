@@ -15,14 +15,14 @@ import {
   machine,
   send,
   type DedupKey,
-  type Envelope
+  type Event
 } from "@flamecast/core"
 import { InMemoryRuntime, type InMemoryOptions } from "./runtime"
 
 // The runtime owes eight ports and six log guarantees. These tests read each guarantee back through
 // the port, because a runtime is trusted for what the core can observe through the seam.
 
-const ev = (type: string): Envelope => ({ type })
+const ev = (type: string): Event => ({ type })
 
 // The runtime requires a key policy rather than assuming one. These tests run under the core's
 // own, where an event states its own key, and the file says so once here.
@@ -65,7 +65,7 @@ describe("the event log", () => {
   })
 
   test("guarantee 5: a redelivered key is absorbed, across batches and inside one", async () => {
-    const message: Envelope = { type: "MessageReceived", key: "msg:m-1" }
+    const message: Event = { type: "MessageReceived", key: "msg:m-1" }
     const result = await inRuntime(
       Effect.gen(function* () {
         const log = yield* EventLog
@@ -112,7 +112,7 @@ describe("the event log", () => {
     const result = await inRuntime(
       Effect.gen(function* () {
         const log = yield* EventLog
-        const message: Envelope = { type: "MessageReceived", key: "msg:m-1" }
+        const message: Event = { type: "MessageReceived", key: "msg:m-1" }
         yield* log.append([message])
         const before = yield* log.head
         yield* log.append([message])
@@ -139,7 +139,7 @@ describe("the event log", () => {
         const log = yield* EventLog
         yield* log.append([ev("A")])
         const first = yield* log.read
-        ;(first as Array<Envelope>).push(ev("Forged"))
+        ;(first as Array<Event>).push(ev("Forged"))
         return (yield* log.read).map((e) => e.type)
       })
     )

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { Infer, inferWith, type Action, type NativeTool } from "./infer"
 import { keyOf } from "./keys"
@@ -41,8 +41,8 @@ const run = <A>(program: Effect.Effect<A, never, AgentServices>, model: Layer.La
 
 describe("the key of an event the world supplies an id for", () => {
   test("a call id repeated on the next turn is a different key", () => {
-    const first: Envelope = { type: "ToolReturned", turn: "m-1", callId: "call_1", result: 1 }
-    const second: Envelope = { type: "ToolReturned", turn: "m-2", callId: "call_1", result: 2 }
+    const first: Event = { type: "ToolReturned", turn: "m-1", callId: "call_1", result: 1 }
+    const second: Event = { type: "ToolReturned", turn: "m-2", callId: "call_1", result: 2 }
     expect(keyOf(first)).not.toBe(keyOf(second))
   })
 

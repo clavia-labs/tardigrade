@@ -10,7 +10,7 @@ export const nudge = (options: NudgeOptions) =>
   defineModule({
     id: `nudge:${options.id}`,
     version: options.version ?? "1",
-    fingerprint: { id: options.id, text: options.text, placement: options.placement ?? "tail" },
+    identity: { id: options.id, text: options.text, placement: options.placement ?? "tail" },
     setup: () => ({
       nudges: [
         {

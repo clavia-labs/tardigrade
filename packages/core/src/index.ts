@@ -2,7 +2,7 @@
 // every doc snippet imports from "@flamecast/core", and a library owes its consumers one door.
 // Inside the package, a module imports from the file that defines the symbol.
 
-export type { Envelope } from "./envelope"
+export type { Event } from "./event"
 export { EventLog, dedupKey, type DedupKey, type EventLogStore } from "./event-log"
 export {
   erase,

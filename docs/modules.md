@@ -79,7 +79,7 @@ class RetrievalConfidence extends Context.Service<
 const retrieval = defineModule({
   id: "retrieval",
   version: "3",
-  fingerprint: { index: "support-v4" },
+  identity: { index: "support-v4" },
   services: Context.make(RetrievalConfidence, retrievalConfidence),
   setup: () => ({
     events: ["RetrievalCompleted"],
@@ -89,6 +89,6 @@ const retrieval = defineModule({
 })
 ```
 
-Set `version` or `fingerprint` when a source change should affect the default program id. Generated-code systems can set `createAgent({ id })` directly.
+`version` and `identity` contribute to the default program id. Generated-code systems can set `createAgent({ id })` directly.
 
 The standard event names live in [Events](events.md). The module type vocabulary lives in [Concepts](concepts.md).

@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect"
 import { EventLog, type DedupKey } from "./event-log"
 import { foldOf, foldStep, type Fold, type Machine } from "./machine"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The conformance kit: the proof that a set of machines replays, and that the store under them
 // keeps the promises the log port asks for.
@@ -42,7 +42,7 @@ export interface ConformanceReport {
 
 export interface ConformanceOptions {
   readonly machines: ReadonlyArray<Machine<unknown, never>>
-  readonly logs: ReadonlyArray<ReadonlyArray<Envelope>>
+  readonly logs: ReadonlyArray<ReadonlyArray<Event>>
   // The key policy the store under test derives dedup keys with. It is required, and it is the same
   // function the runtime was bound with, so the kit reads the log the way the store does.
   //
@@ -56,7 +56,7 @@ export interface ConformanceOptions {
 // The event the dedup probe appends twice. It carries its own key, and no machine transitions on
 // its type, so it is inert to every fold that meets it later.
 const PROBE_KEY = "flamecast/conformance/dedup-probe"
-const PROBE: Envelope = { type: "ConformanceProbe", key: PROBE_KEY }
+const PROBE: Event = { type: "ConformanceProbe", key: PROBE_KEY }
 
 // The clock reading every decide in the kit is given. A decide is a pure function of the log and
 // `now`, so a fixed reading is the whole point: two runs with the same reading owe the same events.
@@ -104,7 +104,7 @@ const same = (a: unknown, b: unknown): boolean => {
 // log from the start is quadratic and a stored log is long. A machine with a view
 // re-derives its slice for each prefix, because a view is a function of the whole log and the
 // prefix of a view is not the view of a prefix.
-const trace = <C>(m: Machine<unknown, C>, log: ReadonlyArray<Envelope>) => {
+const trace = <C>(m: Machine<unknown, C>, log: ReadonlyArray<Event>) => {
   const states: Array<Fold<C>> = []
   let at = foldOf(m, [])
   states.push(at)
@@ -171,7 +171,7 @@ export const conformance = (options: ConformanceOptions) =>
           const decide = definition?.decide
           if (decide === undefined) continue
           const log = recorded.slice(0, prefix)
-          let emitted: ReadonlyArray<Envelope>
+          let emitted: ReadonlyArray<Event>
           try {
             emitted = rigged(() => decide(log, NOW, at.context))
             if (!same(emitted, rigged(() => decide(log, NOW, at.context)))) {

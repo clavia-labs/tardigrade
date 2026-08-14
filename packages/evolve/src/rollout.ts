@@ -1,19 +1,19 @@
 import { Effect } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { canonicalValue, type Agent, type AgentServices, type Usage } from "@flamecast/harness"
 import { spendOf } from "./score"
 
 export interface RolloutOptions<Baseline, Candidate> {
   readonly baseline: Agent<Baseline>
   readonly candidate: Agent<Candidate>
-  readonly log: ReadonlyArray<Envelope>
+  readonly log: ReadonlyArray<Event>
 }
 
 export interface RolloutResult {
   readonly replayed: number
   readonly called: number
   readonly usage: Usage
-  readonly log: ReadonlyArray<Envelope>
+  readonly log: ReadonlyArray<Event>
 }
 
 export interface Divergence {
@@ -21,13 +21,13 @@ export interface Divergence {
   readonly upTo: number
 }
 
-const marksOf = (log: ReadonlyArray<Envelope>): ReadonlyArray<number> =>
+const marksOf = (log: ReadonlyArray<Event>): ReadonlyArray<number> =>
   log.flatMap((event, index) => (event.type === "ModelCalled" ? [index] : []))
 
 export const divergence = <Recorded, Candidate>(
   recorded: Agent<Recorded>,
   candidate: Agent<Candidate>,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): Divergence => {
   let replayed = 0
   for (const at of marksOf(log)) {

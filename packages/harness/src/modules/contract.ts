@@ -1,4 +1,4 @@
-import { erase, machine, type Envelope } from "@flamecast/core"
+import { erase, machine, type Event } from "@flamecast/core"
 import { ANSWER } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
@@ -12,11 +12,11 @@ import { turnHead, turnOf, turnView } from "../turns"
 // A rejection returns to the model as a tool result, so the model reads its own errors and repairs
 // the shape. The inference module's retry options bound how long that can go on.
 
-// The current turn's declared schema. It rides the head envelope, so a turn that declares none
-// answers in prose and this module rests for the whole turn.
-const outputSchemaOf = (log: ReadonlyArray<Envelope>): unknown => turnHead(turnView(log))?.output
+// The turn head stores the declared schema. A turn with no schema answers in prose while this
+// module rests.
+const outputSchemaOf = (log: ReadonlyArray<Event>): unknown => turnHead(turnView(log))?.output
 
-const declaresOutput = (log: ReadonlyArray<Envelope>): boolean => outputSchemaOf(log) !== undefined
+const declaresOutput = (log: ReadonlyArray<Event>): boolean => outputSchemaOf(log) !== undefined
 
 const ANSWER_TEXT =
   "This turn declares an output schema. Finish by calling the answer tool: its arguments are your " +
@@ -28,7 +28,7 @@ const ANSWER_DESCRIPTION = "Deliver the final answer for this turn. The argument
 // JSON by construction. The schema comes from the log, which is why the surface is a projection
 // rather than a fixed list.
 const answerTool = (
-  log: ReadonlyArray<Envelope>,
+  log: ReadonlyArray<Event>,
   description: string
 ): ReadonlyArray<NativeToolSpec> => {
   const schema = outputSchemaOf(log)
@@ -48,7 +48,7 @@ const answerOf = (context: Partial<Answer>): Answer => {
   return context as Answer
 }
 
-const isAnswer = (log: ReadonlyArray<Envelope>): boolean =>
+const isAnswer = (log: ReadonlyArray<Event>): boolean =>
   String(log[log.length - 1]?.name ?? "") === ANSWER
 
 const contractMachine = machine<never, Partial<Answer>>({
@@ -126,7 +126,7 @@ export const contract = (options: ContractOptions = {}) => {
   return defineModule({
     id: "contract",
     version: "2",
-    fingerprint: { text, description },
+    identity: { text, description },
     setup: () => ({
       events: ["AnswerRejected"],
       machines: [erase(contractMachine)],

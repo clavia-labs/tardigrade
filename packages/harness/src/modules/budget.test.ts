@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { boundaryOf } from "../boundary"
 import { inferWith, type Action, type ModelRequest, type NativeTool } from "../infer"
@@ -39,7 +39,7 @@ const call = (callId: string): Action => ({
 
 const agent = createAgent({ modules: defaultPack({ nativeTools: [lookup] }) })
 
-const head = (over: Record<string, unknown> = {}): Envelope => ({
+const head = (over: Record<string, unknown> = {}): Event => ({
   type: "MessageReceived",
   id: "m-1",
   text: "Find order 4182.",
@@ -47,7 +47,7 @@ const head = (over: Record<string, unknown> = {}): Envelope => ({
   ...over
 })
 
-const called = (callId: string, name = "lookup_invoice"): Envelope => ({
+const called = (callId: string, name = "lookup_invoice"): Event => ({
   type: "ToolCalled",
   turn: "m-1",
   callId,
@@ -61,7 +61,7 @@ describe("the budget projections", () => {
     expect(budgetOf([head()])).toBe(40)
   })
 
-  test("the head's budget rides the envelope", () => {
+  test("the head event stores the budget", () => {
     expect(budgetOf([head({ budget: 3 })])).toBe(3)
   })
 
@@ -76,7 +76,7 @@ describe("the budget projections", () => {
   })
 
   test("the phase is scoped to the turn, so an earlier wall does not leak", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       head(),
       { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 2, at: 3 },
       { type: "TurnCompleted", turn: "m-1", output: "done", at: 4 },
@@ -93,7 +93,7 @@ describe("the budget projections", () => {
   })
 
   test("a denial closes the ask and leaves the wall up", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       head({ escalatable: true }),
       { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 2, at: 3 },
       { type: "BudgetDenied", turn: "m-1", at: 4 }

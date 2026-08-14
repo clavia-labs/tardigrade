@@ -3,12 +3,12 @@ import { Effect } from "effect"
 import { conformance, type ConformanceOptions } from "./conformance"
 import { dedupKey, type DedupKey } from "./event-log"
 import { erase, machine } from "./machine"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The kit has to fail the machines it is meant to fail. A conformance report that passes everything
 // proves nothing, so every check here is driven by a fixture built to break exactly one property.
 
-const ev = (type: string): Envelope => ({ type })
+const ev = (type: string): Event => ({ type })
 
 // The kit requires a key policy rather than assuming one. These fixtures run under the core's own,
 // where an event states its own key, and the file says so once here.
@@ -299,7 +299,7 @@ describe("idempotence", () => {
 
 describe("dedup", () => {
   test("fails a log where one key landed twice", async () => {
-    const log: Array<Envelope> = [
+    const log: Array<Event> = [
       { type: "MessageReceived", key: "msg:m-1" },
       { type: "Answered" },
       { type: "MessageReceived", key: "msg:m-1" }
@@ -313,7 +313,7 @@ describe("dedup", () => {
   })
 
   test("passes a log whose keys are unique, and ignores unkeyed repeats", async () => {
-    const log: Array<Envelope> = [
+    const log: Array<Event> = [
       { type: "MessageReceived", key: "msg:m-1" },
       { type: "Mark" },
       { type: "Mark" },
@@ -327,7 +327,7 @@ describe("dedup", () => {
   // A harness that derives its keys from its own event alphabet passes the derivation in, and the
   // kit reads the log the way that harness's store does.
   test("reads keys through the policy the caller passes", async () => {
-    const log: Array<Envelope> = [
+    const log: Array<Event> = [
       { type: "ToolReturned", callId: "c-1" },
       { type: "ToolReturned", callId: "c-1" }
     ]

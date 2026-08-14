@@ -1,8 +1,8 @@
 # Events
 
-## Envelope
+## Event Shape
 
-Every stored row is an open `Envelope` with a required `type` and module-defined fields.
+Every stored row is an open `Event` with a required `type` and module-defined fields.
 
 Common fields include:
 

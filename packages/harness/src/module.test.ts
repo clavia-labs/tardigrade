@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { customInference, type NativeTool } from "./infer"
 import { createAgent, defineModule, undeclaredEvents } from "./module"
 import { morphCompaction } from "./modules/compaction"
@@ -69,7 +69,7 @@ describe("composition", () => {
     expect(agent.request([]).system).toBe("You are a support agent.")
     expect(agent.program.render.messageTruncateAt).toBe(900)
     expect(agent.program.render.nativeTools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
-    expect(agent.program.modules.find((module) => module.id === "budget")?.fingerprint).toMatchObject({
+    expect(agent.program.modules.find((module) => module.id === "budget")?.identity).toMatchObject({
       defaultBudget: 24
     })
   })
@@ -155,7 +155,7 @@ describe("typed module dependencies", () => {
       }
     })
     const agent = createAgent({ modules: [source, consumer] })
-    const log: ReadonlyArray<Envelope> = [{ type: "Observed" }]
+    const log: ReadonlyArray<Event> = [{ type: "Observed" }]
     agent.request(log)
     expect(Context.get(agent.services, CountProjection)(log)).toBe(1)
     expect(seen.length).toBeGreaterThan(0)

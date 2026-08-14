@@ -4,7 +4,7 @@ import * as FastCheck from "fast-check"
 import { EventLog, dedupKey } from "./event-log"
 import { foldOf, foldStep, machine, settle, settleAll } from "./machine"
 import { actor, send } from "./actor"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // The kernel's laws. The types enforce the pure/effectful split; these properties enforce the
 // algebraic equations the types can not express. Determinism is what replay rests on, decomposition
@@ -14,11 +14,11 @@ import type { Envelope } from "./envelope"
 // @flamecast/runtime-in-memory. The dependency runs one way: a runtime imports the core, so the core's
 // own tests can not import a runtime. The binding below is the shortest honest store that keeps the
 // six guarantees the port asks for.
-const testLog = (seed: ReadonlyArray<Envelope> = []) => {
-  const rows: Array<{ seq: number; event: Envelope }> = []
+const testLog = (seed: ReadonlyArray<Event> = []) => {
+  const rows: Array<{ seq: number; event: Event }> = []
   const keys = new Set<string>()
   let seq = 0
-  const put = (events: ReadonlyArray<Envelope>) => {
+  const put = (events: ReadonlyArray<Event>) => {
     for (const event of events) {
       const key = dedupKey(event)
       if (key !== undefined && keys.has(key)) continue
@@ -41,7 +41,7 @@ const readLog = Effect.gen(function* () {
   return yield* store.read
 })
 
-const ev = (type: string): Envelope => ({ type })
+const ev = (type: string): Event => ({ type })
 
 // The wedge is a defect, so it arrives on the Exit as a Die rather than as a typed error.
 const died = async (program: Effect.Effect<unknown>) => {
@@ -70,7 +70,7 @@ const counter = machine<never, { readonly ticks: number }>({
 
 const alphabet = ["Tick", "Trip", "Reset", "Noise"] as const
 const logs = FastCheck.array(
-  FastCheck.constantFrom(...alphabet).map((type) => ({ type }) as Envelope),
+  FastCheck.constantFrom(...alphabet).map((type) => ({ type }) as Event),
   { maxLength: 40 }
 )
 const runs = { numRuns: 200 }
@@ -161,7 +161,7 @@ describe("laws", () => {
   // A redelivered event is absorbed by its key, so the log holds one copy and the fold does not
   // count the delivery twice.
   test("law: a redelivered event lands once and the fold does not move", async () => {
-    const message: Envelope = { type: "Tick", key: "msg:m-1" }
+    const message: Event = { type: "Tick", key: "msg:m-1" }
     const program = Effect.gen(function* () {
       const store = yield* EventLog
       yield* store.append([message])

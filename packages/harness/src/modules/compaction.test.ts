@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
 import { inferWith } from "../infer"
@@ -17,7 +17,7 @@ const refuses = inferWith(async () => {
   throw new Error("compaction called the model")
 })
 
-const turn = (id: string, at: number): ReadonlyArray<Envelope> => [
+const turn = (id: string, at: number): ReadonlyArray<Event> => [
   { type: "MessageReceived", id, text: `question ${id}`, at },
   { type: "TurnCompleted", turn: id, output: `answer ${id}`, at: at + 1 },
   { type: "ReplyDelivered", turn: id, at: at + 2 }
@@ -25,7 +25,7 @@ const turn = (id: string, at: number): ReadonlyArray<Envelope> => [
 
 const history = [...turn("m-1", 1), ...turn("m-2", 10), ...turn("m-3", 20)]
 
-const compacted = (options: MorphOptions, seed: ReadonlyArray<Envelope>) => {
+const compacted = (options: MorphOptions, seed: ReadonlyArray<Event>) => {
   const agent = createAgent({ modules: [inference(), morphCompaction(options)] })
   return Effect.runPromise(
     Effect.provide(
@@ -47,7 +47,7 @@ describe("the context projections", () => {
   })
 
   test("the checkpoint is the last one on the record", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       { type: "CompactionCompleted", upTo: 2, summary: "first", at: 1 },
       { type: "CompactionCompleted", upTo: 5, summary: "second", at: 2 }
     ]

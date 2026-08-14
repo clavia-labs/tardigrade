@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core"
+import type { Event } from "@flamecast/core"
 import { replyView, servedLog, transcript, turnHead, turnOf, turnView, usageIn } from "./turns"
 
-const message = (id: string, at: number): Envelope => ({ type: "MessageReceived", id, text: id, at })
-const stamped = (type: string, turn: string, at: number): Envelope => ({ type, turn, at })
+const message = (id: string, at: number): Event => ({ type: "MessageReceived", id, text: id, at })
+const stamped = (type: string, turn: string, at: number): Event => ({ type, turn, at })
 
 describe("turn attribution", () => {
   test("the current turn is the earliest message with no terminal", () => {
@@ -113,7 +113,7 @@ describe("servedLog", () => {
 
 describe("usageIn", () => {
   test("sums what one turn spent on the model", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       message("m-1", 1),
       {
         type: "ModelReturned",
@@ -155,7 +155,7 @@ describe("usageIn", () => {
 
 describe("transcript", () => {
   test("renders the columns Observability documents", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       {
         type: "MessageReceived",
         id: "m-1",
@@ -208,7 +208,7 @@ describe("transcript", () => {
     // The inference module mints `${turn}/infer/${n}`, so a real call id is eleven characters and
     // the documented seven-character column can not hold it. A column that ran into the next value
     // would read as a call id of "m-1/infer/0108".
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m-1", text: "Find it.", program: "sha256:9f2c…", at: 1 },
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
       {
@@ -231,7 +231,7 @@ describe("transcript", () => {
   })
 
   test("widens every column to the widest value present", () => {
-    const log: ReadonlyArray<Envelope> = [
+    const log: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "conversation-9", text: "hi", at: 1 },
       { type: "CompactionCompleted", upTo: 1, provider: "naive", summary: "s", at: 2 },
       { type: "ToolCalled", turn: "conversation-9", callId: "toolu_01A", name: "t", arguments: {}, at: 3 }

@@ -1,5 +1,5 @@
 import { Clock, Context, Effect, Option } from "effect"
-import { EventLog, Router, erase, machine, type Envelope, type Machine } from "@flamecast/core"
+import { EventLog, Router, erase, machine, type Event, type Machine } from "@flamecast/core"
 import {
   Infer,
   selectedInference,
@@ -34,7 +34,7 @@ export interface InferenceOptions {
   readonly resultTruncateAt?: number
 }
 
-const diedAttempts = (view: ReadonlyArray<Envelope>): number => {
+const diedAttempts = (view: ReadonlyArray<Event>): number => {
   let died = 0
   for (let index = view.length - 1; index >= 0; index--) {
     if (view[index]?.type !== "ModelCalled") break
@@ -43,7 +43,7 @@ const diedAttempts = (view: ReadonlyArray<Envelope>): number => {
   return died
 }
 
-const consequenceOf = (action: Action, turn: string, at: number): Envelope =>
+const consequenceOf = (action: Action, turn: string, at: number): Event =>
   action.kind === "call"
     ? {
         type: "ToolCalled",
@@ -181,7 +181,7 @@ export const inference = (options: InferenceOptions = {}) => {
   return defineModule({
     id: "inference",
     version: "2",
-    fingerprint: {
+    identity: {
       provider: initial.id,
       state: initial.state([]),
       system,

@@ -8,7 +8,7 @@ import {
   actor,
   send,
   settleAll,
-  type Envelope,
+  type Event,
   type EventLogStore,
   type Machine
 } from "@flamecast/core"
@@ -54,7 +54,7 @@ export interface Module<
 > {
   readonly id: Id
   readonly version?: string
-  readonly fingerprint?: unknown
+  readonly identity?: unknown
   readonly services?: Context.Context<Services>
   readonly requires?: Requires
   readonly setup: (context: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
@@ -149,12 +149,12 @@ export interface Agent<R = never, Services = never> {
   readonly program: AgentProgram<R, Services>
   readonly services: Context.Context<Services>
   readonly turn: (message: InboundMessage) => Effect.Effect<TurnResult, never, R | AgentServices>
-  readonly log: Effect.Effect<ReadonlyArray<Envelope>, never, EventLog>
+  readonly log: Effect.Effect<ReadonlyArray<Event>, never, EventLog>
   readonly replay: (
-    recorded: ReadonlyArray<Envelope>
+    recorded: ReadonlyArray<Event>
   ) => Effect.Effect<TurnResult, never, R | AgentServices>
-  readonly request: (log: ReadonlyArray<Envelope>) => ModelRequest
-  readonly branch: (recorded: ReadonlyArray<Envelope>, options?: BranchOptions) => Agent<R, Services>
+  readonly request: (log: ReadonlyArray<Event>) => ModelRequest
+  readonly branch: (recorded: ReadonlyArray<Event>, options?: BranchOptions) => Agent<R, Services>
   readonly fork: (
     options?: BranchOptions
   ) => Effect.Effect<Agent<R, Services>, never, EventLog | Self>
@@ -168,16 +168,16 @@ export interface AgentOptions<Modules extends readonly AnyModule[]> {
 
 export const undeclaredEvents = (
   program: Pick<AgentProgram<never>, "events">,
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): ReadonlyArray<string> =>
   [...new Set(log.map((event) => event.type))]
     .filter((type) => !program.events.includes(type))
     .sort()
 
-const privateLog = (seed: ReadonlyArray<Envelope>): EventLogStore => {
-  const rows: Array<Envelope> = []
+const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
+  const rows: Array<Event> = []
   const keys = new Set<string>()
-  const put = (events: ReadonlyArray<Envelope>) => {
+  const put = (events: ReadonlyArray<Event>) => {
     for (const event of events) {
       const key = keyOf(event)
       if (key !== undefined && keys.has(key)) continue
@@ -188,13 +188,13 @@ const privateLog = (seed: ReadonlyArray<Envelope>): EventLogStore => {
   put(seed)
   return {
     append: (events) => Effect.sync(() => put(events)),
-    read: Effect.sync((): ReadonlyArray<Envelope> => [...rows]),
-    readFrom: (from) => Effect.sync((): ReadonlyArray<Envelope> => rows.slice(from)),
+    read: Effect.sync((): ReadonlyArray<Event> => [...rows]),
+    readFrom: (from) => Effect.sync((): ReadonlyArray<Event> => rows.slice(from)),
     head: Effect.sync(() => rows.length)
   }
 }
 
-const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at: number): Envelope => ({
+const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at: number): Event => ({
   type: "MessageReceived",
   id: message.id,
   text: message.text,
@@ -206,13 +206,13 @@ const headOf = (message: InboundMessage, program: AgentProgram<unknown, any>, at
   at
 })
 
-const resultOf = (log: ReadonlyArray<Envelope>, turn: string): TurnResult => ({
+const resultOf = (log: ReadonlyArray<Event>, turn: string): TurnResult => ({
   ...(boundaryOf(log, turn) ?? { kind: "open" }),
   turn,
   usage: usageIn(log, turn)
 })
 
-const lastTurnOf = (log: ReadonlyArray<Envelope>): string => {
+const lastTurnOf = (log: ReadonlyArray<Event>): string => {
   const open = turnHead(log)
   if (open !== undefined) return String(open.id ?? "")
   const heads = log.filter((event) => event.type === "MessageReceived")
@@ -241,7 +241,7 @@ const build = <R, Services>(
       const writer = yield* Writer
       return yield* writer.hold(yield* Self, work)
     })
-  const branch = (recorded: ReadonlyArray<Envelope>, options: BranchOptions = {}) => {
+  const branch = (recorded: ReadonlyArray<Event>, options: BranchOptions = {}) => {
     const upTo = Math.max(0, Math.min(options.at ?? recorded.length, recorded.length))
     const seed = recorded.slice(0, upTo)
     return build(program, {
@@ -368,7 +368,7 @@ const compile = <R, Services>(
   const manifests: ReadonlyArray<ModuleManifest> = modules.map((module) => ({
     id: module.id,
     version: module.version ?? "1",
-    ...(module.fingerprint === undefined ? {} : { fingerprint: module.fingerprint })
+    ...(module.identity === undefined ? {} : { identity: module.identity })
   }))
   const machines = parts.flatMap((part) =>
     typeof part.machines === "function" ? part.machines(render) : (part.machines ?? [])
