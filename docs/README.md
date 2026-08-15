@@ -25,7 +25,7 @@ flowchart TD
 4. [Modules](modules.md) documents composition and the built-in module catalog.
 5. [Events](events.md) owns the event alphabet and dedup rules.
 6. [Runtimes](runtimes.md) owns the platform port contract and binding status.
-7. [Orchestration](orchestration.md) covers delegation, the session host, and swarm inspection.
+7. [Orchestration](orchestration.md) covers delegation, serving agents at addresses, and swarm inspection.
 8. [Code mode](codemode.md) covers capabilities, the sandbox port, and scripts that delegate.
 9. [Building a swarm](building-a-swarm.md) walks through multiple agents, spawning, and model-written fan-out.
 10. [Observability](observability.md) covers reading, rendering, replaying, and forking logs.

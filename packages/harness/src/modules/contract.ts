@@ -2,7 +2,7 @@ import { erase, machine, type Event } from "@flamecast/core"
 import { ANSWER } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
-import type { Nudge } from "../program"
+import type { Nudge } from "../definition"
 import { answerErrors, repairText } from "../schema"
 import { turnHead, turnOf, turnView } from "../turns"
 

@@ -22,13 +22,13 @@ export {
 } from "./infer"
 export {
   canonicalValue,
-  programId,
+  agentId,
   WITHDRAW_ALL,
-  type AgentProgram,
+  type AgentDefinition,
   type Instruction,
   type ModuleManifest,
   type Nudge
-} from "./program"
+} from "./definition"
 export type { Projection } from "./projection"
 export {
   createAgent,
@@ -54,7 +54,7 @@ export {
   type SubagentResult,
   type SubagentToolOptions
 } from "./subagent"
-export { host, type Host, type HostOptions, type HostedAgent } from "./host"
+export { serve, type Serve, type ServeOptions } from "./serve"
 export { defaultPack, type DefaultPackOptions } from "./pack"
 export { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from "./render"
 export {

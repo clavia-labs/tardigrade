@@ -2,7 +2,7 @@ import { Effect } from "effect"
 import { Router, Self, type Event } from "@flamecast/core"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "./infer"
 import type { MessageOrigin } from "./module"
-import { canonicalValue } from "./program"
+import { canonicalValue } from "./definition"
 import { sha256 } from "./sha256"
 
 // Delegation as one awaitable function with two faces. `callAgent` is the code face: a machine, a
@@ -29,6 +29,9 @@ export interface CallAgentMessage {
   readonly origin?: MessageOrigin
   readonly budget?: number
   readonly escalatable?: boolean
+  // Where the answer goes when the work outlives this call. The target replies through the
+  // asynchronous door and the caller reads the terminal of the dispatch rather than the answer.
+  readonly replyTo?: string
 }
 
 // The terminal event of a routed call, read as a result. `TurnCompleted` carries the output;
@@ -59,7 +62,8 @@ export const callAgent = (
       text: message.text,
       ...(message.origin === undefined ? {} : { origin: message.origin }),
       ...(message.budget === undefined ? {} : { budget: message.budget }),
-      ...(message.escalatable === undefined ? {} : { escalatable: message.escalatable })
+      ...(message.escalatable === undefined ? {} : { escalatable: message.escalatable }),
+      ...(message.replyTo === undefined ? {} : { replyTo: message.replyTo })
     })
     return subagentResultOf(address, terminal, message.id)
   })

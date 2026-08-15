@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import { Router, Self } from "@flamecast/core"
+import { Router, Sessions } from "@flamecast/core"
 import {
   createAgent,
   customInference,
-  host,
+  keyOf,
   nativeTools,
+  serve,
   treeUsageIn,
   type Action,
   type ModelRequest
 } from "@flamecast/harness"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { inference } from "@flamecast/harness/modules/inference"
 import { agents } from "./capabilities/agents"
 import { capability } from "./capability"
@@ -107,23 +109,17 @@ describe("the agents capability", () => {
       ]
     })
 
-  const swarm = () => {
-    const h = host({
-      programs: { "worker/*": (address) => worker(address) }
+  // The swarm is a runtime: a registry of who answers where, and the sandbox the sessions need.
+  const swarm = () =>
+    InMemoryRuntime({
+      keyOf,
+      session: "agent:lead",
+      sessions: { "worker/*": (address: string) => serve(worker(address)) },
+      services: Context.make(Sandbox, inProcessSandbox())
     })
-    const services = Layer.mergeAll(
-      sandbox,
-      Layer.succeed(Router, {
-        deliver: (address, event) => Effect.asVoid(h.route(address, event)),
-        call: h.route
-      }),
-      Layer.succeed(Self, "agent:lead")
-    )
-    return { h, services }
-  }
 
   test("fan-out is Promise.all over agents.call", async () => {
-    const { h, services } = swarm()
+    const services = swarm()
     const execute = codemode({ capabilities: [agents()] })
     const result = (await Effect.runPromise(
       Effect.provide(
@@ -144,11 +140,11 @@ describe("the agents capability", () => {
     )) as CodemodeResult
     expect(result.value).toEqual(["worker/1 answered", "worker/2 answered"])
     expect(result.calls).toEqual(["agents.call", "agents.call"])
-    expect(await Effect.runPromise(h.sessions)).toEqual(["worker/1", "worker/2"])
+    expect(await Effect.runPromise(Effect.provide(Effect.flatMap(Sessions, (s) => s.list), services))).toEqual(["worker/1", "worker/2"])
   })
 
   test("the crossing records its origin in the child log", async () => {
-    const { h, services } = swarm()
+    const services = swarm()
     const execute = codemode({ capabilities: [agents()] })
     await Effect.runPromise(
       Effect.provide(
@@ -159,26 +155,26 @@ describe("the agents capability", () => {
         services
       )
     )
-    const childLog = await Effect.runPromise(h.log("worker/1"))
+    const childLog = await Effect.runPromise(Effect.provide(Effect.flatMap(Sessions, (s) => s.read("worker/1")), services))
     const head = childLog.find((event) => event.type === "MessageReceived")
     expect(head?.origin).toEqual({ session: "agent:lead", turn: "m-1", call: "m-1/c-1" })
   })
 
   test("a re-run asks the same questions, so children answer from their logs", async () => {
-    const { h, services } = swarm()
+    const services = swarm()
     const execute = codemode({ capabilities: [agents()] })
     const source = 'return (await agents.call("worker/1", "alpha")).output'
     const context = { turn: "m-1", callId: "c-1" }
     await Effect.runPromise(Effect.provide(execute.run({ source }, context), services))
-    const afterFirst = (await Effect.runPromise(h.log("worker/1"))).length
+    const afterFirst = (await Effect.runPromise(Effect.provide(Effect.flatMap(Sessions, (s) => s.read("worker/1")), services))).length
     await Effect.runPromise(Effect.provide(execute.run({ source }, context), services))
-    const afterSecond = await Effect.runPromise(h.log("worker/1"))
+    const afterSecond = await Effect.runPromise(Effect.provide(Effect.flatMap(Sessions, (s) => s.read("worker/1")), services))
     expect(afterSecond).toHaveLength(afterFirst)
     expect(afterSecond.filter((event) => event.type === "MessageReceived")).toHaveLength(1)
   })
 
   test("an address outside the allow list is refused without routing", async () => {
-    const { h, services } = swarm()
+    const services = swarm()
     const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
     const result = (await Effect.runPromise(
       Effect.provide(
@@ -190,7 +186,7 @@ describe("the agents capability", () => {
       )
     )) as CodemodeResult
     expect((result.value as { error: string }).error).toContain('may not reach "secrets/1"')
-    expect(await Effect.runPromise(h.sessions)).toEqual([])
+    expect(await Effect.runPromise(Effect.provide(Effect.flatMap(Sessions, (s) => s.list), services))).toEqual([])
   })
 
   test("a whole agent turn drives a swarm from one script", async () => {
@@ -219,13 +215,30 @@ describe("the agents capability", () => {
         nativeTools([codemode({ capabilities: [agents({ allow: ["worker/*"] })] })])
       ]
     })
-    const h = host({
-      programs: { "agent:lead": lead, "worker/*": (address) => worker(address) },
+    const runtime = InMemoryRuntime({
+      keyOf,
+      sessions: {
+        "agent:lead": serve(lead),
+        "worker/*": (address: string) => serve(worker(address))
+      },
       services: Context.make(Sandbox, inProcessSandbox())
     })
-    const terminal = await Effect.runPromise(h.call("agent:lead", { id: "m-1", text: "go" }))
+    const ran = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const terminal = yield* (yield* Router).call("agent:lead", {
+            type: "MessageReceived",
+            id: "m-1",
+            text: "go"
+          })
+          return { terminal, leadLog: yield* Effect.flatMap(Sessions, (s) => s.read("agent:lead")) }
+        }),
+        runtime
+      )
+    )
+    const terminal = ran.terminal
     expect(terminal).toMatchObject({ type: "TurnCompleted", output: "gathered" })
-    const leadLog = await Effect.runPromise(h.log("agent:lead"))
+    const leadLog = ran.leadLog
     const returned = leadLog.find((event) => event.type === "ToolReturned")?.result as
       | CodemodeResult
       | undefined

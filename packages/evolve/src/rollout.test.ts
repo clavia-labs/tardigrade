@@ -201,7 +201,7 @@ describe("forked rollouts", () => {
     const recorded = await record()
     const candidate = buildAgent({ giveUpAfter: 5 })
     const result = await run(rollout({ baseline: agent, candidate, log: recorded }), refuses)
-    expect(candidate.program.id).not.toBe(agent.program.id)
+    expect(candidate.definition.id).not.toBe(agent.definition.id)
     expect(result.replayed).toBe(3)
     expect(result.called).toBe(0)
   })
@@ -255,7 +255,7 @@ describe("forked rollouts", () => {
   test("does not reuse a recording from another program", async () => {
     const recorded = await record()
     const foreign = recorded.map((event, index) =>
-      index === 0 ? { ...event, program: "git:foreign" } : event
+      index === 0 ? { ...event, agent: "git:foreign" } : event
     )
     const model = scripted(script)
     const result = await run(

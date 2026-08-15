@@ -60,14 +60,14 @@ A script is one call at the budget wall, so two limits keep it honest. `maxCalls
 
 ## Binding a Sandbox
 
-`inProcessSandbox()` returns a service value that runs source in this process with the host's globals reachable. It is an execution surface rather than a security boundary, and it suits development, tests, and source that is already trusted.
+`inProcessSandbox()` returns a service value that runs source in this process with the surrounding globals reachable. It is an execution surface rather than a security boundary, and it suits development, tests, and source that is already trusted.
 
 ```ts
 Layer.succeed(Sandbox, inProcessSandbox())
 Context.make(Sandbox, inProcessSandbox())
 ```
 
-The first binds it for a turn, and the second hands it to a session [host](orchestration.md#session-host). Bind an isolating implementation, such as a worker, an isolate, or a micro-VM, to run source a model wrote against data the model should not reach. The port carries source, names, and an outcome, so an out-of-process sandbox proxies each capability call over its own channel without changing what a program offers.
+The first binds it for a turn, and the second hands it to a runtime through `services`. Bind an isolating implementation, such as a worker, an isolate, or a micro-VM, to run source a model wrote against data the model should not reach. The port carries source, names, and an outcome, so an out-of-process sandbox proxies each capability call over its own channel without changing what an agent offers.
 
 ## Writing a Capability
 
@@ -89,4 +89,4 @@ const invoices = capability({
 })
 ```
 
-A method returns an Effect, so it reaches services the same way a machine does. The requirements of every capability become the requirements of the tool, and the host or the runtime provides them.
+A method returns an Effect, so it reaches services the same way a machine does. The requirements of every capability become the requirements of the tool, and the runtime provides them through `services`.

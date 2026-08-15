@@ -88,7 +88,7 @@ describe("the smallest agent", () => {
     expect(result).toMatchObject({ kind: "completed", output: "We are open 9 to 5.", turn: "m-1" })
     expect(result.usage).toEqual(usage)
     // The turn pins the program that ran it, so a replay can verify provenance.
-    expect(log[0]?.program).toBe(agent.program.id)
+    expect(log[0]?.agent).toBe(agent.definition.id)
     expect(model.seen[0]?.system).toBe("You are a support agent. Answer in plain text.")
     expect(model.seen[0]?.messages).toEqual([
       { role: "user", content: "What are your support hours?" }
@@ -228,7 +228,7 @@ describe("a turn with native tools", () => {
     )
 
     const candidate = createAgent({
-      parent: agent.program.id,
+      parent: agent.definition.id,
       modules: defaultPack({
         inference: { system: "Answer in one sentence." },
         nativeTools: [lookupInvoice]
@@ -256,7 +256,7 @@ describe("a turn with native tools", () => {
     )
 
     const report = await Effect.runPromise(
-      conformance({ machines: agent.program.machines, logs: [recorded], keyOf })
+      conformance({ machines: agent.definition.machines, logs: [recorded], keyOf })
     )
     expect(report.purity.failures).toEqual([])
     expect(report.idempotence.failures).toEqual([])
@@ -278,7 +278,7 @@ describe("a turn with native tools", () => {
     // `Module.events` is what an optimizer and an exporter work against, so it has to be a
     // contract rather than a comment. A module that emits an event it never declared shows up
     // here as a name.
-    expect(undeclaredEvents(agent.program, recorded)).toEqual([])
+    expect(undeclaredEvents(agent.definition, recorded)).toEqual([])
   })
 
   test("a redelivered message opens no second turn", async () => {

@@ -213,7 +213,7 @@ describe("transcript", () => {
         type: "MessageReceived",
         id: "m-1",
         text: "Find the invoice for order 4182.",
-        program: "sha256:9f2c…",
+        agent: "sha256:9f2c…",
         at: 1
       },
       { type: "ModelCalled", turn: "t-1", callId: "c-01", at: 2 },
@@ -245,7 +245,7 @@ describe("transcript", () => {
     ]
     expect(transcript(log)).toBe(
       [
-        ` 1  MessageReceived   m-1   "Find the invoice for order 4182."   program=sha256:9f2c…`,
+        ` 1  MessageReceived   m-1   "Find the invoice for order 4182."   agent=sha256:9f2c…`,
         ` 2  ModelCalled       t-1   c-01`,
         ` 3  ModelReturned     t-1   c-01   1284 in / 96 out / $0.0041`,
         ` 4  ToolCalled        t-1   c-02   lookup_invoice {"orderId":"4182"}`,
@@ -262,7 +262,7 @@ describe("transcript", () => {
     // the documented seven-character column can not hold it. A column that ran into the next value
     // would read as a call id of "m-1/infer/0108".
     const log: ReadonlyArray<Event> = [
-      { type: "MessageReceived", id: "m-1", text: "Find it.", program: "sha256:9f2c…", at: 1 },
+      { type: "MessageReceived", id: "m-1", text: "Find it.", agent: "sha256:9f2c…", at: 1 },
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
       {
         type: "ModelReturned",
@@ -275,7 +275,7 @@ describe("transcript", () => {
     ]
     expect(transcript(log)).toBe(
       [
-        ` 1  MessageReceived   m-1   "Find it."   program=sha256:9f2c…`,
+        ` 1  MessageReceived   m-1   "Find it."   agent=sha256:9f2c…`,
         ` 2  ModelCalled       m-1   m-1/infer/0`,
         ` 3  ModelReturned     m-1   m-1/infer/0   108 in / 32 out / $0.0013`,
         ` 4  ReplyDelivered    m-1`
@@ -293,7 +293,7 @@ describe("transcript", () => {
     // column is 22 and the id column 17, and every line's detail starts in the same place.
     expect(transcript(log)).toBe(
       [
-        ` 1  MessageReceived       conversation-9   "hi"   program=`,
+        ` 1  MessageReceived       conversation-9   "hi"   agent=`,
         ` 2  CompactionCompleted                    upTo=1 provider=naive "s"`,
         ` 3  ToolCalled            conversation-9   toolu_01A   t {}`
       ].join("\n")

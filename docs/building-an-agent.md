@@ -167,7 +167,9 @@ Leaving out `tenantSource` fails tuple type-checking and runtime validation.
 ## Delegate to Another Agent
 
 ```ts
-import { createAgent, defaultPack, host, subagentTool } from "flamecast-core/harness"
+import { Effect } from "effect"
+import { callAgent, createAgent, defaultPack, keyOf, serve, subagentTool } from "flamecast-core/harness"
+import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
 const supervisor = createAgent({
   modules: defaultPack({
@@ -181,19 +183,22 @@ const supervisor = createAgent({
   })
 })
 
-const h = host({
-  programs: {
-    "agent:supervisor": supervisor,
-    "agent:research": researcher
+const runtime = InMemoryRuntime({
+  keyOf,
+  sessions: {
+    "agent:supervisor": serve(supervisor),
+    "agent:research": serve(researcher)
   }
 })
 
-const terminal = await Effect.runPromise(h.call("agent:supervisor", { id: "m-1", text: "go" }))
+const answer = await Effect.runPromise(
+  Effect.provide(callAgent("agent:supervisor", { id: "m-1", text: "go" }), runtime)
+)
 ```
 
-Each program picks its own model through its `inference` module. The tool result carries the child's output and inclusive usage, and the child's log records who asked through `origin`.
+`serve` turns an agent into what the runtime holds at an address, and the `sessions` registry says who answers where. Each agent picks its own model through its `inference` module. The tool result carries the answer and inclusive usage, and the receiving session's log records who asked through `origin`.
 
-Code can delegate without a model in the loop through `callAgent(address, message)`, and several concurrent calls joined by `await` are a fan-out. For long-running work, send through `Router.deliver` and set `replyTo` on the inbound message; the reply arrives as a new message stamped with `origin`, `outcome`, and `usage`. [Orchestration](orchestration.md) covers the design.
+Code can delegate without a model in the loop through `callAgent(address, message)`, and several concurrent calls joined by `await` are a fan-out. For long-running work, set `replyTo` on the message; the reply arrives at that address as a new message stamped with `origin`, `outcome`, and `usage`. [Orchestration](orchestration.md) covers the design, and [Building a swarm](building-a-swarm.md) walks the whole path.
 
 ## Let the Model Write the Orchestration
 
@@ -205,7 +210,7 @@ const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
 const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
 ```
 
-The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a host through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.
+The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a runtime through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.
 
 ## Test Inference
 

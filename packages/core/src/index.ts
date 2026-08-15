@@ -19,6 +19,7 @@ export {
 } from "./machine"
 export { actor, send, Self, type Actor } from "./actor"
 export { Router } from "./router"
+export { Sessions } from "./sessions"
 export { Placement, Sink, Spill, Wake, Writer, type SinkRecord } from "./ports"
 export {
   conformance,

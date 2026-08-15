@@ -3,10 +3,10 @@ import { checkpointOf } from "./context"
 import type { AgentMessage, ModelRequest, NativeToolSpec } from "./infer"
 import {
   WITHDRAW_ALL,
-  type AgentProgram,
+  type AgentDefinition,
   type Nudge,
   type RenderPlan
-} from "./program"
+} from "./definition"
 import { servedLog } from "./turns"
 
 const truncate = (body: string, at: number): string =>
@@ -125,7 +125,7 @@ export const renderMessages = (
 }
 
 export const modelRequest = (
-  program: Pick<AgentProgram<never>, "render">,
+  definition: Pick<AgentDefinition<never>, "render">,
   log: ReadonlyArray<Event>
 ): ModelRequest => {
   const checkpoint = checkpointOf(log)
@@ -135,12 +135,12 @@ export const modelRequest = (
       ? []
       : [{ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` }]
   return {
-    system: systemPrompt(program.render, log),
+    system: systemPrompt(definition.render, log),
     messages: [
       ...summary,
-      ...renderMessages(program.render, suffix),
-      ...tailNudgeMessages(program.render, log)
+      ...renderMessages(definition.render, suffix),
+      ...tailNudgeMessages(definition.render, log)
     ],
-    tools: nativeToolSurface(program.render, log)
+    tools: nativeToolSurface(definition.render, log)
   }
 }

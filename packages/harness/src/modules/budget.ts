@@ -2,7 +2,7 @@ import { erase, machine, type Event } from "@flamecast/core"
 import { EXITS, REQUEST_BUDGET } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
-import { WITHDRAW_ALL, type Nudge } from "../program"
+import { WITHDRAW_ALL, type Nudge } from "../definition"
 import { turnHead, turnOf, turnView } from "../turns"
 
 // The budget module: a silent observer of the turn's tool spend, plus the escalation lifecycle.

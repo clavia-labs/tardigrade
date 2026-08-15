@@ -6,11 +6,11 @@ describe("a code candidate", () => {
   const parent = createAgent({ id: "git:base", modules: [inference()] })
   const child = createAgent({
     id: "git:terse",
-    parent: parent.program.id,
+    parent: parent.definition.id,
     modules: [inference({ system: "Answer in one sentence." })]
   })
-  const wrapped = candidate(child.program.id, child, {
-    parent: parent.program.id,
+  const wrapped = candidate(child.definition.id, child, {
+    parent: parent.definition.id,
     source: "src/candidates/terse.ts"
   })
 
@@ -23,7 +23,7 @@ describe("a code candidate", () => {
 
   test("does not mutate its parent", () => {
     expect(parent.request([]).system).not.toBe("Answer in one sentence.")
-    expect(parent.program.parent).toBeUndefined()
+    expect(parent.definition.parent).toBeUndefined()
   })
 
   test("wraps values from any search algorithm", () => {

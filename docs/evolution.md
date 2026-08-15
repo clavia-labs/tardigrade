@@ -9,21 +9,21 @@ The framework supplies evaluation mechanics plus GEPA and PopuLoRA search loops.
 ```ts
 const nextAgent = createAgent({
   id: "git:4f31c2a",
-  parent: baseline.program.id,
+  parent: baseline.definition.id,
   modules: buildCandidateModules()
 })
 
-const next = candidate(nextAgent.program.id, nextAgent, {
-  parent: baseline.program.id,
+const next = candidate(nextAgent.definition.id, nextAgent, {
+  parent: baseline.definition.id,
   source: "src/candidates/4f31c2a.ts"
 })
 ```
 
 `Candidate<Value>` is generic. Search code can wrap an agent, source bundle, adapter population, compiler IR, or any other identified value.
 
-## Program Identity
+## Agent Identity
 
-The default `AgentProgram.id` hashes ordered module manifests. Each manifest contains a module id, a version, and an optional identity value.
+The default `AgentDefinition.id` hashes ordered module manifests. Each manifest contains a module id, a version, and an optional identity value.
 
 A module uses `identity` for behavior-affecting configuration, such as prompts, limits, provider state, and tool schemas. A module version identifies source-level behavior changes.
 
@@ -53,7 +53,7 @@ const result = await rollout({
 })
 ```
 
-The rollout checks the recording's program provenance, compares requests at recorded `ModelCalled` prefixes when the baseline matches, branches the candidate at the first divergence, and settles the live suffix. A provenance mismatch reuses no model calls.
+The rollout checks the recording's agent provenance, compares requests at recorded `ModelCalled` prefixes when the baseline matches, branches the candidate at the first divergence, and settles the live suffix. A provenance mismatch reuses no model calls.
 
 `result.replayed` counts reused model calls. `result.called` counts live candidate calls. `result.log` is the independent branch log. `result.cost` contains the cost of the live suffix.
 
@@ -182,7 +182,7 @@ Generated candidates receive two validation layers:
 1. TypeScript rejects missing services, duplicate service providers, and duplicate module ids for literal tuples.
 2. Runtime compilation repeats those checks for generated JavaScript and rejects duplicate projections, machines, native tools, and instructions.
 
-Search infrastructure can compile candidates first and avoid spending evaluation budget on invalid programs.
+Search infrastructure can compile candidates first and avoid spending evaluation budget on invalid candidates.
 
 ## Evaluation Loop
 
