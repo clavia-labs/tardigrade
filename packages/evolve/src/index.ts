@@ -53,6 +53,22 @@ export {
   type PopuloraTrial
 } from "./populora"
 export {
+  evaluationOf,
+  feedbackOf,
+  outputOf,
+  proposer,
+  reflectionPrompt,
+  reflectiveMutation,
+  reflectivePrompts,
+  type Prompts,
+  type Proposer,
+  type ProposerOptions,
+  type ProposerSession,
+  type Reflection,
+  type ReflectionTrial,
+  type ReflectiveMutationOptions
+} from "./reflect"
+export {
   divergence,
   rollout,
   type Divergence,

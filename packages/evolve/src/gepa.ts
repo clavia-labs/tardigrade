@@ -1,3 +1,12 @@
+// The GEPA loop: Pareto selection over a candidate pool, a minibatch check, and a proposer that
+// reads the losing trials and writes a better candidate.
+//
+// The proposer is the half that learns. Selection decides where to spend the next rollout, and
+// reflection over natural-language feedback is what turns that rollout into an edit. `mutate` is
+// left open because a candidate can be a prompt set, an agent, or a source tree, and only the caller
+// knows how to build one. `reflectiveMutation` in `./reflect` fills it with the paper's proposer, and
+// that is the callback this loop is shaped for.
+
 import { Effect } from "effect"
 import { candidate, type Candidate } from "./candidate"
 import {
@@ -12,8 +21,20 @@ export interface GepaExample<Value> {
   readonly value: Value
 }
 
+// What one candidate scored on one example, and why. This is the paper's feedback function: the
+// metric returns its number together with the text it produced on the way there.
+//
+// `feedback` is required because it carries the signal the search runs on. A number says a candidate
+// reached 0.62. A sentence says which tool it reached for and which fact it missed, and that
+// sentence is what a proposer reads when it rewrites an instruction. An evaluator that reports the
+// number alone leaves the proposer guessing, and reflective search degrades into random edits, so
+// the type asks for the sentence at the point where the evaluator still has it.
 export interface GepaEvaluation<Trajectory = unknown> {
   readonly score: number
+  readonly feedback: string
+  // The candidate's own answer, when the evaluator holds it as text. A reflection shows it beside
+  // the feedback so the proposer reads what the candidate actually said.
+  readonly output?: string
   readonly trajectory: Trajectory
 }
 

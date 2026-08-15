@@ -77,31 +77,77 @@ Each operation record contains its own cost. Each search result contains the sum
 
 `gepa()` implements the reflective-mutation loop from [GEPA](https://arxiv.org/abs/2507.19457). Its mutation unit is a complete `Candidate<Value>`.
 
+The loop has two halves. Pareto selection decides which candidate spends the next rollout. Reflection turns that rollout into an edit: a model reads the failing trials in natural language and writes a replacement instruction. The paper's sample efficiency comes from the second half, so `reflectivePrompts()` is the mutation `gepa()` is shaped for.
+
 ```ts
 const search = gepa({
-  seed: baseline,
+  seed: candidate("v0", { "inference.system": BASE_INSTRUCTION }),
   feedbackExamples,
   paretoExamples,
   minibatchSize: 3,
   maxMetricCalls: 150,
   evaluate: (entry, example) =>
     runEvaluation(entry.value, example).pipe(
-      Effect.map(({ score, log }) =>
-        costed({ score, trajectory: log }, log)
-      )
+      Effect.map((log) => costed(evaluationOf(log), log))
     ),
-  mutate: ({ parent, trials }) =>
-    runMutation(parent, trials).pipe(
-      Effect.map(({ proposal, log }) => costed(proposal, log))
-    )
+  mutate: reflectivePrompts()
 })
 ```
 
-The evaluator returns a costed evaluation with a numeric score and an arbitrary trajectory. The trajectory can contain logs, grader feedback, compiler output, or other evidence.
+A candidate here is its instruction texts, keyed by instruction id, which is what the paper optimizes. `evaluate` builds an agent from those texts, runs it on the example, and returns the log. Nothing else has to be written.
 
-The mutation reads the parent and its feedback trials. It returns a costed candidate and can replace the complete harness.
+A search that rewrites candidates without asking a model to read the feedback keeps GEPA's selection and loses its learning signal. Such a search explores whatever edits its author enumerated in advance.
 
-The loop uses these steps:
+## The Feedback Function
+
+The paper extends the evaluation metric into a feedback function. The metric already produces text on its way to a number, and that text says which mechanism lost the points.
+
+`GepaEvaluation` therefore carries `feedback` beside `score`, and it carries the candidate's own `output` when the evaluator holds it. A proposer reads all three.
+
+`evaluationOf(log)` builds one from a Flamework log. `scoreOf` sums the granted rewards, `feedbackOf` keeps the sentences the graders wrote and the error that ended a failed turn, and the log itself becomes the trajectory.
+
+An evaluator with its own grader can return any evaluation that carries these fields, plus any further fields of its own. The proposer reads the declared ones and the trials carry the rest.
+
+## The Proposer
+
+The proposer is an agent, so reflection runs inside the framework it optimizes. `reflectivePrompts()` builds a default one, and a search that wants a stronger model or tools for the reflection passes its own.
+
+```ts
+const mutate = reflectivePrompts({
+  proposer: proposer({
+    provider: vercelGatewayInference({ model: "anthropic/claude-opus-4.5" }),
+    nativeTools: [readSourceFile]
+  })
+})
+```
+
+Each reflection runs in a fresh session from `agent.branch([])`. The session holds no memory of earlier iterations, so a candidate's lineage stays the only thing carrying lessons forward, and the session log stays a clean span to price.
+
+This buys four things over a bare model call. The proposal arrives through the [contract module](modules.md#contract), so a malformed proposal is rejected back to the model before the search sees it. The tool budget bounds a proposer that reaches for tools. The event log prices the reflection through the same cost projection that prices an evaluation, so a search reports what it spent on thinking about itself. Tools let the proposer read source, run a compiler, or consult a grader before it writes.
+
+`reflectionPrompt()` renders the meta-prompt from Appendix B of the paper: the instruction under revision, then each task input with the response it produced and the feedback on that response, then the request for a replacement instruction. The candidate's other instructions ride along as context that stays fixed, so a replacement does not repeat or contradict what another module says.
+
+One instruction changes per iteration. Selection walks them in round robin, which is how the paper selects modules, so every instruction receives updates instead of the budget pouring into whichever one the search touched first. `selectTarget` replaces that policy.
+
+A proposer that answers with the instruction it was given has proposed nothing, and a proposer whose turn fails has proposed nothing. Both record their cost and skip the candidate evaluation.
+
+## Evolving More Than Prompts
+
+`reflectiveMutation()` is the same proposer over any candidate value. It asks for two functions: the instructions a candidate exposes, and the candidate that carries a rewritten one.
+
+```ts
+const mutate = reflectiveMutation({
+  instructionsOf: (agent) => agent.definition.render.instructions,
+  apply: (rewritten, { iteration, parent }) => {
+    const next = createAgent({ modules: modulesWith(rewritten) })
+    return candidate(`${next.definition.id}@${iteration}`, next, { parent: parent.id })
+  }
+})
+```
+
+`apply` returns `undefined` when it cannot build a candidate, which is how a generated construction that fails to compile costs a proposal and no evaluations. Each proposal needs an id that no accepted candidate already holds, so an id derived from content carries the iteration as well.
+
+## The Loop
 
 1. It scores the seed on every Pareto example.
 2. It finds the best candidates for each Pareto example.

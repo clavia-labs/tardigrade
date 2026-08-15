@@ -21,7 +21,7 @@ The root export is the core package. The other packages use subpath exports:
 import { EventLog } from "flamecast-core"
 import { createAgent, inference } from "flamecast-core/harness"
 import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
-import { candidate, costed, gepa, populora, rollout } from "flamecast-core/evolve"
+import { candidate, gepa, proposer, reflectivePrompts, rollout } from "flamecast-core/evolve"
 ```
 
 ## Quick Start
@@ -78,7 +78,7 @@ if (result.kind === "completed") console.log(result.output)
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
 - `callAgent()`, `subagentTool()`, and `serve()` enable multi-agent systems without imposing a planner or topology. Origin and usage cross the session boundary, so provenance and cost trees are derived from logs.
 - `flamecast-core/codemode` is optional. It lets the model write a script over capabilities the harness developer chose, and fan-out becomes `Promise.all`.
-- `flamecast-core/evolve` supplies candidates, observations, cost tracking, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. Callers provide costed mutation and evaluation policy.
+- `flamecast-core/evolve` supplies candidates, observations, cost tracking, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. GEPA's reflective proposer is an agent that reads evaluator feedback and rewrites an instruction, so a search runs model-driven mutation by default and callers supply the evaluation policy.
 
 ## Public Imports
 
@@ -87,7 +87,7 @@ if (result.kind === "completed") console.log(result.output)
 | `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
 | `flamecast-core/harness` | Agents, modules, rendering, inference providers, native tools, budgets, contracts, compaction, and delegation |
 | `flamecast-core/codemode` | Capabilities, the sandbox port, and the tool that runs model-written scripts |
-| `flamecast-core/evolve` | Candidates, finite observations, costed callbacks, forked rollouts, scoring, Pareto selection, GEPA search, and PopuLoRA co-evolution |
+| `flamecast-core/evolve` | Candidates, finite observations, costed callbacks, forked rollouts, scoring, Pareto selection, GEPA search with its reflective proposer, and PopuLoRA co-evolution |
 | `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
 
 The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.
