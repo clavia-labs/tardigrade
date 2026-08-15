@@ -25,6 +25,7 @@ const priced = <Value>(
 const evaluate = (evaluated: { readonly value: Harness }, task: { readonly id: string }) =>
   Effect.succeed(free({
     score: evaluated.value.scores[task.id] ?? 0,
+    feedback: `${task.id} ran against ${evaluated.value.source}`,
     trajectory: `${evaluated.value.source}:${task.id}`
   }))
 
@@ -148,7 +149,9 @@ describe("the GEPA loop", () => {
     expect(result.metricCalls).toBe(10)
   })
 
-  test("passes evaluator-specific feedback to the mutation", async () => {
+  test("passes evaluator feedback to the mutation", async () => {
+    // The signal the loop exists to carry. A proposer reads these sentences, so the trials reach it
+    // with the evaluator's own words and whatever else that evaluator chose to attach.
     interface FeedbackEvaluation extends GepaEvaluation<string> {
       readonly reason: string
     }
@@ -165,8 +168,10 @@ describe("the GEPA loop", () => {
         evaluate: (evaluated, task) =>
           Effect.succeed(free({
             score: evaluated.value.scores[task.id] ?? 0,
+            feedback: "the harness chose the wrong tool",
+            output: "INV-4182 is paid",
             trajectory: `${evaluated.id}:${task.id}`,
-            reason: "the harness chose the wrong tool"
+            reason: "the grader wanted the invoice date"
           })),
         mutate: ({ trials }) => {
           seen.push(...trials.map((trial) => trial.evaluation))
@@ -178,8 +183,10 @@ describe("the GEPA loop", () => {
     expect(seen).toEqual([
       {
         score: 0,
+        feedback: "the harness chose the wrong tool",
+        output: "INV-4182 is paid",
         trajectory: "seed:f1",
-        reason: "the harness chose the wrong tool"
+        reason: "the grader wanted the invoice date"
       }
     ])
   })
@@ -201,6 +208,7 @@ describe("the GEPA loop", () => {
             priced(
               {
                 score: evaluated.value.scores[task.id] ?? 0,
+                feedback: "the answer missed the deadline clause",
                 trajectory: `${evaluated.id}:${task.id}`
               },
               10,
