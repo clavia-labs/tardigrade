@@ -18,7 +18,7 @@ import {
   type DedupKey,
   type Event
 } from "@flamecast/core"
-import { InMemoryRuntime, type InMemoryOptions } from "./runtime"
+import { InMemoryRuntime, type InMemoryOptions, type SessionPorts } from "./runtime"
 
 // The runtime owes eight ports and six log guarantees. These tests read each guarantee back through
 // the port, because a runtime is trusted for what the core can observe through the seam.
@@ -27,10 +27,16 @@ const ev = (type: string): Event => ({ type })
 
 // The runtime requires a key policy rather than assuming one. These tests run under the core's
 // own, where an event states its own key, and the file says so once here.
-const inRuntime = <A>(
-  program: Effect.Effect<A, never, EventLog | Writer | Wake | Placement | Spill | Sink | Router | Self | Sessions>,
-  { keyOf = dedupKey, ...options }: Omit<InMemoryOptions, "keyOf"> & { readonly keyOf?: DedupKey } = {}
-) => Effect.runPromise(Effect.provide(program, InMemoryRuntime({ ...options, keyOf })))
+const inRuntime = <A, const Keys = Readonly<Record<string, never>>>(
+  program: Effect.Effect<A, never, SessionPorts>,
+  {
+    keyOf = dedupKey,
+    ...options
+  }: Omit<InMemoryOptions<never, Keys>, "keyOf"> & { readonly keyOf?: DedupKey } = {}
+) =>
+  Effect.runPromise(
+    Effect.provide(program, InMemoryRuntime({ ...options, keyOf } as InMemoryOptions<never, Keys>))
+  )
 
 const died = async (program: Effect.Effect<unknown, never, never>) => {
   const exit = await Effect.runPromiseExit(program)

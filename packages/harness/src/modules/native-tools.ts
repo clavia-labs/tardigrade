@@ -1,5 +1,6 @@
 import { Cause, Clock, Effect, Exit } from "effect"
 import { erase, machine, type Event } from "@flamecast/core"
+import { toolReturned } from "../alphabet"
 import { EXITS } from "../exits"
 import type { NativeTool } from "../infer"
 import { defineModule } from "../module"
@@ -54,30 +55,27 @@ const nativeToolsMachine = <R>(handlers: ReadonlyMap<string, NativeTool<R>>) =>
         act: (log, context) =>
           Effect.gen(function* () {
             const call = callOf(context)
-            const answer = (result: unknown, error?: string) => [
-              {
-                type: "ToolReturned",
+            const answer = (result: unknown, error?: string) => (at: number) => [
+              toolReturned({
                 turn: call.turn,
                 callId: call.callId,
                 name: call.name,
                 result,
-                ...(error === undefined ? {} : { error })
-              }
+                ...(error === undefined ? {} : { error }),
+                at
+              })
             ]
             const at = yield* Clock.currentTimeMillis
-            const stamped = (events: ReadonlyArray<Event>) =>
-              events.map((event) => ({ ...event, at }))
-            if (budgetSpent(log)) return stamped(answer(null, WALL_REFUSAL))
+            if (budgetSpent(log)) return answer(null, WALL_REFUSAL)(at)
             const tool = handlers.get(call.name)
-            if (tool === undefined) return stamped(answer(null, `unknown tool: ${call.name}`))
+            if (tool === undefined) return answer(null, `unknown tool: ${call.name}`)(at)
             const outcome = yield* Effect.exit(
               tool.run(call.arguments, { turn: call.turn, callId: call.callId })
             )
-            return stamped(
-              Exit.isSuccess(outcome)
-                ? answer(outcome.value)
-                : answer(null, Cause.pretty(outcome.cause))
-            )
+            const after = yield* Clock.currentTimeMillis
+            return Exit.isSuccess(outcome)
+              ? answer(outcome.value)(after)
+              : answer(null, Cause.pretty(outcome.cause))(after)
           }),
         on: { ToolReturned: "idle" }
       }

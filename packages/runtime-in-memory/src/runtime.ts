@@ -30,14 +30,47 @@ import { inMemoryEventLog } from "./event-log"
 // What answers at an address: an event goes in, the terminal event comes out. `serve` in the
 // harness turns an agent into one of these, and an application whose sessions are machines rather
 // than agents writes its own function of the same shape.
-export type Serve = (event: Event) => Effect.Effect<Event, never, any>
+//
+// `R` is what the answering session needs beyond the runtime's own ports. It rides the type rather
+// than being erased, so a session that reaches for a service the runtime was not given fails to
+// compile instead of dying on its first delivery.
+export type Serve<R = never> = (
+  event: Event
+) => Effect.Effect<Event, never, SessionPorts | R>
+
+// The ports the runtime binds for every session it serves. A serve function may reach any of them
+// without declaring anything, because the runtime owes them all.
+export type SessionPorts =
+  | EventLog
+  | Writer
+  | Wake
+  | Placement
+  | Spill
+  | Sink
+  | Router
+  | Sessions
+  | Self
+
+// What a family of addresses answers with: the address goes in, and what serves it comes out.
+export type SessionFactory<R = never> = (address: string) => Serve<R>
 
 // Who answers where. An exact key names one address and holds what serves it. A `prefix/*` key, or
-// a bare `*`, names a family and holds a factory that receives the address, so the key's shape says
-// which is which and no marker is needed. The most specific key wins.
-export type SessionRegistry = Readonly<Record<string, Serve | ((address: string) => Serve)>>
+// a bare `*`, names a family and holds a factory that receives the address. The most specific key
+// wins.
+export type SessionRegistry<R = never> = Readonly<
+  Record<string, Serve<R> | SessionFactory<R>>
+>
 
-export interface InMemoryOptions<R = never> {
+// The registry as the caller wrote it, checked key by key. Both halves are one-argument functions,
+// so nothing but the key's shape can say which one a value is meant to be, and a union would let
+// either mistake compile: a factory at an exact key is called with the event as its address, and a
+// serve at a pattern key is called with the address as its event. Both die on delivery. The mapped
+// type reads the key and demands the matching half.
+export type ValidRegistry<Keys, R> = {
+  readonly [Key in keyof Keys]: Key extends `${string}/*` | "*" ? SessionFactory<R> : Serve<R>
+}
+
+export interface InMemoryOptions<R = never, Keys = Readonly<Record<string, never>>> {
   // The dedup key policy the store absorbs redeliveries on, and the one required option.
   //
   // Guarantee 5 of the log port is only real once a policy names the key, and the policy belongs to
@@ -52,13 +85,15 @@ export interface InMemoryOptions<R = never> {
   readonly session?: string
   // The events the primary session starts from. A recorded run seeds the log and a settle resumes it.
   readonly seed?: ReadonlyArray<Event>
-  readonly sessions?: SessionRegistry
+  readonly sessions?: ValidRegistry<Keys, R>
   // What the sessions require beyond the runtime's own ports, such as a sandbox. The runtime binds
   // these for a served session and for a caller alike, so one declaration covers both.
   readonly services?: Context.Context<R>
 }
 
-export const InMemoryRuntime = <R = never>(options: InMemoryOptions<R>) => {
+export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, never>>>(
+  options: InMemoryOptions<R, Keys>
+) => {
   const session = options.session ?? "in-memory"
   const registry = options.sessions ?? {}
   const services = options.services ?? (Context.empty() as Context.Context<R>)
@@ -107,20 +142,30 @@ export const InMemoryRuntime = <R = never>(options: InMemoryOptions<R>) => {
   // The resolved behavior for an address, memoized, so a factory runs once per address and a
   // session keeps one behavior for its lifetime. The exact lookup asks for an own property, because
   // a plain object inherits `constructor` and `toString` and a caller can choose the address.
-  const served = new Map<string, Serve>()
-  const serveOf = (address: string): Serve | undefined => {
+  // The registry is typed key by key for the caller. Inside, it is read as the plain record it is.
+  const entries = registry as SessionRegistry<R>
+  const served = new Map<string, Serve<R>>()
+  const serveOf = (address: string): Serve<R> | undefined => {
     const built = served.get(address)
     if (built !== undefined) return built
-    if (Object.hasOwn(registry, address)) {
-      const exact = registry[address] as Serve
+    if (Object.hasOwn(entries, address)) {
+      const exact = entries[address] as Serve<R>
       served.set(address, exact)
       return exact
     }
-    const pattern = Object.entries(registry)
+    const pattern = Object.entries(entries)
       .filter(([key]) => (key === "*" || key.endsWith("/*")) && address.startsWith(key.slice(0, -1)))
       .sort(([a], [b]) => b.length - a.length)[0]
     if (pattern === undefined) return undefined
-    const resolved = (pattern[1] as (address: string) => Serve)(address)
+    // A factory owes a function. A registry written by hand can not get this wrong, because the
+    // key's shape types the value, but a generated one meets no compiler, and returning the wrong
+    // half here would surface as an unreadable defect one call later.
+    const resolved = (pattern[1] as SessionFactory<R>)(address)
+    if (typeof resolved !== "function") {
+      throw new Error(
+        `the registry key "${pattern[0]}" names a family, so it owes a function of the address, and it returned ${typeof resolved}`
+      )
+    }
     served.set(address, resolved)
     return resolved
   }
@@ -192,7 +237,15 @@ export const InMemoryRuntime = <R = never>(options: InMemoryOptions<R>) => {
           error: `no session serves "${address}"`
         })
       }
-      return serve(event).pipe(
+      const answering = serve(event)
+      // The mirror of the factory check: an exact key that holds a factory answers with another
+      // function rather than with the effect of a turn.
+      if (typeof answering === "function") {
+        throw new Error(
+          `the registry key "${address}" names one address, so it owes what serves it, and it answered with a function of the address`
+        )
+      }
+      return answering.pipe(
         Effect.provideService(EventLog, storeOf(address)),
         Effect.provideService(Self, address),
         Effect.provideService(Writer, writer),

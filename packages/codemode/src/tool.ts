@@ -1,6 +1,11 @@
 import { Effect } from "effect"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "@flamecast/harness/infer"
-import { surfaceOf, type Capability, type CapabilityContext } from "./capability"
+import {
+  surfaceOf,
+  type Capability,
+  type CapabilityContext,
+  type CapabilitySurface
+} from "./capability"
 import { Sandbox } from "./sandbox"
 
 // Code mode: the model writes a script, and the script drives the capabilities the harness offers.
@@ -37,7 +42,7 @@ export interface CodemodeResult {
 
 const DEFAULT_MAX_CALLS = 64
 
-const describe = (capabilities: ReadonlyArray<Capability<any>>, extra?: string) =>
+const describe = (capabilities: ReadonlyArray<CapabilitySurface>, extra?: string) =>
   [
     "Run JavaScript. The body is an async function, so it can await and return.",
     "Return the value the caller needs, and use print(...) for progress.",

@@ -70,6 +70,37 @@ export {
 export { checkpointOf, estimateTokens, keepUpTo, suffixOf, type Checkpoint } from "./context"
 export { boundaryOf, type CallResult } from "./boundary"
 export { keyOf } from "./keys"
+export {
+  answerRejected,
+  budgetExhausted,
+  budgetRequested,
+  compactionCompleted,
+  messageReceived,
+  modelCalled,
+  modelReturned,
+  replyDelivered,
+  textReturned,
+  toolCalled,
+  toolReturned,
+  turnCompleted,
+  turnFailed,
+  type Stamped
+} from "./alphabet"
+export { tool, type ToolOptions } from "./tool"
+export {
+  array,
+  boolean,
+  integer,
+  literal,
+  number,
+  object,
+  optional,
+  specOf,
+  string,
+  type Input,
+  type Optional,
+  type Spec
+} from "./spec"
 export { answerErrors, repairText } from "./schema"
 export { ANSWER, EXITS, REQUEST_BUDGET } from "./exits"
 export {

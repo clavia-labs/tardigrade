@@ -1,6 +1,7 @@
 import { Clock, Context, Effect } from "effect"
 import { machine, type Event } from "@flamecast/core"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
+import { compactionCompleted } from "../alphabet"
 import { defineModule } from "../module"
 import { environment } from "../providers/environment"
 import { transcript } from "../turns"
@@ -131,13 +132,12 @@ export const morphCompaction = (options: MorphOptions = {}) => {
                 const span = log.slice(prior.upTo, upTo)
                 if (span.length === 0) {
                   return [
-                    {
-                      type: "CompactionCompleted",
+                    compactionCompleted({
                       upTo: prior.upTo,
                       summary: prior.summary,
                       provider: "fallback",
                       at
-                    }
+                    })
                   ]
                 }
                 const input = [
@@ -148,13 +148,12 @@ export const morphCompaction = (options: MorphOptions = {}) => {
                   .join("\n\n")
                 const compacted = yield* compress(options, input, lastQuestion(log), ratio)
                 return [
-                  {
-                    type: "CompactionCompleted",
+                  compactionCompleted({
                     upTo,
                     summary: compacted.summary,
                     provider: compacted.provider,
                     at
-                  }
+                  })
                 ]
               }),
             on: { CompactionCompleted: "idle" }

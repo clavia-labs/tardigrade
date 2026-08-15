@@ -10,6 +10,7 @@
     ".claude/**"
   ],
   "rules": {
-    "eslint/require-yield": "off"
+    "eslint/require-yield": "off",
+    "typescript/no-explicit-any": "error"
   }
 }

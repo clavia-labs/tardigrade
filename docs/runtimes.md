@@ -41,7 +41,9 @@ It uses arrays, maps, and a semaphore. Agents, routing, wake tracking, spill sto
 
 Serving many sessions is address resolution, so it belongs to the runtime that owns addresses, storage, and leases. `sessions` says who answers where: an exact key names one address, and a `prefix/*` key or a bare `*` names a family and holds a factory that receives the address. A store and a writer lease appear on first delivery, and a session exists once its log holds something, so an address a caller invents costs nothing until it records one.
 
-A registry value is a plain function from an event to a terminal event. `serve` in the harness builds one from an agent, and an application whose sessions are machines rather than agents registers its own. `services` binds what those sessions need beyond the runtime's own ports, for a served session and for a caller alike.
+A registry value is a plain function from an event to a terminal event. `serve` in the harness builds one from an agent, and an application whose sessions are machines rather than agents registers its own. `services` binds what those sessions need beyond the runtime's own ports, for a served session and for a caller alike, and a session that reaches for a service the runtime was not given fails to compile.
+
+Both halves take one argument, so the key's shape is what says which a value is: the type of an exact key is what serves that address, and the type of a pattern key is a function of the address. Getting them the wrong way round would call a factory with an event or a serve with an address, and both die on delivery, so the registry is checked key by key rather than as a union.
 
 ## Planned Bindings
 

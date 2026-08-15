@@ -1,4 +1,5 @@
 import { erase, machine, type Event } from "@flamecast/core"
+import { answerRejected, toolReturned, turnCompleted } from "../alphabet"
 import { ANSWER } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
@@ -82,28 +83,26 @@ const contractMachine = machine({
         const errors = answerErrors(outputSchemaOf(log), answer.arguments)
         if (errors.length === 0) {
           return [
-            {
-              type: "ToolReturned",
+            toolReturned({
               turn,
               callId: answer.callId,
               name: ANSWER,
               result: { accepted: true },
               at: now
-            },
-            { type: "TurnCompleted", turn, output: JSON.stringify(answer.arguments ?? null), at: now }
+            }),
+            turnCompleted({ turn, output: JSON.stringify(answer.arguments ?? null), at: now })
           ]
         }
         return [
-          { type: "AnswerRejected", turn, callId: answer.callId, error: errors.join("; "), at: now },
-          {
-            type: "ToolReturned",
+          answerRejected({ turn, callId: answer.callId, error: errors.join("; "), at: now }),
+          toolReturned({
             turn,
             callId: answer.callId,
             name: ANSWER,
             result: null,
             error: repairText(errors),
             at: now
-          }
+          })
         ]
       },
       on: { ToolReturned: "idle" }
@@ -130,7 +129,7 @@ export const contract = (options: ContractOptions = {}) => {
     version: "2",
     identity: { text, description },
     setup: () => ({
-      events: ["AnswerRejected"],
+      events: ["AnswerRejected", "ToolCalled", "ToolReturned", "TurnCompleted"],
       machines: [erase(contractMachine)],
       nudges: [answerNudge]
     })
