@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Duration, Effect, Schedule } from "effect"
 import type {
   Action,
   AgentMessage,
@@ -18,6 +18,9 @@ export interface OpenAiChatOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly fetch?: typeof fetch
   readonly configurationError?: string
+  // How many further attempts a transient failure earns, and how long one attempt may take.
+  readonly retries?: number
+  readonly timeout?: Duration.Input
 }
 
 interface ChatToolCall {
@@ -114,6 +117,24 @@ const actionOf = (body: ChatResponse): Action => {
   }
 }
 
+// A failure worth another attempt: the connection broke, or the gateway is busy or briefly unwell.
+// A refusal is not one of these. A request refused for a bad key or a malformed body is refused the
+// same way every time, so retrying it spends money and time to learn nothing.
+interface Transient {
+  readonly reason: string
+}
+
+const RETRYABLE = new Set([408, 409, 425, 429])
+
+const isTransient = (status: number) => status >= 500 || RETRYABLE.has(status)
+
+const DEFAULT_RETRIES = 2
+const DEFAULT_TIMEOUT: Duration.Input = "60 seconds"
+
+// Waiting longer each time is what makes a retry useful to a gateway that is shedding load, and the
+// jitter is what stops a fleet of agents that failed together from returning together.
+const backoff = Schedule.exponential("500 millis").pipe(Schedule.jittered)
+
 export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvider => ({
   id: options.id,
   state: () => ({
@@ -126,40 +147,64 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
       return Effect.succeed({ kind: "fail", error: options.configurationError } satisfies Action)
     }
     const call = options.fetch ?? fetch
-    return Effect.tryPromise({
-      try: async () => {
-        const response = await call(options.endpoint, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${options.apiKey ?? ""}`,
-            "content-type": "application/json",
-            "idempotency-key": key,
-            ...options.headers
-          },
-          body: JSON.stringify({
-            model: options.model,
-            messages: [
-              ...(request.system === "" ? [] : [{ role: "system", content: request.system }]),
-              ...request.messages.map(message)
-            ],
-            ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
-          })
-        })
-        const text = await response.text()
-        if (!response.ok) {
-          return {
-            kind: "fail",
-            error: `${options.provider} returned HTTP ${response.status}: ${text}`
-          } satisfies Action
-        }
+    const body = JSON.stringify({
+      model: options.model,
+      messages: [
+        ...(request.system === "" ? [] : [{ role: "system", content: request.system }]),
+        ...request.messages.map(message)
+      ],
+      ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
+    })
+    const failed = (reason: string): Transient => ({ reason })
+    const attempt = Effect.gen(function* () {
+      const response = yield* Effect.tryPromise({
+        try: () =>
+          call(options.endpoint, {
+            method: "POST",
+            headers: {
+              authorization: `Bearer ${options.apiKey ?? ""}`,
+              "content-type": "application/json",
+              // Every attempt carries the same key, so a retry after a reply this side never saw is
+              // the same call to the gateway rather than a second one.
+              "idempotency-key": key,
+              ...options.headers
+            },
+            body
+          }),
+        catch: (error) => failed(error instanceof Error ? error.message : String(error))
+      })
+      const text = yield* Effect.tryPromise({
+        try: () => response.text(),
+        catch: (error) => failed(error instanceof Error ? error.message : String(error))
+      })
+      if (!response.ok) {
+        const reason = `${options.provider} returned HTTP ${response.status}: ${text}`
+        if (isTransient(response.status)) return yield* Effect.fail(failed(reason))
+        return { kind: "fail", error: reason } satisfies Action
+      }
+      try {
         return actionOf(JSON.parse(text) as ChatResponse)
-      },
-      catch: (error) => (error instanceof Error ? error : new Error(String(error)))
-    }).pipe(
-      Effect.catch((error) =>
+      } catch {
+        return {
+          kind: "fail",
+          error: `${options.provider} returned a body that is not JSON: ${text}`
+        } satisfies Action
+      }
+    })
+    return attempt.pipe(
+      // The bound is on one attempt rather than the whole retry, so a gateway that accepts a
+      // request and then goes quiet costs one timeout rather than the turn.
+      Effect.timeoutOrElse({
+        duration: options.timeout ?? DEFAULT_TIMEOUT,
+        orElse: () => Effect.fail(failed("no response within the request timeout"))
+      }),
+      Effect.retry({ schedule: backoff, times: options.retries ?? DEFAULT_RETRIES }),
+      // A failure that outlived its retries becomes the turn's evidence. The inference module reads
+      // it, and the log carries what happened.
+      Effect.catch((failure) =>
         Effect.succeed({
           kind: "fail",
-          error: `${options.provider} request failed: ${error.message}`
+          error: `${options.provider} request failed: ${failure.reason}`
         } satisfies Action)
       ),
       Effect.catchDefect((defect) =>
