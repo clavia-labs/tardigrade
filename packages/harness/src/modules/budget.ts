@@ -1,6 +1,8 @@
+import { Schema } from "effect"
 import { erase, machine, type Event } from "@flamecast/core"
 import { EXITS, REQUEST_BUDGET } from "../exits"
 import type { NativeToolSpec } from "../infer"
+import { jsonSchemaOf } from "../schema"
 import { budgetExhausted, budgetRequested, toolReturned } from "../alphabet"
 import { defineModule } from "../module"
 import { WITHDRAW_ALL, type Nudge } from "../definition"
@@ -222,18 +224,17 @@ const ESCALATE_TEXT =
   "If the work genuinely needs more and the extra spend is worth it, call request-budget with a " +
   "reason and an amount instead of answering. Ask only when it changes the result."
 
+const REQUEST_BUDGET_INPUT = Schema.Struct({
+  reason: Schema.String.annotate({
+    description: "What is still missing and what the calls are for."
+  }),
+  amount: Schema.Finite.annotate({ description: "How many more tool calls you need." })
+})
+
 const requestBudgetTool = (description: string): NativeToolSpec => ({
   name: REQUEST_BUDGET,
   description,
-  inputSchema: {
-    type: "object",
-    properties: {
-      reason: { type: "string", description: "What is still missing and what the calls are for." },
-      amount: { type: "number", description: "How many more tool calls you need." }
-    },
-    required: ["reason", "amount"],
-    additionalProperties: false
-  }
+  inputSchema: jsonSchemaOf(REQUEST_BUDGET_INPUT)
 })
 
 // The wall closes every base tool. It can not name them, because the tools belong to whoever

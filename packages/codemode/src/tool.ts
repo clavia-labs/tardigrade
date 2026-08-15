@@ -1,5 +1,6 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "@flamecast/harness/infer"
+import { jsonSchemaOf } from "@flamecast/harness/schema"
 import {
   surfaceOf,
   type Capability,
@@ -42,6 +43,10 @@ export interface CodemodeResult {
 
 const DEFAULT_MAX_CALLS = 64
 
+const SOURCE_INPUT = Schema.Struct({
+  source: Schema.String.annotate({ description: "The body of an async JavaScript function." })
+})
+
 const describe = (capabilities: ReadonlyArray<CapabilitySurface>, extra?: string) =>
   [
     "Run JavaScript. The body is an async function, so it can await and return.",
@@ -68,14 +73,7 @@ export const codemode = <R = never>(
     spec: {
       name: options.name ?? "execute",
       description: options.description ?? describe(options.capabilities),
-      inputSchema: {
-        type: "object",
-        properties: {
-          source: { type: "string", description: "The body of an async JavaScript function." }
-        },
-        required: ["source"],
-        additionalProperties: false
-      }
+      inputSchema: jsonSchemaOf(SOURCE_INPUT)
     },
     run: (input, context) =>
       Effect.gen(function* () {

@@ -87,21 +87,7 @@ export {
   type Stamped
 } from "./alphabet"
 export { tool, type ToolOptions } from "./tool"
-export {
-  array,
-  boolean,
-  integer,
-  literal,
-  number,
-  object,
-  optional,
-  specOf,
-  string,
-  type Input,
-  type Optional,
-  type Spec
-} from "./spec"
-export { answerErrors, repairText } from "./schema"
+export { jsonSchemaOf, repairText, schemaErrors } from "./schema"
 export { ANSWER, EXITS, REQUEST_BUDGET } from "./exits"
 export {
   cloudflareGatewayInference,
