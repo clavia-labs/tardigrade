@@ -9,7 +9,7 @@ const head: ReadonlyArray<Event> = [
 
 describe("finite program observations", () => {
   test("captures rendered requests, machine folds, and injected projections", () => {
-    const agent = createAgent({ modules: [inference()] })
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     const observation = observationOf(agent, head)
     expect(observation.request.messages).toEqual([
       { role: "user", content: "What are your hours?" }
@@ -21,14 +21,14 @@ describe("finite program observations", () => {
   })
 
   test("treats two constructions with the same behavior as equivalent on a corpus", () => {
-    const left = createAgent({ modules: [inference()] })
-    const right = createAgent({ modules: [inference()] })
+    const left = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
+    const right = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     expect(observationallyEquivalent(left, right, [[], head])).toBe(true)
   })
 
   test("finds a prompt change on the first relevant log", () => {
-    const left = createAgent({ modules: [inference({ system: "Answer clearly." })] })
-    const right = createAgent({ modules: [inference({ system: "Answer briefly." })] })
+    const left = createAgent({ modules: [inference({ system: "Answer clearly.", contextWindow: 200_000 })] })
+    const right = createAgent({ modules: [inference({ system: "Answer briefly.", contextWindow: 200_000 })] })
     expect(observationallyEquivalent(left, right, [[], head])).toBe(false)
   })
 

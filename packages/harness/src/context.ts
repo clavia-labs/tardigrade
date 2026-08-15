@@ -6,9 +6,15 @@ import type { Event } from "@flamecast/core"
 
 // Tokens estimated as characters over four. A real tokenizer is a dependency and a non-pure path,
 // and every size decision has to fold the same on replay, so the estimate is a pure function of the
-// recorded bytes. This is the one measure the guard and the retained tail share.
+// recorded bytes. This is the one measure the guard, the retained tail, and the window check share.
+//
+// The estimate runs low: prose is close to four characters per token, and the JSON and code a tool
+// returns are closer to three. A caller that reads it as "at least this many" is reading it right,
+// which is why the window check refuses on it and nothing sizes a budget up from it.
+export const estimateTextTokens = (text: string): number => Math.ceil(text.length / 4)
+
 export const estimateTokens = (events: ReadonlyArray<Event>): number =>
-  Math.ceil(events.reduce((total, event) => total + JSON.stringify(event).length, 0) / 4)
+  estimateTextTokens(events.map((event) => JSON.stringify(event)).join(""))
 
 export interface Checkpoint {
   // The index the next span starts from. Events before it stay in the log, and the rendered context

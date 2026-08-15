@@ -9,7 +9,7 @@ import {
   type Action,
   type AgentServices,
   type Infer,
-  type InferenceOptions,
+  type InferenceSettings,
   type ModelRequest,
   type NativeTool
 } from "@flamecast/harness"
@@ -25,13 +25,13 @@ const scripted = (actions: ReadonlyArray<Action>) => {
       const next = actions[seen.length - 1]
       if (next === undefined) throw new Error(`the stub model ran out of actions after ${seen.length}`)
       return next
-    })
+    }, { contextWindow: 200_000 })
   }
 }
 
 const refuses = inferWith(async () => {
   throw new Error("the model was called on a step the recording already answered")
-})
+}, { contextWindow: 200_000 })
 
 const usage = { promptTokens: 1284, completionTokens: 96, costUsd: 0.0041 }
 const SYSTEM = "Use the tools for any question about an order."
@@ -57,12 +57,12 @@ const fetchLedger: NativeTool = {
 }
 
 const buildAgent = (
-  inferenceOptions: InferenceOptions = {},
+  inferenceOptions: InferenceSettings = {},
   toolList: ReadonlyArray<NativeTool> = [lookupInvoice, fetchLedger]
 ) =>
   createAgent({
     modules: defaultPack({
-      inference: { system: SYSTEM, ...inferenceOptions },
+      inference: { system: SYSTEM, contextWindow: 200_000, ...inferenceOptions },
       nativeTools: toolList
     })
   })

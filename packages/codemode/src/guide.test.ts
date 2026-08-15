@@ -26,7 +26,7 @@ import { inProcessSandbox, Sandbox } from "./sandbox"
 // addresses an installer of the published package and this file lives in the workspace.
 
 const scripted = (model: string, react: (request: ModelRequest) => Action) =>
-  customInference(async (request) => react(request), { id: model, model })
+  customInference(async (request) => react(request), { id: model, model, contextWindow: 200_000 })
 
 const toolAnswered = (request: ModelRequest) =>
   request.messages.some((message) => message.role === "tool")

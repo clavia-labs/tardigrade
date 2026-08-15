@@ -23,13 +23,13 @@ const scripted = (actions: ReadonlyArray<Action>) => {
       const next = actions[seen.length - 1]
       if (next === undefined) throw new Error(`the stub model ran out of actions after ${seen.length}`)
       return next
-    })
+    }, { contextWindow: 200_000 })
   }
 }
 
 const refuses = inferWith(async () => {
   throw new Error("the model was called when the record already held the answer")
-})
+}, { contextWindow: 200_000 })
 
 const run = <A>(
   program: Effect.Effect<A, never, AgentServices>,
@@ -65,7 +65,7 @@ const lookupInvoice: NativeTool = {
 describe("the smallest agent", () => {
   test("one module, one turn, the documented log", async () => {
     const agent = createAgent({
-      modules: [inference({ system: "You are a support agent. Answer in plain text." })]
+      modules: [inference({ system: "You are a support agent. Answer in plain text.", contextWindow: 200_000 })]
     })
     const model = scripted([{ kind: "complete", output: "We are open 9 to 5.", usage }])
 
@@ -94,12 +94,24 @@ describe("the smallest agent", () => {
       { role: "user", content: "What are your support hours?" }
     ])
   })
+
+  // The symptom this reproduces: a long message reached the model as a fragment, and nothing in the
+  // log, the result, or the usage said so. What the log holds is what the model reads.
+  test("sends a long message whole", async () => {
+    const agent = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 } }) })
+    const trace = `a rollout trace\n${"x".repeat(500_000)}`
+    const model = scripted([{ kind: "complete", output: "Read it.", usage }])
+
+    await run(agent.turn({ id: "m-1", text: trace }), model.layer)
+
+    expect(model.seen[0]?.messages[0]?.content).toBe(trace)
+  })
 })
 
 describe("a turn with native tools", () => {
   const agent = createAgent({
     modules: defaultPack({
-      inference: { system: "Use lookup_invoice for any question about an order." },
+      inference: { system: "Use lookup_invoice for any question about an order.", contextWindow: 200_000 },
       nativeTools: [lookupInvoice]
     })
   })
@@ -230,7 +242,7 @@ describe("a turn with native tools", () => {
     const candidate = createAgent({
       parent: agent.definition.id,
       modules: defaultPack({
-        inference: { system: "Answer in one sentence." },
+        inference: { system: "Answer in one sentence.", contextWindow: 200_000 },
         nativeTools: [lookupInvoice]
       })
     })
@@ -300,7 +312,7 @@ describe("a turn with native tools", () => {
       spec: { name: "lookup_invoice", description: "Look one up.", inputSchema: {} },
       run: () => Effect.die(new Error("the invoice service is down"))
     }
-    const withBroken = createAgent({ modules: defaultPack({ nativeTools: [broken] }) })
+    const withBroken = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 }, nativeTools: [broken] }) })
     const model = scripted(script)
     const log = await run(
       Effect.gen(function* () {
@@ -335,7 +347,7 @@ describe("a turn with native tools", () => {
 
 describe("the give-up policy", () => {
   test("a turn that keeps dying fails instead of trying forever", async () => {
-    const agent = createAgent({ modules: [inference()] })
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     const model = scripted([{ kind: "fail", error: "the provider refused", usage }])
     const result = await run(
       agent.turn({ id: "m-1", text: "hello" }),
@@ -346,7 +358,7 @@ describe("the give-up policy", () => {
   })
 
   test("three marks with nothing after them end the turn", async () => {
-    const agent = createAgent({ modules: [inference()] })
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     // A log whose last three events are attempts that died: the model call never landed a
     // consequence. Replay reads that as the crash loop it is.
     const seeded: ReadonlyArray<Event> = [

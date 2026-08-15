@@ -35,14 +35,30 @@ export class InferenceStateProjection extends Context.Service<
   Projection<InferenceState>
 >()("flamecast/InferenceStateProjection") {}
 
-export interface InferenceOptions {
-  readonly provider?: InferenceSelection
+export interface InferenceSettings {
   readonly system?: string
   readonly giveUpAfter?: number
   readonly repairAtMost?: number
   readonly messageTruncateAt?: number
   readonly resultTruncateAt?: number
 }
+
+// A module says which model answers, and saying that means saying what the model accepts. Either
+// name a provider, which already holds its window, or name the window and take the default gateway
+// with it. There is no third form, because the third form is the one where the framework picks a
+// number for a model it has never met.
+//
+// A provider built by asking a gateway comes from `yield* vercelGatewayInference()`, which reads the
+// window from the model and hands back a provider to pass here.
+export type InferenceOptions =
+  | (InferenceSettings & {
+      readonly provider: InferenceSelection
+      readonly contextWindow?: number
+    })
+  | (InferenceSettings & {
+      readonly provider?: InferenceSelection
+      readonly contextWindow: number
+    })
 
 const diedAttempts = (view: ReadonlyArray<Event>): number => {
   let died = 0
@@ -180,13 +196,36 @@ const replyMachine = machine({
   }
 })
 
-export const inference = (options: InferenceOptions = {}) => {
-  const selection = options.provider ?? vercelGatewayInference()
+// The type says one of the two is there. Generated code meets no type, so the construction says it
+// too, and it names both ways out rather than only the one this function happens to take.
+const selectionOf = (options: InferenceOptions): InferenceSelection => {
+  if (options.provider !== undefined) return options.provider
+  if (options.contextWindow === undefined) {
+    throw new Error(
+      "inference needs a provider or a contextWindow: a module has to say what the model " +
+        "accepts. Pass contextWindow to take the default gateway with it, or build a provider " +
+        "with `yield* vercelGatewayInference()` to read the window from the model."
+    )
+  }
+  return vercelGatewayInference({ contextWindow: options.contextWindow })
+}
+
+export const inference = (options: InferenceOptions) => {
+  const selection = selectionOf(options)
   const system = options.system ?? BASE_SYSTEM
   const giveUpAfter = options.giveUpAfter ?? 3
   const repairAtMost = options.repairAtMost ?? 2
-  const messageTruncateAt = options.messageTruncateAt ?? 12_000
-  const resultTruncateAt = options.resultTruncateAt ?? 6_000
+  // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
+  // message down on the way to the model while the log kept the whole thing, so the record and the
+  // request would disagree and only the request is what the model answered.
+  const truncation = {
+    ...(options.messageTruncateAt === undefined
+      ? {}
+      : { messageTruncateAt: options.messageTruncateAt }),
+    ...(options.resultTruncateAt === undefined
+      ? {}
+      : { resultTruncateAt: options.resultTruncateAt })
+  }
   const initial = selectedInference(selection, [])
   const state: Projection<InferenceState> = (log) => {
     const provider = selectedInference(selection, log)
@@ -201,8 +240,7 @@ export const inference = (options: InferenceOptions = {}) => {
       system,
       giveUpAfter,
       repairAtMost,
-      messageTruncateAt,
-      resultTruncateAt
+      ...truncation
     },
     services: Context.make(InferenceStateProjection, state),
     setup: () => ({
@@ -221,7 +259,7 @@ export const inference = (options: InferenceOptions = {}) => {
       ],
       projections: { [InferenceStateProjection.key]: state },
       instructions: [{ id: "inference.system", text: system }],
-      render: { messageTruncateAt, resultTruncateAt },
+      render: truncation,
       // The requirements are declared rather than cast away. The model loop reaches the log and the
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.

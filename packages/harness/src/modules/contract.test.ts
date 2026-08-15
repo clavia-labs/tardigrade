@@ -28,7 +28,7 @@ const scripted = (actions: ReadonlyArray<Action>) => {
       const next = actions[seen.length - 1]
       if (next === undefined) throw new Error(`the stub model ran out of actions after ${seen.length}`)
       return next
-    })
+    }, { contextWindow: 200_000 })
   }
 }
 
@@ -40,7 +40,7 @@ const answer = (callId: string, args: unknown): Action => ({
   usage
 })
 
-const agent = createAgent({ modules: defaultPack() })
+const agent = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 } }) })
 
 const runTurn = (model: ReturnType<typeof scripted>) =>
   Effect.runPromise(
@@ -163,7 +163,7 @@ describe("the contract in a turn", () => {
 
   test("the inference module owns the repair bound", async () => {
     const patient = createAgent({
-      modules: defaultPack({ inference: { repairAtMost: 0 } })
+      modules: defaultPack({ inference: { repairAtMost: 0, contextWindow: 200_000 } })
     })
     const bad = { invoice: "INV-4182", lines: "[312]" }
     const model = scripted([answer("c-1", bad), answer("c-2", bad)])

@@ -31,7 +31,7 @@ const scripted = (actions: ReadonlyArray<Action>) => {
     served += 1
     if (next === undefined) throw new Error(`the stub model ran out of actions after ${served}`)
     return next
-  })
+  }, { contextWindow: 200_000 })
 }
 
 const run = <A>(program: Effect.Effect<A, never, AgentServices>, model: Layer.Layer<Infer>) =>
@@ -65,7 +65,7 @@ describe("the key of an event the world supplies an id for", () => {
 
 describe("two turns whose model reuses one call id", () => {
   test("both tool results land and both turns complete", async () => {
-    const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
+    const agent = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 }, nativeTools: [lookupInvoice] }) })
     // What a real provider does: tool calls are numbered per response, so turn 2 opens `call_1`
     // again. Nothing about the second call is a redelivery of the first.
     const model = scripted([
