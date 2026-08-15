@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber } from "effect"
+import { Config, Effect, Fiber, Redacted } from "effect"
 import { TestClock } from "effect/testing"
 import type { Action, ModelRequest } from "../infer"
 import { openAiChatInference } from "./openai-chat"
@@ -28,7 +28,7 @@ const provider = (stub: typeof fetch, options: { readonly retries?: number } = {
     model: "test-model",
     contextWindow: 1000,
     endpoint: "https://gateway.test/v1/chat/completions",
-    apiKey: "key",
+    apiKey: Config.succeed(Redacted.make("key")),
     fetch: stub,
     ...options
   })
