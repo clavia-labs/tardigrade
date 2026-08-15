@@ -35,6 +35,8 @@ Vercel AI Gateway is the default provider. The gateway reads `AI_GATEWAY_API_KEY
 
 `nativeTools(list)` implements the model provider's native tool-calling interface. It contributes schemas and a dispatch machine. A handler success or failure becomes a `ToolReturned` event, so the model can observe the outcome and replay can reuse it.
 
+`tool(options)` declares a tool's schema and its handler together. The input spec built from `object`, `string`, `array`, and their siblings carries both the JSON Schema the model reads and the TypeScript type the handler receives, so a field the schema does not offer is a compile error rather than an `undefined` read at runtime. Arguments are checked against that schema before the handler runs, and a mismatch returns to the model as an ordinary tool error it can repair.
+
 Native tool calling is one interface policy. MCP, textual commands, one generic RPC operation, or another protocol can use its own request projection and machines without changing the event-log or module primitives. [Code mode](codemode.md) is the policy that ships, in its own package.
 
 `subagentTool(options)` adapts `callAgent` to a `NativeTool`, so a model delegates to another agent through the same surface it already understands. [Orchestration](orchestration.md) covers the delegation surface.

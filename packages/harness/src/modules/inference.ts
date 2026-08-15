@@ -8,6 +8,16 @@ import {
   type InferenceSelection,
   type InferenceState
 } from "../infer"
+import {
+  messageReceived,
+  modelCalled,
+  modelReturned,
+  replyDelivered,
+  textReturned,
+  toolCalled,
+  turnCompleted,
+  turnFailed
+} from "../alphabet"
 import { defineModule } from "../module"
 import type { Projection } from "../projection"
 import type { RenderPlan } from "../definition"
@@ -45,17 +55,16 @@ const diedAttempts = (view: ReadonlyArray<Event>): number => {
 
 const consequenceOf = (action: Action, turn: string, at: number): Event =>
   action.kind === "call"
-    ? {
-        type: "ToolCalled",
+    ? toolCalled({
         turn,
         callId: action.callId,
         name: action.name,
         arguments: action.arguments,
         at
-      }
+      })
     : action.kind === "complete"
-      ? { type: "TurnCompleted", turn, output: action.output, at }
-      : { type: "TurnFailed", turn, error: action.error, at }
+      ? turnCompleted({ turn, output: action.output, at })
+      : turnFailed({ turn, error: action.error, at })
 
 const inferMachine = (
   render: RenderPlan,
@@ -86,37 +95,35 @@ const inferMachine = (
             const died = diedAttempts(view)
             if (died >= giveUpAfter) {
               return [
-                {
-                  type: "TurnFailed",
+                turnFailed({
                   turn,
                   error: `the model attempt died ${giveUpAfter} times in a row`,
                   at
-                }
+                })
               ]
             }
             const rejections = view.filter((event) => event.type === "AnswerRejected").length
             if (rejections > repairAtMost) {
               return [
-                {
-                  type: "TurnFailed",
+                turnFailed({
                   turn,
                   error: `the answer did not satisfy the declared schema after ${repairAtMost} corrections`,
                   at
-                }
+                })
               ]
             }
             const marks = view.filter((event) => event.type === "ModelCalled").length
             const key = `${turn}/infer/${marks - died}`
             const store = yield* EventLog
-            yield* store.append([{ type: "ModelCalled", turn, callId: key, at }])
+            yield* store.append([modelCalled({ turn, callId: key, at })])
             const override = yield* Effect.serviceOption(Infer)
             const provider = Option.getOrElse(override, () => selectedInference(selection, log))
             const action = yield* provider.react(modelRequest({ render }, log), key)
             const after = yield* Clock.currentTimeMillis
             return [
-              { type: "ModelReturned", turn, callId: key, usage: usageOf(action.usage), at: after },
+              modelReturned({ turn, callId: key, usage: usageOf(action.usage), at: after }),
               ...(action.kind === "call" && action.text !== undefined && action.text !== ""
-                ? [{ type: "TextReturned", turn, text: action.text, at: after }]
+                ? [textReturned({ turn, text: action.text, at: after })]
                 : []),
               consequenceOf(action, turn, after)
             ]
@@ -149,22 +156,24 @@ const replyMachine = machine({
           }
           const turn = String(head.id ?? "")
           const at = yield* Clock.currentTimeMillis
-          if (head.replyTo === undefined) return [{ type: "ReplyDelivered", turn, at }]
+          if (head.replyTo === undefined) return [replyDelivered({ turn, at })]
           const to = String(head.replyTo)
           const failed = terminal.type === "TurnFailed"
           const session = yield* Self
           // The reply names its origin and carries this turn's inclusive usage, so the receiver
           // can attribute and cost the exchange without reading this session's log.
-          yield* (yield* Router).deliver(to, {
-            type: "MessageReceived",
-            id: `reply:${turn}`,
-            text: failed ? `error: ${String(terminal.error ?? "")}` : String(terminal.output ?? ""),
-            outcome: failed ? "failed" : "completed",
-            origin: { session, turn },
-            usage: treeUsageIn(log, turn),
-            at
-          })
-          return [{ type: "ReplyDelivered", turn, to, at }]
+          yield* (yield* Router).deliver(
+            to,
+            messageReceived({
+              id: `reply:${turn}`,
+              text: failed ? `error: ${String(terminal.error ?? "")}` : String(terminal.output ?? ""),
+              outcome: failed ? "failed" : "completed",
+              origin: { session, turn },
+              usage: treeUsageIn(log, turn),
+              at
+            })
+          )
+          return [replyDelivered({ turn, to, at })]
         }),
       on: { ReplyDelivered: "idle" }
     }
@@ -197,11 +206,15 @@ export const inference = (options: InferenceOptions = {}) => {
     },
     services: Context.make(InferenceStateProjection, state),
     setup: () => ({
+      // The model loop emits the tool call and then waits on its result, so both belong here even
+      // though the native-tools module is what dispatches one.
       events: [
         "MessageReceived",
         "ModelCalled",
         "ModelReturned",
         "TextReturned",
+        "ToolCalled",
+        "ToolReturned",
         "TurnCompleted",
         "TurnFailed",
         "ReplyDelivered"
@@ -209,11 +222,13 @@ export const inference = (options: InferenceOptions = {}) => {
       projections: { [InferenceStateProjection.key]: state },
       instructions: [{ id: "inference.system", text: system }],
       render: { messageTruncateAt, resultTruncateAt },
-      machines: (render) =>
-        [
-          erase(inferMachine(render, selection, giveUpAfter, repairAtMost)),
-          replyMachine
-        ] as unknown as ReadonlyArray<Machine<never>>
+      // The requirements are declared rather than cast away. The model loop reaches the log and the
+      // reply machine reaches the router and this session's name, so the module says so and the
+      // agent's own requirement carries it to the runtime.
+      machines: (render): ReadonlyArray<Machine<EventLog | Router | Self, never>> => [
+        erase(inferMachine(render, selection, giveUpAfter, repairAtMost)),
+        erase(replyMachine)
+      ]
     })
   })
 }

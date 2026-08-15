@@ -45,10 +45,23 @@ export const capability = <R = never>(value: Capability<R>): Capability<R> => {
   return value
 }
 
+// What rendering a surface reads: the words, and none of the effects behind them. Asking for this
+// rather than for a `Capability` of some requirement lets one list of capabilities with different
+// requirements render together, and says in the type that rendering runs nothing.
+export interface CapabilitySurface {
+  readonly name: string
+  readonly summary: string
+  readonly methods: ReadonlyArray<{
+    readonly name: string
+    readonly signature: string
+    readonly description: string
+  }>
+}
+
 // The surface as the model reads it. Names and signatures are cheap, so they sit in the static
 // instruction where they cache; a capability that needs more explanation carries it in its
 // description and its method descriptions.
-export const surfaceOf = (capabilities: ReadonlyArray<Capability<any>>): string =>
+export const surfaceOf = (capabilities: ReadonlyArray<CapabilitySurface>): string =>
   capabilities
     .map((one) =>
       [

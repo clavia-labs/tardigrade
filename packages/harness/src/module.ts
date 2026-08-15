@@ -17,6 +17,7 @@ import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
 import { keyOf } from "./keys"
 import { modelRequest } from "./render"
 import {
+  WITHDRAW_ALL,
   agentId,
   type AgentDefinition,
   type Instruction,
@@ -42,9 +43,16 @@ export interface ModulePart<R = never> {
 }
 
 type AnyService = Context.Service.Any
-type RequiredServices<Requires extends readonly AnyService[]> = Context.Service.Identifier<
-  Requires[number]
->
+
+// What a module's declared requirements name. `defineModule` takes `Requires` as a `const`, so a
+// module that declares any is always a literal tuple, and a tuple has a literal `length`. An
+// unbounded array reaches here only when inference had nothing to read and fell back to the
+// constraint, which happens to a module written inline inside `createAgent`, where the tuple's own
+// element constraint is the contextual type. Reading that as "requires every service" would reject
+// a module that declares none, so it reads as what it means: nothing was declared.
+type RequiredServices<Requires extends readonly AnyService[]> = number extends Requires["length"]
+  ? never
+  : Context.Service.Identifier<Requires[number]>
 
 export interface Module<
   Id extends string = string,
@@ -60,7 +68,16 @@ export interface Module<
   readonly setup: (context: Context.Context<RequiredServices<Requires>>) => ModulePart<R>
 }
 
-export type AnyModule = Module<string, never, any, any>
+// A module in a heterogeneous tuple, and the constraint every module tuple is checked against.
+//
+// `Requires` is the one `any` in the framework, and it is load-bearing. It sits in `setup`'s
+// parameter, which is contravariant, so the constraint has to accept a module that requires
+// anything and a module that requires nothing at once. `unknown` and `never` each reject one of
+// those, and a service array narrows `setup` to a context no real module can be called with.
+// A wildcard in a constraint is read by the compiler and never by the code, so nothing here is
+// unsound: `createAgent` recovers each module's real types from the tuple it was given.
+// eslint-disable-next-line typescript/no-explicit-any
+export type AnyModule = Module<string, never, any, unknown>
 
 export const defineModule = <
   const Id extends string,
@@ -209,7 +226,7 @@ export const privateLog = (seed: ReadonlyArray<Event>): EventLogStore => {
   }
 }
 
-const headOf = (message: InboundMessage, definition: AgentDefinition<unknown, any>, at: number): Event => ({
+const headOf = (message: InboundMessage, definition: Pick<AgentDefinition<never>, "id">, at: number): Event => ({
   type: "MessageReceived",
   id: message.id,
   text: message.text,
@@ -321,6 +338,17 @@ const build = <R, Services>(
   }
 }
 
+// Where a function sits inside an identity value, as a path, or undefined when it is all data.
+const functionIn = (value: unknown, path = ""): string | undefined => {
+  if (typeof value === "function") return path === "" ? "" : ` ${path}`
+  if (value === null || typeof value !== "object") return undefined
+  for (const [key, held] of Object.entries(value as Record<string, unknown>)) {
+    const found = functionIn(held, path === "" ? key : `${path}.${key}`)
+    if (found !== undefined) return found
+  }
+  return undefined
+}
+
 const compile = <R, Services>(
   modules: ReadonlyArray<AnyModule>,
   options: { readonly id?: string; readonly parent?: string }
@@ -383,6 +411,19 @@ const compile = <R, Services>(
       resultTruncateAt: 6_000
     } satisfies RenderPlan
   )
+  // Identity is hashed into the agent id, and the hash serializes a function as the constant
+  // "[function]". Two modules whose behavior differs only inside a function would then share an
+  // id, and evolution reads that id as provenance: a rollout would reuse a recording another
+  // agent produced. The value has to be data for the hash to mean anything.
+  for (const module of modules) {
+    const carried = functionIn(module.identity)
+    if (carried !== undefined) {
+      throw new Error(
+        `module "${module.id}" carries a function at identity${carried} and identity is hashed, so it must be data`
+      )
+    }
+  }
+
   const manifests: ReadonlyArray<ModuleManifest> = modules.map((module) => ({
     id: module.id,
     version: module.version ?? "1",
@@ -395,6 +436,40 @@ const compile = <R, Services>(
   for (const machine of machines) {
     if (machineIds.has(machine.id)) throw new Error(`duplicate machine id "${machine.id}"`)
     machineIds.add(machine.id)
+  }
+
+  const declared = new Set(parts.flatMap((part) => part.events ?? []))
+
+  // A transition on an event no module declares waits forever. `machine()` checks that a target
+  // names a declared state, and this is the same check on the other axis of the transition table:
+  // the event names are only meaningful against the alphabet the tuple composes, so the check
+  // belongs here, where the tuple is known, rather than in core, which knows no alphabet.
+  //
+  // The rule is one-directional on purpose. Transitioning on an undeclared event is a typo or a
+  // missing module. Declaring an event nothing transitions on is ordinary: a module records facts
+  // for a projection or for a reader, and no machine has to care.
+  for (const machine of machines) {
+    for (const [state, definition] of Object.entries(machine.states)) {
+      for (const type of Object.keys(definition.on ?? {})) {
+        if (!declared.has(type)) {
+          throw new Error(
+            `machine "${machine.id}" transitions on "${type}" in state "${state}", which no module declares`
+          )
+        }
+      }
+    }
+  }
+
+  // A withdrawal that names no tool is a typo that reads as working: the nudge fires, the surface
+  // is unchanged, and the tool it meant to take away stays in front of the model. Nudges that
+  // compute their tools from the log are exempt, since their names are only known at render time.
+  const offered = new Set(render.nativeTools.map((tool) => tool.name))
+  for (const nudge of render.nudges) {
+    for (const name of nudge.withdrawsNativeTools ?? []) {
+      if (name !== WITHDRAW_ALL && !offered.has(name)) {
+        throw new Error(`nudge "${nudge.id}" withdraws "${name}", which no module offers`)
+      }
+    }
   }
   const projections: Record<string, Projection<unknown>> = {}
   for (const part of parts) {

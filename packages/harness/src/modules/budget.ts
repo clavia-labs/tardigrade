@@ -1,6 +1,7 @@
 import { erase, machine, type Event } from "@flamecast/core"
 import { EXITS, REQUEST_BUDGET } from "../exits"
 import type { NativeToolSpec } from "../infer"
+import { budgetExhausted, budgetRequested, toolReturned } from "../alphabet"
 import { defineModule } from "../module"
 import { WITHDRAW_ALL, type Nudge } from "../definition"
 import { turnHead, turnOf, turnView } from "../turns"
@@ -90,13 +91,12 @@ const budgetMachine = (defaultBudget: number) => machine({
     // The one active state: record the wall, then rest.
     exhausted: {
       decide: (log, now) => [
-        {
-          type: "BudgetExhausted",
+        budgetExhausted({
           turn: turnOf(log),
           budget: budgetOf(log, defaultBudget),
           used: usedOf(log),
           at: now
-        }
+        })
       ],
       on: { BudgetExhausted: "spent" }
     },
@@ -154,14 +154,13 @@ const escalationMachine = machine({
       decide: (_log, now, context) => {
         const ask = askOf(context)
         return [
-          {
-            type: "BudgetRequested",
+          budgetRequested({
             turn: ask.turn,
             callId: ask.callId,
             reason: ask.reason,
             amount: ask.amount,
             at: now
-          }
+          })
         ]
       },
       on: { BudgetRequested: "parked" }
@@ -182,14 +181,13 @@ const escalationMachine = machine({
       decide: (_log, now, context) => {
         const ask = askOf(context)
         return [
-          {
-            type: "ToolReturned",
+          toolReturned({
             turn: ask.turn,
             callId: ask.callId,
             name: REQUEST_BUDGET,
             result: { granted: ask.grant ?? 0 },
             at: now
-          }
+          })
         ]
       },
       on: { ToolReturned: "idle" }
@@ -198,8 +196,7 @@ const escalationMachine = machine({
       decide: (_log, now, context) => {
         const ask = askOf(context)
         return [
-          {
-            type: "ToolReturned",
+          toolReturned({
             turn: ask.turn,
             callId: ask.callId,
             name: REQUEST_BUDGET,
@@ -209,7 +206,7 @@ const escalationMachine = machine({
               note: "No more budget. Answer now with your best result."
             },
             at: now
-          }
+          })
         ]
       },
       on: { ToolReturned: "idle" }
@@ -275,7 +272,14 @@ export const budget = (options: BudgetOptions = {}) => {
     version: "2",
     identity: { defaultBudget, wallText, escalateText, requestTool },
     setup: () => ({
-      events: ["BudgetExhausted", "BudgetRequested", "BudgetGranted", "BudgetDenied"],
+      events: [
+        "BudgetExhausted",
+        "BudgetRequested",
+        "BudgetGranted",
+        "BudgetDenied",
+        "ToolCalled",
+        "ToolReturned"
+      ],
       machines: [budgetMachine(defaultBudget), erase(escalationMachine)],
       nudges: [wallNudge, escalateNudge]
     })

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect } from "effect"
-import type { Event } from "@flamecast/core"
+import { machine, type Event } from "@flamecast/core"
 import { customInference, type NativeTool } from "./infer"
+import { WITHDRAW_ALL } from "./definition"
 import { createAgent, defineModule, undeclaredEvents } from "./module"
 import { morphCompaction } from "./modules/compaction"
 import { inference, InferenceStateProjection } from "./modules/inference"
@@ -22,6 +23,109 @@ const lookupInvoice: NativeTool = {
   run: () => Effect.succeed({ total: "312.00" })
 }
 
+// The checks that serve a module tuple built by generated code, where no compiler ran. Each one
+// names a mistake that is silent at runtime: a transition that waits forever, a withdrawal that
+// takes nothing away, and an identity that hashes two different behaviors to one agent id.
+// A module written inline inside `createAgent` has no `requires` to read, and the tuple's own
+// element constraint is its contextual type, so inference falls back to the constraint rather than
+// to the empty default. Reading that as "requires every service" rejected a module that requires
+// none, which is the shape a one-off module is most naturally written in.
+describe("a module written inline", () => {
+  test("composes with no requires declared", () => {
+    const agent = createAgent({
+      modules: [defineModule({ id: "inline", setup: () => ({ events: ["Noted"] }) })]
+    })
+    expect(agent.definition.events).toEqual(["Noted"])
+  })
+
+  test("still reports a requirement no module provides", () => {
+    const consumer = defineModule({
+      id: "consumer",
+      requires: [InferenceStateProjection] as const,
+      setup: () => ({})
+    })
+    // @ts-expect-error the tuple provides no InferenceStateProjection
+    expect(() => createAgent({ modules: [consumer] })).toThrow(
+      'module "consumer" requires missing service "flamecast/InferenceStateProjection"'
+    )
+  })
+})
+
+describe("composition checks", () => {
+  const bare = (part: Record<string, unknown>) =>
+    defineModule({ id: "generated", setup: () => part as never })
+
+  test("a transition on an event no module declares is rejected", () => {
+    expect(() =>
+      createAgent({
+        modules: [
+          bare({
+            events: ["Started"],
+            machines: [machine({ id: "m", initial: "idle", states: { idle: { on: { Startd: "go" } }, go: {} } })]
+          })
+        ]
+      })
+    ).toThrow('machine "m" transitions on "Startd" in state "idle", which no module declares')
+  })
+
+  test("an event a module declares and no machine reads is ordinary", () => {
+    const agent = createAgent({
+      modules: [bare({ events: ["Noted"], machines: [] })]
+    })
+    expect(agent.definition.events).toEqual(["Noted"])
+  })
+
+  test("a withdrawal that names no offered tool is rejected", () => {
+    expect(() =>
+      createAgent({
+        modules: [
+          bare({
+            nativeTools: [{ name: "lookup_invoice", description: "d", inputSchema: {} }],
+            nudges: [
+              { id: "n", when: () => true, text: "t", withdrawsNativeTools: ["lookup_invoce"] }
+            ]
+          })
+        ]
+      })
+    ).toThrow('nudge "n" withdraws "lookup_invoce", which no module offers')
+  })
+
+  test("withdrawing everything names no tool, so it is always allowed", () => {
+    const agent = createAgent({
+      modules: [
+        bare({
+          nativeTools: [{ name: "lookup", description: "d", inputSchema: {} }],
+          nudges: [{ id: "n", when: () => true, text: "t", withdrawsNativeTools: [WITHDRAW_ALL] }]
+        })
+      ]
+    })
+    expect(agent.definition.render.nudges).toHaveLength(1)
+  })
+
+  // The agent id hashes identity, and the hash writes any function as one constant, so two modules
+  // whose behavior differs only inside a function would share an id and a rollout would reuse the
+  // wrong recording.
+  test("a function carried in identity is rejected", () => {
+    expect(() =>
+      createAgent({
+        modules: [
+          defineModule({ id: "picky", identity: { pick: (log: unknown) => log }, setup: () => ({}) })
+        ]
+      })
+    ).toThrow('module "picky" carries a function at identity pick')
+  })
+
+  test("a function nested deeper in identity is found too", () => {
+    expect(() =>
+      createAgent({
+        modules: [
+          defineModule({ id: "deep", identity: { a: { b: { c: () => 1 } } }, setup: () => ({}) })
+        ]
+      })
+    ).toThrow('module "deep" carries a function at identity a.b.c')
+  })
+})
+
 describe("the declared alphabet", () => {
   test("gathers every module's events into one sorted list", () => {
     const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
@@ -39,10 +143,13 @@ describe("the declared alphabet", () => {
       undeclaredEvents(agent.definition, [
         { type: "MessageReceived", id: "m-1" },
         { type: "ModelCalled", turn: "m-1" },
+        // The model loop emits this one and waits on its result, so an inference-only agent
+        // declares both halves even though nothing dispatches the call.
+        { type: "ToolCalled", turn: "m-1" },
         { type: "ToolReturned", turn: "m-1" },
         { type: "HandoffAccepted", turn: "m-1" }
       ])
-    ).toEqual(["HandoffAccepted", "ToolReturned"])
+    ).toEqual(["HandoffAccepted"])
   })
 
   test("declares nothing the empty agent can meet", () => {
