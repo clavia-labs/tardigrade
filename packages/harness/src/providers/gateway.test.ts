@@ -227,9 +227,32 @@ describe("Vercel AI Gateway", () => {
       kind: "complete"
     })
     expect(provider.state([]).contextWindow).toBeUndefined()
-    // The failed read is dropped, so the next provider tries again rather than inheriting it.
+    // Asked once, whatever the answer was. A gateway whose catalog is down is not asked again on
+    // every model call.
     await Effect.runPromise(provider.react(request, "k"))
-    expect(calls.filter((url) => url.endsWith("/models"))).toHaveLength(2)
+    expect(calls.filter((url) => url.endsWith("/models"))).toHaveLength(1)
+  })
+
+  test("a later provider asks again after a catalog read failed", async () => {
+    const calls: Array<string> = []
+    const of = () =>
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "anthropic/test-model",
+        baseUrl: "https://catalog-five.invalid/v1",
+        fetch: gateway(
+          calls,
+          calls.some((url) => url.endsWith("/models"))
+            ? models("anthropic/test-model", 500_000)
+            : undefined
+        )
+      })
+
+    await Effect.runPromise(of().react(request, "k"))
+    const second = of()
+    await Effect.runPromise(second.react(request, "k"))
+
+    expect(second.state([]).contextWindow).toBe(500_000)
   })
 
   // The window is the one maximum a provider states, and it bounds the whole request. A request past

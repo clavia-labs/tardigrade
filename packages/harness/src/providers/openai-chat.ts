@@ -196,6 +196,10 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
   // synchronous for the folds that read it: a machine guard reads this projection, and a guard that
   // awaited a fetch would stop being a fold over the log.
   let discovered: number | undefined
+  // Asked once per provider, whatever the answer was. A gateway whose catalog is down would
+  // otherwise be asked again on every model call, and the answer it owes does not change within a
+  // session. A later provider asks again, so an outage is not permanent.
+  let asked = false
   const windowOf = () => options.contextWindow ?? discovered
   return {
     id: options.id,
@@ -225,7 +229,8 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
               "Set it in the environment or pass apiKey when constructing the provider."
           } satisfies Action
         }
-        if (windowOf() === undefined && options.discoverContextWindow !== undefined) {
+        if (!asked && options.contextWindow === undefined && options.discoverContextWindow !== undefined) {
+          asked = true
           discovered = yield* options.discoverContextWindow
         }
         const authorization = `Bearer ${Redacted.value(secret.success)}`
