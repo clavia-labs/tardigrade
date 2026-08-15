@@ -41,7 +41,7 @@ export AI_GATEWAY_API_KEY=...
 export AI_GATEWAY_MODEL=anthropic/claude-sonnet-4.6
 ```
 
-An explicit key works in any environment:
+The key is read through `Config` when the request is made, so it comes from whatever `ConfigProvider` is in scope and stays redacted on the way to the request. A test supplies its own provider instead of setting an environment variable. An explicit key works in any environment:
 
 ```ts
 import { inference, vercelGatewayInference } from "flamecast-core/harness"
@@ -73,22 +73,20 @@ Provider selection can be a function of the log. The inference module provides i
 
 ## Add Tools Through the Default Pack
 
-```ts
-import { Effect } from "effect"
-import { createAgent, defaultPack, type NativeTool } from "flamecast-core/harness"
+A tool declares its input once, as a `Schema`. The declaration is lowered to the JSON Schema the model reads, and arguments are decoded against it before the handler runs, so the handler receives the type its own schema describes.
 
-const lookupInvoice: NativeTool = {
-  spec: {
-    name: "lookup_invoice",
-    description: "Look up one invoice by order id.",
-    inputSchema: {
-      type: "object",
-      properties: { orderId: { type: "string" } },
-      required: ["orderId"]
-    }
-  },
-  run: (input) => Effect.promise(() => invoices.lookup((input as { orderId: string }).orderId))
-}
+```ts
+import { Effect, Schema } from "effect"
+import { createAgent, defaultPack, tool } from "flamecast-core/harness"
+
+const lookupInvoice = tool({
+  name: "lookup_invoice",
+  description: "Look up one invoice by order id.",
+  input: Schema.Struct({
+    orderId: Schema.String.annotate({ description: "The order to look up." })
+  }),
+  run: (input) => Effect.promise(() => invoices.lookup(input.orderId))
+})
 
 const agent = createAgent({
   modules: defaultPack({

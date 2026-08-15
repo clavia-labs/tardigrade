@@ -1,39 +1,45 @@
-import { Effect } from "effect"
+import { Effect, Result, Schema } from "effect"
 import type { NativeTool, NativeToolContext } from "./infer"
-import { answerErrors } from "./schema"
-import type { Spec } from "./spec"
+import { jsonSchemaOf } from "./schema"
 
-// A tool whose schema and handler are one declaration. The input type the handler receives is the
-// type its own schema describes, so a field the schema does not offer is a compile error rather
-// than an `undefined` the handler reads at runtime.
+// A tool whose schema and handler are one declaration. The input the handler receives is the type
+// its own schema describes, so a field the schema does not offer is a compile error rather than an
+// `undefined` the handler reads at runtime.
 //
-// Arguments are checked before the handler runs. A model can produce a well-formed call whose
+// Arguments are decoded before the handler runs. A model can produce a well-formed call whose
 // arguments miss the schema, and a handler typed against that schema would then be reading a lie.
-// The check is the one `answerErrors` already performs for the answer tool, so a tool and an
-// answer hold their arguments to the same standard, and a mismatch returns to the model as an
-// ordinary tool error it can repair.
+// The handler receives the decoded value, so what it reads is what the schema promised, and a
+// mismatch returns to the model as an ordinary tool error it can repair.
 
-export interface ToolOptions<Value, R> {
+export interface ToolOptions<S extends Schema.ConstraintDecoder<unknown, never>, R> {
   readonly name: string
   readonly description: string
-  readonly input: Spec<Value>
-  readonly run: (input: Value, context?: NativeToolContext) => Effect.Effect<unknown, never, R>
+  readonly input: S
+  readonly run: (input: S["Type"], context?: NativeToolContext) => Effect.Effect<unknown, never, R>
 }
 
-export const tool = <Value, R = never>(options: ToolOptions<Value, R>): NativeTool<R> => ({
-  spec: {
-    name: options.name,
-    description: options.description,
-    inputSchema: options.input.json
-  },
-  run: (input, context) =>
-    Effect.suspend(() => {
-      const errors = answerErrors(options.input.json, input)
-      if (errors.length > 0) {
-        return Effect.succeed({
-          error: `the arguments did not match this tool's schema: ${errors.join("; ")}`
-        })
-      }
-      return options.run(input as Value, context)
-    })
-})
+export const tool = <S extends Schema.ConstraintDecoder<unknown, never>, R = never>(
+  options: ToolOptions<S, R>
+): NativeTool<R> => {
+  const decode = Schema.decodeUnknownResult(options.input, {
+    errors: "all",
+    onExcessProperty: "error"
+  })
+  return {
+    spec: {
+      name: options.name,
+      description: options.description,
+      inputSchema: jsonSchemaOf(options.input)
+    },
+    run: (input, context) =>
+      Effect.suspend(() => {
+        const decoded = decode(input === undefined ? {} : input)
+        if (Result.isFailure(decoded)) {
+          return Effect.succeed({
+            error: `the arguments did not match this tool's schema: ${decoded.failure.message}`
+          })
+        }
+        return options.run(decoded.success, context)
+      })
+  }
+}

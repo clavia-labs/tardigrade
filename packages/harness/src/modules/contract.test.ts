@@ -5,7 +5,7 @@ import { inferWith, type Action, type ModelRequest } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { defaultPack } from "../pack"
-import { answerErrors } from "../schema"
+import { schemaErrors } from "../schema"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
@@ -58,35 +58,41 @@ const runTurn = (model: ReturnType<typeof scripted>) =>
   )
 
 describe("the answer check", () => {
-  test("reports a missing required property", () => {
-    expect(answerErrors(schema, {})).toEqual(["/invoice: required", "/lines: required"])
+  test("reports every missing required property at once", () => {
+    expect(schemaErrors(schema, {})).toBe('Missing key\n  at ["invoice"]\nMissing key\n  at ["lines"]')
   })
 
   test("reports the shape the model actually got wrong", () => {
     // The failure this exists for: a nested array arriving as a stringified copy.
-    expect(answerErrors(schema, { invoice: "INV-1", lines: "[1,2]" })).toEqual([
-      "/lines: expected array, got string"
-    ])
+    expect(schemaErrors(schema, { invoice: "INV-1", lines: "[1,2]" })).toBe(
+      'Expected array\n  at ["lines"]'
+    )
   })
 
   test("reports an element of the wrong type inside an array", () => {
-    expect(answerErrors(schema, { invoice: "INV-1", lines: [1, "2"] })).toEqual([
-      "/lines/1: expected number, got string"
-    ])
+    expect(schemaErrors(schema, { invoice: "INV-1", lines: [1, "2"] })).toBe(
+      'Expected number\n  at ["lines"][1]'
+    )
   })
 
   test("reports a property the schema closed", () => {
-    expect(answerErrors(schema, { invoice: "INV-1", lines: [], extra: 1 })).toEqual([
-      "/extra: not allowed here"
-    ])
+    expect(schemaErrors(schema, { invoice: "INV-1", lines: [], extra: 1 })).toBe(
+      'Expected no excess property\n  at ["extra"]'
+    )
   })
 
   test("passes a conforming answer", () => {
-    expect(answerErrors(schema, { invoice: "INV-1", lines: [1, 2] })).toEqual([])
+    expect(schemaErrors(schema, { invoice: "INV-1", lines: [1, 2] })).toBeUndefined()
   })
 
   test("a turn that declares nothing has nothing to conform to", () => {
-    expect(answerErrors(undefined, { anything: true })).toEqual([])
+    expect(schemaErrors(undefined, { anything: true })).toBeUndefined()
+  })
+
+  // The schema reaches the check as the JSON the log carries, so a declaration that survives the
+  // round trip checks the same way whether it was written here or arrived from another session.
+  test("a schema this dialect can not express checks nothing rather than failing the turn", () => {
+    expect(schemaErrors("not a schema", { anything: true })).toBeUndefined()
   })
 })
 
@@ -130,13 +136,14 @@ describe("the contract in a turn", () => {
     expect(rejected[0]).toMatchObject({
       turn: "m-1",
       callId: "c-1",
-      error: "/lines: expected array, got string"
+      error: 'Expected array\n  at ["lines"]'
     })
     // The model reads its own errors, which is what makes the repair possible.
     const repair = model.seen[1]?.messages.findLast((message) => message.role === "tool")
     expect(repair?.role).toBe("tool")
-    expect(String(repair?.content)).toContain("did not match this turn's output schema")
-    expect(String(repair?.content)).toContain("/lines: expected array, got string")
+    const reported = JSON.parse(String(repair?.content)) as { readonly error: string }
+    expect(reported.error).toContain("did not match this turn's output schema")
+    expect(reported.error).toContain('Expected array\n  at ["lines"]')
     expect(result).toMatchObject({ kind: "completed", output: '{"invoice":"INV-4182","lines":[312]}' })
   })
 

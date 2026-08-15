@@ -1,91 +1,55 @@
-// The answer check: does a tool call's arguments satisfy the turn's declared output schema?
+import { JsonSchema, Result, Schema, SchemaRepresentation } from "effect"
+
+// The boundary between a declared schema and the JSON a model reads.
 //
-// The check exists because a model can produce a well-formed tool call whose arguments still miss
-// the schema. A nested array arriving as a stringified copy of the whole object is the shape that
-// gets you, and an unchecked answer surfaces later as a type error deep inside the code that read
-// the fields.
+// A schema is declared once, as a `Schema`. Two things need it in different forms. A provider reads
+// JSON Schema, so a declaration is lowered into JSON when it goes out. A check reads the schema back
+// from the log, because a turn declares its output in its own message and a decide must reach that
+// declaration on every settle and every replay. A `Schema` is a runtime value and can not sit in an
+// event, so what the log carries is the lowered JSON, and the check lifts it back.
 //
-// The subset covered is the one a model actually gets wrong: the declared type, a missing required
-// property, a value outside an enum, and an element of the wrong type inside an array. A full
-// draft-2020 validator is a dependency, and the errors it adds beyond these are ones a model does
-// not make. The check is pure, which the decide that calls it requires.
+// The round trip is why both directions live here. Lowering and lifting are pure, so a decide can
+// call the check, and a replay of the same log reaches the same verdict.
 
-const kindOf = (value: unknown): string => {
-  if (value === null) return "null"
-  if (Array.isArray(value)) return "array"
-  return typeof value
-}
+// What a provider reads. Object schemas close to additional properties, so a model that invents a
+// field is told rather than silently believed.
+export const jsonSchemaOf = (schema: Schema.Constraint): Record<string, unknown> =>
+  Schema.toJsonSchemaDocument(schema).schema as Record<string, unknown>
 
-const matches = (expected: string, value: unknown): boolean => {
-  if (expected === "integer") return typeof value === "number" && Number.isInteger(value)
-  return expected === kindOf(value)
-}
-
-const at = (path: string) => (path === "" ? "/" : path)
-
-const walk = (schema: unknown, value: unknown, path: string, errors: Array<string>): void => {
-  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) return
-  const rules = schema as Record<string, unknown>
-
-  const declared =
-    typeof rules.type === "string"
-      ? [rules.type]
-      : Array.isArray(rules.type)
-        ? rules.type.filter((one): one is string => typeof one === "string")
-        : []
-  if (declared.length > 0 && !declared.some((one) => matches(one, value))) {
-    // Once the type is wrong, every nested report is noise about a value that was never there.
-    errors.push(`${at(path)}: expected ${declared.join(" or ")}, got ${kindOf(value)}`)
-    return
-  }
-
-  if (Array.isArray(rules.enum)) {
-    const encoded = JSON.stringify(value)
-    if (!rules.enum.some((one) => JSON.stringify(one) === encoded)) {
-      errors.push(`${at(path)}: expected one of ${JSON.stringify(rules.enum)}`)
-    }
-  }
-
-  if (kindOf(value) === "object") {
-    const record = value as Record<string, unknown>
-    const properties =
-      rules.properties !== null && typeof rules.properties === "object"
-        ? (rules.properties as Record<string, unknown>)
-        : {}
-    if (Array.isArray(rules.required)) {
-      for (const name of rules.required) {
-        if (typeof name === "string" && record[name] === undefined) {
-          errors.push(`${path}/${name}: required`)
-        }
-      }
-    }
-    for (const [name, sub] of Object.entries(properties)) {
-      if (record[name] !== undefined) walk(sub, record[name], `${path}/${name}`, errors)
-    }
-    if (rules.additionalProperties === false) {
-      for (const name of Object.keys(record)) {
-        if (!(name in properties)) errors.push(`${path}/${name}: not allowed here`)
-      }
-    }
-  }
-
-  if (Array.isArray(value) && rules.items !== undefined) {
-    value.forEach((item, index) => walk(rules.items, item, `${path}/${index}`, errors))
+// Lifting can fail on a schema this JSON Schema dialect can not express. A declaration that does not
+// survive the round trip checks nothing, which is the same answer as a turn that declared nothing.
+//
+// The lifted schema is narrowed to one that decodes without services. A JSON Schema document
+// describes data and names no service, so the import can not have produced a schema that needs one.
+const lifted = (schema: unknown): Schema.ConstraintDecoder<unknown, never> | undefined => {
+  if (schema === null || typeof schema !== "object") return undefined
+  try {
+    return SchemaRepresentation.fromJsonSchemaDocument(
+      JsonSchema.fromSchemaDraft2020_12(schema as JsonSchema.JsonSchema),
+      // A pattern is a constraint this check does not enforce rather than a reason to refuse the
+      // whole schema, and refusing inside a decide would be a defect rather than a repairable answer.
+      { patterns: "ignore" }
+    ) as unknown as Schema.ConstraintDecoder<unknown, never>
+  } catch {
+    return undefined
   }
 }
 
-// Why an answer fails its schema, one line each. Empty when it conforms, and empty when the turn
-// declared nothing to conform to.
-export const answerErrors = (schema: unknown, answer: unknown): ReadonlyArray<string> => {
-  if (schema === undefined || schema === null || typeof schema !== "object") return []
-  const errors: Array<string> = []
-  walk(schema, answer === undefined ? {} : answer, "", errors)
-  return errors
+// Why a value misses the schema the log carries, or undefined when it conforms. Every failure is
+// reported at once, because a model repairing one field at a time spends a turn per field.
+export const schemaErrors = (schema: unknown, value: unknown): string | undefined => {
+  const target = lifted(schema)
+  if (target === undefined) return undefined
+  const decoded = Schema.decodeUnknownResult(target, {
+    errors: "all",
+    onExcessProperty: "error"
+  })(value === undefined ? {} : value)
+  return Result.isFailure(decoded) ? decoded.failure.message : undefined
 }
 
-// What the model reads when its answer misses the schema. The errors are the whole message, so the
+// What the model reads when its answer misses the schema. The reasons are the whole message, so the
 // model repairs the shape it actually got wrong.
-export const repairText = (errors: ReadonlyArray<string>): string =>
-  `Your answer did not match this turn's output schema:\n${errors.map((one) => `- ${one}`).join("\n")}\n` +
+export const repairText = (reason: string): string =>
+  `Your answer did not match this turn's output schema:\n${reason}\n` +
   "Call the answer tool again with arguments that satisfy the schema. Send values in their " +
   "declared types: an array is a JSON array, never a string holding one."
