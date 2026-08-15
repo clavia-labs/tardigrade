@@ -60,7 +60,11 @@ export type Action =
 export interface InferenceState {
   readonly provider: string
   readonly model: string
-  readonly contextWindow: number
+  // How large a request the model accepts, once this side knows. The window belongs to the model
+  // rather than to the framework, so nothing here supplies a figure when nobody has said what it is:
+  // a guess would decide when compaction fires and would be wrong for every model it was not
+  // measured against. A provider that can ask its gateway fills this in on its first call.
+  readonly contextWindow?: number
 }
 
 export interface InferenceProvider {
@@ -94,7 +98,7 @@ export const customInference = (
     state: () => ({
       provider: options.id ?? "custom",
       model,
-      contextWindow: options.contextWindow ?? 128_000
+      ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow })
     }),
     react: (request, key) => Effect.promise(() => react(request, key))
   }

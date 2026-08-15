@@ -57,7 +57,7 @@ This shape keeps common request prefixes stable across turns. Dynamic budget, co
 
 Effect service keys form the module dependency graph. A producer contributes a typed `Context`. A consumer declares service keys and receives a context containing only those dependencies.
 
-The compaction module demonstrates the pattern. Inference provides a pure projection of the selected model and context window. Compaction reads that projection with `Context.get` and computes its thresholds from the current window. A model switch changes thresholds without a global registry or hidden module state.
+The compaction module demonstrates the pattern. Inference provides a pure projection of the selected model and [context window](modules.md#the-context-window). Compaction reads that projection with `Context.get` and computes its thresholds from the current window. A model switch changes thresholds without a global registry or hidden module state, and a window the projection does not report yet leaves compaction resting rather than dividing a figure the framework chose.
 
 Pure construction services use Effect `Context` directly. Effectful capabilities use Effect requirements and Layers. Modules separately declare the projections used for observational comparison, so generic service values do not become an accidental serialization format.
 

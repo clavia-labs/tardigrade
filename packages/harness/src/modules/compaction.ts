@@ -104,15 +104,23 @@ export const morphCompaction = (options: MorphOptions = {}) => {
     requires: [InferenceStateProjection] as const,
     setup: (services) => {
       const inferenceState = Context.get(services, InferenceStateProjection)
+      // A ratio of an unknown window is unknown. The provider reports what the model accepts once it
+      // knows, and until then this module has no threshold to compare against and says so rather
+      // than picking one. `fireTokens` and `keepTokens` are the way to compact against a window
+      // nothing publishes.
+      const ratioOf = (window: number | undefined, ratio: number) =>
+        window === undefined ? undefined : Math.max(1, Math.floor(window * ratio))
       const thresholds = (log: ReadonlyArray<Event>) => {
         const window = inferenceState(log).contextWindow
         return {
-          fire: options.fireTokens ?? Math.max(1, Math.floor(window * triggerAt)),
-          keep: options.keepTokens ?? Math.max(1, Math.floor(window * keepAt))
+          fire: options.fireTokens ?? ratioOf(window, triggerAt),
+          keep: options.keepTokens ?? ratioOf(window, keepAt)
         }
       }
-      const overContext = (log: ReadonlyArray<Event>): boolean =>
-        estimateTokens(suffixOf(log)) > thresholds(log).fire
+      const overContext = (log: ReadonlyArray<Event>): boolean => {
+        const fire = thresholds(log).fire
+        return fire !== undefined && estimateTokens(suffixOf(log)) > fire
+      }
       const compactionMachine = machine({
         id: "compaction",
         initial: "idle",
@@ -128,7 +136,9 @@ export const morphCompaction = (options: MorphOptions = {}) => {
               Effect.gen(function* () {
                 const at = yield* Clock.currentTimeMillis
                 const prior = checkpointOf(log)
-                const upTo = Math.max(prior.upTo, keepUpTo(log, thresholds(log).keep))
+                // A forced compaction with no window and no `keepTokens` keeps the newest event and
+                // nothing more. The caller asked to compact without saying how much to hold back.
+                const upTo = Math.max(prior.upTo, keepUpTo(log, thresholds(log).keep ?? 0))
                 const span = log.slice(prior.upTo, upTo)
                 if (span.length === 0) {
                   return [

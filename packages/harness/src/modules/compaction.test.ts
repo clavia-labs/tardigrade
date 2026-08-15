@@ -3,9 +3,10 @@ import { Effect, Layer } from "effect"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
-import { inferWith } from "../infer"
+import { inferWith, type InferenceProvider } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
+import { vercelGatewayInference } from "../providers/vercel-gateway"
 import { modelRequest } from "../render"
 import { inference } from "./inference"
 import { morphCompaction, naiveSummary, type MorphOptions } from "./compaction"
@@ -105,6 +106,47 @@ describe("the local fallback", () => {
     const summary = naiveSummary(input, 0.5)
     expect(summary.length).toBeLessThan(input.length)
     expect(summary).toContain("chars elided")
+  })
+
+  // A ratio of an unknown window is unknown. The module says so by resting, because the alternative
+  // is dividing a figure the framework made up and summarizing away history a larger model would
+  // have read whole.
+  const firedWith = (
+    provider: InferenceProvider | undefined,
+    seed: ReadonlyArray<Event>
+  ) => {
+    const agent = createAgent({
+      modules: [
+        inference(provider === undefined ? {} : { provider }),
+        morphCompaction()
+      ]
+    })
+    return Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* agent.replay(seed)
+          return (yield* agent.log).some((event) => event.type === "CompactionCompleted")
+        }),
+        Layer.merge(InMemoryRuntime({ keyOf }), refuses)
+      )
+    )
+  }
+
+  // Past the trigger of any window a framework would have chosen for a model it never measured, so
+  // resting here is the module declining to guess rather than the history being small.
+  const bulky: ReadonlyArray<Event> = [
+    { type: "MessageReceived", id: "m-1", text: "x".repeat(4_000_000), at: 1 },
+    { type: "TurnCompleted", turn: "m-1", output: "answer", at: 2 },
+    { type: "ReplyDelivered", turn: "m-1", at: 3 }
+  ]
+
+  test("rests while the model's window is unknown", async () => {
+    expect(estimateTokens(bulky)).toBeGreaterThan(1_000_000)
+    expect(await firedWith(undefined, bulky)).toBe(false)
+  })
+
+  test("fires against the window the provider reports", async () => {
+    expect(await firedWith(vercelGatewayInference({ contextWindow: 100 }), history)).toBe(true)
   })
 })
 

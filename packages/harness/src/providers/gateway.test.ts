@@ -104,6 +104,7 @@ describe("Vercel AI Gateway", () => {
   test("refuses an answer the gateway stopped at its completion-token limit", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      contextWindow: 200_000,
       fetch: stoppedAtLimit({ content: "The lease was signed on 29 August 2025 and the term" })
     })
 
@@ -118,12 +119,117 @@ describe("Vercel AI Gateway", () => {
   test("refuses a tool call whose arguments stop mid-JSON", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      contextWindow: 200_000,
       fetch: stoppedAtLimit({
         tool_calls: [{ id: "c-1", function: { name: "lookup_invoice", arguments: '{"orderId":"41' } }]
       })
     })
 
     expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "fail" })
+  })
+
+  // The catalog is cached per gateway for the life of the process, so each of these tests names its
+  // own gateway and reads its own catalog.
+  const gateway = (
+    calls: Array<string>,
+    catalog: unknown,
+    completion: unknown = { choices: [{ message: { content: "ok" } }] }
+  ) =>
+    (async (url: string) => {
+      calls.push(String(url))
+      const body = String(url).endsWith("/models") ? catalog : completion
+      if (body === undefined) return new Response("no catalog here", { status: 404 })
+      return new Response(JSON.stringify(body), { status: 200 })
+    }) as unknown as typeof fetch
+
+  const models = (id: string, window: number) => ({
+    object: "list",
+    data: [{ id, object: "model", context_window: window, max_tokens: 64_000 }]
+  })
+
+  // The window belongs to the model, and the gateway publishes it per model. Reading it there is
+  // what keeps a figure this side invented out of the decision.
+  test("reads the model's context window from the gateway catalog", async () => {
+    const calls: Array<string> = []
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      model: "anthropic/test-model",
+      baseUrl: "https://catalog-one.invalid/v1",
+      fetch: gateway(calls, models("anthropic/test-model", 1_000_000))
+    })
+
+    // Nothing is known until the provider has had a reason to ask.
+    expect(provider.state([]).contextWindow).toBeUndefined()
+    await Effect.runPromise(provider.react(request, "k"))
+
+    expect(provider.state([]).contextWindow).toBe(1_000_000)
+    expect(calls).toEqual([
+      "https://catalog-one.invalid/v1/models",
+      "https://catalog-one.invalid/v1/chat/completions"
+    ])
+  })
+
+  test("reads the catalog once and serves every later call from it", async () => {
+    const calls: Array<string> = []
+    const of = (model: string) =>
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model,
+        baseUrl: "https://catalog-two.invalid/v1",
+        fetch: gateway(calls, {
+          object: "list",
+          data: [
+            { id: "anthropic/small", context_window: 200_000 },
+            { id: "anthropic/large", context_window: 1_000_000 }
+          ]
+        })
+      })
+    const small = of("anthropic/small")
+    const large = of("anthropic/large")
+
+    await Effect.runPromise(small.react(request, "k"))
+    await Effect.runPromise(large.react(request, "k"))
+    await Effect.runPromise(small.react(request, "k"))
+
+    expect(small.state([]).contextWindow).toBe(200_000)
+    expect(large.state([]).contextWindow).toBe(1_000_000)
+    expect(calls.filter((url) => url.endsWith("/models"))).toEqual([
+      "https://catalog-two.invalid/v1/models"
+    ])
+  })
+
+  test("passes the caller's context window and asks the gateway nothing", async () => {
+    const calls: Array<string> = []
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 42_000,
+      baseUrl: "https://catalog-three.invalid/v1",
+      fetch: gateway(calls, models("anthropic/claude-sonnet-4.6", 1_000_000))
+    })
+
+    await Effect.runPromise(provider.react(request, "k"))
+
+    expect(provider.state([]).contextWindow).toBe(42_000)
+    expect(calls.some((url) => url.endsWith("/models"))).toBe(false)
+  })
+
+  // A catalog this side could not read leaves the window unknown. The gateway knows its own limit
+  // and will say so, which is a better answer than refusing the turn here.
+  test("still answers when the catalog cannot be read", async () => {
+    const calls: Array<string> = []
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      baseUrl: "https://catalog-four.invalid/v1",
+      fetch: gateway(calls, undefined)
+    })
+
+    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({
+      kind: "complete"
+    })
+    expect(provider.state([]).contextWindow).toBeUndefined()
+    // The failed read is dropped, so the next provider tries again rather than inheriting it.
+    await Effect.runPromise(provider.react(request, "k"))
+    expect(calls.filter((url) => url.endsWith("/models"))).toHaveLength(2)
   })
 
   // The window is the one maximum a provider states, and it bounds the whole request. A request past
@@ -200,6 +306,7 @@ describe("Vercel AI Gateway", () => {
   test("reads the key from configuration when none is passed", async () => {
     const seen: Array<string> = []
     const provider = vercelGatewayInference({
+      contextWindow: 200_000,
       fetch: (async (_url: string, init: RequestInit) => {
         seen.push(String(new Headers(init.headers).get("authorization")))
         return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {

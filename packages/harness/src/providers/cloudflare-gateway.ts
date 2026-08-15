@@ -28,14 +28,17 @@ export const cloudflareGatewayInference = (
   const gatewayId = options.gatewayId ?? environment("CLOUDFLARE_AI_GATEWAY_ID")
   const model =
     options.model ?? environment("CLOUDFLARE_AI_MODEL") ?? "anthropic/claude-sonnet-4"
+  // This endpoint publishes no model catalog on the path the chat request uses, so the window is
+  // what the caller says and otherwise unknown. An invented figure would decide when compaction
+  // fires for every Cloudflare model at once.
   const contextWindow =
-    options.contextWindow ?? environmentNumber("CLOUDFLARE_AI_CONTEXT_WINDOW") ?? 200_000
+    options.contextWindow ?? environmentNumber("CLOUDFLARE_AI_CONTEXT_WINDOW")
   const baseUrl = options.baseUrl ?? "https://api.cloudflare.com/client/v4/accounts"
   return openAiChatInference({
     id: `cloudflare-ai-gateway:${model}`,
     provider: "cloudflare-ai-gateway",
     model,
-    contextWindow,
+    ...(contextWindow === undefined ? {} : { contextWindow }),
     endpoint: `${baseUrl.replace(/\/$/, "")}/${accountId ?? "missing"}/ai/v1/chat/completions`,
     apiKey: apiToken,
     ...(gatewayId === undefined ? {} : { headers: { "cf-aig-gateway-id": gatewayId } }),
