@@ -145,7 +145,7 @@ const detailOf = (event: Event, callWidth: number): string => {
   const call = (rest: string) => `${String(event.callId ?? "").padEnd(callWidth)}${rest}`
   switch (event.type) {
     case "MessageReceived":
-      return `${quoted(event.text)}   program=${String(event.program ?? "")}`
+      return `${quoted(event.text)}   agent=${String(event.agent ?? "")}`
     case "ModelCalled":
       return call("")
     case "ModelReturned":

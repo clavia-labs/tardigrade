@@ -10,7 +10,7 @@ import {
 } from "../infer"
 import { defineModule } from "../module"
 import type { Projection } from "../projection"
-import type { RenderPlan } from "../program"
+import type { RenderPlan } from "../definition"
 import { modelRequest } from "../render"
 import { replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"

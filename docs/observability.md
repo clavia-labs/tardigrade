@@ -93,4 +93,4 @@ Core defines a `Sink` port, and the in-memory runtime binds a no-op implementati
 
 ## Across Sessions
 
-A swarm is a set of session logs. The [host](orchestration.md#session-host) exposes them: `h.sessions` lists the addresses it serves and `h.log(address)` reads one session's evidence. Each inbound head's `origin` names the session, turn, and call that sent it, so the delegation tree is a projection over the set of logs, and every single-session view on this page applies per session.
+A swarm is a set of session logs, and the [`Sessions`](runtimes.md#port-contract) port is the read side: `list` gives the addresses the runtime serves and `read(address)` gives one session's evidence. Each inbound head's `origin` names the session, turn, and call that sent it, so the delegation tree is a projection over the set of logs, and every single-session view on this page applies per session.

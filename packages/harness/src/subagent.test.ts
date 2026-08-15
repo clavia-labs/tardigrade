@@ -5,29 +5,42 @@ import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { keyOf } from "./keys"
 import { subagentTool } from "./subagent"
 
+// A registry entry is a function from an event to a terminal event, so a stub target is written
+// inline. `*` claims every address the exact keys do not.
+const stub = (
+  record: (address: string, event: Event) => void,
+  answer: (event: Event) => Event
+) => ({
+  "*": (address: string) => (event: Event) => {
+    record(address, event)
+    return Effect.succeed(answer(event))
+  }
+})
+
 describe("subagentTool", () => {
+  const delegate = subagentTool({
+    name: "ask_researcher",
+    description: "Ask the research agent.",
+    address: "agent:research"
+  })
+
   test("turns a routed agent into an ordinary tool and stamps the origin", async () => {
     const routed: Array<{ readonly address: string; readonly event: Event }> = []
-    const delegate = subagentTool({
-      name: "ask_researcher",
-      description: "Ask the research agent.",
-      address: "agent:research"
-    })
     const result = await Effect.runPromise(
       Effect.provide(
         delegate.run({ message: "Find the refund policy." }, { turn: "m-1", callId: "c-1" }),
         InMemoryRuntime({
           keyOf,
           session: "agent:supervisor",
-          route: (address, event) => {
-            routed.push({ address, event })
-            return Effect.succeed({
+          sessions: stub(
+            (address, event) => routed.push({ address, event }),
+            (event) => ({
               type: "TurnCompleted",
               turn: String(event.id ?? ""),
               output: "Refunds are allowed within 30 days.",
               usage: { promptTokens: 5, completionTokens: 7, costUsd: 0.01 }
             })
-          }
+          )
         })
       )
     )
@@ -46,17 +59,12 @@ describe("subagentTool", () => {
 
   test("uses a deterministic child turn id for the same input", async () => {
     const ids: Array<string> = []
-    const delegate = subagentTool({
-      name: "ask_researcher",
-      description: "Ask the research agent.",
-      address: "agent:research"
-    })
     const layer = InMemoryRuntime({
       keyOf,
-      route: (_, event) => {
-        ids.push(String(event.id))
-        return Effect.succeed({ type: "TurnCompleted", output: "ok" })
-      }
+      sessions: stub(
+        (_, event) => ids.push(String(event.id)),
+        () => ({ type: "TurnCompleted", output: "ok" })
+      )
     })
     await Effect.runPromise(Effect.provide(delegate.run({ message: "same" }), layer))
     await Effect.runPromise(Effect.provide(delegate.run({ message: "same" }), layer))
@@ -65,17 +73,12 @@ describe("subagentTool", () => {
 
   test("names the child turn by the parent turn and provider call", async () => {
     const ids: Array<string> = []
-    const delegate = subagentTool({
-      name: "ask_researcher",
-      description: "Ask the research agent.",
-      address: "agent:research"
-    })
     const layer = InMemoryRuntime({
       keyOf,
-      route: (_, event) => {
-        ids.push(String(event.id))
-        return Effect.succeed({ type: "TurnCompleted", output: "ok" })
-      }
+      sessions: stub(
+        (_, event) => ids.push(String(event.id)),
+        () => ({ type: "TurnCompleted", output: "ok" })
+      )
     })
     await Effect.runPromise(
       Effect.provide(delegate.run({ message: "same" }, { turn: "m-1", callId: "c-1" }), layer)
@@ -87,22 +90,19 @@ describe("subagentTool", () => {
   })
 
   test("a failed child turn is an error value with the child's spend", async () => {
-    const delegate = subagentTool({
-      name: "ask_researcher",
-      description: "Ask the research agent.",
-      address: "agent:research"
-    })
     const result = await Effect.runPromise(
       Effect.provide(
         delegate.run({ message: "hard question" }),
         InMemoryRuntime({
           keyOf,
-          route: () =>
-            Effect.succeed({
+          sessions: stub(
+            () => {},
+            () => ({
               type: "TurnFailed",
               error: "the model attempt died 3 times in a row",
               usage: { promptTokens: 9, completionTokens: 0, costUsd: 0.02 }
             })
+          )
         })
       )
     )
@@ -110,5 +110,14 @@ describe("subagentTool", () => {
       error: "the model attempt died 3 times in a row",
       usage: { promptTokens: 9, completionTokens: 0, costUsd: 0.02 }
     })
+  })
+
+  test("an address no session serves is a failed turn, never a hang", async () => {
+    const result = await Effect.runPromise(
+      Effect.provide(delegate.run({ message: "hello" }), InMemoryRuntime({ keyOf }))
+    )
+    expect(String((result as { error?: unknown }).error)).toContain(
+      'no session serves "agent:research"'
+    )
   })
 })

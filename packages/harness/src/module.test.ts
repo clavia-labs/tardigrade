@@ -25,18 +25,18 @@ const lookupInvoice: NativeTool = {
 describe("the declared alphabet", () => {
   test("gathers every module's events into one sorted list", () => {
     const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
-    expect(agent.program.events).toEqual([...new Set(agent.program.events)].sort())
-    expect(agent.program.events).toContain("MessageReceived")
-    expect(agent.program.events).toContain("ToolReturned")
-    expect(agent.program.events).toContain("BudgetRequested")
-    expect(agent.program.events).toContain("AnswerRejected")
-    expect(agent.program.events).toContain("CompactionCompleted")
+    expect(agent.definition.events).toEqual([...new Set(agent.definition.events)].sort())
+    expect(agent.definition.events).toContain("MessageReceived")
+    expect(agent.definition.events).toContain("ToolReturned")
+    expect(agent.definition.events).toContain("BudgetRequested")
+    expect(agent.definition.events).toContain("AnswerRejected")
+    expect(agent.definition.events).toContain("CompactionCompleted")
   })
 
   test("names an event type no module declared", () => {
     const agent = createAgent({ modules: [inference()] })
     expect(
-      undeclaredEvents(agent.program, [
+      undeclaredEvents(agent.definition, [
         { type: "MessageReceived", id: "m-1" },
         { type: "ModelCalled", turn: "m-1" },
         { type: "ToolReturned", turn: "m-1" },
@@ -47,8 +47,8 @@ describe("the declared alphabet", () => {
 
   test("declares nothing the empty agent can meet", () => {
     const agent = createAgent({ modules: [] })
-    expect(agent.program.events).toEqual([])
-    expect(undeclaredEvents(agent.program, [{ type: "MessageReceived" }])).toEqual([
+    expect(agent.definition.events).toEqual([])
+    expect(undeclaredEvents(agent.definition, [{ type: "MessageReceived" }])).toEqual([
       "MessageReceived"
     ])
   })
@@ -67,9 +67,9 @@ describe("composition", () => {
       })
     })
     expect(agent.request([]).system).toBe("You are a support agent.")
-    expect(agent.program.render.messageTruncateAt).toBe(900)
-    expect(agent.program.render.nativeTools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
-    expect(agent.program.modules.find((module) => module.id === "budget")?.identity).toMatchObject({
+    expect(agent.definition.render.messageTruncateAt).toBe(900)
+    expect(agent.definition.render.nativeTools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
+    expect(agent.definition.modules.find((module) => module.id === "budget")?.identity).toMatchObject({
       defaultBudget: 24
     })
   })
@@ -222,20 +222,20 @@ describe("program identity", () => {
   test("is stable across two builds of the same modules", () => {
     const one = createAgent({ modules: defaultPack() })
     const two = createAgent({ modules: defaultPack() })
-    expect(one.program.id).toBe(two.program.id)
-    expect(one.program.id).toMatch(/^sha256:[0-9a-f]{64}$/)
+    expect(one.definition.id).toBe(two.definition.id)
+    expect(one.definition.id).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   test("changes when module order changes", () => {
     const one = createAgent({ modules: [inference(), nativeTools([])] })
     const two = createAgent({ modules: [nativeTools([]), inference()] })
-    expect(one.program.id).not.toBe(two.program.id)
+    expect(one.definition.id).not.toBe(two.definition.id)
   })
 
   test("changes when module-owned prompt configuration changes", () => {
     const one = createAgent({ modules: [inference()] })
     const two = createAgent({ modules: [inference({ system: "Be terse." })] })
-    expect(one.program.id).not.toBe(two.program.id)
+    expect(one.definition.id).not.toBe(two.definition.id)
   })
 
   test("changes when native tool code configuration changes", () => {
@@ -245,21 +245,21 @@ describe("program identity", () => {
         nativeTools([{ ...lookupInvoice, spec: { ...lookupInvoice.spec, description: "Other." } }])
       ]
     })
-    expect(one.program.id).not.toBe(two.program.id)
+    expect(one.definition.id).not.toBe(two.definition.id)
   })
 
   test("records an explicit lineage without changing its parent", () => {
     const parent = createAgent({ modules: [inference()] })
     const child = createAgent({
-      parent: parent.program.id,
+      parent: parent.definition.id,
       modules: [inference({ system: "Be terse." })]
     })
-    expect(child.program.parent).toBe(parent.program.id)
-    expect(parent.program.parent).toBeUndefined()
+    expect(child.definition.parent).toBe(parent.definition.id)
+    expect(parent.definition.parent).toBeUndefined()
   })
 
   test("accepts a source-controlled identity for code-first candidates", () => {
     const agent = createAgent({ id: "git:abc123", modules: [inference()] })
-    expect(agent.program.id).toBe("git:abc123")
+    expect(agent.definition.id).toBe("git:abc123")
   })
 })

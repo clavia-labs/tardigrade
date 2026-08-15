@@ -16,13 +16,13 @@ export const observationOf = <R>(
   log: ReadonlyArray<Event>
 ): ProgramObservation => ({
   request: agent.request(log),
-  machines: agent.program.machines.map((machine) => ({
+  machines: agent.definition.machines.map((machine) => ({
     id: machine.id,
     state: foldOf(machine, log).name,
     context: foldOf(machine, log).context
   })),
   projections: Object.fromEntries(
-    Object.entries(agent.program.projections).map(([id, project]) => [id, project(log)])
+    Object.entries(agent.definition.projections).map(([id, project]) => [id, project(log)])
   )
 })
 

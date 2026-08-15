@@ -61,21 +61,21 @@ interface Module<Id, Services, Requires, R> {
 
 Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
 
-`identity` contributes behavior-affecting configuration to the default program id. [Program Identity](evolution.md#program-identity) explains the identity rules.
+`identity` contributes behavior-affecting configuration to the default agent id. [Agent Identity](evolution.md#agent-identity) explains the identity rules.
 
-## Program
+## Agent
 
-A program is compiled agent behavior: the machines, render plan, projections, and identity that `createAgent` builds from a module tuple.
+An agent is behavior with no state: the machines, render plan, projections, and identity that `createAgent` compiles from a module tuple. `agent.definition` is that compiled record.
 
-A program is a value with no state of its own, the way an executable on disk is a value with no memory of its own. Its `turn` effect asks for a log, an address, and the other [ports](#port) through Effect requirements, so one program value can serve any number of independent conversations.
+An agent holds no log and no name. Its `turn` effect asks for storage, an address, and the other [ports](#port) through Effect requirements, so one agent value serves any number of conversations at once and none of them can reach another.
 
-The word names the compiled agent, never source that a model writes. A model-written orchestration in [code mode](codemode.md) is a script, and the program is what offered the tool that runs it.
+Source that a model writes in [code mode](codemode.md) is a script, never an agent. The agent is what offered the tool that ran it.
 
 ## Session
 
-A session is one running conversation: one address, one event log, one writer lease. A program runs in a session the way an executable runs as a process, and the same program can run in many sessions at once without any shared state.
+A session is one conversation: one address, one event log, one writer lease. It holds all the state an agent does not.
 
-Behavior comes from the program and identity comes from the session. A [host](orchestration.md#session-host) or a runtime marries the two by resolving an address to a program and providing that session's log and services.
+Behavior comes from the agent and identity comes from the session. A [runtime](runtimes.md) marries the two: its registry says which agent answers at which address, and it provides that session's log, name, and services when a delivery arrives. Nothing else needs to know an address exists.
 
 ## Service
 
@@ -92,10 +92,10 @@ const services = Context.make(InferenceStateProjection, selectInferenceState)
 
 A consumer lists service keys in `requires` and reads implementations with `Context.get`. TypeScript rejects missing dependencies and duplicate providers for literal module tuples. Runtime compilation performs the same validation for generated JavaScript.
 
-Construction services are already-created, synchronous values. Effectful capabilities and resources use Effect requirements and Layers at execution time. This keeps program construction deterministic and gives resource lifecycles to Effect.
+Construction services are already-created, synchronous values. Effectful capabilities and resources use Effect requirements and Layers at execution time. This keeps agent construction deterministic and gives resource lifecycles to Effect.
 
 Services connect modules during construction. A module separately contributes observational projections when evolution or inspection should compare a derived value.
 
 ## Port
 
-A port is an effectful capability required by a machine, such as event storage, exclusive writing, time, routing, or spill storage. A runtime binds ports for a platform without changing the program.
+A port is an effectful capability required by a machine, such as event storage, exclusive writing, time, routing, or spill storage. A runtime binds ports for a platform without changing the agent.

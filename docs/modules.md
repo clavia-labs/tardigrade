@@ -2,7 +2,7 @@
 
 ## Composition Contract
 
-Modules are ordered values passed to `createAgent`. Order controls instruction order, native-tool order, machine order, and default program identity.
+Modules are ordered values passed to `createAgent`. Order controls instruction order, native-tool order, machine order, and default agent identity.
 
 Built-in modules are useful policies built from the concepts in [Concepts](concepts.md). They are replaceable defaults rather than framework primitives.
 
@@ -89,6 +89,6 @@ const retrieval = defineModule({
 })
 ```
 
-`version` and `identity` contribute to the default program id. Generated-code systems can set `createAgent({ id })` directly.
+`version` and `identity` contribute to the default agent id. Generated-code systems can set `createAgent({ id })` directly.
 
 The standard event names live in [Events](events.md). The module type vocabulary lives in [Concepts](concepts.md).
