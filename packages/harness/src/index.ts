@@ -100,7 +100,8 @@ export {
 export {
   InferenceStateProjection,
   inference,
-  type InferenceOptions
+  type InferenceOptions,
+  type InferenceSettings
 } from "./modules/inference"
 export { nativeTools } from "./modules/native-tools"
 export {

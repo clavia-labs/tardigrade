@@ -3,11 +3,11 @@ import { createAgent, inference } from "@flamecast/harness"
 import { candidate } from "./candidate"
 
 describe("a code candidate", () => {
-  const parent = createAgent({ id: "git:base", modules: [inference()] })
+  const parent = createAgent({ id: "git:base", modules: [inference({ contextWindow: 200_000 })] })
   const child = createAgent({
     id: "git:terse",
     parent: parent.definition.id,
-    modules: [inference({ system: "Answer in one sentence." })]
+    modules: [inference({ system: "Answer in one sentence.", contextWindow: 200_000 })]
   })
   const wrapped = candidate(child.definition.id, child, {
     parent: parent.definition.id,

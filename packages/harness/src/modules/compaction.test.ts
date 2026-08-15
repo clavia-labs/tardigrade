@@ -16,7 +16,7 @@ import { morphCompaction, naiveSummary, type MorphOptions } from "./compaction"
 
 const refuses = inferWith(async () => {
   throw new Error("compaction called the model")
-})
+}, { contextWindow: 200_000 })
 
 const turn = (id: string, at: number): ReadonlyArray<Event> => [
   { type: "MessageReceived", id, text: `question ${id}`, at },
@@ -27,7 +27,7 @@ const turn = (id: string, at: number): ReadonlyArray<Event> => [
 const history = [...turn("m-1", 1), ...turn("m-2", 10), ...turn("m-3", 20)]
 
 const compacted = (options: MorphOptions, seed: ReadonlyArray<Event>) => {
-  const agent = createAgent({ modules: [inference(), morphCompaction(options)] })
+  const agent = createAgent({ modules: [inference({ contextWindow: 200_000 }), morphCompaction(options)] })
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
@@ -108,19 +108,10 @@ describe("the local fallback", () => {
     expect(summary).toContain("chars elided")
   })
 
-  // A ratio of an unknown window is unknown. The module says so by resting, because the alternative
-  // is dividing a figure the framework made up and summarizing away history a larger model would
-  // have read whole.
-  const firedWith = (
-    provider: InferenceProvider | undefined,
-    seed: ReadonlyArray<Event>
-  ) => {
-    const agent = createAgent({
-      modules: [
-        inference(provider === undefined ? {} : { provider }),
-        morphCompaction()
-      ]
-    })
+  // Both thresholds are ratios of the model's window, so the window the provider holds is what
+  // decides them. A wider model reads more before anything is summarized away.
+  const firedWith = (provider: InferenceProvider, seed: ReadonlyArray<Event>) => {
+    const agent = createAgent({ modules: [inference({ provider }), morphCompaction()] })
     return Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -132,21 +123,9 @@ describe("the local fallback", () => {
     )
   }
 
-  // Past the trigger of any window a framework would have chosen for a model it never measured, so
-  // resting here is the module declining to guess rather than the history being small.
-  const bulky: ReadonlyArray<Event> = [
-    { type: "MessageReceived", id: "m-1", text: "x".repeat(4_000_000), at: 1 },
-    { type: "TurnCompleted", turn: "m-1", output: "answer", at: 2 },
-    { type: "ReplyDelivered", turn: "m-1", at: 3 }
-  ]
-
-  test("rests while the model's window is unknown", async () => {
-    expect(estimateTokens(bulky)).toBeGreaterThan(1_000_000)
-    expect(await firedWith(undefined, bulky)).toBe(false)
-  })
-
   test("fires against the window the provider reports", async () => {
     expect(await firedWith(vercelGatewayInference({ contextWindow: 100 }), history)).toBe(true)
+    expect(await firedWith(vercelGatewayInference({ contextWindow: 200_000 }), history)).toBe(false)
   })
 })
 

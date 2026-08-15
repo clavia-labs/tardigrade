@@ -60,11 +60,15 @@ export type Action =
 export interface InferenceState {
   readonly provider: string
   readonly model: string
-  // How large a request the model accepts, once this side knows. The window belongs to the model
-  // rather than to the framework, so nothing here supplies a figure when nobody has said what it is:
-  // a guess would decide when compaction fires and would be wrong for every model it was not
-  // measured against. A provider that can ask its gateway fills this in on its first call.
-  readonly contextWindow?: number
+  // How large a request the model accepts. The window belongs to the model rather than to the
+  // framework, so nothing here supplies a figure: a provider is built with one or built by asking
+  // the gateway for one, and either way it holds a number before it exists.
+  //
+  // It is required so that this projection stays a pure function of its provider and the log. A
+  // window a provider learned mid-session would answer differently in a process that had made a call
+  // and one that had not, and a machine guard reads this, so the same log would fold two ways and a
+  // replay would diverge from the run it replays.
+  readonly contextWindow: number
 }
 
 export interface InferenceProvider {
@@ -85,12 +89,14 @@ export const selectedInference = (
 export interface CustomInferenceOptions {
   readonly id?: string
   readonly model?: string
-  readonly contextWindow?: number
+  // What the model behind this function accepts. Required for the same reason the projection is:
+  // whoever wrote the function is the only one who can say, and nobody downstream can guess.
+  readonly contextWindow: number
 }
 
 export const customInference = (
   react: (request: ModelRequest, key: string) => Promise<Action>,
-  options: CustomInferenceOptions = {}
+  options: CustomInferenceOptions
 ): InferenceProvider => {
   const model = options.model ?? "custom"
   return {
@@ -98,7 +104,7 @@ export const customInference = (
     state: () => ({
       provider: options.id ?? "custom",
       model,
-      ...(options.contextWindow === undefined ? {} : { contextWindow: options.contextWindow })
+      contextWindow: options.contextWindow
     }),
     react: (request, key) => Effect.promise(() => react(request, key))
   }
@@ -108,7 +114,7 @@ export class Infer extends Context.Service<Infer, InferenceProvider>()("flamecas
 
 export const inferWith = (
   react: (request: ModelRequest, key: string) => Promise<Action>,
-  options: CustomInferenceOptions = {}
+  options: CustomInferenceOptions
 ): Layer.Layer<Infer> => Layer.succeed(Infer, customInference(react, options))
 
 export const usageOf = (value: unknown): Usage => {

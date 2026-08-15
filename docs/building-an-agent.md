@@ -12,7 +12,8 @@ import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 const agent = createAgent({
   modules: [
     inference({
-      system: "You are a support agent. Answer clearly and briefly."
+      system: "You are a support agent. Answer clearly and briefly.",
+      contextWindow: 200_000
     })
   ]
 })
@@ -30,7 +31,9 @@ const result = await Effect.runPromise(
 if (result.kind === "completed") console.log(result.output)
 ```
 
-`agent.turn(message)` appends the message, settles the agent's machines, and returns the turn boundary. `InMemoryRuntime` supplies storage, routing, and the other runtime ports for this process. `inference()` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
+`agent.turn(message)` appends the message, settles the agent's machines, and returns the turn boundary. `InMemoryRuntime` supplies storage, routing, and the other runtime ports for this process. `inference(options)` owns its instruction, retry limits, truncation limits, selected provider, and model loop.
+
+`contextWindow` says what the model accepts. A module names it or names a provider that already holds one, because nothing else can know, and [the context window](modules.md#the-context-window) covers where the number comes from. `yield* vercelGatewayInference()` reads it from the gateway's catalog instead.
 
 ## Default Inference
 
@@ -49,7 +52,8 @@ import { inference, vercelGatewayInference } from "flamecast-core/harness"
 const inferenceModule = inference({
   provider: vercelGatewayInference({
     apiKey: secrets.aiGateway,
-    model: "anthropic/claude-sonnet-4.6"
+    model: "anthropic/claude-sonnet-4.6",
+    contextWindow: 200_000
   })
 })
 ```
@@ -64,7 +68,8 @@ const inferenceModule = inference({
     accountId: secrets.cloudflareAccount,
     apiToken: secrets.cloudflareToken,
     gatewayId: "support",
-    model: "anthropic/claude-sonnet-4"
+    model: "anthropic/claude-sonnet-4",
+    contextWindow: 200_000
   })
 })
 ```
@@ -100,7 +105,7 @@ const agent = createAgent({
 })
 ```
 
-`defaultPack()` returns inference, native-tool, budget, contract, and compaction modules. Each module owns its own options. `nativeTools` is the provider-native calling default; code mode, MCP, textual commands, and generic RPC can be implemented as alternative modules.
+`defaultPack(options)` returns inference, native-tool, budget, contract, and compaction modules. Each module owns its own options. `nativeTools` is the provider-native calling default; code mode, MCP, textual commands, and generic RPC can be implemented as alternative modules.
 
 ## Add a Nudge
 

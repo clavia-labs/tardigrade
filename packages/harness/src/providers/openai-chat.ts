@@ -13,13 +13,10 @@ export interface OpenAiChatOptions {
   readonly id: string
   readonly provider: string
   readonly model: string
-  // What the model accepts, when the caller knows. Leaving it out asks `discoverContextWindow`.
-  readonly contextWindow?: number
-  // How this provider learns the model's window when the caller did not say. It runs at most once
-  // per provider, and what it finds is what `state` reports from then on. A gateway that publishes a
-  // model catalog supplies this; one that publishes nothing leaves the window unknown, which reads
-  // as "ask the gateway" rather than as a number this side made up.
-  readonly discoverContextWindow?: Effect.Effect<number | undefined>
+  // What the model accepts. A provider holds this before it exists, so `state` is a constant and the
+  // folds that read it agree in every process. A constructor that has to ask a gateway asks before
+  // it builds one.
+  readonly contextWindow: number
   readonly endpoint: string
   // The key is a `Config` rather than a string, so it is read where it is used and stays redacted
   // on the way there. A value that never becomes a plain string can not be printed by an error
@@ -149,17 +146,14 @@ const actionOf = (body: ChatResponse): Action => {
 // invents a per-message limit to approximate it.
 //
 // A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
-// words. Refusing here spends nothing and answers in the harness's own words, naming both numbers
-// and the setting that decides one of them. `contextWindow` falls back to a built-in figure when
-// nothing configures it, and that figure already decides when compaction fires, so a model with a
-// larger window meets its assumption here rather than by quietly compacting early.
+// words. Refusing here spends nothing and answers in the harness's own words, naming both sizes and
+// the model they belong to.
 const overWindow = (
   body: string,
   provider: string,
   model: string,
-  window: number | undefined
+  window: number
 ): Action | undefined => {
-  if (window === undefined) return undefined
   const estimate = estimateTextTokens(body)
   if (estimate <= window) return undefined
   return {
@@ -190,59 +184,39 @@ const DEFAULT_TIMEOUT: Duration.Input = "60 seconds"
 // jitter is what stops a fleet of agents that failed together from returning together.
 const backoff = Schedule.exponential("500 millis").pipe(Schedule.jittered)
 
-export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvider => {
-  // What the model accepts. The caller's number wins and asks nothing of the network. Otherwise the
-  // provider learns it on its first call and answers with it from then on, which keeps `state`
-  // synchronous for the folds that read it: a machine guard reads this projection, and a guard that
-  // awaited a fetch would stop being a fold over the log.
-  let discovered: number | undefined
-  // Asked once per provider, whatever the answer was. A gateway whose catalog is down would
-  // otherwise be asked again on every model call, and the answer it owes does not change within a
-  // session. A later provider asks again, so an outage is not permanent.
-  let asked = false
-  const windowOf = () => options.contextWindow ?? discovered
-  return {
-    id: options.id,
-    state: () => {
-      const window = windowOf()
-      return {
-        provider: options.provider,
-        model: options.model,
-        ...(window === undefined ? {} : { contextWindow: window })
+export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvider => ({
+  id: options.id,
+  // A constant, so the projection folds the same in every process and a replay reaches the verdict
+  // the run it replays reached.
+  state: () => ({
+    provider: options.provider,
+    model: options.model,
+    contextWindow: options.contextWindow
+  }),
+  react: (request: ModelRequest, key: string) =>
+    Effect.gen(function* () {
+      if (options.configurationError !== undefined) {
+        return { kind: "fail", error: options.configurationError } satisfies Action
       }
-    },
-    react: (request: ModelRequest, key: string) =>
-      Effect.gen(function* () {
-        if (options.configurationError !== undefined) {
-          return { kind: "fail", error: options.configurationError } satisfies Action
-        }
-        // A key that can not be read is a terminal failure rather than a transient one, so it is
-        // settled before the attempt rather than retried inside it.
-        const secret = yield* Effect.result(
-          options.apiKey ?? Config.succeed(Redacted.make(""))
-        )
-        if (Result.isFailure(secret)) {
-          return {
-            kind: "fail",
-            error:
-              `${options.provider} could not read its API key: ${String(secret.failure)}. ` +
-              "Set it in the environment or pass apiKey when constructing the provider."
-          } satisfies Action
-        }
-        if (!asked && options.contextWindow === undefined && options.discoverContextWindow !== undefined) {
-          asked = true
-          discovered = yield* options.discoverContextWindow
-        }
-        const authorization = `Bearer ${Redacted.value(secret.success)}`
-        return yield* reacted(options, windowOf(), request, key, authorization)
-      })
-  }
-}
+      // A key that can not be read is a terminal failure rather than a transient one, so it is
+      // settled before the attempt rather than retried inside it.
+      const secret = yield* Effect.result(options.apiKey ?? Config.succeed(Redacted.make("")))
+      if (Result.isFailure(secret)) {
+        return {
+          kind: "fail",
+          error:
+            `${options.provider} could not read its API key: ${String(secret.failure)}. ` +
+            "Set it in the environment or pass apiKey when constructing the provider."
+        } satisfies Action
+      }
+      const authorization = `Bearer ${Redacted.value(secret.success)}`
+      return yield* reacted(options, request, key, authorization)
+    })
+})
 
 // The request, its retries, and the one outcome they settle on.
 const reacted = (
   options: OpenAiChatOptions,
-  window: number | undefined,
   request: ModelRequest,
   key: string,
   authorization: string
@@ -257,7 +231,7 @@ const reacted = (
     ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
   })
   const failed = (reason: string): Transient => ({ reason })
-  const refusal = overWindow(body, options.provider, options.model, window)
+  const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
   if (refusal !== undefined) return Effect.succeed(refusal)
   const attempt = Effect.gen(function* () {
     const response = yield* Effect.tryPromise({

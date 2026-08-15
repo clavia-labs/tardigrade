@@ -32,7 +32,7 @@ const scripted = (actions: ReadonlyArray<Action>) => {
       const next = actions[seen.length - 1]
       if (next === undefined) throw new Error(`the stub model ran out of actions after ${seen.length}`)
       return next
-    })
+    }, { contextWindow: 200_000 })
   }
 }
 
@@ -44,7 +44,7 @@ const call = (callId: string): Action => ({
   usage
 })
 
-const agent = createAgent({ modules: defaultPack({ nativeTools: [lookup] }) })
+const agent = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 }, nativeTools: [lookup] }) })
 
 const head = (over: Record<string, unknown> = {}): Event => ({
   type: "MessageReceived",

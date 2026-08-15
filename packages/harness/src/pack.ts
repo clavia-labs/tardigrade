@@ -6,14 +6,16 @@ import { inference, type InferenceOptions } from "./modules/inference"
 import { nativeTools } from "./modules/native-tools"
 
 export interface DefaultPackOptions<R = never> {
-  readonly inference?: InferenceOptions
+  // Required, because `inference` is: a pack that answers with a model has to say which model and
+  // what it accepts, and there is no figure this file could supply on its behalf.
+  readonly inference: InferenceOptions
   readonly nativeTools?: ReadonlyArray<NativeTool<R>>
   readonly budget?: BudgetOptions
   readonly contract?: ContractOptions
   readonly compaction?: MorphOptions
 }
 
-export const defaultPack = <R = never>(options: DefaultPackOptions<R> = {}) =>
+export const defaultPack = <R = never>(options: DefaultPackOptions<R>) =>
   [
     inference(options.inference),
     nativeTools(options.nativeTools ?? []),

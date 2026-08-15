@@ -10,7 +10,7 @@ Module ids must be unique. Replacing a built-in means constructing a different m
 
 ```ts
 const agent = createAgent({
-  modules: [inference(), nativeTools([lookup]), budget(), contract(), morphCompaction()]
+  modules: [inference({ contextWindow: 200_000 }), nativeTools([lookup]), budget(), contract(), morphCompaction()]
 })
 ```
 
@@ -41,19 +41,28 @@ A key or token is a secret, so it is read as a `Config` of a `Redacted` value at
 
 ## The Context Window
 
-The context window belongs to the model, so `InferenceState.contextWindow` is what the model accepts and it is absent until something says what that is. A figure written into the framework would be wrong for every model it was not measured against, and it decides more than one thing: the provider refuses an oversized request against it, and compaction divides it to find its trigger.
+The context window belongs to the model, so `InferenceState.contextWindow` is what the model accepts. It is a number rather than a number this side might not have, because a figure written into the framework would be wrong for every model it was not measured against, and it decides more than one thing: the provider refuses an oversized request against it, and compaction divides it to find its trigger.
 
-Three things can say what the window is, in order. An explicit `contextWindow` on the provider wins and asks nothing of the network. `AI_GATEWAY_MODEL` and `AI_GATEWAY_CONTEXT_WINDOW` and their Cloudflare counterparts come next. Otherwise a provider that can ask its gateway asks it.
+It is required for a second reason. The projection is read by a machine guard, so it has to fold the same way in every process. A window a provider learned partway through a session would answer one way where a call had been made and another where none had, and a replay would diverge from the run it replays. A provider holds its window before it exists, so the projection is a constant.
 
-`vercelGatewayInference()` reads the gateway's model catalog, which publishes a context window per model. The read happens on the provider's first call, once per gateway for the life of the process, and every model built against that gateway shares the result. `state` stays synchronous, because a machine guard reads that projection and a guard that awaited a fetch would stop being a fold over the log. A catalog the process cannot read leaves the window unknown and is dropped, so the next provider tries again.
+That decides the shape of a constructor. Stating the window builds a provider synchronously, with no network and no effect. Leaving it out means the gateway has to be asked, and asking is an effect, so the provider arrives in one.
 
-An unknown window means nothing this side pretends to know it. The provider sends the request and the gateway applies its own limit, and compaction rests unless `fireTokens` and `keepTokens` say what to compact against. `cloudflareGatewayInference()` publishes no catalog on the path its chat requests use, so a Cloudflare session that wants compaction states one of those.
+```ts
+const stated = vercelGatewayInference({ contextWindow: 200_000 })
+const asked = yield* vercelGatewayInference({ model: "anthropic/claude-opus-4.5" })
+```
+
+`vercelGatewayInference()` reads the gateway's model catalog, which publishes a context window per model. One read per gateway for the life of the process, shared by every model built against it. A catalog the process cannot read, or one that lists no such model, fails the construction with a message naming the model and the option that settles it, and the failed read is dropped so the next construction tries again.
+
+`cloudflareGatewayInference()` publishes no catalog on the path its chat requests use, so `contextWindow` or `CLOUDFLARE_AI_CONTEXT_WINDOW` is the only way it can know, and its absence is a construction error. `customInference()` asks for the window outright, because whoever wrote the function is the only one who can say.
+
+A module says which model answers, and saying that means saying what it accepts, so `inference()` takes either a provider or a `contextWindow` to build the default gateway with. The type rejects a module that names neither. Generated code meets no type, so the construction rejects it too.
 
 A gateway that is busy, unwell, or unreachable earns further attempts on a jittered exponential backoff, bounded by `retries`, and one attempt is bounded by `timeout`. Every attempt carries one idempotency key, so a retry after a reply this side never saw is the same call rather than a second one. A refusal earns no retry: a request refused for a bad key is refused the same way every time. A failure that outlives its retries becomes a failed action, which the model loop records as the turn's evidence.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
-A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it. A window nobody knows refuses nothing.
+A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
 
 ## nativeTools
 
@@ -81,7 +90,7 @@ A turn declares its output in its own message, so the schema travels as the JSON
 
 `morphCompaction(options)` requires `InferenceStateProjection`. Its default trigger is 80 percent of the selected model's context window and its retained tail is 20 percent.
 
-Both are ratios of a window, so both are unknown while [the window is](#the-context-window). The module rests until the provider reports one, and `fireTokens` and `keepTokens` state the two thresholds directly for a provider that reports none. A `CompactionFired` event compacts whatever the thresholds allow, and with no threshold at all it keeps the newest event alone.
+Both are ratios of [the model's window](#the-context-window), which the provider holds before it exists, so a model switch moves both and the trigger stays a fold over the log. `fireTokens` and `keepTokens` state the two thresholds directly for a session that would rather set them than derive them.
 
 The module appends `CompactionCompleted` with an `upTo` offset and summary. It deletes no events. Rendering substitutes the latest summary for the compacted prefix.
 

@@ -148,57 +148,79 @@ describe("Vercel AI Gateway", () => {
   })
 
   // The window belongs to the model, and the gateway publishes it per model. Reading it there is
-  // what keeps a figure this side invented out of the decision.
+  // what keeps a figure this side invented out of the decision, and asking is an effect, so the
+  // constructor that asks is one.
   test("reads the model's context window from the gateway catalog", async () => {
     const calls: Array<string> = []
-    const provider = vercelGatewayInference({
-      apiKey: "vercel-key",
-      model: "anthropic/test-model",
-      baseUrl: "https://catalog-one.invalid/v1",
-      fetch: gateway(calls, models("anthropic/test-model", 1_000_000))
-    })
+    const provider = await Effect.runPromise(
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "anthropic/test-model",
+        baseUrl: "https://catalog-one.invalid/v1",
+        fetch: gateway(calls, models("anthropic/test-model", 1_000_000))
+      })
+    )
 
-    // Nothing is known until the provider has had a reason to ask.
-    expect(provider.state([]).contextWindow).toBeUndefined()
+    // Known before the provider exists, so the projection is a constant from its first read.
+    expect(provider.state([]).contextWindow).toBe(1_000_000)
     await Effect.runPromise(provider.react(request, "k"))
 
-    expect(provider.state([]).contextWindow).toBe(1_000_000)
     expect(calls).toEqual([
       "https://catalog-one.invalid/v1/models",
       "https://catalog-one.invalid/v1/chat/completions"
     ])
   })
 
-  test("reads the catalog once and serves every later call from it", async () => {
+  test("reads the catalog once and serves every later model from it", async () => {
     const calls: Array<string> = []
     const of = (model: string) =>
-      vercelGatewayInference({
-        apiKey: "vercel-key",
-        model,
-        baseUrl: "https://catalog-two.invalid/v1",
-        fetch: gateway(calls, {
-          object: "list",
-          data: [
-            { id: "anthropic/small", context_window: 200_000 },
-            { id: "anthropic/large", context_window: 1_000_000 }
-          ]
+      Effect.runPromise(
+        vercelGatewayInference({
+          apiKey: "vercel-key",
+          model,
+          baseUrl: "https://catalog-two.invalid/v1",
+          fetch: gateway(calls, {
+            object: "list",
+            data: [
+              { id: "anthropic/small", context_window: 200_000 },
+              { id: "anthropic/large", context_window: 1_000_000 }
+            ]
+          })
         })
-      })
-    const small = of("anthropic/small")
-    const large = of("anthropic/large")
+      )
 
-    await Effect.runPromise(small.react(request, "k"))
-    await Effect.runPromise(large.react(request, "k"))
-    await Effect.runPromise(small.react(request, "k"))
-
-    expect(small.state([]).contextWindow).toBe(200_000)
-    expect(large.state([]).contextWindow).toBe(1_000_000)
+    expect((await of("anthropic/small")).state([]).contextWindow).toBe(200_000)
+    expect((await of("anthropic/large")).state([]).contextWindow).toBe(1_000_000)
+    expect((await of("anthropic/small")).state([]).contextWindow).toBe(200_000)
     expect(calls.filter((url) => url.endsWith("/models"))).toEqual([
       "https://catalog-two.invalid/v1/models"
     ])
   })
 
-  test("passes the caller's context window and asks the gateway nothing", async () => {
+  // The regression this pins: a window learned mid-session lived in process memory, so a provider
+  // that had made a call and one that had not answered differently about the same log. A machine
+  // guard folds over this, so the same log folded two ways and a replay diverged from its run.
+  test("answers the same about the same log whether or not it has been called", async () => {
+    const calls: Array<string> = []
+    const of = () =>
+      Effect.runPromise(
+        vercelGatewayInference({
+          apiKey: "vercel-key",
+          model: "anthropic/test-model",
+          baseUrl: "https://catalog-seven.invalid/v1",
+          fetch: gateway(calls, models("anthropic/test-model", 750_000))
+        })
+      )
+
+    const used = await of()
+    await Effect.runPromise(used.react(request, "k"))
+    const fresh = await of()
+
+    expect(fresh.state([])).toEqual(used.state([]))
+    expect(fresh.state([]).contextWindow).toBe(750_000)
+  })
+
+  test("takes the caller's context window and asks the gateway nothing", async () => {
     const calls: Array<string> = []
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
@@ -213,46 +235,54 @@ describe("Vercel AI Gateway", () => {
     expect(calls.some((url) => url.endsWith("/models"))).toBe(false)
   })
 
-  // A catalog this side could not read leaves the window unknown. The gateway knows its own limit
-  // and will say so, which is a better answer than refusing the turn here.
-  test("still answers when the catalog cannot be read", async () => {
+  // A window this side can not learn is a construction that fails, because a provider that exists
+  // reports a real number and there is none to report.
+  test("fails to construct when the catalog cannot be read", async () => {
     const calls: Array<string> = []
-    const provider = vercelGatewayInference({
-      apiKey: "vercel-key",
-      baseUrl: "https://catalog-four.invalid/v1",
-      fetch: gateway(calls, undefined)
-    })
-
-    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({
-      kind: "complete"
-    })
-    expect(provider.state([]).contextWindow).toBeUndefined()
-    // Asked once, whatever the answer was. A gateway whose catalog is down is not asked again on
-    // every model call.
-    await Effect.runPromise(provider.react(request, "k"))
-    expect(calls.filter((url) => url.endsWith("/models"))).toHaveLength(1)
-  })
-
-  test("a later provider asks again after a catalog read failed", async () => {
-    const calls: Array<string> = []
-    const of = () =>
+    const built = Effect.runPromise(
       vercelGatewayInference({
         apiKey: "vercel-key",
-        model: "anthropic/test-model",
-        baseUrl: "https://catalog-five.invalid/v1",
-        fetch: gateway(
-          calls,
-          calls.some((url) => url.endsWith("/models"))
-            ? models("anthropic/test-model", 500_000)
-            : undefined
-        )
+        baseUrl: "https://catalog-four.invalid/v1",
+        fetch: gateway(calls, undefined)
       })
+    )
 
-    await Effect.runPromise(of().react(request, "k"))
-    const second = of()
-    await Effect.runPromise(second.react(request, "k"))
+    expect(built).rejects.toThrow("could not read its model catalog")
+  })
 
-    expect(second.state([]).contextWindow).toBe(500_000)
+  test("fails to construct when the catalog lists no such model", async () => {
+    const calls: Array<string> = []
+    const built = Effect.runPromise(
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "anthropic/unlisted",
+        baseUrl: "https://catalog-six.invalid/v1",
+        fetch: gateway(calls, models("anthropic/listed", 1_000))
+      })
+    )
+
+    expect(built).rejects.toThrow('publishes no context window for "anthropic/unlisted"')
+  })
+
+  test("a later construction asks again after a catalog read failed", async () => {
+    const calls: Array<string> = []
+    const of = () =>
+      Effect.runPromise(
+        vercelGatewayInference({
+          apiKey: "vercel-key",
+          model: "anthropic/test-model",
+          baseUrl: "https://catalog-five.invalid/v1",
+          fetch: gateway(
+            calls,
+            calls.some((url) => url.endsWith("/models"))
+              ? models("anthropic/test-model", 500_000)
+              : undefined
+          )
+        })
+      )
+
+    await of().catch(() => undefined)
+    expect((await of()).state([]).contextWindow).toBe(500_000)
   })
 
   // The window is the one maximum a provider states, and it bounds the whole request. A request past
@@ -310,6 +340,7 @@ describe("Vercel AI Gateway", () => {
     let called = false
     const provider = vercelGatewayInference({
       apiKey: "",
+      contextWindow: 200_000,
       fetch: (async () => {
         called = true
         return new Response()
@@ -348,6 +379,14 @@ describe("Vercel AI Gateway", () => {
 })
 
 describe("Cloudflare AI Gateway", () => {
+  // No catalog on this path, so the caller is the only one who can say what the model accepts, and
+  // an absent answer is a construction that fails rather than a number this side chose.
+  test("refuses to build without a window it has no way to learn", () => {
+    expect(() => cloudflareGatewayInference({ accountId: "a", apiToken: "t" })).toThrow(
+      "CLOUDFLARE_AI_CONTEXT_WINDOW"
+    )
+  })
+
   test("uses the current account endpoint and optional gateway header", async () => {
     const calls: Array<{ readonly url: string; readonly headers: Headers }> = []
     const stub = (async (url: string, init: RequestInit) => {
@@ -365,6 +404,7 @@ describe("Cloudflare AI Gateway", () => {
       apiToken: "cloudflare-token",
       gatewayId: "support-gateway",
       model: "anthropic/test-model",
+      contextWindow: 200_000,
       fetch: stub
     })
     expect(await Effect.runPromise(provider.react(request, "k"))).toEqual({
@@ -384,6 +424,7 @@ describe("Cloudflare AI Gateway", () => {
     const provider = cloudflareGatewayInference({
       accountId: "",
       apiToken: "",
+      contextWindow: 200_000,
       fetch: (async () => {
         called = true
         return new Response()
