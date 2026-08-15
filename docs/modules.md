@@ -27,9 +27,11 @@ const agent = createAgent({
 - message and tool-result truncation limits
 - the `InferenceStateProjection` construction service
 
-`messageTruncateAt` and `resultTruncateAt` bound how much of a received message and of a tool result reach the model, in characters. Both are absent until a caller sets one, so a render sends what the log holds. A bound the caller never asked for would drop text that only the rendered request could show was missing, and the log would still read as though the model saw all of it. Context size has an owner already: [compaction](#compaction) checkpoints the log against the provider's window.
+`messageTruncateAt` and `resultTruncateAt` bound how much of a received message and of a tool result reach the model, in characters. Both are absent until a caller sets one, so a render sends what the log holds. A bound the caller never asked for would drop text that only the rendered request could show was missing, and the log would still read as though the model saw all of it.
 
-A body that meets a bound the caller did set carries a marker naming its original size, so a model holding a fragment can read that it is holding one.
+A provider states one maximum, `contextWindow`, and it bounds the whole request rather than any one message. A per-message default derived from it would be a policy the framework invented, so there is none. The window is enforced where it applies, in the provider, and [compaction](#compaction) is what keeps a session under it across turns.
+
+A body that meets a bound the caller did set carries a marker naming its original size, so a model holding a fragment can read that it is holding one. `agent.request(log)` renders exactly what goes to the provider, so what a bound removed is readable at any point without running anything.
 
 Vercel AI Gateway is the default provider. The gateway reads `AI_GATEWAY_API_KEY`, `AI_GATEWAY_MODEL`, and `AI_GATEWAY_CONTEXT_WINDOW`. Explicit options take precedence.
 
@@ -40,6 +42,8 @@ A key or token is a secret, so it is read as a `Config` of a `Redacted` value at
 A gateway that is busy, unwell, or unreachable earns further attempts on a jittered exponential backoff, bounded by `retries`, and one attempt is bounded by `timeout`. Every attempt carries one idempotency key, so a retry after a reply this side never saw is the same call rather than a second one. A refusal earns no retry: a request refused for a bad key is refused the same way every time. A failure that outlives its retries becomes a failed action, which the model loop records as the turn's evidence.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
+
+A request estimated past `contextWindow` is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words and this one names both sizes and the setting that decides one of them. `contextWindow` falls back to a built-in figure when nothing configures it, and that figure also decides when compaction fires, so a model with a larger window meets the assumption here rather than through early compaction. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
 
 ## nativeTools
 

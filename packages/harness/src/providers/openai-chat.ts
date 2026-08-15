@@ -1,4 +1,5 @@
 import { Config, Duration, Effect, Redacted, Result, Schedule } from "effect"
+import { estimateTextTokens } from "../context"
 import type {
   Action,
   AgentMessage,
@@ -137,6 +138,28 @@ const actionOf = (body: ChatResponse): Action => {
   }
 }
 
+// The one maximum a provider states: how large a request the model accepts. It is a bound on the
+// whole request rather than on any one message, so this is where it is checked, and nothing upstream
+// invents a per-message limit to approximate it.
+//
+// A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
+// words. Refusing here spends nothing and answers in the harness's own words, naming both numbers
+// and the setting that decides one of them. `contextWindow` falls back to a built-in figure when
+// nothing configures it, and that figure already decides when compaction fires, so a model with a
+// larger window meets its assumption here rather than by quietly compacting early.
+const overWindow = (body: string, options: OpenAiChatOptions): Action | undefined => {
+  const estimate = estimateTextTokens(body)
+  if (estimate <= options.contextWindow) return undefined
+  return {
+    kind: "fail",
+    error:
+      `this request is at least ${estimate} tokens and ${options.provider} is configured for a ` +
+      `context window of ${options.contextWindow} tokens, so the model can not read it. Set ` +
+      "contextWindow on the provider when the model accepts more, bound what reaches the model " +
+      "with messageTruncateAt and resultTruncateAt, or send less."
+  }
+}
+
 // A failure worth another attempt: the connection broke, or the gateway is busy or briefly unwell.
 // A refusal is not one of these. A request refused for a bad key or a malformed body is refused the
 // same way every time, so retrying it spends money and time to learn nothing.
@@ -202,6 +225,8 @@ const reacted = (
     ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
   })
   const failed = (reason: string): Transient => ({ reason })
+  const refusal = overWindow(body, options)
+  if (refusal !== undefined) return Effect.succeed(refusal)
   const attempt = Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       try: () =>

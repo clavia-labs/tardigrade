@@ -126,6 +126,55 @@ describe("Vercel AI Gateway", () => {
     expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "fail" })
   })
 
+  // The window is the one maximum a provider states, and it bounds the whole request. A request past
+  // it can not succeed, so it is refused here rather than sent to be refused slowly and in the
+  // gateway's words.
+  test("refuses a request larger than its configured context window before fetch", async () => {
+    let called = false
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 1_000,
+      fetch: (async () => {
+        called = true
+        return new Response()
+      }) as unknown as typeof fetch
+    })
+
+    const action = await Effect.runPromise(
+      provider.react(
+        { ...request, messages: [{ role: "user", content: "x".repeat(40_000) }] },
+        "k"
+      )
+    )
+
+    expect(called).toBe(false)
+    expect(action.kind).toBe("fail")
+    const reason = String(action.kind === "fail" ? action.error : "")
+    // The refusal names both numbers and the setting that decides one of them, so the assumption the
+    // provider made is readable at the moment it binds.
+    expect(reason).toMatch(/at least 10\d{3} tokens/)
+    expect(reason).toContain("context window of 1000 tokens")
+    expect(reason).toContain("contextWindow")
+    expect(action.usage).toBeUndefined()
+  })
+
+  test("sends a request that fits its configured context window", async () => {
+    let called = false
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 1_000,
+      fetch: (async () => {
+        called = true
+        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+          status: 200
+        })
+      }) as unknown as typeof fetch
+    })
+
+    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "complete" })
+    expect(called).toBe(true)
+  })
+
   // The key is read from configuration rather than from the machine's environment, so the test
   // supplies the configuration it wants and asks nothing of the machine it runs on.
   test("fails before fetch when no key is configured", async () => {
