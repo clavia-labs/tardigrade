@@ -13,6 +13,8 @@ Keep the docs conceptual. Use diagrams, invariants, and links to explain concept
 ## TypeScript
 
 - Use static imports.
+- Do not write `any`. The linter rejects it, and a wildcard that is genuinely unwriteable otherwise carries a comment saying why.
+- Check a mistake at the tier that can catch it. A type catches what a human writes; a construction-time throw catches what generated code writes, and the framework compiles generated modules and machines.
 - Use inferred return types by default. This keeps the code less verbose.
 - Import symbols from their canonical files. Use re-exports only in a package's published `index.ts`.
 

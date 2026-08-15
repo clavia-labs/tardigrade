@@ -61,6 +61,8 @@ interface Module<Id, Services, Requires, R> {
 
 Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
 
+Compilation checks what a type cannot see, because a module tuple can be generated. A transition on an event no module declares waits forever, a withdrawal that names no offered tool takes nothing away, and a function carried in `identity` hashes to one constant, so two behaviors would share an agent id. Each is rejected where the tuple is known, before any log exists.
+
 `identity` contributes behavior-affecting configuration to the default agent id. [Agent Identity](evolution.md#agent-identity) explains the identity rules.
 
 ## Agent

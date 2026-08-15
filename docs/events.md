@@ -16,6 +16,8 @@ Common fields include:
 
 Unknown fields and event types survive reads and folds.
 
+The open shape is the right contract for reading, and the wrong one for writing the harness's own events: a misspelled field compiles, and `keyOf` reads `callId` to derive a dedup key, so a `ToolReturned` carrying `calId` derives no key and the store stops absorbing its redeliveries. The constructors in `flamecast-core/harness` name each event's fields, and the built-in modules emit through them. They return a plain `Event`, so every reader keeps its tolerant read.
+
 ## Append-Only Rules
 
 1. An event records a past fact.

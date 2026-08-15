@@ -99,8 +99,8 @@ const ancestry = (origin: MessageOrigin | undefined, maxDepth: number) =>
     return chain
   })
 
-export const serve = <R = never>(
-  agent: Agent<AgentServices | R, any>,
+export const serve = <R = never, Services = unknown>(
+  agent: Agent<AgentServices | R, Services>,
   options: ServeOptions = {}
 ): Serve<R> => {
   const maxDepth = options.maxDepth ?? DEFAULT_MAX_DEPTH

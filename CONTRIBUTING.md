@@ -21,6 +21,8 @@ bun run gate
 
 The gate runs lint (oxlint), prose lint (`tools/docs-lint.ts`), typecheck (every package plus root tools), tests (`bun test` per package), and dead-code analysis (knip) in parallel. It must exit 0. Narrow it with `bun run gate --only=typecheck` while iterating. The pre-push hook runs the whole gate.
 
+`any` is a lint error. It defeats the checks the rest of the framework leans on, and every place it looked necessary had an honest type behind it. The one exception is annotated where it sits, with the reason it can not be written any other way.
+
 The prose lint holds markdown to the rules in [AGENTS.md](AGENTS.md) that a code linter cannot see. A paragraph is one line, because hard wrapping bakes one editor's width into the source and makes a one-word change read as a reflowed block. A document states what is true now, so words that narrate the repository's own history belong in the commit and the pull request.
 
 CI runs `bun install --frozen-lockfile` and then the same `bun run gate`. There is no second list of checks to keep in sync, so a green gate locally is a green gate in CI. Commit `bun.lock` with any dependency change.
