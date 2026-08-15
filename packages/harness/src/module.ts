@@ -154,6 +154,9 @@ export interface MessageOrigin {
 export interface InboundMessage {
   readonly id: string
   readonly text: string
+  // The turn's declared output schema, as the JSON Schema the log carries. A caller declaring a
+  // `Schema` lowers it with `jsonSchemaOf`, and a message arriving from another session already
+  // holds the lowered form, so one field means one thing wherever it comes from.
   readonly output?: unknown
   readonly budget?: number
   readonly escalatable?: boolean

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { ConfigProvider, Effect } from "effect"
 import type { ModelRequest } from "../infer"
 import { cloudflareGatewayInference } from "./cloudflare-gateway"
 import { vercelGatewayInference } from "./vercel-gateway"
@@ -88,6 +88,8 @@ describe("Vercel AI Gateway", () => {
     })
   })
 
+  // The key is read from configuration rather than from the machine's environment, so the test
+  // supplies the configuration it wants and asks nothing of the machine it runs on.
   test("fails before fetch when no key is configured", async () => {
     let called = false
     const provider = vercelGatewayInference({
@@ -97,10 +99,34 @@ describe("Vercel AI Gateway", () => {
         return new Response()
       }) as unknown as typeof fetch
     })
-    const action = await Effect.runPromise(provider.react(request, "k"))
+    const action = await Effect.runPromise(
+      Effect.provide(
+        provider.react(request, "k"),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({}))
+      )
+    )
     expect(action).toMatchObject({ kind: "fail" })
     expect(String(action.kind === "fail" ? action.error : "")).toContain("AI_GATEWAY_API_KEY")
     expect(called).toBe(false)
+  })
+
+  test("reads the key from configuration when none is passed", async () => {
+    const seen: Array<string> = []
+    const provider = vercelGatewayInference({
+      fetch: (async (_url: string, init: RequestInit) => {
+        seen.push(String(new Headers(init.headers).get("authorization")))
+        return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+          status: 200
+        })
+      }) as unknown as typeof fetch
+    })
+    await Effect.runPromise(
+      Effect.provide(
+        provider.react(request, "k"),
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ AI_GATEWAY_API_KEY: "from-config" }))
+      )
+    )
+    expect(seen).toEqual(["Bearer from-config"])
   })
 })
 

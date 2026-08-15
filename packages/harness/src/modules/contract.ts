@@ -4,7 +4,7 @@ import { ANSWER } from "../exits"
 import type { NativeToolSpec } from "../infer"
 import { defineModule } from "../module"
 import type { Nudge } from "../definition"
-import { answerErrors, repairText } from "../schema"
+import { repairText, schemaErrors } from "../schema"
 import { turnHead, turnOf, turnView } from "../turns"
 
 // The contract module: a turn that declares an output schema answers through the `answer` tool, and
@@ -80,8 +80,8 @@ const contractMachine = machine({
       decide: (log, now, context) => {
         const answer = answerOf(context)
         const turn = answer.turn === "" ? turnOf(log) : answer.turn
-        const errors = answerErrors(outputSchemaOf(log), answer.arguments)
-        if (errors.length === 0) {
+        const reason = schemaErrors(outputSchemaOf(log), answer.arguments)
+        if (reason === undefined) {
           return [
             toolReturned({
               turn,
@@ -94,13 +94,13 @@ const contractMachine = machine({
           ]
         }
         return [
-          answerRejected({ turn, callId: answer.callId, error: errors.join("; "), at: now }),
+          answerRejected({ turn, callId: answer.callId, error: reason, at: now }),
           toolReturned({
             turn,
             callId: answer.callId,
             name: ANSWER,
             result: null,
-            error: repairText(errors),
+            error: repairText(reason),
             at: now
           })
         ]

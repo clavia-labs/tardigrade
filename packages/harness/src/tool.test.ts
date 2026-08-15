@@ -1,21 +1,21 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
-import { array, boolean, integer, literal, object, optional, string } from "./spec"
+import { Effect, Schema } from "effect"
+import { jsonSchemaOf } from "./schema"
 import { tool } from "./tool"
 
 // One declaration is both halves. These tests pin the schema the model reads and the check that
 // runs before the handler, since the compiler covers the third half in the type tests.
 
-describe("spec", () => {
-  test("an object declares its properties, its required fields, and no others", () => {
-    const input = object({
-      orderId: string("The order to look up."),
-      limit: optional(integer()),
-      tags: array(string()),
-      mode: literal("fast", "thorough"),
-      dryRun: boolean()
+describe("jsonSchemaOf", () => {
+  test("a struct declares its properties, its required fields, and no others", () => {
+    const input = Schema.Struct({
+      orderId: Schema.String.annotate({ description: "The order to look up." }),
+      limit: Schema.optionalKey(Schema.Int),
+      tags: Schema.Array(Schema.String),
+      mode: Schema.Literals(["fast", "thorough"]),
+      dryRun: Schema.Boolean
     })
-    expect(input.json).toEqual({
+    expect(jsonSchemaOf(input)).toEqual({
       type: "object",
       properties: {
         orderId: { type: "string", description: "The order to look up." },
@@ -29,8 +29,8 @@ describe("spec", () => {
     })
   })
 
-  test("an object with only optional fields requires nothing", () => {
-    expect(object({ note: optional(string()) }).json).toEqual({
+  test("a struct with only optional fields requires nothing", () => {
+    expect(jsonSchemaOf(Schema.Struct({ note: Schema.optionalKey(Schema.String) }))).toEqual({
       type: "object",
       properties: { note: { type: "string" } },
       additionalProperties: false
@@ -42,7 +42,7 @@ describe("tool", () => {
   const lookup = tool({
     name: "lookup_invoice",
     description: "Look up one invoice by order id.",
-    input: object({ orderId: string(), limit: optional(integer()) }),
+    input: Schema.Struct({ orderId: Schema.String, limit: Schema.optionalKey(Schema.Int) }),
     run: (input) => Effect.succeed({ invoice: `INV-${input.orderId}`, limit: input.limit ?? 10 })
   })
 
@@ -68,21 +68,31 @@ describe("tool", () => {
   // against that schema, so running it on those arguments would be reading a lie.
   test("a missing required field returns an error the model can repair", async () => {
     const result = await Effect.runPromise(lookup.run({}))
-    expect(String((result as { error: string }).error)).toContain("/orderId: required")
+    expect(String((result as { error: string }).error)).toContain("Missing key")
   })
 
   test("a field of the wrong type never reaches the handler", async () => {
     const result = await Effect.runPromise(lookup.run({ orderId: 4182 }))
-    expect(String((result as { error: string }).error)).toContain("expected string, got number")
+    expect(String((result as { error: string }).error)).toContain("Expected string")
   })
 
   test("an invented field is refused rather than ignored", async () => {
     const result = await Effect.runPromise(lookup.run({ orderId: "4182", sneaky: true }))
-    expect(String((result as { error: string }).error)).toContain("/sneaky: not allowed here")
+    expect(String((result as { error: string }).error)).toContain("Expected no excess property")
   })
 
   test("an absent optional field is not an error", async () => {
     const result = await Effect.runPromise(lookup.run({ orderId: "4182", limit: 3 }))
     expect(result).toEqual({ invoice: "INV-4182", limit: 3 })
+  })
+
+  // Every failure is reported at once, so a model repairing an answer does not spend one turn per
+  // field.
+  test("every failure is reported together", async () => {
+    const result = await Effect.runPromise(lookup.run({ limit: "three", sneaky: true }))
+    const error = String((result as { error: string }).error)
+    expect(error).toContain("Missing key")
+    expect(error).toContain("Expected no excess property")
+    expect(error).toContain("Expected number")
   })
 })

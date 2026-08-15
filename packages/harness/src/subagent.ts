@@ -1,8 +1,9 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { Router, Self, type Event } from "@flamecast/core"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "./infer"
 import type { MessageOrigin } from "./module"
 import { canonicalValue } from "./definition"
+import { jsonSchemaOf } from "./schema"
 import { sha256 } from "./sha256"
 
 // Delegation as one awaitable function with two faces. `callAgent` is the code face: a machine, a
@@ -68,11 +69,16 @@ export const callAgent = (
     return subagentResultOf(address, terminal, message.id)
   })
 
+// What a sub-agent call carries when the caller declares nothing else: the message to send.
+const MESSAGE_INPUT = Schema.Struct({
+  message: Schema.String.annotate({ description: "What to ask the agent at this address." })
+})
+
 export interface SubagentToolOptions {
   readonly name: string
   readonly description: string
   readonly address: string
-  readonly inputSchema?: unknown
+  readonly input?: Schema.Constraint
   readonly budget?: number
   readonly message?: (input: unknown) => string
   readonly callId?: (input: unknown, context?: NativeToolContext) => string
@@ -82,13 +88,7 @@ export const subagentTool = (options: SubagentToolOptions): NativeTool<Router | 
   spec: {
     name: options.name,
     description: options.description,
-    inputSchema:
-      options.inputSchema ?? {
-        type: "object",
-        properties: { message: { type: "string" } },
-        required: ["message"],
-        additionalProperties: false
-      }
+    inputSchema: jsonSchemaOf(options.input ?? MESSAGE_INPUT)
   },
   run: (input, context) =>
     Effect.gen(function* () {
