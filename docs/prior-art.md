@@ -4,7 +4,7 @@ flamecast-core combines ideas from event-sourced systems, typed effect runtimes,
 
 ## Runtime and State
 
-- [Effect](https://effect.website/) informs typed service ports, layers, structured effects, and testable time.
+- [Effect](https://effect.website/) informs typed service ports, layers, structured effects, and testable time. It also supplies the pieces this repository would otherwise write itself: `Schema` for the declarations that cross a boundary, `Schedule` for retry policy, `Config` and `Redacted` for secrets, and a test clock for code that waits.
 - Event sourcing informs immutable logs, projections, replay, and committed effect outcomes.
 - Actor systems inform per-session identity, routing, and single-writer ownership.
 
