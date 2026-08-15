@@ -26,7 +26,7 @@ import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
 const lead = createAgent({
   modules: defaultPack({
-    inference: { provider: vercelGatewayInference({ model: "anthropic/claude-opus-4.5" }) },
+    inference: { provider: vercelGatewayInference({ model: "anthropic/claude-opus-4.5", contextWindow: 200_000 }) },
     nativeTools: [
       subagentTool({
         name: "verify",
@@ -40,7 +40,7 @@ const lead = createAgent({
 const verifier = createAgent({
   modules: [
     inference({
-      provider: vercelGatewayInference({ model: "anthropic/claude-haiku-4.5" }),
+      provider: vercelGatewayInference({ model: "anthropic/claude-haiku-4.5", contextWindow: 200_000 }),
       system: "Check the claim you are given. Answer with the defects you find, or 'correct'."
     })
   ]

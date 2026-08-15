@@ -9,8 +9,12 @@ import {
 } from "./definition"
 import { servedLog } from "./turns"
 
-const truncate = (body: string, at: number): string =>
-  body.length <= at ? body : `${body.slice(0, at)}…[truncated ${body.length} chars]`
+// A body cut to the bound a module asked for. The marker states the original size, so a model
+// holding a fragment can read that it is holding one. No bound means the body goes whole.
+const truncate = (body: string, at: number | undefined): string =>
+  at === undefined || body.length <= at
+    ? body
+    : `${body.slice(0, at)}…[truncated ${body.length} chars]`
 
 const nudgeTools = (
   nudge: Nudge,

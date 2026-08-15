@@ -24,6 +24,7 @@ import {
   type TurnResult
 } from "@flamecast/harness"
 import type { InferenceSelection, NativeTool } from "@flamecast/harness/infer"
+import type { InferenceOptions } from "@flamecast/harness/modules/inference"
 import { candidate, type Candidate } from "./candidate"
 import { costed } from "./cost"
 import type { GepaEvaluation, GepaMutationContext } from "./gepa"
@@ -160,22 +161,41 @@ const PROPOSAL = Schema.Struct({
 
 const PROPOSAL_SCHEMA = jsonSchemaOf(PROPOSAL)
 
-export interface ProposerOptions<R = never> {
-  readonly provider?: InferenceSelection
+interface ProposerSettings<R = never> {
   readonly system?: string
   readonly nativeTools?: ReadonlyArray<NativeTool<R>>
+}
+
+// A proposer answers with a model, so it says which model, the same way every other module does.
+export type ProposerOptions<R = never> =
+  | (ProposerSettings<R> & {
+      readonly provider: InferenceSelection
+      readonly contextWindow?: number
+    })
+  | (ProposerSettings<R> & {
+      readonly provider?: InferenceSelection
+      readonly contextWindow: number
+    })
+
+const proposerInference = <R>(options: ProposerOptions<R>): InferenceOptions => {
+  const system = options.system ?? PROPOSER_SYSTEM
+  if (options.provider !== undefined) return { system, provider: options.provider }
+  if (options.contextWindow === undefined) {
+    throw new Error(
+      "proposer() needs a provider or a contextWindow: reflection answers with a model, so it has " +
+        "to say which model and what it accepts."
+    )
+  }
+  return { system, contextWindow: options.contextWindow }
 }
 
 // The agent that reflects. It is an ordinary Flamework agent, so a caller who wants the proposer to
 // read the repository before it rewrites an instruction adds tools, and a caller who wants a
 // stronger model than the one under optimization names a provider.
-export const proposer = <R = never>(options: ProposerOptions<R> = {}) =>
+export const proposer = <R = never>(options: ProposerOptions<R>) =>
   createAgent({
     modules: defaultPack<R>({
-      inference: {
-        system: options.system ?? PROPOSER_SYSTEM,
-        ...(options.provider === undefined ? {} : { provider: options.provider })
-      },
+      inference: proposerInference(options),
       ...(options.nativeTools === undefined ? {} : { nativeTools: options.nativeTools })
     })
   })
@@ -217,9 +237,9 @@ export interface ReflectiveMutationOptions<
   Evaluation extends GepaEvaluation,
   R = never
 > {
-  // The agent that reflects. Omitting it takes `proposer()`, so the shortest mutation that compiles
-  // is the one that reads the feedback with a model.
-  readonly proposer?: Proposer<R>
+  // The agent that reflects. Required, because reflection answers with a model and the search has no
+  // way to pick one: `proposer({ contextWindow })` builds the default, and any agent will do.
+  readonly proposer: Proposer<R>
   // The instructions a candidate exposes for rewriting, in a stable order. Round-robin selection
   // walks this list, so every instruction gets its turn.
   readonly instructionsOf: (value: Value) => ReadonlyArray<Instruction>
@@ -254,9 +274,9 @@ export const reflectiveMutation = <
 >(
   options: ReflectiveMutationOptions<Value, Example, Evaluation, R>
 ) => {
-  // The proposer compiles once. Building it per iteration would recompile the same modules and
-  // rehash the same identity for every reflection in the run.
-  const reflector: Proposer<R> = options.proposer ?? proposer()
+  // Read once. Reaching through the options on every iteration would say the proposer could change
+  // between them, and it can not.
+  const reflector = options.proposer
   const render = options.renderExample ?? textOf
   const select = options.selectTarget ?? roundRobin
   return (context: GepaMutationContext<Value, Example, Evaluation>) =>
@@ -308,7 +328,7 @@ export const reflectivePrompts = <Example, Evaluation extends GepaEvaluation, R 
   options: Omit<
     ReflectiveMutationOptions<Prompts, Example, Evaluation, R>,
     "instructionsOf" | "apply"
-  > = {}
+  >
 ) =>
   reflectiveMutation<Prompts, Example, Evaluation, R>({
     ...options,

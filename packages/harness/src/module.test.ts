@@ -128,7 +128,7 @@ describe("composition checks", () => {
 
 describe("the declared alphabet", () => {
   test("gathers every module's events into one sorted list", () => {
-    const agent = createAgent({ modules: defaultPack({ nativeTools: [lookupInvoice] }) })
+    const agent = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 }, nativeTools: [lookupInvoice] }) })
     expect(agent.definition.events).toEqual([...new Set(agent.definition.events)].sort())
     expect(agent.definition.events).toContain("MessageReceived")
     expect(agent.definition.events).toContain("ToolReturned")
@@ -138,7 +138,7 @@ describe("the declared alphabet", () => {
   })
 
   test("names an event type no module declared", () => {
-    const agent = createAgent({ modules: [inference()] })
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     expect(
       undeclaredEvents(agent.definition, [
         { type: "MessageReceived", id: "m-1" },
@@ -167,7 +167,8 @@ describe("composition", () => {
       modules: defaultPack({
         inference: {
           system: "You are a support agent.",
-          messageTruncateAt: 900
+          messageTruncateAt: 900,
+          contextWindow: 200_000
         },
         nativeTools: [lookupInvoice],
         budget: { defaultBudget: 24 }
@@ -181,8 +182,17 @@ describe("composition", () => {
     })
   })
 
+  test("compiles no truncation bound until a module asks for one", () => {
+    const plain = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 } }) })
+    expect(plain.definition.render.messageTruncateAt).toBeUndefined()
+    expect(plain.definition.render.resultTruncateAt).toBeUndefined()
+    const bounded = createAgent({ modules: defaultPack({ inference: { resultTruncateAt: 900, contextWindow: 200_000 } }) })
+    expect(bounded.definition.render.messageTruncateAt).toBeUndefined()
+    expect(bounded.definition.render.resultTruncateAt).toBe(900)
+  })
+
   test("passes the complete render plan to machine builders", () => {
-    const seen: Array<number> = []
+    const seen: Array<number | undefined> = []
     const probe = defineModule({
       id: "probe",
       setup: () => ({
@@ -192,8 +202,15 @@ describe("composition", () => {
         }
       })
     })
-    createAgent({ modules: [inference({ messageTruncateAt: 777 }), probe] })
+    createAgent({ modules: [inference({ messageTruncateAt: 777, contextWindow: 200_000 }), probe] })
     expect(seen).toEqual([777])
+  })
+
+  // The type refuses this for anything a person writes. Generated code meets no type, so the
+  // construction refuses it too, and it names both ways out.
+  test("rejects a module that names neither a provider nor a window", () => {
+    expect(() => inference({} as never)).toThrow("needs a provider or a contextWindow")
+    expect(() => inference({ system: "Be terse." } as never)).toThrow("vercelGatewayInference")
   })
 
   test("rejects duplicate module ids at runtime", () => {
@@ -327,21 +344,21 @@ describe("typed module dependencies", () => {
 
 describe("program identity", () => {
   test("is stable across two builds of the same modules", () => {
-    const one = createAgent({ modules: defaultPack() })
-    const two = createAgent({ modules: defaultPack() })
+    const one = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 } }) })
+    const two = createAgent({ modules: defaultPack({ inference: { contextWindow: 200_000 } }) })
     expect(one.definition.id).toBe(two.definition.id)
     expect(one.definition.id).toMatch(/^sha256:[0-9a-f]{64}$/)
   })
 
   test("changes when module order changes", () => {
-    const one = createAgent({ modules: [inference(), nativeTools([])] })
-    const two = createAgent({ modules: [nativeTools([]), inference()] })
+    const one = createAgent({ modules: [inference({ contextWindow: 200_000 }), nativeTools([])] })
+    const two = createAgent({ modules: [nativeTools([]), inference({ contextWindow: 200_000 })] })
     expect(one.definition.id).not.toBe(two.definition.id)
   })
 
   test("changes when module-owned prompt configuration changes", () => {
-    const one = createAgent({ modules: [inference()] })
-    const two = createAgent({ modules: [inference({ system: "Be terse." })] })
+    const one = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
+    const two = createAgent({ modules: [inference({ system: "Be terse.", contextWindow: 200_000 })] })
     expect(one.definition.id).not.toBe(two.definition.id)
   })
 
@@ -356,17 +373,17 @@ describe("program identity", () => {
   })
 
   test("records an explicit lineage without changing its parent", () => {
-    const parent = createAgent({ modules: [inference()] })
+    const parent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
     const child = createAgent({
       parent: parent.definition.id,
-      modules: [inference({ system: "Be terse." })]
+      modules: [inference({ system: "Be terse.", contextWindow: 200_000 })]
     })
     expect(child.definition.parent).toBe(parent.definition.id)
     expect(parent.definition.parent).toBeUndefined()
   })
 
   test("accepts a source-controlled identity for code-first candidates", () => {
-    const agent = createAgent({ id: "git:abc123", modules: [inference()] })
+    const agent = createAgent({ id: "git:abc123", modules: [inference({ contextWindow: 200_000 })] })
     expect(agent.definition.id).toBe("git:abc123")
   })
 })

@@ -37,7 +37,7 @@ const scripted = (actions: ReadonlyArray<Action>) => {
       const next = actions[seen.length - 1]
       if (next === undefined) throw new Error(`the stub model ran out of actions after ${seen.length}`)
       return next
-    })
+    }, { contextWindow: 200_000 })
   }
 }
 
@@ -158,7 +158,7 @@ describe("the reflective mutation", () => {
 
   test("runs the proposer as a session and returns its rewritten candidate", async () => {
     const model = scripted([answers("Answer the billing question. Always state the tax line.")])
-    const mutate = reflectivePrompts({ proposer: proposer() })
+    const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
     const result = await run(
       mutate(
@@ -198,7 +198,7 @@ describe("the reflective mutation", () => {
     const targets: Array<string> = []
     const model = scripted([answers("first rewrite"), answers("second rewrite")])
     const mutate = reflectivePrompts({
-      proposer: proposer(),
+      proposer: proposer({ contextWindow: 200_000 }),
       selectTarget: (available, context) => {
         const target = available[context.iteration % available.length]
         targets.push(target?.id ?? "")
@@ -217,7 +217,7 @@ describe("the reflective mutation", () => {
 
   test("selects by round robin without being told to", async () => {
     const model = scripted([answers("a rewrite of the tone")])
-    const mutate = reflectivePrompts({ proposer: proposer() })
+    const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
     const result = await run(
       mutate(contextOf(prompts, 1, [trial("f1", "a question", { score: 0, feedback: "wrong" })])),
@@ -228,12 +228,11 @@ describe("the reflective mutation", () => {
     expect(result.value?.value["inference.system"]).toBe("Answer the billing question.")
   })
 
-  test("reflects with the default proposer when it is given none", async () => {
-    // The shortest mutation that compiles has a model in it, which is the point of the default.
+  test("reflects with the proposer's own system instruction", async () => {
     const model = scripted([answers("a rewrite from the default proposer")])
 
     const result = await run(
-      reflectivePrompts()(
+      reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })(
         contextOf(prompts, 0, [trial("f1", "a question", { score: 0, feedback: "wrong" })])
       ),
       model.layer
@@ -245,7 +244,7 @@ describe("the reflective mutation", () => {
 
   test("proposes nothing when the proposer answers with the instruction it was given", async () => {
     const model = scripted([answers("Answer the billing question.")])
-    const mutate = reflectivePrompts({ proposer: proposer() })
+    const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
     const result = await run(
       mutate(contextOf(prompts, 0, [trial("f1", "a question", { score: 0, feedback: "wrong" })])),
@@ -259,7 +258,7 @@ describe("the reflective mutation", () => {
 
   test("proposes nothing when the proposer turn fails", async () => {
     const model = scripted([{ kind: "fail", error: "the provider refused", usage }])
-    const mutate = reflectivePrompts({ proposer: proposer() })
+    const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
     const result = await run(
       mutate(contextOf(prompts, 0, [trial("f1", "a question", { score: 0, feedback: "wrong" })])),
@@ -272,7 +271,7 @@ describe("the reflective mutation", () => {
 
   test("proposes nothing when a candidate exposes no instruction", async () => {
     const model = scripted([])
-    const mutate = reflectivePrompts({ proposer: proposer() })
+    const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
     const result = await run(
       mutate(contextOf({}, 0, [trial("f1", "a question", { score: 0, feedback: "wrong" })])),
@@ -290,7 +289,7 @@ describe("the reflective mutation", () => {
       readonly feedback: string
       readonly trajectory: ReadonlyArray<Event>
     }>({
-      proposer: proposer(),
+      proposer: proposer({ contextWindow: 200_000 }),
       instructionsOf: (value) => Object.entries(value).map(([id, text]) => ({ id, text })),
       apply: (rewritten, context) =>
         candidate("child", { ...context.parent.value, [rewritten.id]: rewritten.text }),
@@ -345,7 +344,7 @@ describe("GEPA driven by reflection", () => {
         minibatchSize: 1,
         maxMetricCalls: 4,
         evaluate,
-        mutate: reflectivePrompts({ proposer: proposer() })
+        mutate: reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
       }),
       model.layer
     )

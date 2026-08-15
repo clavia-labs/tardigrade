@@ -104,6 +104,8 @@ export const morphCompaction = (options: MorphOptions = {}) => {
     requires: [InferenceStateProjection] as const,
     setup: (services) => {
       const inferenceState = Context.get(services, InferenceStateProjection)
+      // Both thresholds are ratios of the selected model's window, which a provider holds before it
+      // exists, so this stays a fold over the log and a model switch moves both.
       const thresholds = (log: ReadonlyArray<Event>) => {
         const window = inferenceState(log).contextWindow
         return {

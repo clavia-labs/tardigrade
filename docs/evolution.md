@@ -90,7 +90,7 @@ const search = gepa({
     runEvaluation(entry.value, example).pipe(
       Effect.map((log) => costed(evaluationOf(log), log))
     ),
-  mutate: reflectivePrompts()
+  mutate: reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 })
 ```
 
@@ -110,12 +110,12 @@ An evaluator with its own grader can return any evaluation that carries these fi
 
 ## The Proposer
 
-The proposer is an agent, so reflection runs inside the framework it optimizes. `reflectivePrompts()` builds a default one, and a search that wants a stronger model or tools for the reflection passes its own.
+The proposer is an agent, so reflection runs inside the framework it optimizes. It says which model reflects the same way every module does, by naming a provider or [the window](modules.md#the-context-window) to take the default gateway with.
 
 ```ts
 const mutate = reflectivePrompts({
   proposer: proposer({
-    provider: vercelGatewayInference({ model: "anthropic/claude-opus-4.5" }),
+    provider: yield* vercelGatewayInference({ model: "anthropic/claude-opus-4.5" }),
     nativeTools: [readSourceFile]
   })
 })

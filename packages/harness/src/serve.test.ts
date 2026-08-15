@@ -12,7 +12,7 @@ import { subagentTool, type SubagentResult } from "./subagent"
 import { treeUsageIn } from "./turns"
 
 const scripted = (model: string, react: (request: ModelRequest) => Action) =>
-  customInference(async (request) => react(request), { id: model, model })
+  customInference(async (request) => react(request), { id: model, model, contextWindow: 200_000 })
 
 const toolAnswered = (request: ModelRequest) =>
   request.messages.some((message) => message.role === "tool")

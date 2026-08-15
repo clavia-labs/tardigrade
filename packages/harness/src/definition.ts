@@ -28,8 +28,12 @@ export interface RenderPlan {
   readonly instructions: ReadonlyArray<Instruction>
   readonly nativeTools: ReadonlyArray<NativeToolSpec>
   readonly nudges: ReadonlyArray<Nudge>
-  readonly messageTruncateAt: number
-  readonly resultTruncateAt: number
+  // How much of a received message and of a tool result reach the model, in characters. Both are
+  // absent until a module asks for a bound, because a bound the caller never asked for drops data
+  // that only the rendered request would show was missing. Context size has an owner already: the
+  // compaction module checkpoints the log against the provider's window.
+  readonly messageTruncateAt?: number
+  readonly resultTruncateAt?: number
 }
 
 export interface ModuleManifest {

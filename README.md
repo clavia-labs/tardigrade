@@ -50,7 +50,8 @@ const lookupInvoice: NativeTool = {
 const agent = createAgent({
   modules: defaultPack({
     inference: {
-      system: "You are a support agent. Use lookup_invoice for order questions."
+      system: "You are a support agent. Use lookup_invoice for order questions.",
+      contextWindow: 200_000
     },
     nativeTools: [lookupInvoice],
     budget: { defaultBudget: 24 }
@@ -67,7 +68,7 @@ const result = await Effect.runPromise(
 if (result.kind === "completed") console.log(result.output)
 ```
 
-`inference()` uses Vercel AI Gateway by default. Set `AI_GATEWAY_API_KEY`, or pass `vercelGatewayInference({ apiKey })`. Cloudflare AI Gateway is available through `cloudflareGatewayInference()`.
+`inference(options)` uses Vercel AI Gateway by default. Set `AI_GATEWAY_API_KEY`, or pass `vercelGatewayInference({ apiKey })`. Cloudflare AI Gateway is available through `cloudflareGatewayInference()`. A module names either a provider or a `contextWindow`, because what a model accepts is not something the framework can guess. `yield* vercelGatewayInference()` reads that number from the gateway's model catalog.
 
 ## Design
 

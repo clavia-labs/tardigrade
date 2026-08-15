@@ -1,4 +1,5 @@
 import { Config, Duration, Effect, Redacted, Result, Schedule } from "effect"
+import { estimateTextTokens } from "../context"
 import type {
   Action,
   AgentMessage,
@@ -12,6 +13,9 @@ export interface OpenAiChatOptions {
   readonly id: string
   readonly provider: string
   readonly model: string
+  // What the model accepts. A provider holds this before it exists, so `state` is a constant and the
+  // folds that read it agree in every process. A constructor that has to ask a gateway asks before
+  // it builds one.
   readonly contextWindow: number
   readonly endpoint: string
   // The key is a `Config` rather than a string, so it is read where it is used and stays redacted
@@ -33,6 +37,9 @@ interface ChatToolCall {
 
 interface ChatResponse {
   readonly choices?: ReadonlyArray<{
+    // Why the model stopped. A gateway that ran out of completion tokens says so here and returns
+    // the fragment it had, which is the one failure that looks exactly like an answer.
+    readonly finish_reason?: unknown
     readonly message?: {
       readonly content?: unknown
       readonly tool_calls?: ReadonlyArray<ChatToolCall>
@@ -94,9 +101,23 @@ const argumentsOf = (value: unknown): unknown => {
 const actionOf = (body: ChatResponse): Action => {
   const failure = body.error?.message
   if (failure !== undefined) return { kind: "fail", error: String(failure) }
-  const answer = body.choices?.[0]?.message
+  const choice = body.choices?.[0]
+  const answer = choice?.message
   if (answer === undefined) return { kind: "fail", error: "the inference gateway returned no choice" }
   const usage = usageOf(body.usage)
+  // A response the gateway stopped at the completion-token limit is a fragment wearing the shape of
+  // an answer. Reading it as one is the silent failure this catches: the turn would complete on half
+  // a sentence, or dispatch a tool call whose arguments stop mid-JSON and parse as a bare string.
+  // The tokens were spent either way, so the usage rides the failure and the turn's cost stays true.
+  if (choice?.finish_reason === "length") {
+    return {
+      kind: "fail",
+      error:
+        "the model stopped at its completion-token limit, so its answer is incomplete. Raise the " +
+        "model's completion-token limit, or ask for a shorter answer.",
+      usage
+    }
+  }
   const call = answer.tool_calls?.[0]
   if (call !== undefined) {
     const name = call.function?.name
@@ -120,6 +141,31 @@ const actionOf = (body: ChatResponse): Action => {
   }
 }
 
+// The one maximum a provider states: how large a request the model accepts. It is a bound on the
+// whole request rather than on any one message, so this is where it is checked, and nothing upstream
+// invents a per-message limit to approximate it.
+//
+// A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
+// words. Refusing here spends nothing and answers in the harness's own words, naming both sizes and
+// the model they belong to.
+const overWindow = (
+  body: string,
+  provider: string,
+  model: string,
+  window: number
+): Action | undefined => {
+  const estimate = estimateTextTokens(body)
+  if (estimate <= window) return undefined
+  return {
+    kind: "fail",
+    error:
+      `this request is at least ${estimate} tokens and ${provider} reports a context window of ` +
+      `${window} tokens for ${model}, so the model can not read it. Pass contextWindow to override ` +
+      "what the model accepts, bound what reaches the model with messageTruncateAt and " +
+      "resultTruncateAt, or send less."
+  }
+}
+
 // A failure worth another attempt: the connection broke, or the gateway is busy or briefly unwell.
 // A refusal is not one of these. A request refused for a bad key or a malformed body is refused the
 // same way every time, so retrying it spends money and time to learn nothing.
@@ -140,6 +186,8 @@ const backoff = Schedule.exponential("500 millis").pipe(Schedule.jittered)
 
 export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvider => ({
   id: options.id,
+  // A constant, so the projection folds the same in every process and a replay reaches the verdict
+  // the run it replays reached.
   state: () => ({
     provider: options.provider,
     model: options.model,
@@ -152,9 +200,7 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
       }
       // A key that can not be read is a terminal failure rather than a transient one, so it is
       // settled before the attempt rather than retried inside it.
-      const secret = yield* Effect.result(
-        options.apiKey ?? Config.succeed(Redacted.make(""))
-      )
+      const secret = yield* Effect.result(options.apiKey ?? Config.succeed(Redacted.make("")))
       if (Result.isFailure(secret)) {
         return {
           kind: "fail",
@@ -185,6 +231,8 @@ const reacted = (
     ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
   })
   const failed = (reason: string): Transient => ({ reason })
+  const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
+  if (refusal !== undefined) return Effect.succeed(refusal)
   const attempt = Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       try: () =>

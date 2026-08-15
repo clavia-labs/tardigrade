@@ -3,9 +3,10 @@ import { Effect, Layer } from "effect"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
-import { inferWith } from "../infer"
+import { inferWith, type InferenceProvider } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
+import { vercelGatewayInference } from "../providers/vercel-gateway"
 import { modelRequest } from "../render"
 import { inference } from "./inference"
 import { morphCompaction, naiveSummary, type MorphOptions } from "./compaction"
@@ -15,7 +16,7 @@ import { morphCompaction, naiveSummary, type MorphOptions } from "./compaction"
 
 const refuses = inferWith(async () => {
   throw new Error("compaction called the model")
-})
+}, { contextWindow: 200_000 })
 
 const turn = (id: string, at: number): ReadonlyArray<Event> => [
   { type: "MessageReceived", id, text: `question ${id}`, at },
@@ -26,7 +27,7 @@ const turn = (id: string, at: number): ReadonlyArray<Event> => [
 const history = [...turn("m-1", 1), ...turn("m-2", 10), ...turn("m-3", 20)]
 
 const compacted = (options: MorphOptions, seed: ReadonlyArray<Event>) => {
-  const agent = createAgent({ modules: [inference(), morphCompaction(options)] })
+  const agent = createAgent({ modules: [inference({ contextWindow: 200_000 }), morphCompaction(options)] })
   return Effect.runPromise(
     Effect.provide(
       Effect.gen(function* () {
@@ -105,6 +106,26 @@ describe("the local fallback", () => {
     const summary = naiveSummary(input, 0.5)
     expect(summary.length).toBeLessThan(input.length)
     expect(summary).toContain("chars elided")
+  })
+
+  // Both thresholds are ratios of the model's window, so the window the provider holds is what
+  // decides them. A wider model reads more before anything is summarized away.
+  const firedWith = (provider: InferenceProvider, seed: ReadonlyArray<Event>) => {
+    const agent = createAgent({ modules: [inference({ provider }), morphCompaction()] })
+    return Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          yield* agent.replay(seed)
+          return (yield* agent.log).some((event) => event.type === "CompactionCompleted")
+        }),
+        Layer.merge(InMemoryRuntime({ keyOf }), refuses)
+      )
+    )
+  }
+
+  test("fires against the window the provider reports", async () => {
+    expect(await firedWith(vercelGatewayInference({ contextWindow: 100 }), history)).toBe(true)
+    expect(await firedWith(vercelGatewayInference({ contextWindow: 200_000 }), history)).toBe(false)
   })
 })
 

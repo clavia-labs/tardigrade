@@ -406,12 +406,12 @@ const compile = <R, Services>(
       nativeTools: [...plan.nativeTools, ...(part.nativeTools ?? [])],
       nudges: [...plan.nudges, ...(part.nudges ?? [])]
     }),
+    // The plan starts with no truncation bound. A module that wants one contributes it, and a
+    // render with none sends what the log holds.
     {
       instructions: [],
       nativeTools: [],
-      nudges: [],
-      messageTruncateAt: 12_000,
-      resultTruncateAt: 6_000
+      nudges: []
     } satisfies RenderPlan
   )
   // Identity is hashed into the agent id, and the hash serializes a function as the constant
