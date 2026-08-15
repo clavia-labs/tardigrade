@@ -88,6 +88,44 @@ describe("Vercel AI Gateway", () => {
     })
   })
 
+  // A gateway that runs out of completion tokens returns the fragment it had, and the fragment
+  // arrives in the shape of an answer. Reading it as one is a silent truncation: the turn completes
+  // on half a sentence and nothing in the log says the model never finished.
+  const stoppedAtLimit = (message: Record<string, unknown>) =>
+    (async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ finish_reason: "length", message }],
+          usage: { prompt_tokens: 900, completion_tokens: 4096, cost_usd: 0.02 }
+        }),
+        { status: 200 }
+      )) as unknown as typeof fetch
+
+  test("refuses an answer the gateway stopped at its completion-token limit", async () => {
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      fetch: stoppedAtLimit({ content: "The lease was signed on 29 August 2025 and the term" })
+    })
+
+    const action = await Effect.runPromise(provider.react(request, "k"))
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("completion-token limit")
+    // The tokens were spent, so the turn still costs what it cost.
+    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 4096, costUsd: 0.02 })
+  })
+
+  test("refuses a tool call whose arguments stop mid-JSON", async () => {
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      fetch: stoppedAtLimit({
+        tool_calls: [{ id: "c-1", function: { name: "lookup_invoice", arguments: '{"orderId":"41' } }]
+      })
+    })
+
+    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "fail" })
+  })
+
   // The key is read from configuration rather than from the machine's environment, so the test
   // supplies the configuration it wants and asks nothing of the machine it runs on.
   test("fails before fetch when no key is configured", async () => {

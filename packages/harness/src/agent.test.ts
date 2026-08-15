@@ -94,6 +94,18 @@ describe("the smallest agent", () => {
       { role: "user", content: "What are your support hours?" }
     ])
   })
+
+  // The symptom this reproduces: a long message reached the model as a fragment, and nothing in the
+  // log, the result, or the usage said so. What the log holds is what the model reads.
+  test("sends a long message whole", async () => {
+    const agent = createAgent({ modules: defaultPack() })
+    const trace = `a rollout trace\n${"x".repeat(500_000)}`
+    const model = scripted([{ kind: "complete", output: "Read it.", usage }])
+
+    await run(agent.turn({ id: "m-1", text: trace }), model.layer)
+
+    expect(model.seen[0]?.messages[0]?.content).toBe(trace)
+  })
 })
 
 describe("a turn with native tools", () => {

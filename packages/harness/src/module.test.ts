@@ -181,8 +181,17 @@ describe("composition", () => {
     })
   })
 
+  test("compiles no truncation bound until a module asks for one", () => {
+    const plain = createAgent({ modules: defaultPack() })
+    expect(plain.definition.render.messageTruncateAt).toBeUndefined()
+    expect(plain.definition.render.resultTruncateAt).toBeUndefined()
+    const bounded = createAgent({ modules: defaultPack({ inference: { resultTruncateAt: 900 } }) })
+    expect(bounded.definition.render.messageTruncateAt).toBeUndefined()
+    expect(bounded.definition.render.resultTruncateAt).toBe(900)
+  })
+
   test("passes the complete render plan to machine builders", () => {
-    const seen: Array<number> = []
+    const seen: Array<number | undefined> = []
     const probe = defineModule({
       id: "probe",
       setup: () => ({

@@ -185,8 +185,17 @@ export const inference = (options: InferenceOptions = {}) => {
   const system = options.system ?? BASE_SYSTEM
   const giveUpAfter = options.giveUpAfter ?? 3
   const repairAtMost = options.repairAtMost ?? 2
-  const messageTruncateAt = options.messageTruncateAt ?? 12_000
-  const resultTruncateAt = options.resultTruncateAt ?? 6_000
+  // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
+  // message down on the way to the model while the log kept the whole thing, so the record and the
+  // request would disagree and only the request is what the model answered.
+  const truncation = {
+    ...(options.messageTruncateAt === undefined
+      ? {}
+      : { messageTruncateAt: options.messageTruncateAt }),
+    ...(options.resultTruncateAt === undefined
+      ? {}
+      : { resultTruncateAt: options.resultTruncateAt })
+  }
   const initial = selectedInference(selection, [])
   const state: Projection<InferenceState> = (log) => {
     const provider = selectedInference(selection, log)
@@ -201,8 +210,7 @@ export const inference = (options: InferenceOptions = {}) => {
       system,
       giveUpAfter,
       repairAtMost,
-      messageTruncateAt,
-      resultTruncateAt
+      ...truncation
     },
     services: Context.make(InferenceStateProjection, state),
     setup: () => ({
@@ -221,7 +229,7 @@ export const inference = (options: InferenceOptions = {}) => {
       ],
       projections: { [InferenceStateProjection.key]: state },
       instructions: [{ id: "inference.system", text: system }],
-      render: { messageTruncateAt, resultTruncateAt },
+      render: truncation,
       // The requirements are declared rather than cast away. The model loop reaches the log and the
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.

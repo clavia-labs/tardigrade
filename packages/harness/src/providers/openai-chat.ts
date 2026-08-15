@@ -33,6 +33,9 @@ interface ChatToolCall {
 
 interface ChatResponse {
   readonly choices?: ReadonlyArray<{
+    // Why the model stopped. A gateway that ran out of completion tokens says so here and returns
+    // the fragment it had, which is the one failure that looks exactly like an answer.
+    readonly finish_reason?: unknown
     readonly message?: {
       readonly content?: unknown
       readonly tool_calls?: ReadonlyArray<ChatToolCall>
@@ -94,9 +97,23 @@ const argumentsOf = (value: unknown): unknown => {
 const actionOf = (body: ChatResponse): Action => {
   const failure = body.error?.message
   if (failure !== undefined) return { kind: "fail", error: String(failure) }
-  const answer = body.choices?.[0]?.message
+  const choice = body.choices?.[0]
+  const answer = choice?.message
   if (answer === undefined) return { kind: "fail", error: "the inference gateway returned no choice" }
   const usage = usageOf(body.usage)
+  // A response the gateway stopped at the completion-token limit is a fragment wearing the shape of
+  // an answer. Reading it as one is the silent failure this catches: the turn would complete on half
+  // a sentence, or dispatch a tool call whose arguments stop mid-JSON and parse as a bare string.
+  // The tokens were spent either way, so the usage rides the failure and the turn's cost stays true.
+  if (choice?.finish_reason === "length") {
+    return {
+      kind: "fail",
+      error:
+        "the model stopped at its completion-token limit, so its answer is incomplete. Raise the " +
+        "model's completion-token limit, or ask for a shorter answer.",
+      usage
+    }
+  }
   const call = answer.tool_calls?.[0]
   if (call !== undefined) {
     const name = call.function?.name

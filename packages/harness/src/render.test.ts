@@ -8,12 +8,12 @@ import { modelRequest, nativeToolSurface, renderMessages, systemPrompt } from ".
 const lookup: NativeToolSpec = { name: "lookup_invoice", description: "Look one up.", inputSchema: {} }
 const notify: NativeToolSpec = { name: "notify", description: "Tell someone.", inputSchema: {} }
 
+// The base plan carries no truncation bound, which is what `createAgent` compiles until a module
+// asks for one.
 const renderOf = (over: Partial<RenderPlan> = {}): RenderPlan => ({
   instructions: [{ id: "base", text: "You are a support agent." }],
   nativeTools: [lookup, notify],
   nudges: [],
-  messageTruncateAt: 12_000,
-  resultTruncateAt: 6_000,
   ...over
 })
 
@@ -144,6 +144,17 @@ describe("truncation", () => {
 
   test("leaves a short message alone", () => {
     expect(renderMessages(renderOf(), [head])[0]?.content).toBe("Find order 4182.")
+  })
+
+  // The defect this guards: a bound nobody asked for cut a long message down on the way to the
+  // model while the log kept the whole thing, so the record and the request disagreed and only the
+  // request is what the model answered.
+  test("sends a message whole when no module bounds it", () => {
+    const render = renderOf()
+    const long: Event = { type: "MessageReceived", id: "m-1", text: "x".repeat(500_000), at: 1 }
+    const big: Event = { ...returned, result: { body: "y".repeat(500_000) } }
+    expect(renderMessages(render, [long])[0]?.content).toBe("x".repeat(500_000))
+    expect(String(renderMessages(render, [big])[0]?.content)).toContain("y".repeat(500_000))
   })
 })
 
