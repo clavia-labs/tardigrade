@@ -80,6 +80,7 @@ describe("Vercel AI Gateway", () => {
     expect(calls[0]?.headers.get("idempotency-key")).toBe("turn/infer/0")
     expect(calls[0]?.body).toMatchObject({
       model: "anthropic/test-model",
+      parallel_tool_calls: false,
       messages: [
         { role: "system", content: "You are a support agent." },
         { role: "user", content: "Find order 4182." },
@@ -128,6 +129,36 @@ describe("Vercel AI Gateway", () => {
     })
 
     expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "fail" })
+  })
+
+  test("refuses multiple tool calls instead of dropping all but the first", async () => {
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 200_000,
+      fetch: (async () =>
+        new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  tool_calls: [
+                    { id: "c-1", function: { name: "lookup_invoice", arguments: "{}" } },
+                    { id: "c-2", function: { name: "lookup_invoice", arguments: "{}" } }
+                  ]
+                }
+              }
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 4, cost_usd: 0.001 }
+          }),
+          { status: 200 }
+        )) as unknown as typeof fetch
+    })
+
+    const action = await Effect.runPromise(provider.react(request, "k"))
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("multiple tool calls")
+    expect(action.usage).toEqual({ promptTokens: 10, completionTokens: 4, costUsd: 0.001 })
   })
 
   // The catalog is cached per gateway for the life of the process, so each of these tests names its
@@ -337,7 +368,7 @@ describe("Vercel AI Gateway", () => {
   })
 
   // The ceiling on one answer. Without it the gateway's own default for the model decides, and a
-  // default sized for chat cuts off a reflection that has to write out a source file. The provider
+  // default sized for chat cuts off a long generated source file. The provider
   // that refuses a truncated answer names this option, so the option has to exist.
   test("sends the output ceiling a caller states, and none when they state none", async () => {
     const bodies: Array<Record<string, unknown>> = []

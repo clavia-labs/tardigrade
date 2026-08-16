@@ -97,7 +97,7 @@ How much orchestration the model drives is configuration:
 2. Spawns: a `prefix/*` registry entry lets the model open fresh sessions under a namespace the application chose.
 3. Generated orchestration: [code mode](codemode.md) offers the `agents` capability inside a sandbox, and the model writes the fan-out, joins, and retries as source.
 
-All three leave the same events, so widening authority as models improve changes configuration and prompt, never architecture. An orchestration module is source, so [evolution](evolution.md) can search it like any other candidate.
+All three leave the same events, so widening authority as models improve changes configuration and prompt, never architecture. An orchestration module is ordinary source that an application can version, test, replace, or generate.
 
 ## What Stays in User Code
 

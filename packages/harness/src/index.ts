@@ -21,7 +21,6 @@ export {
   type Usage
 } from "./infer"
 export {
-  canonicalValue,
   agentId,
   WITHDRAW_ALL,
   type AgentDefinition,
@@ -72,7 +71,9 @@ export { boundaryOf, type CallResult } from "./boundary"
 export { keyOf } from "./keys"
 export {
   answerRejected,
+  budgetDenied,
   budgetExhausted,
+  budgetGranted,
   budgetRequested,
   compactionCompleted,
   messageReceived,
@@ -115,6 +116,7 @@ export { nativeTools } from "./modules/native-tools"
 export {
   budgetOf,
   budgetPhase,
+  budgetRefusesCall,
   budgetSpent,
   budget,
   canRequestBudget,

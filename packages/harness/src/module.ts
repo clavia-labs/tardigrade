@@ -3,7 +3,6 @@ import {
   EventLog,
   Router,
   Self,
-  Wake,
   Writer,
   actor,
   send,
@@ -25,10 +24,9 @@ import {
   type Nudge,
   type RenderPlan
 } from "./definition"
-import type { Projection } from "./projection"
 import { turnHead, usageIn } from "./turns"
 
-export type AgentServices = EventLog | Writer | Wake | Router | Self
+export type AgentServices = EventLog | Writer | Router | Self
 
 export interface ModulePart<R = never> {
   readonly events?: ReadonlyArray<string>
@@ -38,7 +36,6 @@ export interface ModulePart<R = never> {
   readonly instructions?: ReadonlyArray<Instruction>
   readonly nudges?: ReadonlyArray<Nudge>
   readonly nativeTools?: ReadonlyArray<NativeToolSpec>
-  readonly projections?: Readonly<Record<string, Projection<unknown>>>
   readonly render?: Partial<Pick<RenderPlan, "messageTruncateAt" | "resultTruncateAt">>
 }
 
@@ -197,7 +194,6 @@ export interface Agent<R = never, Services = never> {
 
 export interface AgentOptions<Modules extends readonly AnyModule[]> {
   readonly id?: string
-  readonly parent?: string
   readonly modules: Modules
 }
 
@@ -354,7 +350,7 @@ const functionIn = (value: unknown, path = ""): string | undefined => {
 
 const compile = <R, Services>(
   modules: ReadonlyArray<AnyModule>,
-  options: { readonly id?: string; readonly parent?: string }
+  options: { readonly id?: string }
 ): AgentDefinition<R, Services> => {
   const ids = new Set<string>()
   const serviceKeys = new Set<string>()
@@ -385,6 +381,7 @@ const compile = <R, Services>(
 
   const toolNames = new Set<string>()
   const instructionIds = new Set<string>()
+  const nudgeIds = new Set<string>()
   for (const part of parts) {
     for (const tool of part.nativeTools ?? []) {
       if (toolNames.has(tool.name)) throw new Error(`duplicate native tool name "${tool.name}"`)
@@ -395,6 +392,23 @@ const compile = <R, Services>(
         throw new Error(`duplicate instruction id "${instruction.id}"`)
       }
       instructionIds.add(instruction.id)
+    }
+    for (const nudge of part.nudges ?? []) {
+      if (nudgeIds.has(nudge.id)) throw new Error(`duplicate nudge id "${nudge.id}"`)
+      nudgeIds.add(nudge.id)
+    }
+  }
+
+  const renderKeys = ["messageTruncateAt", "resultTruncateAt"] as const
+  for (const key of renderKeys) {
+    const values = parts.flatMap((part) => {
+      const value = part.render?.[key]
+      return value === undefined ? [] : [value]
+    })
+    if (values.length > 1) throw new Error(`more than one module sets render.${key}`)
+    const value = values[0]
+    if (value !== undefined && (!Number.isInteger(value) || value < 0)) {
+      throw new Error(`render.${key} must be a nonnegative integer`)
     }
   }
 
@@ -416,8 +430,7 @@ const compile = <R, Services>(
   )
   // Identity is hashed into the agent id, and the hash serializes a function as the constant
   // "[function]". Two modules whose behavior differs only inside a function would then share an
-  // id, and evolution reads that id as provenance: a rollout would reuse a recording another
-  // agent produced. The value has to be data for the hash to mean anything.
+  // id. The value has to be data for the hash to identify a program reliably.
   for (const module of modules) {
     const carried = functionIn(module.identity)
     if (carried !== undefined) {
@@ -474,22 +487,13 @@ const compile = <R, Services>(
       }
     }
   }
-  const projections: Record<string, Projection<unknown>> = {}
-  for (const part of parts) {
-    for (const [id, project] of Object.entries(part.projections ?? {})) {
-      if (projections[id] !== undefined) throw new Error(`duplicate projection id "${id}"`)
-      projections[id] = project
-    }
-  }
   return {
     id: options.id ?? agentId(manifests),
-    ...(options.parent === undefined ? {} : { parent: options.parent }),
     modules: manifests,
     events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
     machines: machines as ReadonlyArray<Machine<R, never>>,
     render,
-    services: services as unknown as Context.Context<Services>,
-    projections
+    services: services as unknown as Context.Context<Services>
   }
 }
 

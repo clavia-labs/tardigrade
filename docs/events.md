@@ -35,8 +35,9 @@ Examples:
 - an inbound message dedups by message id
 - a model result dedups by turn and call id
 - a tool result dedups by turn and call id
+- a budget grant or denial dedups by turn and request call id
 
-This lets providers reuse `call_1` in later turns without the store confusing separate calls.
+This lets providers reuse `call_1` in later turns without the store confusing separate calls. A grant and denial for one budget request share a key, so the first committed decision wins.
 
 ## Standard Alphabet
 

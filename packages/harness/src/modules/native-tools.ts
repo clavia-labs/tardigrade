@@ -5,7 +5,7 @@ import { EXITS } from "../exits"
 import type { NativeTool } from "../infer"
 import { defineModule } from "../module"
 import { turnView } from "../turns"
-import { budgetSpent } from "./budget"
+import { budgetRefusesCall } from "./budget"
 
 interface Call {
   readonly callId: string
@@ -66,7 +66,7 @@ const nativeToolsMachine = <R>(handlers: ReadonlyMap<string, NativeTool<R>>) =>
               })
             ]
             const at = yield* Clock.currentTimeMillis
-            if (budgetSpent(log)) return answer(null, WALL_REFUSAL)(at)
+            if (budgetRefusesCall(log)) return answer(null, WALL_REFUSAL)(at)
             const tool = handlers.get(call.name)
             if (tool === undefined) return answer(null, `unknown tool: ${call.name}`)(at)
             const outcome = yield* Effect.exit(
@@ -95,4 +95,3 @@ export const nativeTools = <R = never>(list: ReadonlyArray<NativeTool<R>>) => {
     })
   })
 }
-

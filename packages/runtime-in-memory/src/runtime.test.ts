@@ -1,14 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Exit, Fiber } from "effect"
+import { Effect, Fiber } from "effect"
 import {
   EventLog,
-  Placement,
   Router,
   Self,
   Sessions,
-  Sink,
-  Spill,
-  Wake,
   Writer,
   actor,
   conformance,
@@ -37,11 +33,6 @@ const inRuntime = <A, const Keys = Readonly<Record<string, never>>>(
   Effect.runPromise(
     Effect.provide(program, InMemoryRuntime({ ...options, keyOf } as InMemoryOptions<never, Keys>))
   )
-
-const died = async (program: Effect.Effect<unknown, never, never>) => {
-  const exit = await Effect.runPromiseExit(program)
-  return Exit.isFailure(exit) ? Cause.pretty(exit.cause) : "the program did not die"
-}
 
 describe("the event log", () => {
   test("guarantee 1 and 2: an append binds, and seq rises and never repeats", async () => {
@@ -229,73 +220,7 @@ describe("the writer", () => {
   })
 })
 
-describe("the other ports", () => {
-  test("wake keeps the nearest alarm and lists what is owed", async () => {
-    const owed = await inRuntime(
-      Effect.gen(function* () {
-        const wake = yield* Wake
-        yield* wake.armIfSooner(5_000)
-        yield* wake.armIfSooner(9_000)
-        yield* wake.armIfSooner(1_000)
-        return yield* wake.owed
-      }),
-      { session: "user-42" }
-    )
-    expect(owed).toEqual([{ session: "user-42", at: 1_000 }])
-  })
-
-  test("wake owes nothing until something arms it", async () => {
-    expect(await inRuntime(Effect.gen(function* () { return yield* (yield* Wake).owed }))).toEqual([])
-  })
-
-  test("placement sends every address to the one host, and Self carries the session", async () => {
-    const result = await inRuntime(
-      Effect.gen(function* () {
-        const placement = yield* Placement
-        return { home: yield* placement.home("anything"), self: yield* Self }
-      }),
-      { session: "user-42" }
-    )
-    expect(result).toEqual({ home: "user-42", self: "user-42" })
-  })
-
-  test("spill round trips a value the log is too small to hold", async () => {
-    const value = new TextEncoder().encode("a tool result too large for one event")
-    const result = await inRuntime(
-      Effect.gen(function* () {
-        const spill = yield* Spill
-        const ref = yield* spill.put(value)
-        return { ref, read: yield* spill.get(ref) }
-      })
-    )
-    expect(result.ref).toBe("spill:1")
-    expect(new TextDecoder().decode(result.read)).toBe("a tool result too large for one event")
-  })
-
-  test("spill dies on a reference it never wrote", async () => {
-    const message = await died(
-      Effect.provide(
-        Effect.gen(function* () {
-          return yield* (yield* Spill).get("spill:404")
-        }),
-        InMemoryRuntime({ keyOf: dedupKey })
-      )
-    )
-    expect(message).toContain('no spilled value at "spill:404"')
-  })
-
-  test("the sink drops what it is given, and the log stays complete", async () => {
-    const events = await inRuntime(
-      Effect.gen(function* () {
-        const log = yield* EventLog
-        yield* log.append([ev("Asked")])
-        yield* (yield* Sink).write([{ type: "Asked", session: "user-42" }])
-        return yield* log.read
-      })
-    )
-    expect(events).toHaveLength(1)
-  })
-
+describe("routing and sessions", () => {
   test("an address no session serves answers, rather than hanging or dying", async () => {
     const result = await inRuntime(
       Effect.gen(function* () {

@@ -42,7 +42,7 @@ export const nativeToolSurface = (
   const seen = new Set<string>()
   const surface: Array<NativeToolSpec> = []
   for (const tool of [...base, ...offered]) {
-    if (seen.has(tool.name)) continue
+    if (seen.has(tool.name)) throw new Error(`duplicate active native tool name "${tool.name}"`)
     seen.add(tool.name)
     surface.push(tool)
   }

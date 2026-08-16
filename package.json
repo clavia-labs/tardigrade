@@ -26,10 +26,6 @@
     "./runtime-in-memory": {
       "types": "./dist/runtime-in-memory.d.ts",
       "import": "./dist/runtime-in-memory.js"
-    },
-    "./evolve": {
-      "types": "./dist/evolve.d.ts",
-      "import": "./dist/evolve.js"
     }
   },
   "workspaces": [

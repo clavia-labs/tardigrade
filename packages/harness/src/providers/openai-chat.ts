@@ -41,9 +41,8 @@ export interface TransportOptions {
   readonly retries?: number
   readonly timeout?: Duration.Input
   // The ceiling on one answer, in completion tokens. Absent leaves it to the gateway's own default
-  // for the model, which is the right answer until a turn asks for something long: a reflection that
-  // rewrites a source file spends its tokens on the file and on the reasoning that produced it, and
-  // a default sized for chat cuts it off mid-file.
+  // for the model, which is the right answer until a turn asks for a long generated artifact. A
+  // default sized for chat can cut that artifact off partway through.
   readonly maxOutputTokens?: number
 }
 
@@ -143,7 +142,15 @@ const actionOf = (body: ChatResponse): Action => {
       usage
     }
   }
-  const call = answer.tool_calls?.[0]
+  const calls = answer.tool_calls ?? []
+  if (calls.length > 1) {
+    return {
+      kind: "fail",
+      error: "the inference gateway returned multiple tool calls, but this agent executes one call at a time",
+      usage
+    }
+  }
+  const call = calls[0]
   if (call !== undefined) {
     const name = call.function?.name
     const id = call.id
@@ -262,7 +269,9 @@ const reacted = (
     ...(options.maxOutputTokens === undefined
       ? {}
       : { max_tokens: options.maxOutputTokens }),
-    ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
+    ...(request.tools.length === 0
+      ? {}
+      : { tools: request.tools.map(tool), parallel_tool_calls: false })
   })
   const failed = (reason: string): Transient => ({ reason })
   const refusal = overWindow(body, options.provider, options.model, options.contextWindow)

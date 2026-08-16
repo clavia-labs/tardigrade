@@ -3,8 +3,8 @@ import { Router, Self, type Event } from "@flamecast/core"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "./infer"
 import type { MessageOrigin } from "./module"
 import { canonicalValue } from "./definition"
-import { jsonSchemaOf } from "./schema"
 import { sha256 } from "./sha256"
+import { tool } from "./tool"
 
 // Delegation as one awaitable function with two faces. `callAgent` is the code face: a machine, a
 // workflow, or a code-mode sandbox awaits it, and `Effect.all` over several calls is fan-out with
@@ -78,39 +78,38 @@ export interface SubagentToolOptions {
   readonly name: string
   readonly description: string
   readonly address: string
-  readonly input?: Schema.Constraint
+  readonly input?: Schema.ConstraintDecoder<unknown, never>
   readonly budget?: number
   readonly message?: (input: unknown) => string
   readonly callId?: (input: unknown, context?: NativeToolContext) => string
 }
 
-export const subagentTool = (options: SubagentToolOptions): NativeTool<Router | Self> => ({
-  spec: {
+export const subagentTool = (options: SubagentToolOptions): NativeTool<Router | Self> =>
+  tool({
     name: options.name,
     description: options.description,
-    inputSchema: jsonSchemaOf(options.input ?? MESSAGE_INPUT)
-  },
-  run: (input, context) =>
-    Effect.gen(function* () {
-      const session = yield* Self
-      const message =
-        options.message?.(input) ??
-        String((input as { readonly message?: unknown } | undefined)?.message ?? input)
-      // The child turn id is derived from the parent turn and provider call, so a re-dispatched
-      // tool call re-sends the same message and the child's dedup absorbs it.
-      const id =
-        options.callId?.(input, context) ??
-        (context === undefined
-          ? `${options.name}:${sha256(canonicalValue(input)).slice(0, 16)}`
-          : `${options.name}:${context.turn}:${context.callId}`)
-      return yield* callAgent(options.address, {
-        id,
-        text: message,
-        ...(options.budget === undefined ? {} : { budget: options.budget }),
-        origin: {
-          session,
-          ...(context === undefined ? {} : { turn: context.turn, call: context.callId })
-        }
+    input: options.input ?? MESSAGE_INPUT,
+    run: (input, context) =>
+      Effect.gen(function* () {
+        const session = yield* Self
+        const message =
+          options.message?.(input) ??
+          String((input as { readonly message?: unknown } | undefined)?.message ?? input)
+        // The child turn id is derived from the parent turn and provider call, so a re-dispatched
+        // tool call re-sends the same message and the child's dedup absorbs it.
+        const id =
+          options.callId?.(input, context) ??
+          (context === undefined
+            ? `${options.name}:${sha256(canonicalValue(input)).slice(0, 16)}`
+            : `${options.name}:${context.turn}:${context.callId}`)
+        return yield* callAgent(options.address, {
+          id,
+          text: message,
+          ...(options.budget === undefined ? {} : { budget: options.budget }),
+          origin: {
+            session,
+            ...(context === undefined ? {} : { turn: context.turn, call: context.callId })
+          }
+        })
       })
-    })
-})
+  })

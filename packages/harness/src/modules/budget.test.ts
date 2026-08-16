@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
+import { budgetDenied, budgetGranted } from "../alphabet"
 import { boundaryOf } from "../boundary"
 import { inferWith, type Action, type ModelRequest, type NativeTool } from "../infer"
 import { keyOf } from "../keys"
@@ -73,8 +74,30 @@ describe("the budget projections", () => {
   })
 
   test("a grant raises the ceiling", () => {
-    const log = [head({ budget: 3 }), { type: "BudgetGranted", turn: "m-1", amount: 2, at: 3 }]
+    const log = [
+      head({ budget: 3 }),
+      { type: "BudgetRequested", turn: "m-1", callId: "c-ask", amount: 2, at: 2 },
+      budgetGranted({ turn: "m-1", callId: "c-ask", amount: 2, at: 3 })
+    ]
     expect(budgetOf(log)).toBe(5)
+  })
+
+  test("a stale or repeated grant does not raise the ceiling", () => {
+    const grant = budgetGranted({ turn: "m-1", callId: "c-ask", amount: 2, at: 3 })
+    const log = [
+      head({ budget: 3 }),
+      { type: "BudgetRequested", turn: "m-1", callId: "c-ask", amount: 2, at: 2 },
+      budgetGranted({ turn: "m-1", callId: "stale", amount: 10, at: 2 }),
+      grant,
+      grant
+    ]
+    expect(budgetOf(log)).toBe(5)
+  })
+
+  test("a declared zero budget closes the surface", () => {
+    expect(budgetOf([head({ budget: 0 })])).toBe(0)
+    expect(budgetSpent([head({ budget: 0 })])).toBe(true)
+    expect(canRequestBudget([head({ budget: 0, escalatable: true })])).toBe(true)
   })
 
   test("only work draws the budget down", () => {
@@ -106,7 +129,7 @@ describe("the budget projections", () => {
   })
 
   test("an escalation is offered only to a turn whose head allows it", () => {
-    const wall = { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 2, at: 3 }
+    const wall = { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 1, at: 3 }
     expect(canRequestBudget([head(), wall])).toBe(false)
     expect(canRequestBudget([head({ escalatable: true }), wall])).toBe(true)
   })
@@ -114,8 +137,9 @@ describe("the budget projections", () => {
   test("a denial closes the ask and leaves the wall up", () => {
     const log: ReadonlyArray<Event> = [
       head({ escalatable: true }),
-      { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 2, at: 3 },
-      { type: "BudgetDenied", turn: "m-1", at: 4 }
+      { type: "BudgetExhausted", turn: "m-1", budget: 1, used: 1, at: 3 },
+      { type: "BudgetRequested", turn: "m-1", callId: "c-ask", amount: 2, at: 4 },
+      budgetDenied({ turn: "m-1", callId: "c-ask", at: 5 })
     ]
     expect(budgetSpent(log)).toBe(true)
     expect(canRequestBudget(log)).toBe(false)
@@ -124,7 +148,7 @@ describe("the budget projections", () => {
 
 describe("the wall", () => {
   test("fires once and closes the tool surface", async () => {
-    const model = scripted([call("c-1"), call("c-2"), { kind: "complete", output: "Partial.", usage }])
+    const model = scripted([call("c-1"), { kind: "complete", output: "Partial.", usage }])
     const log = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -137,15 +161,13 @@ describe("the wall", () => {
 
     const walls = log.filter((event) => event.type === "BudgetExhausted")
     expect(walls).toHaveLength(1)
-    // Off by one on purpose: the turn gets its budget dispatched and the wall lands behind the
-    // last return, which is what the documented transcript shows.
-    expect(walls[0]).toMatchObject({ turn: "m-1", budget: 1, used: 2 })
+    expect(walls[0]).toMatchObject({ turn: "m-1", budget: 1, used: 1 })
 
-    // The surface was open for the first two calls and closed for the third.
+    // The surface is open for the one allowed call and closed on the next model request.
     expect(model.seen[0]?.tools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
-    expect(model.seen[2]?.tools).toEqual([])
-    expect(model.seen[2]?.system).not.toContain("Your tool budget for this turn is spent")
-    expect(model.seen[2]?.messages.at(-1)?.content).toContain(
+    expect(model.seen[1]?.tools).toEqual([])
+    expect(model.seen[1]?.system).not.toContain("Your tool budget for this turn is spent")
+    expect(model.seen[1]?.messages.at(-1)?.content).toContain(
       "Your tool budget for this turn is spent"
     )
   })
@@ -155,7 +177,6 @@ describe("the wall", () => {
     const model = scripted([
       call("c-1"),
       call("c-2"),
-      call("c-3"),
       { kind: "complete", output: "Partial.", usage }
     ])
     const log = await Effect.runPromise(
@@ -170,21 +191,54 @@ describe("the wall", () => {
     const refused = log.filter((event) => event.type === "ToolReturned").at(-1)
     expect(String(refused?.error)).toContain("Tool budget reached")
   })
+
+  test("a zero budget never invokes a hidden work tool", async () => {
+    let invoked = 0
+    const counted: NativeTool = {
+      ...lookup,
+      run: () => {
+        invoked += 1
+        return Effect.succeed({ invoice: "unexpected" })
+      }
+    }
+    const zeroAgent = createAgent({
+      modules: defaultPack({
+        inference: { contextWindow: 200_000 },
+        nativeTools: [counted]
+      })
+    })
+    const model = scripted([call("c-1"), { kind: "complete", output: "No lookup.", usage }])
+
+    await Effect.runPromise(
+      Effect.provide(
+        zeroAgent.turn({ id: "m-1", text: "Find order 4182.", budget: 0 }),
+        Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
+      )
+    )
+
+    expect(model.seen[0]?.tools).toEqual([])
+    expect(invoked).toBe(0)
+  })
+
+  test("rejects an invalid configured default", () => {
+    expect(() => defaultPack({ inference: { contextWindow: 200_000 }, budget: { defaultBudget: -1 } })).toThrow(
+      "defaultBudget must be a nonnegative integer"
+    )
+  })
 })
 
 describe("the escalation", () => {
   test("parks on an ask and resumes on a grant", async () => {
     const model = scripted([
       call("c-1"),
-      call("c-2"),
       {
         kind: "call",
-        callId: "c-3",
+        callId: "c-2",
         name: "request-budget",
         arguments: { reason: "two invoices left", amount: 2 },
         usage
       },
-      call("c-4"),
+      call("c-3"),
       { kind: "complete", output: "All three invoices are in.", usage }
     ])
     const layer = Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
@@ -207,25 +261,24 @@ describe("the escalation", () => {
     // A park is not a terminal: the turn holds no lock and no fiber waits.
     expect(parked.result).toMatchObject({
       kind: "parked",
-      callId: "c-3",
+      callId: "c-2",
       reason: "two invoices left",
       amount: 2
     })
     expect(boundaryOf(parked.log, "m-1")).toEqual({
       kind: "parked",
-      callId: "c-3",
+      callId: "c-2",
       reason: "two invoices left",
       amount: 2
     })
     // The escalate nudge offered the ask exactly at the wall.
-    expect(model.seen[2]?.tools.map((tool) => tool.name)).toEqual(["request-budget"])
+    expect(model.seen[1]?.tools.map((tool) => tool.name)).toEqual(["request-budget"])
 
     const resumed = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
-          const result = yield* agent.replay([
-            { type: "BudgetGranted", turn: "m-1", amount: 2, at: 99 }
-          ])
+          const grant = budgetGranted({ turn: "m-1", callId: "c-2", amount: 2, at: 99 })
+          const result = yield* agent.replay([grant, grant])
           return { result, log: yield* agent.log }
         }),
         layer
@@ -236,20 +289,20 @@ describe("the escalation", () => {
 
     // The grant answered the ask as a tool result, so the model loop woke on it.
     const answered = resumed.log.find(
-      (event) => event.type === "ToolReturned" && event.callId === "c-3"
+      (event) => event.type === "ToolReturned" && event.callId === "c-2"
     )
     expect(answered?.result).toEqual({ granted: 2 })
     // A grant reopened the surface.
-    expect(model.seen[3]?.tools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
+    expect(model.seen[2]?.tools.map((tool) => tool.name)).toEqual(["lookup_invoice"])
+    expect(resumed.log.filter((event) => event.type === "BudgetGranted")).toHaveLength(1)
   })
 
   test("a denial answers the ask and the turn finishes", async () => {
     const model = scripted([
       call("c-1"),
-      call("c-2"),
       {
         kind: "call",
-        callId: "c-3",
+        callId: "c-2",
         name: "request-budget",
         arguments: { reason: "more please", amount: 5 },
         usage
@@ -268,7 +321,12 @@ describe("the escalation", () => {
       Effect.provide(
         Effect.gen(function* () {
           const result = yield* agent.replay([
-            { type: "BudgetDenied", turn: "m-1", reason: "the pool is empty", at: 99 }
+            budgetDenied({
+              turn: "m-1",
+              callId: "c-2",
+              reason: "the pool is empty",
+              at: 99
+            })
           ])
           return { result, log: yield* agent.log }
         }),
@@ -277,20 +335,50 @@ describe("the escalation", () => {
     )
     expect(resumed.result).toMatchObject({ kind: "completed", output: "Here is what I have." })
     const answered = resumed.log.find(
-      (event) => event.type === "ToolReturned" && event.callId === "c-3"
+      (event) => event.type === "ToolReturned" && event.callId === "c-2"
     )
     expect(answered?.result).toMatchObject({ denied: true, reason: "the pool is empty" })
     // A denied turn answers; it does not ask again.
-    expect(model.seen[3]?.tools).toEqual([])
+    expect(model.seen[2]?.tools).toEqual([])
+  })
+
+  test("a stale decision leaves the turn parked", async () => {
+    const model = scripted([
+      call("c-1"),
+      {
+        kind: "call",
+        callId: "c-2",
+        name: "request-budget",
+        arguments: { reason: "one more", amount: 1 },
+        usage
+      }
+    ])
+    const layer = Layer.merge(InMemoryRuntime({ keyOf }), model.layer)
+    await Effect.runPromise(
+      Effect.provide(
+        agent.turn({ id: "m-1", text: "Find every invoice.", budget: 1, escalatable: true }),
+        layer
+      )
+    )
+
+    const result = await Effect.runPromise(
+      Effect.provide(
+        agent.replay([
+          budgetGranted({ turn: "m-1", callId: "stale", amount: 10, at: 99 })
+        ]),
+        layer
+      )
+    )
+
+    expect(result).toMatchObject({ kind: "parked", callId: "c-2" })
   })
 
   test("a message queued behind a parked turn reports its turn as open", async () => {
     const model = scripted([
       call("c-1"),
-      call("c-2"),
       {
         kind: "call",
-        callId: "c-3",
+        callId: "c-2",
         name: "request-budget",
         arguments: { reason: "one more", amount: 1 },
         usage

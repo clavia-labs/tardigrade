@@ -93,6 +93,13 @@ describe("codemode", () => {
     )) as CodemodeResult
     expect(result.error).toContain("agents is not defined")
   })
+
+  test("rejects malformed arguments before opening the sandbox", async () => {
+    const execute = codemode({ capabilities: [clock] })
+    const result = await runWith(execute.run({}))
+    expect(result).toHaveProperty("error")
+    expect(String((result as { error?: unknown }).error)).toContain("did not match")
+  })
 })
 
 describe("the agents capability", () => {

@@ -46,11 +46,11 @@ describe("the key of an event the world supplies an id for", () => {
     expect(keyOf(first)).not.toBe(keyOf(second))
   })
 
-  test("every event keyed on a provider id carries its turn", () => {
-    const types = ["ToolReturned", "PackageReturned", "CodeDispatched", "CodeSettled"]
+  test("every event keyed on a call id carries its turn", () => {
+    const types = ["ToolReturned", "BudgetGranted", "BudgetDenied"]
     for (const type of types) {
-      const one = keyOf({ type, turn: "m-1", callId: "c-1", execId: "e-1" })
-      const two = keyOf({ type, turn: "m-2", callId: "c-1", execId: "e-1" })
+      const one = keyOf({ type, turn: "m-1", callId: "c-1" })
+      const two = keyOf({ type, turn: "m-2", callId: "c-1" })
       expect(one).toBeDefined()
       expect(one).not.toBe(two)
     }
@@ -60,6 +60,13 @@ describe("the key of an event the world supplies an id for", () => {
     const one = keyOf({ type: "ToolReturned", turn: "m-1", callId: "call_1", result: 1 })
     const two = keyOf({ type: "ToolReturned", turn: "m-1", callId: "call_1", result: 1 })
     expect(one).toBe(two)
+  })
+
+  test("a grant and denial for one request compete for one decision key", () => {
+    const grant = keyOf({ type: "BudgetGranted", turn: "m-1", callId: "c-1", amount: 2 })
+    const denial = keyOf({ type: "BudgetDenied", turn: "m-1", callId: "c-1" })
+    expect(grant).toBe("bd:m-1/c-1")
+    expect(denial).toBe(grant)
   })
 })
 

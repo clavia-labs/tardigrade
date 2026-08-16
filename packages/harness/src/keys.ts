@@ -4,7 +4,7 @@ import { dedupKey, type DedupKey, type Event } from "@flamecast/core"
 // redelivered event, which is guarantee 5 of the log port.
 //
 // The policy lives here because the harness owns the alphabet: a store that held this table would
-// have to know `ToolReturned` and `RunFired`, and a store knows no domain. Bind a runtime with
+// have to know `ToolReturned` and budget decisions, and a store knows no domain. Bind a runtime with
 // `InMemoryRuntime({ keyOf })` and hand the same function to the conformance kit, so the kit reads
 // the log the way the store does.
 //
@@ -27,25 +27,17 @@ export const keyOf: DedupKey = (event: Event) => {
   const inTurn = (prefix: string, id: string | undefined) =>
     id === undefined ? undefined : `${prefix}:${field("turn") ?? ""}/${id}`
   switch (event.type) {
-    // The three ids below head their own unit of work rather than sitting inside one, so each is
-    // already the namespace a narrower key would be scoped to. A message id IS the turn id
-    // (`turnOf` returns the head's id), and a run id is what `incarnationOf` reads.
+    // A message id heads its own unit of work, so it is already the namespace a narrower key would
+    // be scoped to. A message id is the turn id that `turnOf` returns.
     case "MessageReceived":
       return field("id") === undefined ? undefined : `msg:${field("id")}`
-    case "RunFired":
-      return field("runId") === undefined ? undefined : `rf:${field("runId")}`
-    case "RunReported":
-      return field("run") === undefined ? undefined : `rr:${field("run")}`
-    case "RewardGranted":
-      return field("run") === undefined ? undefined : `rw:${field("run")}/${field("regime") ?? ""}`
     case "ToolReturned":
       return inTurn("tr", field("callId"))
-    case "PackageReturned":
-      return inTurn("pr", field("callId"))
-    case "CodeDispatched":
-      return inTurn("cd", field("execId"))
-    case "CodeSettled":
-      return inTurn("cs", field("execId"))
+    // A grant and a denial answer the same request. Sharing one key makes the first committed
+    // decision final and absorbs its redelivery.
+    case "BudgetGranted":
+    case "BudgetDenied":
+      return inTurn("bd", field("callId"))
     default:
       // Anything outside the table falls back to the core policy, where an event states its own
       // key. That is the door an outside sender uses when it can redeliver its own event type.

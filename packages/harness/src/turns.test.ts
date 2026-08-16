@@ -239,7 +239,7 @@ describe("transcript", () => {
         result: { invoice: "INV-4182", total: "312.00" },
         at: 5
       },
-      { type: "BudgetExhausted", turn: "t-1", budget: 24, used: 25, at: 6 },
+      { type: "BudgetExhausted", turn: "t-1", budget: 1, used: 1, at: 6 },
       { type: "TurnCompleted", turn: "t-1", output: "Invoice INV-4182 totals 312.00.", at: 7 },
       { type: "ReplyDelivered", turn: "t-1", at: 8 }
     ]
@@ -250,7 +250,7 @@ describe("transcript", () => {
         ` 3  ModelReturned     t-1   c-01   1284 in / 96 out / $0.0041`,
         ` 4  ToolCalled        t-1   c-02   lookup_invoice {"orderId":"4182"}`,
         ` 5  ToolReturned      t-1   c-02   {"invoice":"INV-4182","total":"312.00"}`,
-        ` 6  BudgetExhausted   t-1   budget=24 used=25`,
+        ` 6  BudgetExhausted   t-1   budget=1 used=1`,
         ` 7  TurnCompleted     t-1   "Invoice INV-4182 totals 312.00."`,
         ` 8  ReplyDelivered    t-1`
       ].join("\n")

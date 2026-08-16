@@ -229,7 +229,7 @@ describe("a turn with native tools", () => {
     )
   })
 
-  test("a candidate program renders differently over the same record", async () => {
+  test("an alternate program renders differently over the same record", async () => {
     const model = scripted(script)
     const recorded = await run(
       Effect.gen(function* () {
@@ -239,8 +239,7 @@ describe("a turn with native tools", () => {
       model.layer
     )
 
-    const candidate = createAgent({
-      parent: agent.definition.id,
+    const alternate = createAgent({
       modules: defaultPack({
         inference: { system: "Answer in one sentence.", contextWindow: 200_000 },
         nativeTools: [lookupInvoice]
@@ -249,7 +248,7 @@ describe("a turn with native tools", () => {
     const after = scripted(script)
     await run(
       Effect.gen(function* () {
-        yield* candidate.replay(recorded.slice(0, 1))
+        yield* alternate.replay(recorded.slice(0, 1))
       }),
       after.layer
     )

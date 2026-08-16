@@ -1,8 +1,8 @@
 # flamecast-core
 
-flamecast-core is a code-first framework for building and evolving agent harnesses around frozen language models.
+flamecast-core is a code-first framework for building reliable agent harnesses around frozen language models.
 
-The event log is the source of truth. Modules compile into an agent. Machines react to the log. Rendering is pure. Runtimes bind storage, routing, and concurrency. Evolution creates new code constructions and reuses recorded work until their observable behavior diverges.
+The event log is the source of truth. Modules compile into an agent. Machines react to the log. Rendering is pure. Runtimes bind storage, routing, and concurrency.
 
 ## Install
 
@@ -21,31 +21,24 @@ The root export is the core package. The other packages use subpath exports:
 import { EventLog } from "flamecast-core"
 import { createAgent, inference } from "flamecast-core/harness"
 import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
-import { candidate, gepa, proposer, reflectivePrompts, rollout } from "flamecast-core/evolve"
 ```
 
 ## Quick Start
 
 ```ts
-import { Effect } from "effect"
-import { createAgent, defaultPack, keyOf, type NativeTool } from "flamecast-core/harness"
+import { Effect, Schema } from "effect"
+import { createAgent, defaultPack, keyOf, tool } from "flamecast-core/harness"
 import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
-const lookupInvoice: NativeTool = {
-  spec: {
-    name: "lookup_invoice",
-    description: "Look up one invoice by order id.",
-    inputSchema: {
-      type: "object",
-      properties: { orderId: { type: "string" } },
-      required: ["orderId"]
-    }
-  },
+const lookupInvoice = tool({
+  name: "lookup_invoice",
+  description: "Look up one invoice by order id.",
+  input: Schema.Struct({ orderId: Schema.String }),
   run: (input) =>
     Effect.succeed({
-      invoiceId: `invoice-${(input as { orderId: string }).orderId}`
+      invoiceId: `invoice-${input.orderId}`
     })
-}
+})
 
 const agent = createAgent({
   modules: defaultPack({
@@ -72,14 +65,14 @@ if (result.kind === "completed") console.log(result.output)
 
 ## Design
 
-- Modules own their configuration, projections, and machines.
+- Modules own their configuration, services, render contributions, and machines.
 - Effect services inject typed construction dependencies between modules.
 - Static instructions form the cache-friendly system prefix. Conditional nudges are appended near the request tail by default.
-- `AgentDefinition` records module provenance and compiled behavior. Source-controlled candidates can supply an explicit agent id such as a commit SHA.
+- `AgentDefinition` records module provenance and compiled behavior. Source-controlled programs can supply an explicit agent id such as a commit SHA.
 - `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
 - `callAgent()`, `subagentTool()`, and `serve()` enable multi-agent systems without imposing a planner or topology. Origin and usage cross the session boundary, so provenance and cost trees are derived from logs.
 - `flamecast-core/codemode` is optional. It lets the model write a script over capabilities the harness developer chose, and fan-out becomes `Promise.all`.
-- `flamecast-core/evolve` supplies candidates, observations, cost tracking, rollouts, scoring, Pareto utilities, and GEPA and PopuLoRA search loops. GEPA's reflective proposer is an agent that reads evaluator feedback and rewrites an instruction, so a search runs model-driven mutation by default and callers supply the evaluation policy.
+- Search and evaluation policy stay in application code. Optimizers can use logs, pure request rendering, explicit agent ids, and independent branches without making their problem-specific policy part of the execution engine.
 
 ## Public Imports
 
@@ -88,14 +81,13 @@ if (result.kind === "completed") console.log(result.output)
 | `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
 | `flamecast-core/harness` | Agents, modules, rendering, inference providers, native tools, budgets, contracts, compaction, and delegation |
 | `flamecast-core/codemode` | Capabilities, the sandbox port, and the tool that runs model-written scripts |
-| `flamecast-core/evolve` | Candidates, finite observations, costed callbacks, forked rollouts, scoring, Pareto selection, GEPA search with its reflective proposer, and PopuLoRA co-evolution |
 | `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
 
 The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.
 
 ## Documentation
 
-Start with [docs/README.md](docs/README.md). [docs/building-an-agent.md](docs/building-an-agent.md) is the practical guide. [docs/evolution.md](docs/evolution.md) explains the code-first evolution model.
+Start with [docs/README.md](docs/README.md). [docs/building-an-agent.md](docs/building-an-agent.md) is the practical guide.
 
 ## Contributing
 

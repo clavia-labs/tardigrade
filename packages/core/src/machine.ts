@@ -118,8 +118,8 @@ export const erase = <R, C>(m: Machine<R, C>): Machine<R, never> => m as unknown
 // The RUNTIME tier serves a machine that arrives as generated source, where no compiler ran. It
 // repeats the same two checks over the values, plus the structural rule that a state decides or
 // acts and never both. Throwing here is honest about the bug: the machine is malformed before any
-// log exists, so an evolution candidate that names a state it does not declare dies at
-// construction instead of resting forever mid-rollout.
+// log exists, so a generated program that names a state it does not declare dies at construction
+// instead of resting forever during a run.
 export const machine = <R = never, C = never, const S extends string = string>(definition: {
   readonly id: string
   readonly initial: NoInfer<S>
@@ -249,8 +249,7 @@ export const settle = <R, C>(m: Machine<R, C>): Effect.Effect<void, never, Event
     }
   })
 
-// Are all machines resting on this log? A runtime's alarm reads this to decide whether a backup
-// wake is still owed.
+// Are all machines resting on this log?
 export const resting = <R>(
   machines: ReadonlyArray<Machine<R, never>>,
   log: ReadonlyArray<Event>

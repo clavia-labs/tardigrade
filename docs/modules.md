@@ -6,7 +6,7 @@ Modules are ordered values passed to `createAgent`. Order controls instruction o
 
 Built-in modules are useful policies built from the concepts in [Concepts](concepts.md). They are replaceable defaults rather than framework primitives.
 
-Module ids must be unique. Replacing a built-in means constructing a different module tuple. Silent last-write replacement is deliberately rejected.
+Module ids, instruction ids, nudge ids, machine ids, service providers, and static native-tool names must be unique. Each render bound has one owner and must be a nonnegative integer. A dynamic nudge cannot add a tool name that is already active. Replacing a built-in means constructing a different module tuple. Silent last-write replacement is rejected.
 
 ```ts
 const agent = createAgent({
@@ -64,13 +64,15 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `timeout` defaults to ten minutes, which is a guard against a socket that has gone quiet rather than a limit on how long a model may think. A bound inside the range where real answers land discards answers that were on their way, and a reasoning model working for two minutes is inside that range.
 
-`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model, which is right until a turn asks for something long: a reflection that rewrites a source file spends its tokens on the file and on the reasoning that produced it, and a default sized for chat stops it mid-file. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
+`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
 
 `headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
 
 `openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
+
+The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped.
 
 A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
 
@@ -82,13 +84,13 @@ A request estimated past a known context window is refused before it is sent. It
 
 Native tool calling is one interface policy. MCP, textual commands, one generic RPC operation, or another protocol can use its own request projection and machines without changing the event-log or module primitives. [Code mode](codemode.md) is the policy that ships, in its own package.
 
-`subagentTool(options)` adapts `callAgent` to a `NativeTool`, so a model delegates to another agent through the same surface it already understands. [Orchestration](orchestration.md) covers the delegation surface.
+`subagentTool(options)` adapts `callAgent` to a `NativeTool`, so a model delegates to another agent through the same surface it already understands. Its input is decoded before routing. [Orchestration](orchestration.md) covers the delegation surface.
 
 ## budget
 
-`budget(options)` projects tool spend, emits the wall event, withdraws spending tools, and optionally exposes a budget-request tool. The default budget and all wall text belong to this module.
+`budget(options)` projects tool spend, emits the wall event when the final allowed work call is recorded, withdraws spending tools, and optionally exposes a budget-request tool. A budget of zero exposes no work tools and refuses a hidden work call before its handler runs. The default budget and all wall text belong to this module.
 
-Budget control is event driven. A grant or denial can arrive later through replay or routing, which lets parked work resume without a waiting process. [Cost projections](observability.md#cost-projections) expose the tool spend.
+Budget control is event driven. A grant or denial can arrive later through replay or routing, which lets parked work resume without a waiting process. Both decisions carry the `callId` of their `BudgetRequested` event. The first committed decision for that turn and call wins, a redelivery is absorbed, and a stale decision leaves the request parked. Use `budgetGranted()` and `budgetDenied()` to construct these events. [Cost projections](observability.md#cost-projections) expose the tool spend.
 
 ## contract
 
