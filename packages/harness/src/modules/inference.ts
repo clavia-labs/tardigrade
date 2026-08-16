@@ -257,7 +257,6 @@ export const inference = (options: InferenceOptions) => {
         "TurnFailed",
         "ReplyDelivered"
       ],
-      projections: { [InferenceStateProjection.key]: state },
       instructions: [{ id: "inference.system", text: system }],
       render: truncation,
       // The requirements are declared rather than cast away. The model loop reaches the log and the

@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "@flamecast/harness/infer"
-import { jsonSchemaOf } from "@flamecast/harness/schema"
+import { tool } from "@flamecast/harness/tool"
 import {
   surfaceOf,
   type Capability,
@@ -69,15 +69,13 @@ export const codemode = <R = never>(
     names.add(one.name)
   }
   const maxCalls = options.maxCalls ?? DEFAULT_MAX_CALLS
-  return {
-    spec: {
-      name: options.name ?? "execute",
-      description: options.description ?? describe(options.capabilities),
-      inputSchema: jsonSchemaOf(SOURCE_INPUT)
-    },
+  return tool({
+    name: options.name ?? "execute",
+    description: options.description ?? describe(options.capabilities),
+    input: SOURCE_INPUT,
     run: (input, context) =>
       Effect.gen(function* () {
-        const source = String((input as { readonly source?: unknown } | undefined)?.source ?? "")
+        const source = input.source
         if (source.trim() === "") {
           return {
             output: [],
@@ -146,7 +144,7 @@ export const codemode = <R = never>(
           )
         } satisfies CodemodeResult
       })
-  }
+  })
 }
 
 const NO_SPEND: Usage = { promptTokens: 0, completionTokens: 0, costUsd: 0 }

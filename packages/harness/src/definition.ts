@@ -2,7 +2,6 @@ import type { Context } from "effect"
 import type { Event, Machine } from "@flamecast/core"
 import type { NativeToolSpec } from "./infer"
 import { sha256 } from "./sha256"
-import type { Projection } from "./projection"
 
 export interface Instruction {
   readonly id: string
@@ -44,13 +43,11 @@ export interface ModuleManifest {
 
 export interface AgentDefinition<R = never, Services = never> {
   readonly id: string
-  readonly parent?: string
   readonly modules: ReadonlyArray<ModuleManifest>
   readonly events: ReadonlyArray<string>
   readonly machines: ReadonlyArray<Machine<R, never>>
   readonly render: RenderPlan
   readonly services: Context.Context<Services>
-  readonly projections: Readonly<Record<string, Projection<unknown>>>
 }
 
 const canonical = (value: unknown): string => {

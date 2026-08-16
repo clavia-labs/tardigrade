@@ -1,13 +1,9 @@
 import { Context, Effect, Layer, Semaphore } from "effect"
 import {
   EventLog,
-  Placement,
   Router,
   Self,
   Sessions,
-  Sink,
-  Spill,
-  Wake,
   Writer,
   type DedupKey,
   type Event,
@@ -43,10 +39,6 @@ export type Serve<R = never> = (
 export type SessionPorts =
   | EventLog
   | Writer
-  | Wake
-  | Placement
-  | Spill
-  | Sink
   | Router
   | Sessions
   | Self
@@ -80,8 +72,7 @@ export interface InMemoryOptions<R = never, Keys = Readonly<Record<string, never
   // the call site. Requiring it is the whole point: the shortest path that compiles is the one
   // where a redelivered event lands once.
   readonly keyOf: DedupKey
-  // The address a caller runs in directly. `Self` carries it, `seed` fills its log, and `Wake`
-  // reports its owed alarms under it.
+  // The address a caller runs in directly. `Self` carries it and `seed` fills its log.
   readonly session?: string
   // The events the primary session starts from. A recorded run seeds the log and a settle resumes it.
   readonly seed?: ReadonlyArray<Event>
@@ -132,13 +123,6 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
     return fresh
   }
 
-  // The wake table. The runtime arms no real timer: a test drives time itself, and a timer that
-  // fired on its own would make a test nondeterministic. `owed` is the table a restart re-arms from.
-  let armed: number | undefined
-
-  const blobs = new Map<string, Uint8Array>()
-  let spilled = 0
-
   // The resolved behavior for an address, memoized, so a factory runs once per address and a
   // session keeps one behavior for its lifetime. The exact lookup asks for an own property, because
   // a plain object inherits `constructor` and `toString` and a caller can choose the address.
@@ -174,39 +158,6 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
     hold: <A, E, Rw>(address: string, work: Effect.Effect<A, E, Rw>) =>
       leaseOf(address).withPermits(1)(work)
   }
-
-  const wake = {
-    armIfSooner: (at: number) =>
-      Effect.sync(() => {
-        if (armed === undefined || at < armed) armed = at
-      }),
-    owed: Effect.sync(() => (armed === undefined ? [] : [{ session, at: armed }]))
-  }
-
-  const placement = { home: () => Effect.succeed(session) }
-
-  const spill = {
-    // The reference counts up rather than hashing or randomizing, so the same run spills to the
-    // same references twice and a replay reads what the recorded event points at.
-    put: (value: Uint8Array) =>
-      Effect.sync(() => {
-        spilled += 1
-        const ref = `spill:${spilled}`
-        blobs.set(ref, value)
-        return ref
-      }),
-    get: (ref: string) =>
-      Effect.suspend(() => {
-        const value = blobs.get(ref)
-        return value === undefined
-          ? Effect.die(new Error(`in-memory runtime: no spilled value at "${ref}"`))
-          : Effect.succeed(value)
-      })
-  }
-
-  // Telemetry is optional and the stored log is complete without it, so the in-memory sink drops
-  // what it is given.
-  const sink = { write: () => Effect.void }
 
   // A session exists once its log holds something. Routing to an address materializes a store
   // before whatever serves it decides what to do, and a delivery that is refused appends nothing,
@@ -249,10 +200,6 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
         Effect.provideService(EventLog, storeOf(address)),
         Effect.provideService(Self, address),
         Effect.provideService(Writer, writer),
-        Effect.provideService(Wake, wake),
-        Effect.provideService(Placement, placement),
-        Effect.provideService(Spill, spill),
-        Effect.provideService(Sink, sink),
         Effect.provideService(Router, router),
         Effect.provideService(Sessions, sessions),
         Effect.provideContext(services)
@@ -268,10 +215,6 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
     Layer.succeedContext(services),
     Layer.succeed(EventLog, storeOf(session)),
     Layer.succeed(Writer, writer),
-    Layer.succeed(Wake, wake),
-    Layer.succeed(Placement, placement),
-    Layer.succeed(Spill, spill),
-    Layer.succeed(Sink, sink),
     Layer.succeed(Router, router),
     Layer.succeed(Sessions, sessions),
     Layer.succeed(Self, session)

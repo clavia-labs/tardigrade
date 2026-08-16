@@ -14,9 +14,6 @@
       "@flamecast/core": [
         "./packages/core/src/index.ts"
       ],
-      "@flamecast/evolve": [
-        "./packages/evolve/src/index.ts"
-      ],
       "@flamecast/harness": [
         "./packages/harness/src/index.ts"
       ],

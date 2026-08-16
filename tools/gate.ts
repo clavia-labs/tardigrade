@@ -10,7 +10,6 @@ type Task = {
 const root = fileURLToPath(new URL("../", import.meta.url))
 const codemode = `${root}packages/codemode`
 const core = `${root}packages/core`
-const evolve = `${root}packages/evolve`
 const harness = `${root}packages/harness`
 const runtimeInMemory = `${root}packages/runtime-in-memory`
 
@@ -22,12 +21,10 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   { id: "typecheck:codemode", cwd: codemode, cmd: ["bun", "run", "typecheck"] },
   { id: "typecheck:core", cwd: core, cmd: ["bun", "run", "typecheck"] },
-  { id: "typecheck:evolve", cwd: evolve, cmd: ["bun", "run", "typecheck"] },
   { id: "typecheck:harness", cwd: harness, cmd: ["bun", "run", "typecheck"] },
   { id: "typecheck:runtime-in-memory", cwd: runtimeInMemory, cmd: ["bun", "run", "typecheck"] },
   { id: "test:codemode", cwd: codemode, cmd: ["bun", "test"] },
   { id: "test:core", cwd: core, cmd: ["bun", "test"] },
-  { id: "test:evolve", cwd: evolve, cmd: ["bun", "test"] },
   { id: "test:harness", cwd: harness, cmd: ["bun", "test"] },
   { id: "test:runtime-in-memory", cwd: runtimeInMemory, cmd: ["bun", "test"] },
   { id: "test:package", cmd: ["bun", "run", "tools/package-smoke.ts"] },

@@ -96,7 +96,8 @@ const lookupInvoice = tool({
 const agent = createAgent({
   modules: defaultPack({
     inference: {
-      system: "Use lookup_invoice for order questions."
+      system: "Use lookup_invoice for order questions.",
+      contextWindow: 200_000
     },
     nativeTools: [lookupInvoice],
     budget: { defaultBudget: 24 },
@@ -119,7 +120,13 @@ const citeInvoice = nudge({
 })
 
 const agent = createAgent({
-  modules: [...defaultPack({ nativeTools: [lookupInvoice] }), citeInvoice]
+  modules: [
+    ...defaultPack({
+      inference: { contextWindow: 200_000 },
+      nativeTools: [lookupInvoice]
+    }),
+    citeInvoice
+  ]
 })
 ```
 
@@ -176,6 +183,7 @@ import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
 
 const supervisor = createAgent({
   modules: defaultPack({
+    inference: { contextWindow: 200_000 },
     nativeTools: [
       subagentTool({
         name: "ask_researcher",
@@ -210,7 +218,12 @@ import { agents, codemode } from "flamecast-core/codemode"
 
 const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
 
-const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
+const lead = createAgent({
+  modules: defaultPack({
+    inference: { contextWindow: 200_000 },
+    nativeTools: [execute]
+  })
+})
 ```
 
 The model writes a script, and a fan-out is `Promise.all` over `agents.call`. Bind a sandbox with `Layer.succeed(Sandbox, inProcessSandbox())` for a turn, or hand one to a runtime through `services`. [Code mode](codemode.md) covers capabilities and sandbox choice.

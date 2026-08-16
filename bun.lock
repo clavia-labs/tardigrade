@@ -37,18 +37,6 @@
         "fast-check": "^4.9.0",
       },
     },
-    "packages/evolve": {
-      "name": "@flamecast/evolve",
-      "version": "0.0.0",
-      "dependencies": {
-        "@flamecast/core": "workspace:*",
-        "@flamecast/harness": "workspace:*",
-        "effect": "4.0.0-rc.108",
-      },
-      "devDependencies": {
-        "@flamecast/runtime-in-memory": "workspace:*",
-      },
-    },
     "packages/harness": {
       "name": "@flamecast/harness",
       "version": "0.0.0",
@@ -79,8 +67,6 @@
     "@flamecast/codemode": ["@flamecast/codemode@workspace:packages/codemode"],
 
     "@flamecast/core": ["@flamecast/core@workspace:packages/core"],
-
-    "@flamecast/evolve": ["@flamecast/evolve@workspace:packages/evolve"],
 
     "@flamecast/harness": ["@flamecast/harness@workspace:packages/harness"],
 

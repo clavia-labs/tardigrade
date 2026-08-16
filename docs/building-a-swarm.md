@@ -138,7 +138,12 @@ import { agents, codemode, inProcessSandbox, Sandbox } from "flamecast-core/code
 
 const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
 
-const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
+const lead = createAgent({
+  modules: defaultPack({
+    inference: { contextWindow: 200_000 },
+    nativeTools: [execute]
+  })
+})
 
 const runtime = InMemoryRuntime({
   keyOf,

@@ -118,6 +118,22 @@ describe("nudges", () => {
     expect(nativeToolSurface(render, [head])).toEqual([])
     expect(nativeToolSurface(render, [declared])[0]?.inputSchema).toEqual({ type: "object" })
   })
+
+  test("rejects duplicate tools that become active together", () => {
+    const render = renderOf({
+      nudges: [
+        {
+          id: "duplicate",
+          when: () => true,
+          text: "Duplicate.",
+          nativeTools: [lookup]
+        }
+      ]
+    })
+    expect(() => nativeToolSurface(render, [head])).toThrow(
+      'duplicate active native tool name "lookup_invoice"'
+    )
+  })
 })
 
 describe("module-owned native tool descriptions", () => {

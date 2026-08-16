@@ -40,8 +40,8 @@ const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor as new (
 
 // The process-local executor. It runs the source in this process with the host's globals reachable,
 // so it is an execution surface rather than a security boundary. It suits development, tests, and
-// deployments whose source is already trusted, such as source a candidate program generated and a
-// reviewer approved. Bind an isolating implementation to run source a model wrote against data the
+// deployments whose source is already trusted, such as generated source that a reviewer approved.
+// Bind an isolating implementation to run source a model wrote against data the
 // model should not reach.
 //
 // It returns the service value, because the two ways to hold a service both take one:

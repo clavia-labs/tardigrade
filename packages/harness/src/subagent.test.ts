@@ -120,4 +120,25 @@ describe("subagentTool", () => {
       'no session serves "agent:research"'
     )
   })
+
+  test("rejects malformed arguments before routing", async () => {
+    let routed = false
+    const result = await Effect.runPromise(
+      Effect.provide(
+        delegate.run({}),
+        InMemoryRuntime({
+          keyOf,
+          sessions: stub(
+            () => {
+              routed = true
+            },
+            () => ({ type: "TurnCompleted", output: "unexpected" })
+          )
+        })
+      )
+    )
+    expect(result).toHaveProperty("error")
+    expect(String((result as { error?: unknown }).error)).toContain("did not match")
+    expect(routed).toBe(false)
+  })
 })
