@@ -93,6 +93,14 @@ export {
   cloudflareGatewayInference,
   type CloudflareGatewayInferenceOptions
 } from "./providers/cloudflare-gateway"
+// The OpenAI-compatible provider the shipped gateways are built from. It is published so a caller
+// who needs a different endpoint, or a header the gateways do not model, writes options rather than
+// a second copy of the request serialization.
+export {
+  openAiChatInference,
+  type OpenAiChatOptions,
+  type TransportOptions
+} from "./providers/openai-chat"
 export {
   vercelGatewayInference,
   type VercelGatewayInferenceOptions

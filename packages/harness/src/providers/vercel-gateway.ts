@@ -1,7 +1,7 @@
-import { Config, Effect, Redacted } from "effect"
+import { Config, Duration, Effect, Redacted } from "effect"
 import type { InferenceProvider } from "../infer"
 import { environment, environmentNumber } from "./environment"
-import { openAiChatInference } from "./openai-chat"
+import { openAiChatInference, transport } from "./openai-chat"
 
 export interface VercelGatewayInferenceOptions {
   readonly apiKey?: string
@@ -11,6 +11,12 @@ export interface VercelGatewayInferenceOptions {
   readonly contextWindow?: number
   readonly baseUrl?: string
   readonly fetch?: typeof fetch
+  // The transport settings, forwarded rather than fixed here. A gateway in front of a reasoning
+  // model answers on a different scale from one in front of a small one, and the caller is the only
+  // one who knows which they have.
+  readonly headers?: Readonly<Record<string, string>>
+  readonly retries?: number
+  readonly timeout?: Duration.Input
 }
 
 // What each model accepts, as the gateway publishes it. The context window belongs to the model, so
@@ -82,7 +88,7 @@ const build = (
     contextWindow,
     endpoint: `${baseUrl}/chat/completions`,
     apiKey,
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch })
+    ...transport(options)
   })
 
 // The key is the one secret here, so it is the one setting read as a `Config`: it is resolved where
