@@ -18,6 +18,8 @@ export interface OpenAiChatOptions {
   // it builds one.
   readonly contextWindow: number
   readonly endpoint: string
+  // The ceiling on one answer, in completion tokens. See `TransportOptions`.
+  readonly maxOutputTokens?: number
   // The key is a `Config` rather than a string, so it is read where it is used and stays redacted
   // on the way there. A value that never becomes a plain string can not be printed by an error
   // report or a log line that happened to hold the options.
@@ -30,21 +32,27 @@ export interface OpenAiChatOptions {
   readonly timeout?: Duration.Input
 }
 
-// What a gateway forwards rather than fixes. Every gateway built on this provider has the same four,
-// and one that swallowed them would leave a caller reimplementing the whole provider to change one
-// number, which is what a gateway in front of a slow model needs to do.
+// What a gateway forwards rather than fixes. Every gateway built on this provider takes the same
+// settings, and one that swallowed them would leave a caller reimplementing the whole provider to
+// change one number, which is what a gateway in front of a slow model needs to do.
 export interface TransportOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly fetch?: typeof fetch
   readonly retries?: number
   readonly timeout?: Duration.Input
+  // The ceiling on one answer, in completion tokens. Absent leaves it to the gateway's own default
+  // for the model, which is the right answer until a turn asks for something long: a reflection that
+  // rewrites a source file spends its tokens on the file and on the reasoning that produced it, and
+  // a default sized for chat cuts it off mid-file.
+  readonly maxOutputTokens?: number
 }
 
 export const transport = (options: TransportOptions) => ({
   ...(options.headers === undefined ? {} : { headers: options.headers }),
   ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   ...(options.retries === undefined ? {} : { retries: options.retries }),
-  ...(options.timeout === undefined ? {} : { timeout: options.timeout })
+  ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+  ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens })
 })
 
 interface ChatToolCall {
@@ -130,8 +138,8 @@ const actionOf = (body: ChatResponse): Action => {
     return {
       kind: "fail",
       error:
-        "the model stopped at its completion-token limit, so its answer is incomplete. Raise the " +
-        "model's completion-token limit, or ask for a shorter answer.",
+        "the model stopped at its completion-token limit, so its answer is incomplete. Raise " +
+        "maxOutputTokens on the provider, or ask for a shorter answer.",
       usage
     }
   }
@@ -251,6 +259,9 @@ const reacted = (
       ...(request.system === "" ? [] : [{ role: "system", content: request.system }]),
       ...request.messages.map(message)
     ],
+    ...(options.maxOutputTokens === undefined
+      ? {}
+      : { max_tokens: options.maxOutputTokens }),
     ...(request.tools.length === 0 ? {} : { tools: request.tools.map(tool) })
   })
   const failed = (reason: string): Transient => ({ reason })

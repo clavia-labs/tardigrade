@@ -17,6 +17,7 @@ export interface VercelGatewayInferenceOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly retries?: number
   readonly timeout?: Duration.Input
+  readonly maxOutputTokens?: number
 }
 
 // What each model accepts, as the gateway publishes it. The context window belongs to the model, so

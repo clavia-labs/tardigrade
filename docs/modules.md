@@ -62,7 +62,11 @@ A gateway that is busy, unwell, or unreachable earns further attempts on a jitte
 
 An attempt this side stops waiting for is cancelled. Dropping the wait alone leaves the request running: the model finishes it, the gateway bills for it, and the retry asks for the same completion again, so one turn is paid for twice. `timeout` therefore bounds what the gateway is asked to do rather than only what this side waits for.
 
-`timeout` defaults to ten minutes, which is a guard against a socket that has gone quiet rather than a limit on how long a model may think. A bound inside the range where real answers land discards answers that were on their way, and a reasoning model working for two minutes is inside that range. `headers`, `fetch`, `retries`, and `timeout` are settings of the transport, so every shipped gateway forwards them rather than fixing them.
+`timeout` defaults to ten minutes, which is a guard against a socket that has gone quiet rather than a limit on how long a model may think. A bound inside the range where real answers land discards answers that were on their way, and a reasoning model working for two minutes is inside that range.
+
+`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model, which is right until a turn asks for something long: a reflection that rewrites a source file spends its tokens on the file and on the reasoning that produced it, and a default sized for chat stops it mid-file. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
+
+`headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
 
 `openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
 
