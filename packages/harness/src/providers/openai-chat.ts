@@ -30,6 +30,23 @@ export interface OpenAiChatOptions {
   readonly timeout?: Duration.Input
 }
 
+// What a gateway forwards rather than fixes. Every gateway built on this provider has the same four,
+// and one that swallowed them would leave a caller reimplementing the whole provider to change one
+// number, which is what a gateway in front of a slow model needs to do.
+export interface TransportOptions {
+  readonly headers?: Readonly<Record<string, string>>
+  readonly fetch?: typeof fetch
+  readonly retries?: number
+  readonly timeout?: Duration.Input
+}
+
+export const transport = (options: TransportOptions) => ({
+  ...(options.headers === undefined ? {} : { headers: options.headers }),
+  ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+  ...(options.retries === undefined ? {} : { retries: options.retries }),
+  ...(options.timeout === undefined ? {} : { timeout: options.timeout })
+})
+
 interface ChatToolCall {
   readonly id?: unknown
   readonly function?: { readonly name?: unknown; readonly arguments?: unknown }
@@ -178,7 +195,13 @@ const RETRYABLE = new Set([408, 409, 425, 429])
 const isTransient = (status: number) => status >= 500 || RETRYABLE.has(status)
 
 const DEFAULT_RETRIES = 2
-const DEFAULT_TIMEOUT: Duration.Input = "60 seconds"
+
+// How long one attempt may take before this side stops waiting. It is a guard against a socket that
+// has gone quiet, so it sits well outside the range where real answers land: a reasoning model
+// thinking for two minutes is working, and a connection silent for ten is hung. A bound inside that
+// range discards answers that were on their way, which is the failure this number is set to avoid
+// rather than the one it is set to cause. `timeout` moves it.
+const DEFAULT_TIMEOUT: Duration.Input = "10 minutes"
 
 // Waiting longer each time is what makes a retry useful to a gateway that is shedding load, and the
 // jitter is what stops a fleet of agents that failed together from returning together.
@@ -235,7 +258,11 @@ const reacted = (
   if (refusal !== undefined) return Effect.succeed(refusal)
   const attempt = Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
-      try: () =>
+      // The signal is what makes an interruption reach the gateway. Without it, a timed-out attempt
+      // stops being awaited and keeps running: the model finishes, the provider bills for it, and
+      // the retry asks for the same completion again. Every attempt after the first was then paid
+      // for twice for a turn that recorded a failure.
+      try: (signal) =>
         call(options.endpoint, {
           method: "POST",
           headers: {
@@ -246,7 +273,8 @@ const reacted = (
             "idempotency-key": key,
             ...options.headers
           },
-          body
+          body,
+          signal
         }),
       catch: (error) => failed(error instanceof Error ? error.message : String(error))
     })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Config, Effect, Fiber, Redacted } from "effect"
+import { Config, Duration, Effect, Fiber, Redacted } from "effect"
 import { TestClock } from "effect/testing"
 import type { Action, ModelRequest } from "../infer"
 import { openAiChatInference } from "./openai-chat"
@@ -21,7 +21,10 @@ const answer = JSON.stringify({
   usage: { prompt_tokens: 10, completion_tokens: 4, cost_usd: 0.001 }
 })
 
-const provider = (stub: typeof fetch, options: { readonly retries?: number } = {}) =>
+const provider = (
+  stub: typeof fetch,
+  options: { readonly retries?: number; readonly timeout?: Duration.Input } = {}
+) =>
   openAiChatInference({
     id: "test",
     provider: "test-gateway",
@@ -116,17 +119,50 @@ describe("a refusal", () => {
 })
 
 describe("a silent gateway", () => {
-  test("costs one timeout rather than the turn", async () => {
+  // A gateway that accepts the request and never answers.
+  const silent = () => {
+    const signals: Array<AbortSignal> = []
     let attempts = 0
-    const stub = (async () => {
+    const stub = (async (_url: string, init: RequestInit) => {
       attempts += 1
-      // A gateway that accepts the request and never answers.
+      if (init.signal !== null && init.signal !== undefined) signals.push(init.signal)
       return await new Promise<Response>(() => {})
     }) as unknown as typeof fetch
-    const result = await settled(provider(stub, { retries: 0 }).react(request, "turn/infer/0"))
+    return { signals, stub, attempts: () => attempts }
+  }
+
+  test("costs one timeout rather than the turn", async () => {
+    const gateway = silent()
+    const result = await settled(
+      provider(gateway.stub, { retries: 0, timeout: "2 minutes" }).react(request, "turn/infer/0")
+    )
 
     expect(result).toMatchObject({ kind: "fail" })
     expect(String((result as { error: string }).error)).toContain("timeout")
-    expect(attempts).toBe(1)
+    expect(gateway.attempts()).toBe(1)
+  })
+
+  // The defect this pins: a timed-out attempt that is only stopped being awaited keeps running. The
+  // model finishes, the gateway bills for it, and the retry asks for the same completion again, so
+  // a turn that recorded a failure was paid for two or three times over.
+  test("aborts the request it gave up on", async () => {
+    const gateway = silent()
+    await settled(
+      provider(gateway.stub, { retries: 0, timeout: "2 minutes" }).react(request, "turn/infer/0")
+    )
+
+    expect(gateway.signals).toHaveLength(1)
+    expect(gateway.signals[0]?.aborted).toBe(true)
+  })
+
+  test("takes the timeout the caller states", async () => {
+    const gateway = silent()
+    // Under the default this attempt is still in flight when the clock stops, so a result at all is
+    // the caller's bound being read.
+    const result = await settled(
+      provider(gateway.stub, { retries: 0, timeout: "30 seconds" }).react(request, "turn/infer/0")
+    )
+
+    expect(result).toMatchObject({ kind: "fail" })
   })
 })

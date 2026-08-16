@@ -334,6 +334,33 @@ describe("Vercel AI Gateway", () => {
     expect(called).toBe(true)
   })
 
+  // The defect this pins: the provider accepted a timeout, a retry count, and headers, and the
+  // gateway that builds it forwarded none of them. A caller in front of a slow model had no way to
+  // move the bound except to reimplement the provider.
+  test("forwards the transport settings a caller states", async () => {
+    const seen: Array<Headers> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      seen.push(new Headers(init.headers))
+      return await new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 200_000,
+      headers: { "x-trace": "abc" },
+      retries: 0,
+      timeout: "10 millis",
+      fetch: stub
+    })
+
+    const action = await Effect.runPromise(provider.react(request, "k"))
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("timeout")
+    // One attempt, because the caller asked for no retries.
+    expect(seen).toHaveLength(1)
+    expect(seen[0]?.get("x-trace")).toBe("abc")
+  })
+
   // The key is read from configuration rather than from the machine's environment, so the test
   // supplies the configuration it wants and asks nothing of the machine it runs on.
   test("fails before fetch when no key is configured", async () => {
@@ -417,6 +444,29 @@ describe("Cloudflare AI Gateway", () => {
     )
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer cloudflare-token")
     expect(calls[0]?.headers.get("cf-aig-gateway-id")).toBe("support-gateway")
+  })
+
+  test("forwards the transport settings beside its own gateway header", async () => {
+    const seen: Array<Headers> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      seen.push(new Headers(init.headers))
+      return await new Promise<Response>(() => {})
+    }) as unknown as typeof fetch
+    const provider = cloudflareGatewayInference({
+      accountId: "account-1",
+      apiToken: "cloudflare-token",
+      gatewayId: "support-gateway",
+      contextWindow: 200_000,
+      headers: { "x-trace": "abc" },
+      retries: 0,
+      timeout: "10 millis",
+      fetch: stub
+    })
+
+    await Effect.runPromise(provider.react(request, "k"))
+
+    expect(seen[0]?.get("x-trace")).toBe("abc")
+    expect(seen[0]?.get("cf-aig-gateway-id")).toBe("support-gateway")
   })
 
   test("reports missing account configuration without a network call", async () => {

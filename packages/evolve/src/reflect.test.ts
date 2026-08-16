@@ -12,7 +12,7 @@ import {
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { candidate } from "./candidate"
 import { costed } from "./cost"
-import { gepa, type GepaMutationContext } from "./gepa"
+import { gepa, type GepaMutationContext, type GepaProposal } from "./gepa"
 import {
   evaluationOf,
   feedbackOf,
@@ -59,6 +59,14 @@ const run = <A>(
       Layer.merge(InMemoryRuntime({ keyOf, session: "search" }), model)
     )
   )
+
+// A mutation answers with what to do next, so a test says which case it expects before reading it.
+const proposedBy = (proposal: GepaProposal<Prompts>) => {
+  if (proposal.kind !== "proposed") {
+    throw new Error(`expected a proposal, and the mutation answered "${proposal.kind}"`)
+  }
+  return proposal.candidate
+}
 
 const trial = (id: string, value: string, evaluation: {
   readonly score: number
@@ -173,11 +181,11 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    expect(result.value?.value).toEqual({
+    expect(proposedBy(result.value).value).toEqual({
       "inference.system": "Answer the billing question. Always state the tax line.",
       tone: "Write in plain English."
     })
-    expect(result.value?.parent).toBe("seed")
+    expect(proposedBy(result.value).parent).toBe("seed")
     // The proposer is an agent, so what it spent is priced from its own log by the same projection
     // that prices an evaluation.
     expect(result.cost).toEqual({
@@ -211,8 +219,8 @@ describe("the reflective mutation", () => {
     const second = await run(mutate(contextOf(prompts, 1, trials)), model.layer)
 
     expect(targets).toEqual(["inference.system", "tone"])
-    expect(first.value?.value["inference.system"]).toBe("first rewrite")
-    expect(second.value?.value.tone).toBe("second rewrite")
+    expect(proposedBy(first.value).value["inference.system"]).toBe("first rewrite")
+    expect(proposedBy(second.value).value.tone).toBe("second rewrite")
   })
 
   test("selects by round robin without being told to", async () => {
@@ -224,8 +232,8 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    expect(result.value?.value.tone).toBe("a rewrite of the tone")
-    expect(result.value?.value["inference.system"]).toBe("Answer the billing question.")
+    expect(proposedBy(result.value).value.tone).toBe("a rewrite of the tone")
+    expect(proposedBy(result.value).value["inference.system"]).toBe("Answer the billing question.")
   })
 
   test("reflects with the proposer's own system instruction", async () => {
@@ -238,7 +246,9 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    expect(result.value?.value["inference.system"]).toBe("a rewrite from the default proposer")
+    expect(proposedBy(result.value).value["inference.system"]).toBe(
+      "a rewrite from the default proposer"
+    )
     expect(model.seen[0]?.system).toContain("You rewrite the instructions")
   })
 
@@ -251,12 +261,16 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    // No candidate, and the reflection is still priced: the loop paid for the thinking.
-    expect(result.value).toBeUndefined()
+    // Declined rather than failed: the proposer ran and chose to leave the instruction alone, so the
+    // search keeps going. The reflection is still priced, because the loop paid for the thinking.
+    expect(result.value.kind).toBe("declined")
     expect(result.cost.completionTokens).toBe(60)
   })
 
-  test("proposes nothing when the proposer turn fails", async () => {
+  // The defect this pins: a proposer that broke answered with the same "nothing" as a proposer that
+  // chose not to propose, so a search whose transport was down read as a search that found nothing
+  // and spent the rest of its budget proving it.
+  test("reports a failure when the proposer turn does not complete", async () => {
     const model = scripted([{ kind: "fail", error: "the provider refused", usage }])
     const mutate = reflectivePrompts({ proposer: proposer({ contextWindow: 200_000 }) })
 
@@ -265,7 +279,10 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    expect(result.value).toBeUndefined()
+    expect(result.value.kind).toBe("failed")
+    expect(result.value.kind === "failed" ? result.value.error : "").toContain(
+      "the provider refused"
+    )
     expect(result.cost.promptTokens).toBe(900)
   })
 
@@ -278,7 +295,7 @@ describe("the reflective mutation", () => {
       model.layer
     )
 
-    expect(result.value).toBeUndefined()
+    expect(result.value.kind).toBe("declined")
     expect(model.seen).toEqual([])
   })
 
