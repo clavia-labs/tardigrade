@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { candidate } from "./candidate"
+import { candidate, type Candidate } from "./candidate"
 import { costed, zeroEvolutionCost } from "./cost"
 import { gepa, type GepaEvaluation } from "./gepa"
 
@@ -10,6 +10,10 @@ interface Harness {
 }
 
 const example = (id: string) => ({ id, value: id })
+// A mutation answers with what to do next, so a test says which of the three it means.
+const proposes = <Value>(built: Candidate<Value>) =>
+  ({ kind: "proposed", candidate: built }) as const
+const nothing = { kind: "declined", reason: "the proposer had nothing better" } as const
 const free = <Value>(value: Value) => costed(value)
 const priced = <Value>(
   value: Value,
@@ -40,7 +44,7 @@ describe("the GEPA loop", () => {
         minibatchSize: 1,
         maxMetricCalls: 2,
         evaluate,
-        mutate: () => Effect.succeed(free(undefined))
+        mutate: () => Effect.succeed(free(nothing))
       })
     )
 
@@ -69,15 +73,17 @@ describe("the GEPA loop", () => {
         mutate: ({ iteration, parent, trials }) => {
           expect(trials[0]?.evaluation.trajectory).toBe(`${parent.value.source}:f1`)
           return Effect.succeed(free(
-            iteration === 0
-              ? candidate("better", {
-                  source: "better.ts",
-                  scores: { f1: 0.8, p1: 0.7, p2: 0.9 }
-                })
-              : candidate("worse", {
-                  source: "worse.ts",
-                  scores: { f1: 0.1, p1: 1, p2: 1 }
-                })
+            proposes(
+              iteration === 0
+                ? candidate("better", {
+                    source: "better.ts",
+                    scores: { f1: 0.8, p1: 0.7, p2: 0.9 }
+                  })
+                : candidate("worse", {
+                    source: "worse.ts",
+                    scores: { f1: 0.1, p1: 1, p2: 1 }
+                  })
+            )
           ))
         }
       })
@@ -130,15 +136,17 @@ describe("the GEPA loop", () => {
         mutate: ({ iteration, parent }) => {
           parents.push(parent.id)
           return Effect.succeed(free(
-            iteration === 0
-              ? candidate("right", {
-                  source: "right.ts",
-                  scores: { feedback: 1, left: 0, middle: 0, right: 1 }
-                })
-              : candidate("discarded", {
-                  source: "discarded.ts",
-                  scores: { feedback: -1, left: 1, middle: 1, right: 1 }
-                })
+            proposes(
+              iteration === 0
+                ? candidate("right", {
+                    source: "right.ts",
+                    scores: { feedback: 1, left: 0, middle: 0, right: 1 }
+                  })
+                : candidate("discarded", {
+                    source: "discarded.ts",
+                    scores: { feedback: -1, left: 1, middle: 1, right: 1 }
+                  })
+            )
           ))
         }
       })
@@ -175,7 +183,7 @@ describe("the GEPA loop", () => {
           })),
         mutate: ({ trials }) => {
           seen.push(...trials.map((trial) => trial.evaluation))
-          return Effect.succeed(free(undefined))
+          return Effect.succeed(free(nothing))
         }
       })
     )
@@ -220,10 +228,12 @@ describe("the GEPA loop", () => {
         mutate: () =>
           Effect.succeed(
             priced(
-              candidate("better", {
-                source: "better.ts",
-                scores: { f1: 1, p1: 1 }
-              }),
+              proposes(
+                candidate("better", {
+                  source: "better.ts",
+                  scores: { f1: 1, p1: 1 }
+                })
+              ),
               5,
               1,
               0.005,
@@ -248,6 +258,63 @@ describe("the GEPA loop", () => {
     expect(result.population.map((entry) => entry.cost.toolCalls)).toEqual([1, 1])
   })
 
+  // A declined proposal and a broken proposer are different facts. The first is the search working
+  // and finding nothing this round. The second is the search unable to run, and every later
+  // iteration would pay a minibatch to discover that again.
+  test("keeps going when a proposer declines", async () => {
+    let mutations = 0
+    const result = await Effect.runPromise(
+      gepa({
+        seed: candidate("seed", { source: "seed.ts", scores: { f1: 0, p1: 0 } }),
+        feedbackExamples: [example("f1")],
+        paretoExamples: [example("p1")],
+        minibatchSize: 1,
+        maxMetricCalls: 7,
+        evaluate,
+        mutate: () => {
+          mutations += 1
+          return Effect.succeed(free(nothing))
+        }
+      })
+    )
+
+    // The loop spends its whole budget rather than stopping, because declining is an answer.
+    expect(mutations).toBe(4)
+    expect(result.failure).toBeUndefined()
+    expect(result.iterations.every((one) => one.declined === "the proposer had nothing better")).toBe(
+      true
+    )
+    expect(result.iterations.every((one) => one.failure === undefined)).toBe(true)
+  })
+
+  test("stops when a proposer reports that it could not run", async () => {
+    let mutations = 0
+    const result = await Effect.runPromise(
+      gepa({
+        seed: candidate("seed", { source: "seed.ts", scores: { f1: 0, p1: 0 } }),
+        feedbackExamples: [example("f1")],
+        paretoExamples: [example("p1")],
+        minibatchSize: 1,
+        maxMetricCalls: 100,
+        evaluate,
+        mutate: () => {
+          mutations += 1
+          return Effect.succeed(
+            free({ kind: "failed", error: "the proposer turn failed: no response" } as const)
+          )
+        }
+      })
+    )
+
+    // One iteration, not the ninety-odd the budget would have allowed.
+    expect(mutations).toBe(1)
+    expect(result.failure).toBe("the proposer turn failed: no response")
+    expect(result.iterations).toHaveLength(1)
+    expect(result.iterations[0]?.failure).toBe("the proposer turn failed: no response")
+    // The parent minibatch and the reflection are still counted, so the run reports what it spent.
+    expect(result.metricCalls).toBe(2)
+  })
+
   test("requires mutations to preserve the selected parent", async () => {
     const run = Effect.runPromise(
       gepa({
@@ -259,10 +326,12 @@ describe("the GEPA loop", () => {
         evaluate,
         mutate: () =>
           Effect.succeed(free(
-            candidate(
-              "child",
-              { source: "child.ts", scores: { f1: 1, p1: 1 } },
-              { parent: "someone-else" }
+            proposes(
+              candidate(
+                "child",
+                { source: "child.ts", scores: { f1: 1, p1: 1 } },
+                { parent: "someone-else" }
+              )
             )
           ))
       })

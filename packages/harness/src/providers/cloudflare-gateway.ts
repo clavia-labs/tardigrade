@@ -1,7 +1,7 @@
-import { Config, Redacted } from "effect"
+import { Config, Duration, Redacted } from "effect"
 import type { InferenceProvider } from "../infer"
 import { environment, environmentNumber } from "./environment"
-import { openAiChatInference } from "./openai-chat"
+import { openAiChatInference, transport } from "./openai-chat"
 
 export interface CloudflareGatewayInferenceOptions {
   readonly accountId?: string
@@ -14,6 +14,10 @@ export interface CloudflareGatewayInferenceOptions {
   readonly contextWindow?: number
   readonly baseUrl?: string
   readonly fetch?: typeof fetch
+  // The transport settings, forwarded rather than fixed here.
+  readonly headers?: Readonly<Record<string, string>>
+  readonly retries?: number
+  readonly timeout?: Duration.Input
 }
 
 export const cloudflareGatewayInference = (
@@ -49,8 +53,10 @@ export const cloudflareGatewayInference = (
     contextWindow,
     endpoint: `${baseUrl.replace(/\/$/, "")}/${accountId ?? "missing"}/ai/v1/chat/completions`,
     apiKey: apiToken,
-    ...(gatewayId === undefined ? {} : { headers: { "cf-aig-gateway-id": gatewayId } }),
-    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...transport(options),
+    ...(gatewayId === undefined
+      ? {}
+      : { headers: { "cf-aig-gateway-id": gatewayId, ...options.headers } }),
     // The account names the endpoint, so its absence is known here rather than at the request.
     ...(accountId === undefined
       ? {

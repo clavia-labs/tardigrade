@@ -44,6 +44,31 @@ export interface GepaTrial<Example, Evaluation extends GepaEvaluation> {
   readonly cost: EvolutionCost
 }
 
+// What a mutation answers with. The three cases are three different things to do next, and
+// collapsing them is how a broken proposer reads as a working one.
+//
+// A declined proposal is ordinary: the proposer looked and had nothing better to offer, and the
+// search moves on. A failed one means the proposer itself did not run, so every later iteration
+// would spend a minibatch on the same broken thing. The loop stops on that and says so, which is
+// what a caller needs to retry or to fix the transport rather than to read a wasted budget as a
+// search that found nothing.
+export interface GepaProposed<Value> {
+  readonly kind: "proposed"
+  readonly candidate: Candidate<Value>
+}
+
+export interface GepaDeclined {
+  readonly kind: "declined"
+  readonly reason: string
+}
+
+export interface GepaProposalFailed {
+  readonly kind: "failed"
+  readonly error: string
+}
+
+export type GepaProposal<Value> = GepaProposed<Value> | GepaDeclined | GepaProposalFailed
+
 export interface GepaMutationContext<Value, Example, Evaluation extends GepaEvaluation> {
   readonly iteration: number
   readonly parent: Candidate<Value>
@@ -64,6 +89,10 @@ export interface GepaIteration {
   readonly parentAverage: number
   readonly proposal?: string
   readonly proposalAverage?: number
+  // Why no candidate was evaluated. `declined` is the proposer choosing not to propose. `failure` is
+  // the proposer not running, and it is the last iteration in the result.
+  readonly declined?: string
+  readonly failure?: string
   readonly accepted: boolean
   readonly cost: EvolutionCost
 }
@@ -75,6 +104,9 @@ export interface GepaResult<Value> {
   readonly iterations: ReadonlyArray<GepaIteration>
   readonly metricCalls: number
   readonly cost: EvolutionCost
+  // Why the loop stopped before its budget ran out, when it did. A result carrying this is a search
+  // that was cut short rather than one that finished and found little.
+  readonly failure?: string
 }
 
 export interface GepaOptions<
@@ -98,7 +130,7 @@ export interface GepaOptions<
   readonly mutate: (
     context: GepaMutationContext<Value, Example, Evaluation>
   ) => Effect.Effect<
-    Costed<Candidate<Value> | undefined>,
+    Costed<GepaProposal<Value>>,
     MutationError,
     MutationRequirements
   >
@@ -313,6 +345,7 @@ export const gepa = <
 
     const seed = yield* scoreOnPareto(options.seed)
     let totalCost = seed.cost
+    let failure: string | undefined
     const population: Array<GepaPopulationEntry<Value>> = [seed]
     const iterations: Array<GepaIteration> = []
     const exampleIds = options.paretoExamples.map((example) => example.id)
@@ -336,7 +369,7 @@ export const gepa = <
       const proposed = mutation.value
       const iterationCosts: Array<EvolutionCost> = [parentEvaluation.cost, mutation.cost]
 
-      if (proposed === undefined) {
+      if (proposed.kind !== "proposed") {
         const cost = sumEvolutionCosts(iterationCosts)
         totalCost = sumEvolutionCosts([totalCost, cost])
         iterations.push({
@@ -344,13 +377,22 @@ export const gepa = <
           parent: parent.candidate.id,
           batch: batch.map((example) => example.id),
           parentAverage,
+          ...(proposed.kind === "declined"
+            ? { declined: proposed.reason }
+            : { failure: proposed.error }),
           accepted: false,
           cost
         })
+        // A proposer that did not run will not run on the next iteration either, and each one costs
+        // a minibatch to learn that again. The loop stops and the result says why.
+        if (proposed.kind === "failed") {
+          failure = proposed.error
+          break
+        }
         continue
       }
 
-      const proposal = withParent(proposed, parent.candidate)
+      const proposal = withParent(proposed.candidate, parent.candidate)
       if (population.some((entry) => entry.candidate.id === proposal.id)) {
         throw new Error(`GEPA proposal id "${proposal.id}" already exists in the population`)
       }
@@ -389,7 +431,8 @@ export const gepa = <
       front: frontOf(population, exampleIds),
       iterations,
       metricCalls,
-      cost: totalCost
+      cost: totalCost,
+      ...(failure === undefined ? {} : { failure })
     }
     return result
   })

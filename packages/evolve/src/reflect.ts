@@ -27,7 +27,7 @@ import type { InferenceSelection, NativeTool } from "@flamecast/harness/infer"
 import type { InferenceOptions } from "@flamecast/harness/modules/inference"
 import { candidate, type Candidate } from "./candidate"
 import { costed } from "./cost"
-import type { GepaEvaluation, GepaMutationContext } from "./gepa"
+import type { GepaEvaluation, GepaMutationContext, GepaProposal } from "./gepa"
 import { scoreOf, verdictsOf } from "./score"
 
 // The paper's feedback function over a Flamework log.
@@ -258,6 +258,24 @@ export interface ReflectiveMutationOptions<
   readonly budget?: number
 }
 
+const proposed = <Value>(built: Candidate<Value>): GepaProposal<Value> => ({
+  kind: "proposed",
+  candidate: built
+})
+
+const declined = (reason: string): GepaProposal<never> => ({ kind: "declined", reason })
+
+const failedProposal = (error: string): GepaProposal<never> => ({ kind: "failed", error })
+
+// Why the reflection turn did not answer, in the words the turn itself recorded.
+const reflectionFailure = (result: TurnResult): string => {
+  if (result.kind === "failed") return `the proposer turn failed: ${result.error}`
+  if (result.kind === "parked") {
+    return `the proposer turn parked asking for more budget: ${result.reason}`
+  }
+  return "the proposer turn did not finish"
+}
+
 // Round robin over the candidate's instructions, which is what the paper selects modules with: every
 // instruction receives updates rather than the search pouring its budget into whichever one it
 // touched first.
@@ -282,9 +300,11 @@ export const reflectiveMutation = <
   return (context: GepaMutationContext<Value, Example, Evaluation>) =>
     Effect.gen(function* () {
       const targets = options.instructionsOf(context.parent.value)
-      if (targets.length === 0) return costed(undefined)
+      if (targets.length === 0) {
+        return costed(declined("the candidate exposes no instruction to rewrite"))
+      }
       const target = select(targets, context)
-      if (target === undefined) return costed(undefined)
+      if (target === undefined) return costed(declined("no instruction was selected to rewrite"))
       const prompt = reflectionPrompt({
         instruction: target,
         trials: context.trials.map((trial) => ({
@@ -308,14 +328,31 @@ export const reflectiveMutation = <
         ...(options.budget === undefined ? {} : { budget: options.budget })
       })
       const log = yield* session.log
-      if (result.kind !== "completed") return costed(undefined, log)
+      // A turn that did not complete is the proposer breaking, which is a different fact from the
+      // proposer declining. The reflection never ran, so reading it as "nothing better to offer"
+      // would spend the rest of the budget re-learning that the transport is down.
+      if (result.kind !== "completed") {
+        return costed(failedProposal(reflectionFailure(result)), log)
+      }
       const rewritten = instructionIn(result.output)
+      if (rewritten === undefined) {
+        return costed(
+          failedProposal("the proposer completed without answering through the contract"),
+          log
+        )
+      }
       // A proposer that answers with the instruction it was given has proposed nothing. Evaluating
       // it would spend a minibatch to learn that a candidate ties itself.
-      if (rewritten === undefined || rewritten.trim() === "" || rewritten === target.text) {
-        return costed(undefined, log)
+      if (rewritten.trim() === "" || rewritten === target.text) {
+        return costed(declined(`the proposer left "${target.id}" as it was`), log)
       }
-      return costed(options.apply({ id: target.id, text: rewritten }, context), log)
+      const built = options.apply({ id: target.id, text: rewritten }, context)
+      return costed(
+        built === undefined
+          ? declined(`the rewritten "${target.id}" did not build a candidate`)
+          : proposed(built),
+        log
+      )
     })
 }
 

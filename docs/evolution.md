@@ -129,7 +129,7 @@ This buys four things over a bare model call. The proposal arrives through the [
 
 One instruction changes per iteration. Selection walks them in round robin, which is how the paper selects modules, so every instruction receives updates instead of the budget pouring into whichever one the search touched first. `selectTarget` replaces that policy.
 
-A proposer that answers with the instruction it was given has proposed nothing, and a proposer whose turn fails has proposed nothing. Both record their cost and skip the candidate evaluation.
+A proposer that answers with the instruction it was given has proposed nothing. A proposer whose turn never completed is a different fact, and the mutation says which of the two happened.
 
 ## Evolving More Than Prompts
 
@@ -147,6 +147,18 @@ const mutate = reflectiveMutation({
 
 `apply` returns `undefined` when it cannot build a candidate, which is how a generated construction that fails to compile costs a proposal and no evaluations. Each proposal needs an id that no accepted candidate already holds, so an id derived from content carries the iteration as well.
 
+## What a Mutation Answers
+
+A mutation returns one of three things, because they are three different things for the loop to do next.
+
+- `{ kind: "proposed", candidate }` is a candidate to evaluate on the minibatch.
+- `{ kind: "declined", reason }` is the proposer choosing not to propose. The iteration records the reason and the search continues.
+- `{ kind: "failed", error }` is the proposer not running at all. The loop stops, the iteration records the error, and `GepaResult.failure` carries it.
+
+The last one is why the three are separate. A reflection whose transport is down proposes nothing, and so does a reflection that read the trials and judged the instruction already good. Reading the first as the second spends the rest of the budget re-learning that the transport is still down, and reports it as a search that found nothing. A result that carries `failure` was cut short; one that does not ran to its budget.
+
+Cost rides all three, so a run reports what it paid whether or not it got a candidate for it.
+
 ## The Loop
 
 1. It scores the seed on every Pareto example.
@@ -163,7 +175,7 @@ GEPA records the selected parent on proposals that omit `parent`. Each populatio
 
 `maxMetricCalls` counts candidate-example evaluations. The loop starts an iteration when the remaining budget can score an accepted child on the full Pareto set.
 
-The mutation can return `costed(undefined, mutationLog)` for an invalid construction. This records the mutation cost and prevents candidate evaluation.
+A declined mutation records its cost and evaluates no candidate. A failed one does the same and ends the loop.
 
 ## PopuLoRA Search
 

@@ -22,6 +22,10 @@ export {
   type GepaMutationContext,
   type GepaOptions,
   type GepaPopulationEntry,
+  type GepaDeclined,
+  type GepaProposal,
+  type GepaProposalFailed,
+  type GepaProposed,
   type GepaResult,
   type GepaTrial
 } from "./gepa"
