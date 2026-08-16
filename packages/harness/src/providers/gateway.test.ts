@@ -112,6 +112,8 @@ describe("Vercel AI Gateway", () => {
 
     expect(action.kind).toBe("fail")
     expect(String(action.kind === "fail" ? action.error : "")).toContain("completion-token limit")
+    // The message names the option that moves the ceiling, and that option exists.
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("maxOutputTokens")
     // The tokens were spent, so the turn still costs what it cost.
     expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 4096, costUsd: 0.02 })
   })
@@ -332,6 +334,33 @@ describe("Vercel AI Gateway", () => {
 
     expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "complete" })
     expect(called).toBe(true)
+  })
+
+  // The ceiling on one answer. Without it the gateway's own default for the model decides, and a
+  // default sized for chat cuts off a reflection that has to write out a source file. The provider
+  // that refuses a truncated answer names this option, so the option has to exist.
+  test("sends the output ceiling a caller states, and none when they state none", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        status: 200
+      })
+    }) as unknown as typeof fetch
+    const of = (maxOutputTokens?: number) =>
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        contextWindow: 200_000,
+        fetch: stub,
+        ...(maxOutputTokens === undefined ? {} : { maxOutputTokens })
+      })
+
+    await Effect.runPromise(of(32_000).react(request, "k"))
+    await Effect.runPromise(of().react(request, "k"))
+
+    expect(bodies[0]?.max_tokens).toBe(32_000)
+    // Absent rather than a figure this side chose, so the model's own default decides.
+    expect(bodies[1]).not.toHaveProperty("max_tokens")
   })
 
   // The defect this pins: the provider accepted a timeout, a retry count, and headers, and the

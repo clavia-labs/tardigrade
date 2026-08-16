@@ -18,6 +18,7 @@ export interface CloudflareGatewayInferenceOptions {
   readonly headers?: Readonly<Record<string, string>>
   readonly retries?: number
   readonly timeout?: Duration.Input
+  readonly maxOutputTokens?: number
 }
 
 export const cloudflareGatewayInference = (
