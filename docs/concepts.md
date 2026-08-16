@@ -59,15 +59,15 @@ interface Module<Id, Services, Requires, R> {
 }
 ```
 
-Modules own their configuration and can contribute machines or projections. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
+Modules own their configuration and can contribute events, machines, instructions, nudges, native tools, render bounds, and construction services. Module ids are unique. Compilation rejects ambiguous or incomplete compositions.
 
-Compilation checks what a type cannot see, because a module tuple can be generated. A transition on an event no module declares waits forever, a withdrawal that names no offered tool takes nothing away, and a function carried in `identity` hashes to one constant, so two behaviors would share an agent id. Each is rejected where the tuple is known, before any log exists.
+Construction checks what a type cannot see, because a module tuple can be generated. Compilation rejects transitions on undeclared events, withdrawals of missing tools, duplicate nudge ids, render bounds with multiple owners, invalid render bounds, and functions inside `identity`. Request rendering rejects duplicate tools that become active from dynamic nudges. Each failure is reported before external work starts.
 
-`identity` contributes behavior-affecting configuration to the default agent id. [Agent Identity](evolution.md#agent-identity) explains the identity rules.
+`identity` contributes behavior-affecting configuration to the default agent id. It must contain data because functions have no stable serialized identity. `createAgent({ id })` accepts an explicit source or build identity when the default hash is insufficient.
 
 ## Agent
 
-An agent is behavior with no state: the machines, render plan, projections, and identity that `createAgent` compiles from a module tuple. `agent.definition` is that compiled record.
+An agent is behavior with no state: the machines, render plan, services, and identity that `createAgent` compiles from a module tuple. `agent.definition` is that compiled record.
 
 An agent holds no log and no name. Its `turn` effect asks for storage, an address, and the other [ports](#port) through Effect requirements, so one agent value serves any number of conversations at once and none of them can reach another.
 
@@ -96,8 +96,8 @@ A consumer lists service keys in `requires` and reads implementations with `Cont
 
 Construction services are already-created, synchronous values. Effectful capabilities and resources use Effect requirements and Layers at execution time. This keeps agent construction deterministic and gives resource lifecycles to Effect.
 
-Services connect modules during construction. A module separately contributes observational projections when evolution or inspection should compare a derived value.
+Services connect modules during construction. A projection can be exposed as a service when another module or application needs that derived value.
 
 ## Port
 
-A port is an effectful capability required by a machine, such as event storage, exclusive writing, time, routing, or spill storage. A runtime binds ports for a platform without changing the agent.
+A port is an effectful capability required by a machine, such as event storage, exclusive writing, routing, or session inspection. A runtime binds ports for a platform without changing the agent.

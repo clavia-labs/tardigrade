@@ -163,6 +163,26 @@ export const budgetRequested = (
   at: fields.at
 })
 
+export const budgetGranted = (
+  fields: Stamped & { readonly callId: string; readonly amount: number }
+): Event => ({
+  type: "BudgetGranted",
+  turn: fields.turn,
+  callId: fields.callId,
+  amount: fields.amount,
+  at: fields.at
+})
+
+export const budgetDenied = (
+  fields: Stamped & { readonly callId: string; readonly reason?: string }
+): Event => ({
+  type: "BudgetDenied",
+  turn: fields.turn,
+  callId: fields.callId,
+  ...(fields.reason === undefined ? {} : { reason: fields.reason }),
+  at: fields.at
+})
+
 export const compactionCompleted = (fields: {
   readonly upTo: number
   readonly summary: string

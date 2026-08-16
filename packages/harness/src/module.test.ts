@@ -25,7 +25,7 @@ const lookupInvoice: NativeTool = {
 
 // The checks that serve a module tuple built by generated code, where no compiler ran. Each one
 // names a mistake that is silent at runtime: a transition that waits forever, a withdrawal that
-// takes nothing away, and an identity that hashes two different behaviors to one agent id.
+// takes nothing away, and ambiguous render configuration.
 // A module written inline inside `createAgent` has no `requires` to read, and the tuple's own
 // element constraint is its contextual type, so inference falls back to the constraint rather than
 // to the empty default. Reading that as "requires every service" rejected a module that requires
@@ -102,9 +102,45 @@ describe("composition checks", () => {
     expect(agent.definition.render.nudges).toHaveLength(1)
   })
 
+  test("duplicate nudge ids are rejected", () => {
+    expect(() =>
+      createAgent({
+        modules: [
+          bare({
+            nudges: [
+              { id: "same", when: () => true, text: "one" },
+              { id: "same", when: () => false, text: "two" }
+            ]
+          })
+        ]
+      })
+    ).toThrow('duplicate nudge id "same"')
+  })
+
+  test("only one module can own each render bound", () => {
+    const one = defineModule({
+      id: "one",
+      setup: () => ({ render: { messageTruncateAt: 100 } })
+    })
+    const two = defineModule({
+      id: "two",
+      setup: () => ({ render: { messageTruncateAt: 200 } })
+    })
+    expect(() => createAgent({ modules: [one, two] })).toThrow(
+      "more than one module sets render.messageTruncateAt"
+    )
+  })
+
+  test("render bounds are nonnegative integers", () => {
+    expect(() =>
+      createAgent({
+        modules: [bare({ render: { resultTruncateAt: -1 } })]
+      })
+    ).toThrow("render.resultTruncateAt must be a nonnegative integer")
+  })
+
   // The agent id hashes identity, and the hash writes any function as one constant, so two modules
-  // whose behavior differs only inside a function would share an id and a rollout would reuse the
-  // wrong recording.
+  // whose behavior differs only inside a function would share an id.
   test("a function carried in identity is rejected", () => {
     expect(() =>
       createAgent({
@@ -372,17 +408,7 @@ describe("program identity", () => {
     expect(one.definition.id).not.toBe(two.definition.id)
   })
 
-  test("records an explicit lineage without changing its parent", () => {
-    const parent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
-    const child = createAgent({
-      parent: parent.definition.id,
-      modules: [inference({ system: "Be terse.", contextWindow: 200_000 })]
-    })
-    expect(child.definition.parent).toBe(parent.definition.id)
-    expect(parent.definition.parent).toBeUndefined()
-  })
-
-  test("accepts a source-controlled identity for code-first candidates", () => {
+  test("accepts an explicit source-controlled identity", () => {
     const agent = createAgent({ id: "git:abc123", modules: [inference({ contextWindow: 200_000 })] })
     expect(agent.definition.id).toBe("git:abc123")
   })

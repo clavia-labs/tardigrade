@@ -27,10 +27,15 @@ import { agents, codemode } from "flamecast-core/codemode"
 
 const execute = codemode({ capabilities: [agents({ allow: ["worker/*"] })] })
 
-const lead = createAgent({ modules: defaultPack({ nativeTools: [execute] }) })
+const lead = createAgent({
+  modules: defaultPack({
+    inference: { contextWindow: 200_000 },
+    nativeTools: [execute]
+  })
+})
 ```
 
-The tool's description carries the capability surface, so the model reads what it can call in the place it already looks. A capability declares each method as a signature string, because the reader is a writer of code and the sandbox rejects a bad call at the call site.
+The tool's description carries the capability surface, so the model reads what it can call in the place it already looks. The tool decodes its input schema before it opens the sandbox, so `source` must be a string. A capability declares each method as a signature string, because the reader is a writer of code and the sandbox rejects a bad call at the call site.
 
 ## One Tool, Not a New Alphabet
 

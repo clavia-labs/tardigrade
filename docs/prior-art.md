@@ -1,6 +1,6 @@
 # Prior Art
 
-flamecast-core combines ideas from event-sourced systems, typed effect runtimes, extensible coding agents, and harness optimization research.
+flamecast-core combines ideas from event-sourced systems, typed effect runtimes, and extensible coding agents.
 
 ## Runtime and State
 
@@ -15,13 +15,6 @@ flamecast-core combines ideas from event-sourced systems, typed effect runtimes,
 - [Anthropic's multi-agent research system](https://www.anthropic.com/research/multiagent-systems) demonstrates parallel delegation and coordinator-worker patterns.
 - [Recursive language model harnesses](https://alexzhang13.github.io/blog/2026/harness/) motivate leaving orchestration open to generated code and runtime routing.
 
-## Evolution
-
-- [Don't Train the Model, Evolve the Harness](https://huggingface.co/spaces/joelniklaus/harness-optimization) motivates optimizing the code and control structure around a frozen model.
-- [Let the Model Write the Code](https://www.cmpnd.ai/blog/let-the-model-write-the-code.html) motivates source-level candidates instead of a closed parameter table.
-- [GEPA](https://arxiv.org/abs/2507.19457) motivates reflective search and Pareto selection across tasks.
-- [PopuLoRA](https://arxiv.org/abs/2605.16727v1) motivates separate teacher and student populations, TrueSkill-guided PFSP matchmaking, and periodic population replacement.
-
 ## Multi-Agent Evidence
 
 These sources motivate the delegation design in [Orchestration](orchestration.md).
@@ -31,7 +24,6 @@ These sources motivate the delegation design in [Orchestration](orchestration.md
 - [MAST](https://arxiv.org/abs/2503.13657) catalogs fourteen failure modes across seven frameworks and shows most failures are design failures.
 - [Reliability limits of delegated planning](https://arxiv.org/abs/2603.26993) proves a delegation chain that adds no new information loses to one centralized decision maker.
 - [From Spark to Fire](https://arxiv.org/abs/2603.04474) shows one error injected at a hub reaching every downstream agent, which motivates origin fields and provenance projections.
-- [MANTA](https://arxiv.org/abs/2607.28527) motivates trace auditing and treating topology as a searchable artifact.
 
 ## Compaction
 

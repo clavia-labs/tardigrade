@@ -36,7 +36,15 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): CallResult 
   for (const event of log) {
     if (stampOf(event) !== turn) continue
     if (event.type === "BudgetRequested") pending = event
-    else if (event.type === "BudgetGranted" || event.type === "BudgetDenied") pending = undefined
+    else if (
+      pending !== undefined &&
+      (event.type === "BudgetGranted" || event.type === "BudgetDenied") &&
+      String(event.callId ?? "") === String(pending.callId ?? "") &&
+      (event.type === "BudgetDenied" ||
+        (typeof event.amount === "number" && Number.isFinite(event.amount) && event.amount > 0))
+    ) {
+      pending = undefined
+    }
   }
   if (pending === undefined) return undefined
   return {

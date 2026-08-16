@@ -19,6 +19,43 @@ import { turnHead, turnOf, turnView } from "../turns"
 // A turn with no declared budget takes this, so an unbounded agent is never an accident.
 export const DEFAULT_BUDGET = 40
 
+const natural = (value: unknown): number => {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? Math.floor(value)
+    : 0
+}
+
+const nonnegative = (value: unknown): number => {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? Math.floor(value)
+    : 0
+}
+
+const grantedOf = (view: ReadonlyArray<Event>): number => {
+  let pending: string | undefined
+  let granted = 0
+  for (const event of view) {
+    if (event.type === "BudgetRequested") {
+      pending = String(event.callId ?? "")
+      continue
+    }
+    if (
+      pending === undefined ||
+      String(event.callId ?? "") !== pending ||
+      (event.type !== "BudgetGranted" && event.type !== "BudgetDenied")
+    ) {
+      continue
+    }
+    if (event.type === "BudgetGranted") {
+      const amount = natural(event.amount)
+      if (amount === 0) continue
+      granted += amount
+    }
+    pending = undefined
+  }
+  return granted
+}
+
 // The turn head stores its budget. Each grant increases it. A turn keeps its initial budget after
 // the harness starts another turn.
 export const budgetOf = (
@@ -28,11 +65,10 @@ export const budgetOf = (
   const view = turnView(log)
   const head = turnHead(view)
   const declared = head?.budget
-  const base = typeof declared === "number" && declared > 0 ? Math.floor(declared) : fallback
-  return view.reduce(
-    (total, event) => (event.type === "BudgetGranted" ? total + Number(event.amount ?? 0) : total),
-    base
-  )
+  const base = typeof declared === "number" && Number.isFinite(declared) && declared >= 0
+    ? Math.floor(declared)
+    : nonnegative(fallback)
+  return base + grantedOf(view)
 }
 
 // The work-tool calls in any log span. The exits are not work, so they never draw the budget down.
@@ -54,28 +90,77 @@ export type BudgetPhase = "spending" | "exhausted" | "denied"
 
 export const budgetPhase = (log: ReadonlyArray<Event>): BudgetPhase => {
   const view = turnView(log)
-  for (let index = view.length - 1; index >= 0; index--) {
-    const type = view[index]?.type
-    if (type === "BudgetExhausted") return "exhausted"
-    if (type === "BudgetDenied") return "denied"
-    if (type === "BudgetGranted") return "spending"
-    if (type === "MessageReceived") return "spending"
+  let phase: BudgetPhase = "spending"
+  let pending: string | undefined
+  for (const event of view) {
+    if (event.type === "MessageReceived") phase = "spending"
+    else if (event.type === "BudgetExhausted") phase = "exhausted"
+    else if (event.type === "BudgetRequested") pending = String(event.callId ?? "")
+    else if (
+      pending !== undefined &&
+      String(event.callId ?? "") === pending &&
+      event.type === "BudgetDenied"
+    ) {
+      phase = "denied"
+      pending = undefined
+    } else if (
+      pending !== undefined &&
+      String(event.callId ?? "") === pending &&
+      event.type === "BudgetGranted" &&
+      natural(event.amount) > 0
+    ) {
+      phase = "spending"
+      pending = undefined
+    }
   }
-  return "spending"
+  return phase
 }
 
 // Are the work tools withdrawn for this turn? True once the wall is recorded, until a grant reopens
-// it. This is the one predicate the native tool surface and the dispatch gate both read, so they can not
-// disagree about what the log forbids.
-export const budgetSpent = (log: ReadonlyArray<Event>): boolean => budgetPhase(log) !== "spending"
+// it. A declared zero closes the surface before the first model request.
+export const budgetSpent = (log: ReadonlyArray<Event>): boolean =>
+  budgetPhase(log) !== "spending" || budgetOf(log) === 0
+
+// A work call is refused when its ordinal exceeds the available budget or a denial has closed the
+// turn. This stays separate from `budgetSpent`, because the call that reaches the exact limit is
+// allowed to finish before the surface closes.
+export const budgetRefusesCall = (log: ReadonlyArray<Event>): boolean =>
+  budgetPhase(log) === "denied" || usedOf(log) > budgetOf(log)
 
 // May the model ask for more? Only while the wall is up, only when no denial has closed it, and
 // only when the turn's head made it escalatable. A denied turn answers; it does not ask again.
 export const canRequestBudget = (log: ReadonlyArray<Event>): boolean =>
-  budgetPhase(log) === "exhausted" && escalatableOf(log)
+  escalatableOf(log) &&
+  (budgetPhase(log) === "exhausted" ||
+    (budgetPhase(log) === "spending" && budgetOf(log) === 0))
 
-// The guard. Off by exactly one on purpose: `used > budget` fires on the call after the last
-// allowed one, so the turn gets its budget dispatched and the wall lands behind the last return.
+const decisionAnswersLatestRequest = (log: ReadonlyArray<Event>): boolean => {
+  const decision = log[log.length - 1]
+  if (
+    decision === undefined ||
+    (decision.type !== "BudgetGranted" && decision.type !== "BudgetDenied")
+  ) {
+    return false
+  }
+  if (decision.type === "BudgetGranted" && natural(decision.amount) === 0) return false
+  let pending: string | undefined
+  for (let index = 0; index < log.length - 1; index++) {
+    const event = log[index]
+    if (event?.type === "BudgetRequested") pending = String(event.callId ?? "")
+    else if (
+      pending !== undefined &&
+      String(event?.callId ?? "") === pending &&
+      (event?.type === "BudgetDenied" ||
+        (event?.type === "BudgetGranted" && natural(event.amount) > 0))
+    ) {
+      pending = undefined
+    }
+  }
+  return pending !== undefined && pending === String(decision.callId ?? "")
+}
+
+// The wall lands when the last allowed call is recorded. The handler may finish, and the next
+// model request sees a closed work-tool surface.
 const budgetMachine = (defaultBudget: number) => machine({
   id: "budget",
   view: turnView,
@@ -86,7 +171,7 @@ const budgetMachine = (defaultBudget: number) => machine({
       on: {
         ToolCalled: {
           target: "exhausted",
-          when: (log) => usedOf(log) > budgetOf(log, defaultBudget)
+          when: (log) => usedOf(log) >= budgetOf(log, defaultBudget)
         }
       }
     },
@@ -104,7 +189,14 @@ const budgetMachine = (defaultBudget: number) => machine({
     },
     // The wall holds. A grant raises the ceiling, so `spending` rests again until the spend passes
     // the new one. A denial leaves the wall up and the turn answers.
-    spent: { on: { BudgetGranted: "spending" } }
+    spent: {
+      on: {
+        BudgetGranted: {
+          target: "spending",
+          when: decisionAnswersLatestRequest
+        }
+      }
+    }
   }
 })
 
@@ -141,11 +233,10 @@ const escalationMachine = machine({
           when: isEscalation,
           assign: (_, event) => {
             const args = event.arguments as { reason?: unknown; amount?: unknown } | undefined
-            const asked = Number(args?.amount ?? 0)
             return {
               callId: String(event.callId ?? ""),
               reason: String(args?.reason ?? ""),
-              amount: asked > 0 ? Math.floor(asked) : 0,
+              amount: natural(args?.amount),
               turn: String(event.turn ?? "")
             }
           }
@@ -171,10 +262,12 @@ const escalationMachine = machine({
       on: {
         BudgetGranted: {
           target: "granting",
-          assign: (context, event) => ({ ...context, grant: Number(event.amount ?? 0) })
+          when: decisionAnswersLatestRequest,
+          assign: (context, event) => ({ ...context, grant: natural(event.amount) })
         },
         BudgetDenied: {
           target: "denying",
+          when: decisionAnswersLatestRequest,
           assign: (context, event) => ({ ...context, denial: String(event.reason ?? "") })
         }
       }
@@ -253,6 +346,9 @@ export interface BudgetOptions {
 
 export const budget = (options: BudgetOptions = {}) => {
   const defaultBudget = options.defaultBudget ?? DEFAULT_BUDGET
+  if (!Number.isFinite(defaultBudget) || !Number.isInteger(defaultBudget) || defaultBudget < 0) {
+    throw new Error("defaultBudget must be a nonnegative integer")
+  }
   const wallText = options.wallText ?? WALL_TEXT
   const escalateText = options.escalateText ?? ESCALATE_TEXT
   const requestTool = requestBudgetTool(options.requestDescription ?? REQUEST_DESCRIPTION)

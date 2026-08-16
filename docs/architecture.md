@@ -59,7 +59,7 @@ Effect service keys form the module dependency graph. A producer contributes a t
 
 The compaction module demonstrates the pattern. Inference provides a pure projection of the selected model and [context window](modules.md#the-context-window). Compaction reads that projection with `Context.get` and computes its thresholds from the current window. A model switch changes thresholds without a global registry or hidden module state, and a window the projection does not report yet leaves compaction resting rather than dividing a figure the framework chose.
 
-Pure construction services use Effect `Context` directly. Effectful capabilities use Effect requirements and Layers. Modules separately declare the projections used for observational comparison, so generic service values do not become an accidental serialization format.
+Pure construction services use Effect `Context` directly. Effectful capabilities use Effect requirements and Layers. A service can be a projection when another module needs a typed derived value during construction.
 
 ## Multi-Agent Orchestration
 
@@ -85,4 +85,4 @@ These primitives support supervisors, peer groups, recursive calls, RLM-style de
 
 ## Boundaries
 
-Core owns platform-independent event machinery and ports. Harness owns agent vocabulary and construction. Evolve consumes agents and logs without defining a search algorithm. Runtime packages bind ports. The package table lives in the repository [README](../README.md).
+Core owns platform-independent event machinery and ports. Harness owns agent vocabulary and construction. Codemode adapts model-written scripts to the harness tool boundary. Runtime packages bind ports. Search, evaluation, mutation, and archive policy belong to applications because their correct shape depends on the task. The package table lives in the repository [README](../README.md).

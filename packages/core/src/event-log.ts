@@ -35,7 +35,7 @@ export class EventLog extends Context.Service<EventLog, EventLogStore>()("flamec
 //
 // The derivation is a policy of the harness that owns the event alphabet, so it arrives as a
 // function rather than a table in the core. A core that held the table would have to know
-// `ToolReturned` and `RunFired`, and the core knows no domain.
+// `ToolReturned` and `BudgetGranted`, and the core knows no domain.
 export type DedupKey = (event: Event) => string | undefined
 
 // The key policy the core ships: an event states its own identity in a `key` field. It is the
