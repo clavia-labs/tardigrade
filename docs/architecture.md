@@ -72,6 +72,18 @@ The framework exposes routing primitives and leaves topology in user code or mod
 
 These primitives support supervisors, peer groups, recursive calls, RLM-style decomposition, and generated orchestration modules. The framework does not install a planner, role taxonomy, or fixed conversation protocol. [Orchestration](orchestration.md) covers the design.
 
+## Visible Failure
+
+Work that can not be done correctly fails, and the failure says what to change. The framework repairs no request by guessing, and it decides nothing on an application's behalf that the application is entitled to decide.
+
+A figure the framework can not know is asked for. The context window belongs to the model, so a provider is built with one or built by reading the gateway's catalog, and a provider with neither fails to construct. A number invented here would be wrong for every model it was never measured against, and it would be wrong silently.
+
+A decision that belongs to a deployment stays with the deployment. Which upstream provider serves a model changes cost, latency, and where data travels, so no provider here states a routing preference. When a route breaks a rule the harness depends on, the turn fails and names the option that reaches a route which holds it.
+
+A result shaped like an answer is checked before it is read as one. An answer stopped at its token ceiling is a fragment, and a turn that accepted it would finish on half a sentence. A tool call whose recorded arguments will not parse would reach the tool with none of what the model asked for.
+
+The failure worth this much care is the quiet one. A gateway that receives a request stripped of its Gemini thought signature answers it anyway, by substituting the sentinel that turns the provider's validation off. The turn succeeds, the model answers without the reasoning it already paid for, and nothing in the reply says so. [inference](modules.md#inference) covers what Flamework carries so that substitution never applies, and `bun run smoke:live` is what checks it against live models, because a stub can not.
+
 ## Invariants
 
 1. The event log is append-only.

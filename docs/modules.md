@@ -66,6 +66,8 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
 
+The Messages API refuses a request that states no ceiling, so a provider for it always sends one. The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request, so what is left is the lowest ceiling any Claude model accepts. State `maxOutputTokens` to raise it, and a turn that reaches it says so.
+
 `headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
 
 `openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
