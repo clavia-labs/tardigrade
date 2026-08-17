@@ -36,17 +36,25 @@ export interface VercelGatewayInferenceOptions {
 // One catalog per gateway per process, shared by every provider built against it, because the
 // answer is the same for all of them and none of it is a secret. A read that fails is dropped from
 // the table so the next construction tries again rather than inheriting one bad morning.
-const catalogs = new Map<string, Promise<ReadonlyMap<string, number>>>()
+// The catalog publishes an output ceiling beside the window, and the Messages API requires one in
+// every request, so it is read from the model for the same reason the window is.
+interface Limits {
+  readonly contextWindow: number
+  readonly maxOutputTokens?: number
+}
+
+const catalogs = new Map<string, Promise<ReadonlyMap<string, Limits>>>()
 
 interface CatalogEntry {
   readonly id?: unknown
   readonly context_window?: unknown
+  readonly max_tokens?: unknown
 }
 
 const readCatalog = async (
   baseUrl: string,
   call: typeof fetch
-): Promise<ReadonlyMap<string, number>> => {
+): Promise<ReadonlyMap<string, Limits>> => {
   const response = await call(`${baseUrl}/models`)
   if (!response.ok) {
     throw new Error(`the gateway model catalog returned HTTP ${response.status}`)
@@ -55,13 +63,23 @@ const readCatalog = async (
   return new Map(
     (body.data ?? []).flatMap((entry) =>
       typeof entry.id === "string" && typeof entry.context_window === "number"
-        ? ([[entry.id, entry.context_window]] as ReadonlyArray<readonly [string, number]>)
+        ? ([
+            [
+              entry.id,
+              {
+                contextWindow: entry.context_window,
+                ...(typeof entry.max_tokens === "number"
+                  ? { maxOutputTokens: entry.max_tokens }
+                  : {})
+              }
+            ]
+          ] as ReadonlyArray<readonly [string, Limits]>)
         : []
     )
   )
 }
 
-const catalogOf = (baseUrl: string, call: typeof fetch): Promise<ReadonlyMap<string, number>> => {
+const catalogOf = (baseUrl: string, call: typeof fetch): Promise<ReadonlyMap<string, Limits>> => {
   const held = catalogs.get(baseUrl)
   if (held !== undefined) return held
   const reading = readCatalog(baseUrl, call).catch((error: unknown) => {
@@ -91,36 +109,51 @@ const settings = (options: VercelGatewayInferenceOptions) => {
 // built for it.
 const isAnthropic = (model: string) => model.startsWith("anthropic/")
 
+// The Messages API refuses a request that states no ceiling on the answer, so one is always sent.
+// The model publishes its own, and this is what is left when nobody asked the catalog: a caller who
+// states the context window has said they know the model's limits, and this call makes no network
+// request to check. It is the lowest ceiling any Claude model accepts, because a figure above what
+// the model allows is refused on every request rather than on a long one. A turn that reaches it
+// fails and names `maxOutputTokens`, so a ceiling too low for the work says so.
+const SAFE_OUTPUT_TOKENS = 8192
+
 const build = (
   options: VercelGatewayInferenceOptions,
   model: string,
   baseUrl: string,
   apiKey: Config.Config<Redacted.Redacted<string>>,
-  contextWindow: number
-): InferenceProvider =>
-  isAnthropic(model)
-    ? anthropicMessagesInference({
-        id: `vercel-ai-gateway:${model}`,
-        provider: "vercel-ai-gateway",
-        model,
-        contextWindow,
-        endpoint: `${baseUrl}/messages`,
-        apiKey,
-        ...transport(options),
-        ...(options.effort === undefined ? {} : { effort: options.effort }),
-        ...(options.routes === undefined
-          ? {}
-          : { body: { providerOptions: { gateway: { only: options.routes } } } })
-      })
-    : openAiChatInference({
-        id: `vercel-ai-gateway:${model}`,
-        provider: "vercel-ai-gateway",
-        model,
-        contextWindow,
-        endpoint: `${baseUrl}/chat/completions`,
-        apiKey,
-        ...transport(options)
-      })
+  contextWindow: number,
+  publishedOutputTokens?: number
+): InferenceProvider => {
+  if (isAnthropic(model)) {
+    return anthropicMessagesInference({
+      id: `vercel-ai-gateway:${model}`,
+      provider: "vercel-ai-gateway",
+      model,
+      contextWindow,
+      endpoint: `${baseUrl}/messages`,
+      apiKey,
+      ...transport(options),
+      // The caller's ceiling, then the model's own, then the floor below. The published figure is
+      // why a model that can write 128,000 tokens is allowed to, rather than being held to the one
+      // number that would have been safe for every model at once.
+      maxOutputTokens: options.maxOutputTokens ?? publishedOutputTokens ?? SAFE_OUTPUT_TOKENS,
+      ...(options.effort === undefined ? {} : { effort: options.effort }),
+      ...(options.routes === undefined
+        ? {}
+        : { body: { providerOptions: { gateway: { only: options.routes } } } })
+    })
+  }
+  return openAiChatInference({
+    id: `vercel-ai-gateway:${model}`,
+    provider: "vercel-ai-gateway",
+    model,
+    contextWindow,
+    endpoint: `${baseUrl}/chat/completions`,
+    apiKey,
+    ...transport(options)
+  })
+}
 
 // The key is the one secret here, so it is the one setting read as a `Config`: it is resolved where
 // it is used and stays redacted until the request carries it. The model is read at construction
@@ -162,6 +195,20 @@ export function vercelGatewayInference(
         )
       )
     }
-    return build(options, model, baseUrl, apiKey, published)
+    // A construction that can not settle a required figure throws, and this one runs inside an
+    // effect, so the throw becomes the effect's failure rather than a defect the caller can not
+    // catch beside the other construction failures here.
+    return yield* Effect.try({
+      try: () =>
+        build(
+          options,
+          model,
+          baseUrl,
+          apiKey,
+          published.contextWindow,
+          published.maxOutputTokens
+        ),
+      catch: (error) => (error instanceof Error ? error : new Error(String(error)))
+    })
   })
 }
