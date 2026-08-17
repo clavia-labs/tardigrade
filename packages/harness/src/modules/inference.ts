@@ -136,8 +136,15 @@ const inferMachine = (
             const provider = Option.getOrElse(override, () => selectedInference(selection, log))
             const action = yield* provider.react(modelRequest({ render }, log), key)
             const after = yield* Clock.currentTimeMillis
+            const continuation = action.kind === "fail" ? undefined : action.continuation
             return [
-              modelReturned({ turn, callId: key, usage: usageOf(action.usage), at: after }),
+              modelReturned({
+                turn,
+                callId: key,
+                usage: usageOf(action.usage),
+                ...(continuation === undefined ? {} : { continuation }),
+                at: after
+              }),
               ...(action.kind === "call" && action.text !== undefined && action.text !== ""
                 ? [textReturned({ turn, text: action.text, at: after })]
                 : []),
@@ -233,7 +240,7 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "2",
+    version: "3",
     identity: {
       provider: initial.id,
       state: initial.state([]),

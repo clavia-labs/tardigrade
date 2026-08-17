@@ -1,6 +1,11 @@
 import type { Event } from "@flamecast/core"
 import { checkpointOf } from "./context"
-import type { AgentMessage, ModelRequest, NativeToolSpec } from "./infer"
+import type {
+  AgentMessage,
+  ModelRequest,
+  NativeToolSpec,
+  ProviderContinuation
+} from "./infer"
 import {
   WITHDRAW_ALL,
   type AgentDefinition,
@@ -73,6 +78,7 @@ export const renderMessages = (
 ): ReadonlyArray<AgentMessage> => {
   const messages: Array<AgentMessage> = []
   let pendingText: string | null = null
+  let pendingContinuation: ProviderContinuation | undefined
   for (const event of log) {
     switch (event.type) {
       case "MessageReceived": {
@@ -80,6 +86,14 @@ export const renderMessages = (
           role: "user",
           content: truncate(String(event.text ?? ""), render.messageTruncateAt)
         })
+        break
+      }
+      case "ModelReturned": {
+        const continuation = event.continuation as Partial<ProviderContinuation> | undefined
+        pendingContinuation =
+          typeof continuation?.protocol === "string"
+            ? { protocol: continuation.protocol, value: continuation.value }
+            : undefined
         break
       }
       case "TextReturned": {
@@ -96,9 +110,11 @@ export const renderMessages = (
               name: String(event.name ?? ""),
               arguments: JSON.stringify(event.arguments ?? {})
             }
-          ]
+          ],
+          ...(pendingContinuation === undefined ? {} : { continuation: pendingContinuation })
         })
         pendingText = null
+        pendingContinuation = undefined
         break
       }
       case "ToolReturned": {
@@ -114,11 +130,17 @@ export const renderMessages = (
         break
       }
       case "TurnCompleted": {
-        messages.push({ role: "assistant", content: String(event.output ?? "") })
+        messages.push({
+          role: "assistant",
+          content: String(event.output ?? ""),
+          ...(pendingContinuation === undefined ? {} : { continuation: pendingContinuation })
+        })
+        pendingContinuation = undefined
         break
       }
       case "TurnFailed": {
         messages.push({ role: "assistant", content: `the turn failed: ${String(event.error ?? "")}` })
+        pendingContinuation = undefined
         break
       }
       default:
