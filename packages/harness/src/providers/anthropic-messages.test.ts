@@ -174,6 +174,97 @@ describe("an Anthropic model on the Vercel gateway", () => {
     expect(calls[1]).not.toHaveProperty("output_config")
   })
 
+  // The ceiling belongs to the model, and the catalog publishes it. Holding every model to the one
+  // figure that is safe for all of them would cut a long answer short on the models that could have
+  // finished it, and nothing in the reply would say the ceiling was this side's choice.
+  test("takes the output ceiling the catalog publishes for the model", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (url: string, init: RequestInit) => {
+      if (String(url).endsWith("/models")) {
+        return new Response(
+          JSON.stringify({
+            object: "list",
+            data: [
+              { id: "anthropic/claude-opus-5", context_window: 1_000_000, max_tokens: 128_000 }
+            ]
+          }),
+          { status: 200 }
+        )
+      }
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    const built = await Effect.runPromise(
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "anthropic/claude-opus-5",
+        baseUrl: "https://anthropic-catalog.invalid/v1",
+        fetch: stub
+      })
+    )
+    await Effect.runPromise(built.react(request, "k"))
+
+    expect(bodies[0]?.max_tokens).toBe(128_000)
+  })
+
+  // A caller who states the window has said they know the model's limits, and this call asks the
+  // gateway nothing. What is left is the lowest ceiling any Claude model accepts, because a figure
+  // above what the model allows is refused on every request rather than on a long one.
+  test("falls back to a ceiling every model accepts, and takes the caller's over it", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(provider(stub).react(request, "k"))
+    await Effect.runPromise(provider(stub, { maxOutputTokens: 64_000 }).react(request, "k"))
+
+    expect(bodies[0]?.max_tokens).toBe(8192)
+    expect(bodies[1]?.max_tokens).toBe(64_000)
+  })
+
+  // This API takes a call's input as a value rather than as the string the other format uses. A
+  // recorded string that will not parse is a broken record, and calling the tool with an empty
+  // input in its place would answer a question the model never asked.
+  test("refuses to replay a tool call whose recorded arguments are not JSON", async () => {
+    let called = false
+    const stub = (async () => {
+      called = true
+      return new Response("{}", { status: 200 })
+    }) as unknown as typeof fetch
+
+    const action = await Effect.runPromise(
+      provider(stub).react(
+        {
+          ...request,
+          messages: [
+            { role: "user", content: "Find order 4182." },
+            {
+              role: "assistant",
+              content: null,
+              toolCalls: [{ id: "c-1", name: "lookup_invoice", arguments: '{"orderId":"41' }]
+            },
+            { role: "tool", toolCallId: "c-1", content: "{}" }
+          ]
+        },
+        "k"
+      )
+    )
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("lookup_invoice")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("not JSON")
+    expect(called).toBe(false)
+  })
+
   test("refuses an answer stopped at the output-token limit", async () => {
     const action = await Effect.runPromise(
       provider(

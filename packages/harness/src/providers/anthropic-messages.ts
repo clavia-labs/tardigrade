@@ -24,9 +24,11 @@ export interface AnthropicMessagesOptions {
   // folds that read it agree in every process.
   readonly contextWindow: number
   readonly endpoint: string
-  // The ceiling on one answer. This API requires it, so absent means the default below rather than
-  // the model's own, which is the one way this surface differs from the OpenAI-compatible one.
-  readonly maxOutputTokens?: number
+  // The ceiling on one answer, which this API requires in every request. It is required here for the
+  // same reason the context window is: the number belongs to the model, and a figure invented here
+  // would be wrong for every model it was not measured against. A ceiling set low enough to be safe
+  // everywhere cuts a long answer short on the models that could have finished it.
+  readonly maxOutputTokens: number
   // The key is a `Config` rather than a string, so it is read where it is used and stays redacted on
   // the way there.
   readonly apiKey?: Config.Config<Redacted.Redacted<string>>
@@ -43,11 +45,6 @@ export interface AnthropicMessagesOptions {
   // API takes routing options here, so this file holds no vendor's routing vocabulary.
   readonly body?: Readonly<Record<string, unknown>>
 }
-
-// This API requires a ceiling, so one is chosen. It is low enough for every current Claude model to
-// accept and high enough for an ordinary answer. A turn that needs a long artifact raises it, and a
-// turn that hits it fails loudly rather than returning a fragment.
-const DEFAULT_MAX_OUTPUT_TOKENS = 8192
 
 interface ContentBlock {
   readonly type?: unknown
@@ -99,11 +96,17 @@ const carriedBlocks = (
   return Array.isArray(blocks) ? blocks : []
 }
 
+// This API takes a tool call's input as a value rather than as the string the OpenAI-compatible
+// format uses, so the recorded arguments are read back here. A string that will not parse is a
+// broken record: sending an empty object in its place would call the tool with none of what the
+// model asked for, and the tool would answer the wrong question with no sign anything was lost.
+const BAD_ARGUMENTS = Symbol("arguments that are not JSON")
+
 const parsedArguments = (value: string): unknown => {
   try {
     return JSON.parse(value) as unknown
   } catch {
-    return {}
+    return BAD_ARGUMENTS
   }
 }
 
@@ -163,11 +166,19 @@ const joined = (entries: ReadonlyArray<Entry>): ReadonlyArray<Entry> =>
     return all
   }, [])
 
-const messagesOf = (request: ModelRequest) =>
-  joined(request.messages.flatMap((one) => {
+const messagesOf = (request: ModelRequest) => {
+  const entries = request.messages.flatMap((one) => {
     const entry = entryOf(one)
     return entry === undefined ? [] : [entry]
-  }))
+  })
+  const broken = entries
+    .flatMap((entry) => entry.content)
+    .find((block) => (block as { readonly input?: unknown }).input === BAD_ARGUMENTS)
+  if (broken !== undefined) {
+    return { name: String((broken as { readonly name?: unknown }).name ?? "") }
+  }
+  return { messages: joined(entries) }
+}
 
 const usageOf = (usage: MessagesResponse["usage"]): Usage => {
   const count = (value: unknown) => (typeof value === "number" ? value : 0)
@@ -277,11 +288,21 @@ const reacted = (
   key: string,
   secret: string
 ) => {
+  const converted = messagesOf(request)
+  if (converted.messages === undefined) {
+    return Effect.succeed({
+      kind: "fail",
+      error:
+        `the recorded arguments for the ${converted.name} call are not JSON, so this turn can not ` +
+        "be replayed. The log holds what the model asked for, and sending an empty input in its " +
+        "place would call the tool with none of it."
+    } satisfies Action)
+  }
   const body = JSON.stringify({
     model: options.model,
-    max_tokens: options.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+    max_tokens: options.maxOutputTokens,
     ...(request.system === "" ? {} : { system: request.system }),
-    messages: messagesOf(request),
+    messages: converted.messages,
     ...(request.tools.length === 0
       ? {}
       : {
