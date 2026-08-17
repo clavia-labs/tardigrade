@@ -76,7 +76,11 @@ The OpenAI-compatible adapter preserves conversation extension fields from assis
 
 The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now. This is what keeps the round trip free of a per-provider table.
 
-A live check against the Vercel AI Gateway on 2026-08-16 measured what each family returns on this surface, and what a second turn does when the fields go missing. Gemini carries its state in the tool call, as a thought signature. Claude Sonnet 4.6 and DeepSeek carry it in the reasoning details. GPT 5.6 Sol and Claude Opus 5 return no reasoning state here, because extended thinking on those models needs the Anthropic and OpenAI surfaces that this adapter does not speak.
+A live check against the Vercel AI Gateway on 2026-08-17 measured what each family returns on this surface, and what a second turn does when the fields go missing. Gemini carries its state in the tool call, as a thought signature. Claude Sonnet 4.6 and DeepSeek carry it in the reasoning details, as text with a signature. GPT 5.6 Sol carries it in the reasoning details too, as a summary beside an encrypted block. The adapter preserves all of these, because it copies fields rather than names.
+
+A turn that needs no thought produces no state, so a model looks stateless until the question earns the reasoning. Measure this with a question hard enough to spend reasoning tokens, and read the token counters rather than the presence of a field.
+
+Claude Opus 5 is the exception on this surface. It spends thinking tokens here and returns no reasoning details with them, so its thoughts end with the turn that made them and no harness can carry them. The same model on the Anthropic Messages surface returns thinking blocks with signatures, so the state exists and this wire format is what drops it. A session that needs Opus 5 to build on its own reasoning needs an adapter for that surface, which is the case the protocol tag on a continuation is there to allow.
 
 A caller that drops the state gets an answer rather than an error, which is what makes the loss quiet. Google rejects a function call that arrives with no thought signature, and names the missing field in a 400. The gateway keeps that rejection away from the caller by sending a sentinel value in place of the signature, which turns the validation off. The request then succeeds, and the model answers the turn without the thoughts it had already paid for.
 
