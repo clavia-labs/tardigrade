@@ -74,6 +74,10 @@ Provider continuation data belongs to the provider adapter. The inference module
 
 The OpenAI-compatible adapter preserves conversation extension fields from assistant messages and tool calls. These fields include Gemini thought signatures and encrypted reasoning details. Flamework owns this round trip for applications.
 
+The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now. This is what keeps the round trip free of a per-provider table.
+
+A live check against the Vercel AI Gateway on 2026-08-16 measured what each family returns on this surface. Gemini returns a thought signature on the tool call, and reasoning text details at high effort. Claude Sonnet 4.6 and DeepSeek return reasoning text details. GPT 5.6 Sol and Claude Opus 5 return no reasoning state here, because extended thinking on those models needs the Anthropic and OpenAI surfaces that this adapter does not speak. A second turn succeeded with the preserved fields and also without them, so the gateway accepts a caller that drops them today. The adapter preserves them because the provider owns the meaning of that state, and a gateway that begins to validate it finds it present.
+
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped.
