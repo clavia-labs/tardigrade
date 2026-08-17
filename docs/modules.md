@@ -76,7 +76,13 @@ The OpenAI-compatible adapter preserves conversation extension fields from assis
 
 The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now. This is what keeps the round trip free of a per-provider table.
 
-A live check against the Vercel AI Gateway on 2026-08-16 measured what each family returns on this surface. Gemini returns a thought signature on the tool call, and reasoning text details at high effort. Claude Sonnet 4.6 and DeepSeek return reasoning text details. GPT 5.6 Sol and Claude Opus 5 return no reasoning state here, because extended thinking on those models needs the Anthropic and OpenAI surfaces that this adapter does not speak. A second turn succeeded with the preserved fields and also without them, so the gateway accepts a caller that drops them today. The adapter preserves them because the provider owns the meaning of that state, and a gateway that begins to validate it finds it present.
+A live check against the Vercel AI Gateway on 2026-08-16 measured what each family returns on this surface, and what a second turn does when the fields go missing. Gemini carries its state in the tool call, as a thought signature. Claude Sonnet 4.6 and DeepSeek carry it in the reasoning details. GPT 5.6 Sol and Claude Opus 5 return no reasoning state here, because extended thinking on those models needs the Anthropic and OpenAI surfaces that this adapter does not speak.
+
+A caller that drops the state gets an answer rather than an error, which is what makes the loss quiet. Google rejects a function call that arrives with no thought signature. The gateway keeps that rejection away from the caller by sending a documented sentinel value in place of the signature, which turns the validation off. The request then succeeds, and the model answers the turn without the thoughts it had already paid for.
+
+The measurement shows the difference upstream. With the signature, Google counted 333 prompt tokens and resumed thinking. With the signature dropped, it counted 92 and started the turn cold. A request that sent the sentinel by hand matched the dropped one exactly, which is how the substitution shows itself from outside. Anthropic behaves the same way through its reasoning details, at 707 prompt tokens against 673.
+
+Each family puts its state in a different field, so the adapter preserves fields rather than a list of names. This is what lets one round trip serve a model whose state lives in the tool call and a model whose state lives beside the message.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
