@@ -18,6 +18,7 @@ export {
   type NativeTool,
   type NativeToolContext,
   type NativeToolSpec,
+  type ProviderContinuation,
   type Usage
 } from "./infer"
 export {

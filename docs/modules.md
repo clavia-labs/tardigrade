@@ -70,6 +70,10 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
 
+Provider continuation data belongs to the provider adapter. The inference module records this opaque value on `ModelReturned`, and the renderer restores it on the related assistant message. Each value names its wire protocol. An incompatible adapter ignores the value.
+
+The OpenAI-compatible adapter preserves conversation extension fields from assistant messages and tool calls. These fields include Gemini thought signatures and encrypted reasoning details. Flamework owns this round trip for applications.
+
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped.

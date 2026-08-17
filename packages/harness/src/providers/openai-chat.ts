@@ -6,8 +6,11 @@ import type {
   InferenceProvider,
   ModelRequest,
   NativeToolSpec,
+  ProviderContinuation,
   Usage
 } from "../infer"
+
+const OPENAI_CHAT_PROTOCOL = "openai-chat-completions/v1"
 
 export interface OpenAiChatOptions {
   readonly id: string
@@ -57,6 +60,13 @@ export const transport = (options: TransportOptions) => ({
 interface ChatToolCall {
   readonly id?: unknown
   readonly function?: { readonly name?: unknown; readonly arguments?: unknown }
+  readonly [key: string]: unknown
+}
+
+interface ChatMessage {
+  readonly content?: unknown
+  readonly tool_calls?: ReadonlyArray<ChatToolCall>
+  readonly [key: string]: unknown
 }
 
 interface ChatResponse {
@@ -64,10 +74,7 @@ interface ChatResponse {
     // Why the model stopped. A gateway that ran out of completion tokens says so here and returns
     // the fragment it had, which is the one failure that looks exactly like an answer.
     readonly finish_reason?: unknown
-    readonly message?: {
-      readonly content?: unknown
-      readonly tool_calls?: ReadonlyArray<ChatToolCall>
-    }
+    readonly message?: ChatMessage
   }>
   readonly usage?: {
     readonly prompt_tokens?: unknown
@@ -87,20 +94,57 @@ const tool = (spec: NativeToolSpec) => ({
   }
 })
 
-const message = (one: AgentMessage) =>
-  one.role === "assistant" && one.toolCalls !== undefined
-    ? {
-        role: one.role,
-        content: one.content,
-        tool_calls: one.toolCalls.map((call) => ({
-          id: call.id,
-          type: "function",
-          function: { name: call.name, arguments: call.arguments }
-        }))
-      }
-    : one.role === "tool"
-      ? { role: one.role, content: one.content, tool_call_id: one.toolCallId }
-      : { role: one.role, content: one.content }
+interface OpenAiContinuation {
+  readonly message?: Readonly<Record<string, unknown>>
+  readonly toolCall?: Readonly<Record<string, unknown>>
+}
+
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined
+
+const extrasOf = (
+  source: Readonly<Record<string, unknown>>,
+  reserved: ReadonlySet<string>
+): Readonly<Record<string, unknown>> =>
+  Object.fromEntries(Object.entries(source).filter(([name]) => !reserved.has(name)))
+
+const openAiContinuationOf = (
+  continuation: ProviderContinuation | undefined
+): OpenAiContinuation => {
+  if (continuation?.protocol !== OPENAI_CHAT_PROTOCOL) return {}
+  const value = recordOf(continuation.value)
+  if (value === undefined) return {}
+  const message = recordOf(value.message)
+  const toolCall = recordOf(value.toolCall)
+  return {
+    ...(message === undefined ? {} : { message }),
+    ...(toolCall === undefined ? {} : { toolCall })
+  }
+}
+
+const message = (one: AgentMessage) => {
+  if (one.role === "assistant") {
+    const continuation = openAiContinuationOf(one.continuation)
+    return one.toolCalls === undefined
+      ? { ...continuation.message, role: one.role, content: one.content }
+      : {
+          ...continuation.message,
+          role: one.role,
+          content: one.content,
+          tool_calls: one.toolCalls.map((call) => ({
+            ...continuation.toolCall,
+            id: call.id,
+            type: "function",
+            function: { name: call.name, arguments: call.arguments }
+          }))
+        }
+  }
+  return one.role === "tool"
+    ? { role: one.role, content: one.content, tool_call_id: one.toolCallId }
+    : { role: one.role, content: one.content }
+}
 
 const usageOf = (usage: ChatResponse["usage"]): Usage => ({
   promptTokens: typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : 0,
@@ -119,6 +163,30 @@ const argumentsOf = (value: unknown): unknown => {
     return JSON.parse(value) as unknown
   } catch {
     return value
+  }
+}
+
+const continuationOf = (
+  answer: ChatMessage,
+  call: ChatToolCall | undefined
+): ProviderContinuation | undefined => {
+  // Provider metadata describes routing and billing after the call. Conversation input excludes
+  // it. Every other extension stays with the assistant message, where reasoning transports place
+  // the state that a later request must return.
+  const message = extrasOf(
+    answer,
+    new Set(["role", "content", "tool_calls", "provider_metadata", "providerMetadata"])
+  )
+  const toolCall = call === undefined
+    ? {}
+    : extrasOf(call, new Set(["id", "type", "function"]))
+  if (Object.keys(message).length === 0 && Object.keys(toolCall).length === 0) return undefined
+  return {
+    protocol: OPENAI_CHAT_PROTOCOL,
+    value: {
+      ...(Object.keys(message).length === 0 ? {} : { message }),
+      ...(Object.keys(toolCall).length === 0 ? {} : { toolCall })
+    }
   }
 }
 
@@ -157,18 +225,22 @@ const actionOf = (body: ChatResponse): Action => {
     if (typeof name !== "string" || typeof id !== "string") {
       return { kind: "fail", error: "the inference gateway returned a malformed tool call", usage }
     }
+    const continuation = continuationOf(answer, call)
     return {
       kind: "call",
       callId: id,
       name,
       arguments: argumentsOf(call.function?.arguments),
       text: typeof answer.content === "string" ? answer.content : undefined,
+      ...(continuation === undefined ? {} : { continuation }),
       usage
     }
   }
+  const continuation = continuationOf(answer, undefined)
   return {
     kind: "complete",
     output: typeof answer.content === "string" ? answer.content : "",
+    ...(continuation === undefined ? {} : { continuation }),
     usage
   }
 }

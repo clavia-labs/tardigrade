@@ -26,11 +26,20 @@ export interface NativeToolCall {
   readonly arguments: string
 }
 
+// A provider can return opaque data that its next request must carry. Gemini thought signatures
+// are one example. The protocol names the adapter that can read the value, so a later provider
+// switch ignores data from an incompatible wire format.
+export interface ProviderContinuation {
+  readonly protocol: string
+  readonly value: unknown
+}
+
 export interface AgentMessage {
   readonly role: "system" | "user" | "assistant" | "tool"
   readonly content: string | null
   readonly toolCalls?: ReadonlyArray<NativeToolCall>
   readonly toolCallId?: string
+  readonly continuation?: ProviderContinuation
 }
 
 export interface ModelRequest {
@@ -53,8 +62,14 @@ export type Action =
       readonly arguments: unknown
       readonly text?: string | undefined
       readonly usage?: Usage | undefined
+      readonly continuation?: ProviderContinuation | undefined
     }
-  | { readonly kind: "complete"; readonly output: string; readonly usage?: Usage | undefined }
+  | {
+      readonly kind: "complete"
+      readonly output: string
+      readonly usage?: Usage | undefined
+      readonly continuation?: ProviderContinuation | undefined
+    }
   | { readonly kind: "fail"; readonly error: string; readonly usage?: Usage | undefined }
 
 export interface InferenceState {
