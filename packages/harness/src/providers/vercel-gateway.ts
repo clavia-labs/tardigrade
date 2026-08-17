@@ -1,5 +1,6 @@
 import { Config, Duration, Effect, Redacted } from "effect"
 import type { InferenceProvider } from "../infer"
+import { anthropicMessagesInference, type ThinkingEffort } from "./anthropic-messages"
 import { environment, environmentNumber } from "./environment"
 import { openAiChatInference, transport } from "./openai-chat"
 
@@ -18,6 +19,12 @@ export interface VercelGatewayInferenceOptions {
   readonly retries?: number
   readonly timeout?: Duration.Input
   readonly maxOutputTokens?: number
+  // How much an Anthropic model thinks before it answers. Ignored by a model on the
+  // OpenAI-compatible surface, which takes its reasoning settings from the gateway's own default.
+  readonly effort?: ThinkingEffort
+  // Which upstream providers may serve an Anthropic model. The default names the two that honour a
+  // request for one tool call at a time. See `ANTHROPIC_ROUTES`.
+  readonly routes?: ReadonlyArray<string>
 }
 
 // What each model accepts, as the gateway publishes it. The context window belongs to the model, so
@@ -75,6 +82,18 @@ const settings = (options: VercelGatewayInferenceOptions) => {
   }
 }
 
+// An Anthropic model reaches this gateway through two surfaces, and they are not equivalent. The
+// OpenAI-compatible one returns no thinking state for the current models, so a turn's reasoning ends
+// with the turn that made it. The Messages surface returns thinking blocks with their signatures, so
+// the model builds on what it already worked out. A model is asked for on the surface its maker
+// built for it.
+const isAnthropic = (model: string) => model.startsWith("anthropic/")
+
+// The routes that honour a request for one tool call at a time. Bedrock answers with several calls
+// whatever the request asks, and this harness runs one at a time, so a turn routed there fails on
+// the model's second call rather than on anything the caller did. `routes` names others.
+const ANTHROPIC_ROUTES: ReadonlyArray<string> = ["anthropic", "vertex"]
+
 const build = (
   options: VercelGatewayInferenceOptions,
   model: string,
@@ -82,15 +101,27 @@ const build = (
   apiKey: Config.Config<Redacted.Redacted<string>>,
   contextWindow: number
 ): InferenceProvider =>
-  openAiChatInference({
-    id: `vercel-ai-gateway:${model}`,
-    provider: "vercel-ai-gateway",
-    model,
-    contextWindow,
-    endpoint: `${baseUrl}/chat/completions`,
-    apiKey,
-    ...transport(options)
-  })
+  isAnthropic(model)
+    ? anthropicMessagesInference({
+        id: `vercel-ai-gateway:${model}`,
+        provider: "vercel-ai-gateway",
+        model,
+        contextWindow,
+        endpoint: `${baseUrl}/messages`,
+        apiKey,
+        ...transport(options),
+        ...(options.effort === undefined ? {} : { effort: options.effort }),
+        body: { providerOptions: { gateway: { only: options.routes ?? ANTHROPIC_ROUTES } } }
+      })
+    : openAiChatInference({
+        id: `vercel-ai-gateway:${model}`,
+        provider: "vercel-ai-gateway",
+        model,
+        contextWindow,
+        endpoint: `${baseUrl}/chat/completions`,
+        apiKey,
+        ...transport(options)
+      })
 
 // The key is the one secret here, so it is the one setting read as a `Config`: it is resolved where
 // it is used and stays redacted until the request carries it. The model is read at construction

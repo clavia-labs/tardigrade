@@ -7,6 +7,7 @@ import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { inference } from "../modules/inference"
 import { nativeTools } from "../modules/native-tools"
+import { cloudflareGatewayInference } from "./cloudflare-gateway"
 import { vercelGatewayInference } from "./vercel-gateway"
 
 const asRecord = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
@@ -155,5 +156,66 @@ describe("provider continuation", () => {
     const restoredGoogle = asRecord(restoredExtra?.google)
     expect(durable).toEqual(result.log)
     expect(restoredGoogle?.thought_signature).toBe(signature)
+  })
+
+  // Every gateway in this package is built from the one OpenAI-compatible provider, so the round
+  // trip belongs to all of them. This pins that for the second gateway, because a fix that lived in
+  // a gateway rather than in the provider would leave this one carrying nothing.
+  test("travels the Cloudflare gateway too, because the provider is the same", async () => {
+    const bodies: Array<Readonly<Record<string, unknown>>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(asRecord(JSON.parse(String(init.body))) ?? {})
+      if (bodies.length === 1) {
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  role: "assistant",
+                  content: null,
+                  reasoning_details: [{ type: "reasoning.encrypted", data: "cloudflare-state" }],
+                  tool_calls: [
+                    {
+                      id: "call-1",
+                      type: "function",
+                      function: { name: "lookup_invoice", arguments: "{}" }
+                    }
+                  ]
+                }
+              }
+            ]
+          }),
+          { status: 200 }
+        )
+      }
+      return new Response(
+        JSON.stringify({ choices: [{ message: { role: "assistant", content: "Invoice INV-4182." } }] }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    const provider = cloudflareGatewayInference({
+      accountId: "account-1",
+      apiToken: "cloudflare-token",
+      model: "google/gemini-3.1-pro-preview",
+      contextWindow: 1_000_000,
+      retries: 0,
+      fetch: stub
+    })
+    const agent = createAgent({ modules: [inference({ provider }), nativeTools([tool])] })
+    const outcome = await Effect.runPromise(
+      Effect.provide(
+        agent.turn({ id: "m-1", text: "Find invoice 4182." }),
+        InMemoryRuntime({ keyOf })
+      )
+    )
+
+    expect(outcome).toMatchObject({ kind: "completed", output: "Invoice INV-4182." })
+    const continued = asRecords(bodies[1]?.messages).find(
+      (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
+    )
+    expect(continued?.reasoning_details).toEqual([
+      { type: "reasoning.encrypted", data: "cloudflare-state" }
+    ])
   })
 })

@@ -1,5 +1,5 @@
-import { Config, Duration, Effect, Redacted, Result, Schedule } from "effect"
-import { estimateTextTokens } from "../context"
+import { Config, Duration, Effect, Redacted, Result } from "effect"
+import { overWindow, sent } from "./http"
 import type {
   Action,
   AgentMessage,
@@ -245,55 +245,6 @@ const actionOf = (body: ChatResponse): Action => {
   }
 }
 
-// The one maximum a provider states: how large a request the model accepts. It is a bound on the
-// whole request rather than on any one message, so this is where it is checked, and nothing upstream
-// invents a per-message limit to approximate it.
-//
-// A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
-// words. Refusing here spends nothing and answers in the harness's own words, naming both sizes and
-// the model they belong to.
-const overWindow = (
-  body: string,
-  provider: string,
-  model: string,
-  window: number
-): Action | undefined => {
-  const estimate = estimateTextTokens(body)
-  if (estimate <= window) return undefined
-  return {
-    kind: "fail",
-    error:
-      `this request is at least ${estimate} tokens and ${provider} reports a context window of ` +
-      `${window} tokens for ${model}, so the model can not read it. Pass contextWindow to override ` +
-      "what the model accepts, bound what reaches the model with messageTruncateAt and " +
-      "resultTruncateAt, or send less."
-  }
-}
-
-// A failure worth another attempt: the connection broke, or the gateway is busy or briefly unwell.
-// A refusal is not one of these. A request refused for a bad key or a malformed body is refused the
-// same way every time, so retrying it spends money and time to learn nothing.
-interface Transient {
-  readonly reason: string
-}
-
-const RETRYABLE = new Set([408, 409, 425, 429])
-
-const isTransient = (status: number) => status >= 500 || RETRYABLE.has(status)
-
-const DEFAULT_RETRIES = 2
-
-// How long one attempt may take before this side stops waiting. It is a guard against a socket that
-// has gone quiet, so it sits well outside the range where real answers land: a reasoning model
-// thinking for two minutes is working, and a connection silent for ten is hung. A bound inside that
-// range discards answers that were on their way, which is the failure this number is set to avoid
-// rather than the one it is set to cause. `timeout` moves it.
-const DEFAULT_TIMEOUT: Duration.Input = "10 minutes"
-
-// Waiting longer each time is what makes a retry useful to a gateway that is shedding load, and the
-// jitter is what stops a fleet of agents that failed together from returning together.
-const backoff = Schedule.exponential("500 millis").pipe(Schedule.jittered)
-
 export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvider => ({
   id: options.id,
   // A constant, so the projection folds the same in every process and a replay reaches the verdict
@@ -324,14 +275,12 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
     })
 })
 
-// The request, its retries, and the one outcome they settle on.
 const reacted = (
   options: OpenAiChatOptions,
   request: ModelRequest,
   key: string,
   authorization: string
 ) => {
-  const call = options.fetch ?? fetch
   const body = JSON.stringify({
     model: options.model,
     messages: [
@@ -345,70 +294,23 @@ const reacted = (
       ? {}
       : { tools: request.tools.map(tool), parallel_tool_calls: false })
   })
-  const failed = (reason: string): Transient => ({ reason })
   const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
   if (refusal !== undefined) return Effect.succeed(refusal)
-  const attempt = Effect.gen(function* () {
-    const response = yield* Effect.tryPromise({
-      // The signal is what makes an interruption reach the gateway. Without it, a timed-out attempt
-      // stops being awaited and keeps running: the model finishes, the provider bills for it, and
-      // the retry asks for the same completion again. Every attempt after the first was then paid
-      // for twice for a turn that recorded a failure.
-      try: (signal) =>
-        call(options.endpoint, {
-          method: "POST",
-          headers: {
-            authorization,
-            "content-type": "application/json",
-            // Every attempt carries the same key, so a retry after a reply this side never saw is
-            // the same call to the gateway rather than a second one.
-            "idempotency-key": key,
-            ...options.headers
-          },
-          body,
-          signal
-        }),
-      catch: (error) => failed(error instanceof Error ? error.message : String(error))
-    })
-    const text = yield* Effect.tryPromise({
-      try: () => response.text(),
-      catch: (error) => failed(error instanceof Error ? error.message : String(error))
-    })
-    if (!response.ok) {
-      const reason = `${options.provider} returned HTTP ${response.status}: ${text}`
-      if (isTransient(response.status)) return yield* Effect.fail(failed(reason))
-      return { kind: "fail", error: reason } satisfies Action
-    }
-    try {
-      return actionOf(JSON.parse(text) as ChatResponse)
-    } catch {
-      return {
-        kind: "fail",
-        error: `${options.provider} returned a body that is not JSON: ${text}`
-      } satisfies Action
-    }
+  return sent({
+    call: options.fetch ?? fetch,
+    endpoint: options.endpoint,
+    headers: {
+      authorization,
+      "content-type": "application/json",
+      // Every attempt carries the same key, so a retry after a reply this side never saw is the
+      // same call to the gateway rather than a second one.
+      "idempotency-key": key,
+      ...options.headers
+    },
+    body,
+    provider: options.provider,
+    ...(options.retries === undefined ? {} : { retries: options.retries }),
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    read: (parsed) => actionOf(parsed as ChatResponse)
   })
-  return attempt.pipe(
-    // The bound is on one attempt rather than the whole retry, so a gateway that accepts a
-    // request and then goes quiet costs one timeout rather than the turn.
-    Effect.timeoutOrElse({
-      duration: options.timeout ?? DEFAULT_TIMEOUT,
-      orElse: () => Effect.fail(failed("no response within the request timeout"))
-    }),
-    Effect.retry({ schedule: backoff, times: options.retries ?? DEFAULT_RETRIES }),
-    // A failure that outlived its retries becomes the turn's evidence. The inference module reads
-    // it, and the log carries what happened.
-    Effect.catch((failure) =>
-      Effect.succeed({
-        kind: "fail",
-        error: `${options.provider} request failed: ${failure.reason}`
-      } satisfies Action)
-    ),
-    Effect.catchDefect((defect) =>
-      Effect.succeed({
-        kind: "fail",
-        error: `${options.provider} request failed: ${String(defect)}`
-      } satisfies Action)
-    )
-  )
 }

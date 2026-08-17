@@ -1,0 +1,321 @@
+import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
+import type { Event } from "@flamecast/core"
+import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
+import type { ModelRequest, NativeTool } from "../infer"
+import { keyOf } from "../keys"
+import { createAgent } from "../module"
+import { inference } from "../modules/inference"
+import { nativeTools } from "../modules/native-tools"
+import { vercelGatewayInference } from "./vercel-gateway"
+
+const asRecord = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined
+
+const asRecords = (value: unknown): ReadonlyArray<Readonly<Record<string, unknown>>> =>
+  Array.isArray(value)
+    ? value.flatMap((item) => {
+        const record = asRecord(item)
+        return record === undefined ? [] : [record]
+      })
+    : []
+
+const request: ModelRequest = {
+  system: "You are a support agent.",
+  messages: [
+    { role: "user", content: "Find order 4182." },
+    { role: "system", content: "Cite the invoice id." }
+  ],
+  tools: [
+    {
+      name: "lookup_invoice",
+      description: "Look up one invoice.",
+      inputSchema: { type: "object" }
+    }
+  ]
+}
+
+const provider = (stub: typeof fetch, options: Record<string, unknown> = {}) =>
+  vercelGatewayInference({
+    apiKey: "vercel-key",
+    model: "anthropic/claude-opus-5",
+    contextWindow: 200_000,
+    fetch: stub,
+    ...options
+  })
+
+const replied = (body: unknown) =>
+  (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+
+describe("an Anthropic model on the Vercel gateway", () => {
+  // The surface is chosen by the model rather than by the caller, because the caller can not be
+  // expected to know which of a gateway's surfaces carries a given model's thinking state.
+  test("is asked on the Messages surface, in the shape that API defines", async () => {
+    const calls: Array<{ readonly url: string; readonly headers: Headers; readonly body: Record<string, unknown> }> = []
+    const stub = (async (url: string, init: RequestInit) => {
+      calls.push({
+        url,
+        headers: new Headers(init.headers),
+        body: JSON.parse(String(init.body)) as Record<string, unknown>
+      })
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "Invoice INV-4182." }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 8, output_tokens: 3 }
+        }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    expect(await Effect.runPromise(provider(stub).react(request, "turn/infer/0"))).toEqual({
+      kind: "complete",
+      output: "Invoice INV-4182.",
+      usage: { promptTokens: 8, completionTokens: 3, costUsd: 0 }
+    })
+    expect(calls[0]?.url).toBe("https://ai-gateway.vercel.sh/v1/messages")
+    expect(calls[0]?.headers.get("anthropic-version")).toBe("2023-06-01")
+    expect(calls[0]?.headers.get("idempotency-key")).toBe("turn/infer/0")
+    expect(calls[0]?.body).toMatchObject({
+      model: "anthropic/claude-opus-5",
+      system: "You are a support agent.",
+      tools: [
+        { name: "lookup_invoice", description: "Look up one invoice.", input_schema: { type: "object" } }
+      ],
+      tool_choice: { type: "auto", disable_parallel_tool_use: true }
+    })
+    // This API requires a ceiling, so one is always sent.
+    expect(typeof calls[0]?.body.max_tokens).toBe("number")
+  })
+
+  // Roles alternate on this API, and the renderer emits a nudge as a message of its own beside the
+  // user turn it belongs to. Sending both as they came would be rejected.
+  test("joins the neighbouring messages that share a role", async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(provider(stub).react(request, "k"))
+
+    const messages = asRecords(calls[0]?.messages)
+    expect(messages).toHaveLength(1)
+    expect(messages[0]?.role).toBe("user")
+    expect(asRecords(messages[0]?.content).map((block) => block.text)).toEqual([
+      "Find order 4182.",
+      "Cite the invoice id."
+    ])
+  })
+
+  // Bedrock answers with several calls whatever the request asks. The harness runs one at a time,
+  // so the routes that honour the request are the ones this gateway is asked to use.
+  test("names the routes that honour one tool call at a time, and takes an override", async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(provider(stub).react(request, "k"))
+    await Effect.runPromise(provider(stub, { routes: ["bedrock"] }).react(request, "k"))
+
+    expect(calls[0]?.providerOptions).toEqual({ gateway: { only: ["anthropic", "vertex"] } })
+    expect(calls[1]?.providerOptions).toEqual({ gateway: { only: ["bedrock"] } })
+  })
+
+  test("asks for the thinking effort a caller states", async () => {
+    const calls: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      calls.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(
+        JSON.stringify({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn" }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(provider(stub, { effort: "high" }).react(request, "k"))
+    await Effect.runPromise(provider(stub).react(request, "k"))
+
+    expect(calls[0]?.output_config).toEqual({ effort: "high" })
+    // Absent leaves the model's own default, which already thinks on the current models.
+    expect(calls[1]).not.toHaveProperty("output_config")
+  })
+
+  test("refuses an answer stopped at the output-token limit", async () => {
+    const action = await Effect.runPromise(
+      provider(
+        replied({
+          content: [{ type: "text", text: "The lease was signed on 29 August and the" }],
+          stop_reason: "max_tokens",
+          usage: { input_tokens: 900, output_tokens: 8192 }
+        })
+      ).react(request, "k")
+    )
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("output-token limit")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("maxOutputTokens")
+    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 8192, costUsd: 0 })
+  })
+
+  test("refuses multiple tool calls instead of dropping all but the first", async () => {
+    const action = await Effect.runPromise(
+      provider(
+        replied({
+          content: [
+            { type: "tool_use", id: "c-1", name: "lookup_invoice", input: {} },
+            { type: "tool_use", id: "c-2", name: "lookup_invoice", input: {} }
+          ],
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 4 }
+        })
+      ).react(request, "k")
+    )
+
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("multiple tool calls")
+  })
+
+  // A cached read is a read of the same conversation, so a turn served from cache reports the
+  // context it actually carried rather than the part that missed.
+  test("counts what the model read, cached or not", async () => {
+    const action = await Effect.runPromise(
+      provider(
+        replied({
+          content: [{ type: "text", text: "ok" }],
+          stop_reason: "end_turn",
+          usage: {
+            input_tokens: 12,
+            output_tokens: 5,
+            cache_read_input_tokens: 400,
+            cache_creation_input_tokens: 100
+          }
+        })
+      ).react(request, "k")
+    )
+
+    expect(action.usage).toEqual({ promptTokens: 512, completionTokens: 5, costUsd: 0 })
+  })
+})
+
+const tool: NativeTool = {
+  spec: {
+    name: "lookup_invoice",
+    description: "Look up one invoice.",
+    inputSchema: { type: "object" }
+  },
+  run: () => Effect.succeed({ invoice: "INV-4182" })
+}
+
+describe("thinking state on the Messages surface", () => {
+  // Claude returns its thinking as signed blocks. A harness that rebuilds the conversation from its
+  // own log drops them, and the model then answers the rest of the turn without the reasoning it
+  // already paid for. This follows the whole Flamework path, because a provider-only test would miss
+  // the event that failed to carry the blocks.
+  test("round-trips signed thinking blocks through tools and later turns", async () => {
+    const thinking = {
+      type: "thinking",
+      thinking: "The invoice id is INV-4182.",
+      signature: "signed-by-anthropic"
+    }
+    const finalThinking = { type: "thinking", thinking: "Answering now.", signature: "second" }
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>
+      bodies.push(body)
+      if (bodies.length === 1) {
+        return new Response(
+          JSON.stringify({
+            content: [
+              thinking,
+              { type: "text", text: "I will look it up." },
+              { type: "tool_use", id: "call-1", name: "lookup_invoice", input: {} }
+            ],
+            stop_reason: "tool_use",
+            usage: { input_tokens: 20, output_tokens: 30 }
+          }),
+          { status: 200 }
+        )
+      }
+      if (bodies.length === 2) {
+        // The assistant turn has to carry the thinking block back, ahead of the text and the call
+        // it belongs to, or the model continues without it.
+        const assistant = asRecords(body.messages).find((message) => message.role === "assistant")
+        const blocks = asRecords(assistant?.content)
+        if (blocks[0]?.type !== "thinking" || blocks[0]?.signature !== "signed-by-anthropic") {
+          return new Response(
+            JSON.stringify({ error: { message: "the tool call lost its thinking block" } }),
+            { status: 400 }
+          )
+        }
+        return new Response(
+          JSON.stringify({
+            content: [finalThinking, { type: "text", text: "Invoice INV-4182." }],
+            stop_reason: "end_turn",
+            usage: { input_tokens: 40, output_tokens: 10 }
+          }),
+          { status: 200 }
+        )
+      }
+      const completed = asRecords(body.messages).find(
+        (message) =>
+          message.role === "assistant" &&
+          asRecords(message.content).some((block) => block.text === "Invoice INV-4182.")
+      )
+      if (asRecords(completed?.content)[0]?.signature !== "second") {
+        return new Response(
+          JSON.stringify({ error: { message: "the completed answer lost its thinking" } }),
+          { status: 400 }
+        )
+      }
+      return new Response(
+        JSON.stringify({
+          content: [{ type: "text", text: "Still INV-4182." }],
+          stop_reason: "end_turn",
+          usage: { input_tokens: 50, output_tokens: 5 }
+        }),
+        { status: 200 }
+      )
+    }) as unknown as typeof fetch
+
+    const agent = createAgent({
+      modules: [inference({ provider: provider(stub) }), nativeTools([tool])]
+    })
+    const result = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const first = yield* agent.turn({ id: "m-1", text: "Find invoice 4182." })
+          const second = yield* agent.turn({ id: "m-2", text: "Repeat the invoice id." })
+          return { first, second, log: yield* agent.log }
+        }),
+        InMemoryRuntime({ keyOf })
+      )
+    )
+
+    expect(result.first).toMatchObject({ kind: "completed", output: "Invoice INV-4182." })
+    expect(result.second).toMatchObject({ kind: "completed", output: "Still INV-4182." })
+    expect(bodies).toHaveLength(3)
+    expect(
+      result.log.filter(
+        (event) => event.type === "ModelReturned" && event.continuation !== undefined
+      )
+    ).toHaveLength(2)
+
+    // The log is what a later process replays, so the blocks have to survive being written down.
+    const durable = JSON.parse(JSON.stringify(result.log)) as ReadonlyArray<Event>
+    const restored = agent
+      .request(durable)
+      .messages.find((message) => message.toolCalls !== undefined)?.continuation
+    expect(restored?.protocol).toBe("anthropic-messages/v1")
+    expect(asRecord(restored?.value)?.blocks).toEqual([thinking])
+  })
+})

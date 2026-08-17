@@ -80,7 +80,15 @@ A live check against the Vercel AI Gateway on 2026-08-17 measured what each fami
 
 A turn that needs no thought produces no state, so a model looks stateless until the question earns the reasoning. Measure this with a question hard enough to spend reasoning tokens, and read the token counters rather than the presence of a field.
 
-Claude Opus 5 is the exception on this surface. It spends thinking tokens here and returns no reasoning details with them, so its thoughts end with the turn that made them and no harness can carry them. The same model on the Anthropic Messages surface returns thinking blocks with signatures, so the state exists and this wire format is what drops it. A session that needs Opus 5 to build on its own reasoning needs an adapter for that surface, which is the case the protocol tag on a continuation is there to allow.
+A Claude model returns no reasoning details on this surface at all. Opus 5 and Sonnet 5 spend hundreds of thinking tokens here and return nothing to carry them, so on this wire format their thoughts end with the turn that made them. This is why an Anthropic model is asked on the Anthropic surface instead.
+
+`anthropicMessagesInference(options)` speaks the Messages API, where a Claude model returns its thinking as blocks that carry a signature. `vercelGatewayInference()` chooses it for every `anthropic/` model, because the surface a model is asked on is not a decision a caller can be expected to make. The continuation protocol tag is what lets the two wire formats live beside each other: a continuation written by one adapter names its format, and the other ignores it.
+
+The Messages surface takes the thinking configuration that matches the model's generation, and there is no one setting that suits both. Adaptive thinking is rejected by Claude Sonnet 4 and earlier, and a token budget is rejected by Opus 5 and Sonnet 5. So the adapter asks for neither by default: the Claude 5 generation already thinks without being asked, and an earlier model takes `thinkingBudget`. `effort` sets the adaptive level where the model supports one.
+
+That default takes nothing away from an earlier model. Sonnet 4.6 and Sonnet 4 spend no thinking tokens on either surface until something asks them to, so the surface they are asked on changes what is preserved rather than what is produced.
+
+Anthropic models are asked through the routes that honour one tool call at a time. Bedrock answers with several calls whatever the request asks, and this harness runs one at a time, so a model routed there fails on its own second call. `routes` names the providers that may serve the model, and its default names the two that honour the setting.
 
 A caller that drops the state gets an answer rather than an error, which is what makes the loss quiet. Google rejects a function call that arrives with no thought signature, and names the missing field in a 400. The gateway keeps that rejection away from the caller by sending a sentinel value in place of the signature, which turns the validation off. The request then succeeds, and the model answers the turn without the thoughts it had already paid for.
 
@@ -88,9 +96,13 @@ Google defines that sentinel for a caller replaying function calls it made itsel
 
 The measurement shows the difference upstream. With the signature, Google counted 333 prompt tokens and resumed thinking. With the signature dropped, it counted 92 and started the turn cold. A request that sent the sentinel by hand matched the dropped one exactly, which is how the substitution shows itself from outside.
 
-Claude Sonnet 4.6 loses its state the same quiet way, at 707 prompt tokens against 673, though nothing stands in for what went missing. The substitution belongs to Google alone. What the families share is that the request succeeds either way, so only the token count says whether the model received what it had already thought.
+A Claude model loses its state the same quiet way, though nothing stands in for what went missing. The substitution belongs to Google alone. What the families share is that the request succeeds either way, so only the token count says whether the model received what it had already thought.
 
 Each family puts its state in a different field, so the adapter preserves fields rather than a list of names. This is what lets one round trip serve a model whose state lives in the tool call and a model whose state lives beside the message.
+
+`bun run smoke:live` is what checks that the preserved state reaches the model, because no test that stubs the gateway can. It runs one tool-calling turn per model twice, once replaying what the provider returned and once replaying only what an event log holds, and reads the prompt tokens the provider counted. A model that reads the same either way never received the state. It calls live models and costs money, so it runs from a command rather than from the gate.
+
+The last run, on 2026-08-17, read more with the state preserved for every model: Gemini 3.1 Pro at 431 against 99, GPT 5.6 Sol at 164 against 129, DeepSeek V4 Pro at 563 against 392, Claude Opus 5 at 622 against 571, and Claude Sonnet 4.6 at 706 against 590.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 

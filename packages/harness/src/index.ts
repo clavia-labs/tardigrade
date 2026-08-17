@@ -91,6 +91,14 @@ export {
 export { tool, type ToolOptions } from "./tool"
 export { jsonSchemaOf, repairText, schemaErrors } from "./schema"
 export { ANSWER, EXITS, REQUEST_BUDGET } from "./exits"
+// The Anthropic Messages provider. It is published for the same reason as the OpenAI-compatible
+// one: a caller who talks to that API directly, rather than through a gateway that fronts it,
+// writes options rather than a second copy of the request serialization.
+export {
+  anthropicMessagesInference,
+  type AnthropicMessagesOptions,
+  type ThinkingEffort
+} from "./providers/anthropic-messages"
 export {
   cloudflareGatewayInference,
   type CloudflareGatewayInferenceOptions
