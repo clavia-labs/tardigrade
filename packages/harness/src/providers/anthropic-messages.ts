@@ -210,7 +210,9 @@ const actionOf = (body: MessagesResponse): Action => {
       kind: "fail",
       error:
         "the inference gateway returned multiple tool calls, but this agent executes one call at " +
-        "a time. Route this model through a provider that honours disable_parallel_tool_use.",
+        "a time. This request asked for one call at a time, so the route that served it does not " +
+        "honour that setting. Amazon Bedrock is one such route. Name the providers that may serve " +
+        "this model with the routes option to reach one that does.",
       usage
     }
   }

@@ -142,6 +142,9 @@ const messages = async (model: string, thinking?: Record<string, unknown>): Prom
     max_tokens: 8192,
     tools: [{ name: TOOL.name, description: TOOL.description, input_schema: TOOL.parameters }],
     tool_choice: { type: "auto", disable_parallel_tool_use: true },
+    // This command pins a route, which is a choice a deployment makes rather than one the framework
+    // makes for it. It is pinned here so the reading measures what the state does and not where the
+    // gateway happened to send the request.
     providerOptions: { gateway: { only: ["anthropic", "vertex"] } },
     ...thinking
   }

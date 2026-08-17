@@ -88,7 +88,7 @@ The Messages surface takes the thinking configuration that matches the model's g
 
 That default takes nothing away from an earlier model. Sonnet 4.6 and Sonnet 4 spend no thinking tokens on either surface until something asks them to, so the surface they are asked on changes what is preserved rather than what is produced.
 
-Anthropic models are asked through the routes that honour one tool call at a time. Bedrock answers with several calls whatever the request asks, and this harness runs one at a time, so a model routed there fails on its own second call. `routes` names the providers that may serve the model, and its default names the two that honour the setting.
+Where a request runs is a deployment's decision, so no provider here states a preference and `routes` is empty until a caller fills it. This has one consequence worth knowing. The adapter asks for one tool call at a time, because the harness runs one at a time, and a route can ignore that request. Amazon Bedrock does, and answers with several calls. A turn served that way fails on the model's own second call, and the failure names the setting that was asked for, the route behaviour that ignored it, and `routes` as the way to reach a route that honours it.
 
 A caller that drops the state gets an answer rather than an error, which is what makes the loss quiet. Google rejects a function call that arrives with no thought signature, and names the missing field in a 400. The gateway keeps that rejection away from the caller by sending a sentinel value in place of the signature, which turns the validation off. The request then succeeds, and the model answers the turn without the thoughts it had already paid for.
 

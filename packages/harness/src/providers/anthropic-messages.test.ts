@@ -113,9 +113,9 @@ describe("an Anthropic model on the Vercel gateway", () => {
     ])
   })
 
-  // Bedrock answers with several calls whatever the request asks. The harness runs one at a time,
-  // so the routes that honour the request are the ones this gateway is asked to use.
-  test("names the routes that honour one tool call at a time, and takes an override", async () => {
+  // Where a request runs is a deployment's decision. This framework states no preference, so a
+  // caller who names none gets the gateway's own routing.
+  test("pins a route only when the caller names one", async () => {
     const calls: Array<Record<string, unknown>> = []
     const stub = (async (_url: string, init: RequestInit) => {
       calls.push(JSON.parse(String(init.body)) as Record<string, unknown>)
@@ -126,10 +126,34 @@ describe("an Anthropic model on the Vercel gateway", () => {
     }) as unknown as typeof fetch
 
     await Effect.runPromise(provider(stub).react(request, "k"))
-    await Effect.runPromise(provider(stub, { routes: ["bedrock"] }).react(request, "k"))
+    await Effect.runPromise(
+      provider(stub, { routes: ["anthropic", "vertex"] }).react(request, "k")
+    )
 
-    expect(calls[0]?.providerOptions).toEqual({ gateway: { only: ["anthropic", "vertex"] } })
-    expect(calls[1]?.providerOptions).toEqual({ gateway: { only: ["bedrock"] } })
+    expect(calls[0]).not.toHaveProperty("providerOptions")
+    expect(calls[1]?.providerOptions).toEqual({ gateway: { only: ["anthropic", "vertex"] } })
+  })
+
+  // A route that answers with several calls at once is a real deployment, and the harness runs one
+  // call at a time. The failure says which setting was asked for and which option reaches a route
+  // that honours it, because this framework does not choose the route.
+  test("names the routes option when a route ignores the request for serial calls", async () => {
+    const action = await Effect.runPromise(
+      provider(
+        replied({
+          content: [
+            { type: "tool_use", id: "c-1", name: "lookup_invoice", input: {} },
+            { type: "tool_use", id: "c-2", name: "lookup_invoice", input: {} }
+          ],
+          stop_reason: "tool_use",
+          usage: { input_tokens: 10, output_tokens: 4 }
+        })
+      ).react(request, "k")
+    )
+
+    const reason = String(action.kind === "fail" ? action.error : "")
+    expect(reason).toContain("routes")
+    expect(reason).toContain("Bedrock")
   })
 
   test("asks for the thinking effort a caller states", async () => {

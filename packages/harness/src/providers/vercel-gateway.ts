@@ -22,8 +22,10 @@ export interface VercelGatewayInferenceOptions {
   // How much an Anthropic model thinks before it answers. Ignored by a model on the
   // OpenAI-compatible surface, which takes its reasoning settings from the gateway's own default.
   readonly effort?: ThinkingEffort
-  // Which upstream providers may serve an Anthropic model. The default names the two that honour a
-  // request for one tool call at a time. See `ANTHROPIC_ROUTES`.
+  // Which upstream providers may serve this model. Absent leaves the routing to the gateway, because
+  // where a request runs is a deployment's decision rather than this framework's. It has one
+  // consequence worth knowing: a route that answers with several tool calls at once fails a harness
+  // that runs one at a time, and the failure names this option.
   readonly routes?: ReadonlyArray<string>
 }
 
@@ -89,11 +91,6 @@ const settings = (options: VercelGatewayInferenceOptions) => {
 // built for it.
 const isAnthropic = (model: string) => model.startsWith("anthropic/")
 
-// The routes that honour a request for one tool call at a time. Bedrock answers with several calls
-// whatever the request asks, and this harness runs one at a time, so a turn routed there fails on
-// the model's second call rather than on anything the caller did. `routes` names others.
-const ANTHROPIC_ROUTES: ReadonlyArray<string> = ["anthropic", "vertex"]
-
 const build = (
   options: VercelGatewayInferenceOptions,
   model: string,
@@ -111,7 +108,9 @@ const build = (
         apiKey,
         ...transport(options),
         ...(options.effort === undefined ? {} : { effort: options.effort }),
-        body: { providerOptions: { gateway: { only: options.routes ?? ANTHROPIC_ROUTES } } }
+        ...(options.routes === undefined
+          ? {}
+          : { body: { providerOptions: { gateway: { only: options.routes } } } })
       })
     : openAiChatInference({
         id: `vercel-ai-gateway:${model}`,
