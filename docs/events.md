@@ -13,6 +13,7 @@ Common fields include:
 - `agent` for the agent that accepted the inbound message
 - `origin` for the session, turn, and call that sent a cross-session message
 - `usage` on a cross-session reply for the sender's inclusive spend
+- `continuation` on a model result for opaque provider state
 
 Unknown fields and event types survive reads and folds.
 

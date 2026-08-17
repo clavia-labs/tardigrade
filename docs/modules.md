@@ -70,6 +70,40 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
 
+Provider continuation data belongs to the provider adapter. The inference module records this opaque value on `ModelReturned`, and the renderer restores it on the related assistant message. Each value names its wire protocol. An incompatible adapter ignores the value.
+
+The OpenAI-compatible adapter preserves conversation extension fields from assistant messages and tool calls. These fields include Gemini thought signatures and encrypted reasoning details. Flamework owns this round trip for applications.
+
+The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now. This is what keeps the round trip free of a per-provider table.
+
+A live check against the Vercel AI Gateway on 2026-08-17 measured what each family returns on this surface, and what a second turn does when the fields go missing. Gemini carries its state in the tool call, as a thought signature. Claude Sonnet 4.6 and DeepSeek carry it in the reasoning details, as text with a signature. GPT 5.6 Sol carries it in the reasoning details too, as a summary beside an encrypted block. The adapter preserves all of these, because it copies fields rather than names.
+
+A turn that needs no thought produces no state, so a model looks stateless until the question earns the reasoning. Measure this with a question hard enough to spend reasoning tokens, and read the token counters rather than the presence of a field.
+
+A Claude model returns no reasoning details on this surface at all. Opus 5 and Sonnet 5 spend hundreds of thinking tokens here and return nothing to carry them, so on this wire format their thoughts end with the turn that made them. This is why an Anthropic model is asked on the Anthropic surface instead.
+
+`anthropicMessagesInference(options)` speaks the Messages API, where a Claude model returns its thinking as blocks that carry a signature. `vercelGatewayInference()` chooses it for every `anthropic/` model, because the surface a model is asked on is not a decision a caller can be expected to make. The continuation protocol tag is what lets the two wire formats live beside each other: a continuation written by one adapter names its format, and the other ignores it.
+
+The Messages surface takes the thinking configuration that matches the model's generation, and there is no one setting that suits both. Adaptive thinking is rejected by Claude Sonnet 4 and earlier, and a token budget is rejected by Opus 5 and Sonnet 5. So the adapter asks for neither by default: the Claude 5 generation already thinks without being asked, and an earlier model takes `thinkingBudget`. `effort` sets the adaptive level where the model supports one.
+
+That default takes nothing away from an earlier model. Sonnet 4.6 and Sonnet 4 spend no thinking tokens on either surface until something asks them to, so the surface they are asked on changes what is preserved rather than what is produced.
+
+Where a request runs is a deployment's decision, so no provider here states a preference and `routes` is empty until a caller fills it. This has one consequence worth knowing. The adapter asks for one tool call at a time, because the harness runs one at a time, and a route can ignore that request. Amazon Bedrock does, and answers with several calls. A turn served that way fails on the model's own second call, and the failure names the setting that was asked for, the route behaviour that ignored it, and `routes` as the way to reach a route that honours it.
+
+A caller that drops the state gets an answer rather than an error, which is what makes the loss quiet. Google rejects a function call that arrives with no thought signature, and names the missing field in a 400. The gateway keeps that rejection away from the caller by sending a sentinel value in place of the signature, which turns the validation off. The request then succeeds, and the model answers the turn without the thoughts it had already paid for.
+
+Google defines that sentinel for a caller replaying function calls it made itself, and discourages it otherwise, because a model that gets it answers without its earlier thoughts. The gateway applies it on the caller's behalf, and says so nowhere in its documentation or its responses. A harness therefore can not learn from the wire that it dropped the state, which is why the regression test pins the fields rather than a status code.
+
+The measurement shows the difference upstream. With the signature, Google counted 333 prompt tokens and resumed thinking. With the signature dropped, it counted 92 and started the turn cold. A request that sent the sentinel by hand matched the dropped one exactly, which is how the substitution shows itself from outside.
+
+A Claude model loses its state the same quiet way, though nothing stands in for what went missing. The substitution belongs to Google alone. What the families share is that the request succeeds either way, so only the token count says whether the model received what it had already thought.
+
+Each family puts its state in a different field, so the adapter preserves fields rather than a list of names. This is what lets one round trip serve a model whose state lives in the tool call and a model whose state lives beside the message.
+
+`bun run smoke:live` is what checks that the preserved state reaches the model, because no test that stubs the gateway can. It runs one tool-calling turn per model twice, once replaying what the provider returned and once replaying only what an event log holds, and reads the prompt tokens the provider counted. A model that reads the same either way never received the state. It calls live models and costs money, so it runs from a command rather than from the gate.
+
+The last run, on 2026-08-17, read more with the state preserved for every model: Gemini 3.1 Pro at 431 against 99, GPT 5.6 Sol at 164 against 129, DeepSeek V4 Pro at 563 against 392, Claude Opus 5 at 622 against 571, and Claude Sonnet 4.6 at 706 against 590.
+
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped.

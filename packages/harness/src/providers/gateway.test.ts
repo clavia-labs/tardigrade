@@ -57,14 +57,14 @@ describe("Vercel AI Gateway", () => {
     }) as unknown as typeof fetch
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
-      model: "anthropic/test-model",
+      model: "openai/test-model",
       contextWindow: 90_000,
       fetch: stub
     })
 
     expect(provider.state([])).toEqual({
       provider: "vercel-ai-gateway",
-      model: "anthropic/test-model",
+      model: "openai/test-model",
       contextWindow: 90_000
     })
     expect(await Effect.runPromise(provider.react(request, "turn/infer/0"))).toEqual({
@@ -79,7 +79,7 @@ describe("Vercel AI Gateway", () => {
     expect(calls[0]?.headers.get("authorization")).toBe("Bearer vercel-key")
     expect(calls[0]?.headers.get("idempotency-key")).toBe("turn/infer/0")
     expect(calls[0]?.body).toMatchObject({
-      model: "anthropic/test-model",
+      model: "openai/test-model",
       parallel_tool_calls: false,
       messages: [
         { role: "system", content: "You are a support agent." },
@@ -105,6 +105,7 @@ describe("Vercel AI Gateway", () => {
   test("refuses an answer the gateway stopped at its completion-token limit", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      model: "openai/test-model",
       contextWindow: 200_000,
       fetch: stoppedAtLimit({ content: "The lease was signed on 29 August 2025 and the term" })
     })
@@ -122,6 +123,7 @@ describe("Vercel AI Gateway", () => {
   test("refuses a tool call whose arguments stop mid-JSON", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      model: "openai/test-model",
       contextWindow: 200_000,
       fetch: stoppedAtLimit({
         tool_calls: [{ id: "c-1", function: { name: "lookup_invoice", arguments: '{"orderId":"41' } }]
@@ -134,6 +136,7 @@ describe("Vercel AI Gateway", () => {
   test("refuses multiple tool calls instead of dropping all but the first", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      model: "openai/test-model",
       contextWindow: 200_000,
       fetch: (async () =>
         new Response(
@@ -188,9 +191,9 @@ describe("Vercel AI Gateway", () => {
     const provider = await Effect.runPromise(
       vercelGatewayInference({
         apiKey: "vercel-key",
-        model: "anthropic/test-model",
+        model: "openai/test-model",
         baseUrl: "https://catalog-one.invalid/v1",
-        fetch: gateway(calls, models("anthropic/test-model", 1_000_000))
+        fetch: gateway(calls, models("openai/test-model", 1_000_000))
       })
     )
 
@@ -354,6 +357,7 @@ describe("Vercel AI Gateway", () => {
     let called = false
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
+      model: "openai/test-model",
       contextWindow: 1_000,
       fetch: (async () => {
         called = true
@@ -381,6 +385,7 @@ describe("Vercel AI Gateway", () => {
     const of = (maxOutputTokens?: number) =>
       vercelGatewayInference({
         apiKey: "vercel-key",
+        model: "openai/test-model",
         contextWindow: 200_000,
         fetch: stub,
         ...(maxOutputTokens === undefined ? {} : { maxOutputTokens })

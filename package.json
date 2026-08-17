@@ -38,6 +38,7 @@
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
     "test": "bun run --filter './packages/*' test",
     "knip": "knip",
+    "smoke:live": "bun run tools/live-smoke.ts",
     "prepare": "bun run build",
     "setup": "git config core.hooksPath .githooks"
   },
