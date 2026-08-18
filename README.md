@@ -2,7 +2,11 @@
 
 Tardigrade is an agent harness built with the log as its core, inspired by event sourcing and React: state at any point is a pure function of the log, and the harness is a set of transitions derived from it.
 
-Designing a harness is not very different from designing a user interface, except here the user is a language model. React declared the component tree as a function of state, `UI = f(state)`, and the less known half is that the set of valid transitions derives from the same function: `{transitions} = f(state)`. A harness needs the same shape with the log as the state: `{transitions} = f(log)`. One function implies every state and every valid transition between them, and the log is the source of truth for what happened and for what will happen.
+Designing a harness is not very different from designing a user interface, except here the user is a language model. React declared the component tree as a function of state, `UI = f(state)`, and the less known half is that the set of valid transitions derives from the same function. A harness needs the same shape with the log as the state:
+
+$$\{\mathrm{transitions}\} = f(\mathrm{log})$$
+
+One function implies every state and every valid transition between them, and the log is the source of truth for what happened and for what will happen.
 
 ## Events
 
