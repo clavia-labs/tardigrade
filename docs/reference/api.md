@@ -70,23 +70,3 @@ const resting: (actor: Actor, events: Event[]) => boolean
 
 resting reports quiescence: no reactor enables a transition. The platform alarm may be deleted only on a true answer (tla/Driver.tla, Accounting).
 
-### Usage
-
-```ts
-type CostSource = "provider" | "table"
-
-type Usage = {
-  promptTokens: number
-  completionTokens: number
-  costUsd?: number
-  costSource?: CostSource
-  provider?: string
-  model?: string
-}
-
-const usageIn: (events: Event[], turn: string) => Usage
-```
-
-Usage is what one model attempt spent. The attempt's consequence records it: `ToolCalled`, `TurnCompleted`, or `TurnFailed` carries a `usage` field, and an attempt with unreported spend carries an empty one. `costUsd` is present when the figure is known: a provider bill, including zero, or a price table fill from token counts. Absence is unknown. `costSource` says which of those two produced the figure, so a billed dollar and a catalog estimate cannot be mistaken for each other. `provider` and `model` name who was called.
-
-`usageIn(log, turn)` sums the `usage` fields on that turn's events. Unknown is sticky: if any part omitted cost, including an empty usage, the total omits `costUsd`. Mixed sources take `table`, the weaker label. An event with no usage field is no attempt: a died `ModelCalled` and the give-up `TurnFailed` invent nothing.
