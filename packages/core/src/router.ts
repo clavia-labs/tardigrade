@@ -26,7 +26,7 @@ export const readAddress = (a: string): { readonly home: string; readonly facet:
 // settle eventually. call is the sync door: run the target to quiescence, return its terminal.
 // A call cycle deadlocks on per-actor serialization, so long work goes through deliver with the
 // reply coming home as an inbound.
-export class Router extends Context.Tag("flamecast/Router")<
+export class Router extends Context.Service<
   Router,
   {
     readonly deliver: (address: string, event: Event) => Effect.Effect<void>
@@ -52,4 +52,4 @@ export class Router extends Context.Tag("flamecast/Router")<
       decision: { readonly amount: number; readonly reason?: string }
     ) => Effect.Effect<CallResult>
   }
->() {}
+>()("flamecast/Router") {}

@@ -7,7 +7,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "effect": "^3.22.1"
+    "effect": "4.0.0-rc.110"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
