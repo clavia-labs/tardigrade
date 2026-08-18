@@ -4,11 +4,7 @@ The log is the primary record: every call, park, and terminal is an event you ca
 
 ## Wire a tracer
 
-The one prerequisite is a listener that speaks OTLP over HTTP; the exporter ships in effect core, so there is nothing to install. For a local look, Jaeger is one container: spans arrive on port 4318, the UI reads on 16686.
-
-```bash
-docker run --rm -p 16686:16686 -p 4318:4318 jaegertracing/jaeger:2
-```
+The one prerequisite is a listener that speaks OTLP over HTTP (Jaeger, an OTel Collector, a hosted backend); the exporter ships in effect core, so there is nothing to install.
 
 `createBunHost` takes any tracer as a Layer through `telemetry`. The ready-made layer is `otlpTelemetry`, on the OTLP exporter effect v4 ships in core:
 
