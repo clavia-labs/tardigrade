@@ -1,6 +1,6 @@
 import { Clock, Effect } from "effect"
 import { EventLog } from "@flamecast/core/event-log"
-import { actor, send } from "@flamecast/core/actor"
+import { actor, send, type Actor } from "@flamecast/core/actor"
 import { composeKeys } from "@flamecast/core/event-log"
 import { messageKeys } from "@flamecast/core/message"
 import { codeKeys } from "@flamecast/code/events"
@@ -20,43 +20,52 @@ import { codeSurface, type ToolSurface } from "./surface"
 
 export { Infer } from "./infer"
 
-// agent is one actor, six reactors over one log. infer decides, budget fires the wall, tools
-// serves the surface's tools, code runs bodies durably, reply reports the terminal home,
-// compaction checkpoints the context. None imports another; they compose through event names.
-// budget precedes tools in the list, so BudgetExhausted is on the log when the dispatch gate
-// reads it.
-export type AgentR = Infer | EventLog | Packages | Sandbox | Tmp | Router | Self
-// agentActorKeys is the agent's own key table: its alphabet, the code lane's, and the canonical
-// inbound. A platform composes wider (its app fragments join in) when it builds its own actor;
-// this default serves the library tier and tests.
-export const agentActorKeys = composeKeys(messageKeys, codeKeys, agentKeys)
+// AgentR is the mind: infer, a tool surface, and a reply home. Budget, code, and compaction
+// join at the RLM assembly (rlmAgentFor).
+export type AgentR = Infer | EventLog | Router | Self
+export type RlmR = AgentR | Packages | Sandbox | Tmp
 
-// agentFor composes the actor around one tool surface. The code lane stays in the list whatever
-// the surface is: it derives work only from `CodeDispatched`, so a surface that never dispatches
-// code leaves it quiet.
+// agentActorKeys is the mind's key table: its alphabet and the canonical inbound.
+export const agentActorKeys = composeKeys(messageKeys, agentKeys)
+
+// rlmActorKeys adds the code lane's fragment. createRlmAgent uses this table.
+export const rlmActorKeys = composeKeys(messageKeys, codeKeys, agentKeys)
+
+// agentFor is the mind: infer decides, tools serve the surface, reply reports the terminal home.
+// A caller adds budget, code, or compaction by listing those reactors beside this actor's.
 export const agentFor = (surface: ToolSurface<AgentR>) =>
-  actor<AgentR>(
-    [inferReactor, budgetReactor, toolsReactorFor(surface), codeReactor, replyReactor, compactionReactor],
-    agentActorKeys
-  )
+  actor<AgentR>([inferReactor, toolsReactorFor(surface), replyReactor], agentActorKeys)
 
-// agent is the default assembly: code mode, the surface this library prefers.
+// agent is the mind on the library's code-mode surface.
 export const agent = agentFor(codeSurface())
 
-// receive sends the inbound to the actor. The message id is the dedup key, so delivery can be
-// at-least-once.
-export const receive = (
+// rlmAgentFor is the Recursive Language Model default: the mind plus budget, durable code, and
+// compaction. budget precedes tools, so BudgetExhausted is on the log when the dispatch gate
+// reads it. None of the six imports another; they compose through event names.
+export const rlmAgentFor = (surface: ToolSurface<RlmR>) =>
+  actor<RlmR>(
+    [inferReactor, budgetReactor, toolsReactorFor(surface), codeReactor, replyReactor, compactionReactor],
+    rlmActorKeys
+  )
+
+// rlmAgent is that default on code mode. createRlmAgent hosts this actor.
+export const rlmAgent = rlmAgentFor(codeSurface())
+
+// receive sends the inbound to the given actor. The message id is the dedup key, so delivery can
+// be at-least-once.
+export const receive = <R>(
+  a: Actor<R>,
   // `output` is the turn's contract: a message that declares one is answered in that shape,
   // whichever door it arrived through.
   message: { readonly id: string; readonly text: string; readonly input?: unknown; readonly output?: unknown }
-): Effect.Effect<void, never, AgentR> =>
+): Effect.Effect<void, never, EventLog | R> =>
   Effect.gen(function* () {
     const log = yield* EventLog
     const events = yield* log.read
     const seen = events.some((e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === message.id)
     if (seen) return
     const at = yield* Clock.currentTimeMillis
-    yield* send(agent, {
+    yield* send(a, {
       type: "MessageReceived",
       id: message.id,
       text: message.text,

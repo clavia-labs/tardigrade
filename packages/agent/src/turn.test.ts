@@ -7,7 +7,7 @@ import { Packages, type Package } from "@flamecast/code/packages"
 import { Sandbox, type Bindings } from "@flamecast/code/sandbox"
 import { Router } from "@flamecast/core/router"
 import { Self } from "@flamecast/core/actor"
-import { Infer, agent, receive } from "./turn"
+import { Infer, agent, rlmAgent, receive } from "./turn"
 import { inferReactor } from "./infer"
 import { toolsReactor } from "./tools"
 import { Tmp } from "@flamecast/code/tmp"
@@ -114,7 +114,7 @@ describe("the agent with execute as the only tool", () => {
     memoryLog(), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* receive({ id: "m1", text: "add the JD and search candidates" })
+        yield* receive(rlmAgent, { id: "m1", text: "add the JD and search candidates" })
         return yield* readLog
       }),
       layers
@@ -190,7 +190,7 @@ describe("the agent with execute as the only tool", () => {
     const layers = Layer.mergeAll(memSpill(), memoryLog(crashed), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* settleActor(agent)
+        yield* settleActor(rlmAgent)
         return yield* readLog
       }),
       layers
@@ -222,7 +222,7 @@ describe("the agent with execute as the only tool", () => {
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive({ id: "m1", text: "run it" })
+        yield* receive(rlmAgent, { id: "m1", text: "run it" })
         return yield* readLog
       }),
       layers
@@ -252,7 +252,7 @@ describe("the agent with execute as the only tool", () => {
     memoryLog(queued), echoHead, registry([]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* settleActor(agent)
+        yield* settleActor(rlmAgent)
         return yield* readLog
       }),
       layers
@@ -279,7 +279,7 @@ describe("the agent with execute as the only tool", () => {
     const layers = Layer.mergeAll(memSpill(), memoryLog(crashed), codeThenComplete(count), registry([]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* settleActor(agent)
+        yield* settleActor(rlmAgent)
         return yield* readLog
       }),
       layers
@@ -305,8 +305,8 @@ describe("the agent with execute as the only tool", () => {
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive({ id: "m1", text: "hi" })
-        yield* receive({ id: "m1", text: "hi" })
+        yield* receive(rlmAgent, { id: "m1", text: "hi" })
+        yield* receive(rlmAgent, { id: "m1", text: "hi" })
         return yield* readLog
       }),
       layers
@@ -361,7 +361,7 @@ describe("a turn that declares an output schema", () => {
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive({ id: "m1", text: "decompose this topic", output: SCOUT_SCHEMA })
+        yield* receive(rlmAgent, { id: "m1", text: "decompose this topic", output: SCOUT_SCHEMA })
         return yield* readLog
       }),
       layers
@@ -398,7 +398,7 @@ describe("a turn that declares an output schema", () => {
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive({ id: "m1", text: "decompose this topic", output: SCOUT_SCHEMA })
+        yield* receive(rlmAgent, { id: "m1", text: "decompose this topic", output: SCOUT_SCHEMA })
         return yield* readLog
       }),
       layers
@@ -407,5 +407,12 @@ describe("a turn that declares an output schema", () => {
     expect(failed.error).toContain("did not satisfy the declared schema")
     // Bounded: the corrections are spent, not repeated forever.
     expect(asked).toBeLessThanOrEqual(4)
+  })
+})
+
+describe("the mind and the RLM default", () => {
+  test("the mind is three reactors; the RLM default adds budget, code, and compaction", () => {
+    expect(agent.reactors).toHaveLength(3)
+    expect(rlmAgent.reactors).toHaveLength(6)
   })
 })
