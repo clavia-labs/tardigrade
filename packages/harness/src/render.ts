@@ -160,6 +160,7 @@ export const modelRequest = (
     checkpoint.summary === ""
       ? []
       : [{ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` }]
+  const options = definition.render.requestOptions?.(log) ?? {}
   return {
     system: systemPrompt(definition.render, log),
     messages: [
@@ -167,6 +168,7 @@ export const modelRequest = (
       ...renderMessages(definition.render, suffix),
       ...tailNudgeMessages(definition.render, log)
     ],
-    tools: nativeToolSurface(definition.render, log)
+    tools: nativeToolSurface(definition.render, log),
+    ...(Object.keys(options).length === 0 ? {} : { options })
   }
 }

@@ -14,7 +14,7 @@ import {
 } from "@flamecast/core"
 import { alarmFired } from "./alphabet"
 import { boundaryOf, type CallResult } from "./boundary"
-import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
+import { type ModelRequest, type NativeToolSpec, type Spend, type Usage, RequestOptionsProjection } from "./infer"
 import { keyOf } from "./keys"
 import { modelRequest } from "./render"
 import {
@@ -171,7 +171,7 @@ export type TurnOutcome = CallResult | { readonly kind: "open" }
 
 export type TurnResult = TurnOutcome & {
   readonly turn: string
-  readonly usage: Usage
+  readonly usage: Spend
 }
 
 export interface BranchOptions {
@@ -453,6 +453,11 @@ const compile = <R, Services>(
       nudges: []
     } satisfies RenderPlan
   )
+  const requestOptions = serviceKeys.has(RequestOptionsProjection.key)
+    ? Context.get(services as Context.Context<RequestOptionsProjection>, RequestOptionsProjection)
+    : undefined
+  const planned: RenderPlan =
+    requestOptions === undefined ? render : { ...render, requestOptions }
   // Identity is hashed into the agent id, and the hash serializes a function as the constant
   // "[function]". Two modules whose behavior differs only inside a function would then share an
   // id. The value has to be data for the hash to identify a program reliably.
@@ -471,7 +476,7 @@ const compile = <R, Services>(
     ...(module.identity === undefined ? {} : { identity: module.identity })
   }))
   const machines = parts.flatMap((part) =>
-    typeof part.machines === "function" ? part.machines(render) : (part.machines ?? [])
+    typeof part.machines === "function" ? part.machines(planned) : (part.machines ?? [])
   )
   const machineIds = new Set<string>()
   for (const machine of machines) {
@@ -504,8 +509,8 @@ const compile = <R, Services>(
   // A withdrawal that names no tool is a typo that reads as working: the nudge fires, the surface
   // is unchanged, and the tool it meant to take away stays in front of the model. Nudges that
   // compute their tools from the log are exempt, since their names are only known at render time.
-  const offered = new Set(render.nativeTools.map((tool) => tool.name))
-  for (const nudge of render.nudges) {
+  const offered = new Set(planned.nativeTools.map((tool) => tool.name))
+  for (const nudge of planned.nudges) {
     for (const name of nudge.withdrawsNativeTools ?? []) {
       if (name !== WITHDRAW_ALL && !offered.has(name)) {
         throw new Error(`nudge "${nudge.id}" withdraws "${name}", which no module offers`)
@@ -517,7 +522,7 @@ const compile = <R, Services>(
     modules: manifests,
     events: [...new Set(parts.flatMap((part) => part.events ?? []))].sort(),
     machines: machines as ReadonlyArray<Machine<R, never>>,
-    render,
+    render: planned,
     services: services as unknown as Context.Context<Services>
   }
 }

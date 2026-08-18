@@ -3,6 +3,8 @@ import { EventLog, Router, Self, erase, machine, type Event, type Machine } from
 import {
   Infer,
   selectedInference,
+  settledUsage,
+  reservedUsage,
   usageOf,
   type Action,
   type InferenceSelection,
@@ -13,6 +15,7 @@ import {
   modelCalled,
   modelDeferred,
   modelReturned,
+  modelSettled,
   replyDelivered,
   textReturned,
   toolCalled,
@@ -80,6 +83,28 @@ const openCallId = (view: ReadonlyArray<Event>): string | undefined => {
   return undefined
 }
 
+const lastCalled = (view: ReadonlyArray<Event>): Event | undefined => {
+  for (let index = view.length - 1; index >= 0; index--) {
+    const event = view[index]
+    if (event?.type === "ModelCalled") return event
+  }
+  return undefined
+}
+
+const closeOrphan = (view: ReadonlyArray<Event>, turn: string, at: number): ReadonlyArray<Event> => {
+  const called = lastCalled(view)
+  if (called === undefined) return []
+  return [
+    modelSettled({
+      turn,
+      callId: String(called.callId ?? ""),
+      usage: usageOf(called.reserved),
+      reason: "the model attempt died",
+      at
+    })
+  ]
+}
+
 const completedCalls = (view: ReadonlyArray<Event>) =>
   view.filter((event) => event.type === "ModelReturned").length
 
@@ -140,8 +165,10 @@ const inferMachine = (
             const view = turnView(log)
             const at = yield* Clock.currentTimeMillis
             const died = diedAttempts(view)
+            const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
             if (died >= giveUpAfter) {
               return [
+                ...closeOrphan(view, turn, at),
                 turnFailed({
                   turn,
                   error: `the model attempt died ${giveUpAfter} times in a row`,
@@ -159,10 +186,10 @@ const inferMachine = (
                 })
               ]
             }
-            const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
             const deferrals = deferralsOf(view, key)
             if (deferrals >= deferAtMost) {
               return [
+                ...closeOrphan(view, turn, at),
                 turnFailed({
                   turn,
                   error: `the model was deferred ${deferAtMost} times`,
@@ -170,10 +197,12 @@ const inferMachine = (
                 })
               ]
             }
-            // An orphaned mark is a crash mid-call. Journal the wait so a restart sleeps instead of
-            // immediately issuing another request against a queue that has not moved.
+            // An orphaned mark is a crash mid-call. Close the reservation so cost does not vanish,
+            // then journal the wait so a restart sleeps instead of immediately issuing another
+            // request against a queue that has not moved.
             if (died > 0) {
               return [
+                ...closeOrphan(view, turn, at),
                 modelDeferred({
                   turn,
                   callId: key,
@@ -185,14 +214,32 @@ const inferMachine = (
               ]
             }
             const store = yield* EventLog
-            yield* store.append([modelCalled({ turn, callId: key, at })])
             const override = yield* Effect.serviceOption(Infer)
             const provider = Option.getOrElse(override, () => selectedInference(selection, log))
-            const action = yield* provider.react(modelRequest({ render }, log), key)
+            const request = modelRequest({ render }, log)
+            const reserved = reservedUsage(request, provider.state(log).pricing)
+            yield* store.append([
+              modelCalled({
+                turn,
+                callId: key,
+                reserved,
+                ...(request.options === undefined ? {} : { options: request.options }),
+                at
+              })
+            ])
+            const action = yield* provider.react(request, key)
             const after = yield* Clock.currentTimeMillis
+            const usage = settledUsage(action.usage, reserved, provider.state(log).pricing)
             if (action.kind === "defer") {
               const attempt = deferrals + 1
               return [
+                modelSettled({
+                  turn,
+                  callId: key,
+                  usage,
+                  reason: action.error,
+                  at: after
+                }),
                 modelDeferred({
                   turn,
                   callId: key,
@@ -208,7 +255,7 @@ const inferMachine = (
               modelReturned({
                 turn,
                 callId: key,
-                usage: usageOf(action.usage),
+                usage,
                 ...(continuation === undefined ? {} : { continuation }),
                 at: after
               }),
@@ -314,7 +361,7 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "4",
+    version: "5",
     identity: {
       provider: initial.id,
       state: initial.state([]),
@@ -333,6 +380,7 @@ export const inference = (options: InferenceOptions) => {
         "ModelCalled",
         "ModelDeferred",
         "AlarmFired",
+        "ModelSettled",
         "ModelReturned",
         "TextReturned",
         "ToolCalled",

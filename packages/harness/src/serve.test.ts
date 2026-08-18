@@ -79,12 +79,12 @@ describe("serve", () => {
     expect(result.terminal).toMatchObject({
       type: "TurnCompleted",
       output: "verified",
-      usage: { promptTokens: 5, completionTokens: 7, costUsd: 0.01 }
+      usage: { completionTokens: 7, settled: { completionTokens: 7, costUsd: 0.01, promptTokens: 5 } }
     })
     const head = result.childLog.find((event) => event.type === "MessageReceived")
     expect(head?.origin).toEqual({ session: "agent:supervisor", turn: "m-1", call: "c-1" })
     expect(String(head?.id)).toBe("ask_verify:m-1:c-1")
-    expect(treeUsageIn(result.parentLog, "m-1")).toEqual({
+    expect(treeUsageIn(result.parentLog, "m-1")).toMatchObject({
       promptTokens: 5,
       completionTokens: 7,
       costUsd: 0.01

@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Effect, Layer } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import { TestClock } from "effect/testing"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { alarmFired } from "../alphabet"
-import { inferWith, type Action, type ModelRequest } from "../infer"
+import { inferWith, RequestOptionsProjection, type Action, type ModelRequest } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { serve } from "../serve"
 import { inference } from "./inference"
+import { flexThenStandard } from "./request-options"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
@@ -59,6 +60,7 @@ describe("a deferred model call", () => {
     expect(parked.log.map((event) => event.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
+      "ModelSettled",
       "ModelDeferred"
     ])
     expect(model.keys).toEqual(["m-1/infer/0"])
@@ -86,6 +88,7 @@ describe("a deferred model call", () => {
     expect(resumed.log.map((event) => event.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
+      "ModelSettled",
       "ModelDeferred",
       "AlarmFired",
       "ModelCalled",
@@ -129,6 +132,13 @@ describe("a deferred model call", () => {
       reason: "the model attempt died"
     })
     expect(model.keys).toEqual([])
+    const log = await Effect.runPromise(Effect.provide(agent.log, layer))
+    expect(log.map((event) => event.type)).toEqual([
+      "MessageReceived",
+      "ModelCalled",
+      "ModelSettled",
+      "ModelDeferred"
+    ])
 
     const resumed = await Effect.runPromise(
       Effect.provide(
@@ -193,5 +203,121 @@ describe("an in-memory alarm", () => {
 
     expect(log.map((event) => event.type)).toContain("TurnCompleted")
     expect(model.keys).toEqual(["m-1/infer/0", "m-1/infer/0"])
+  })
+})
+
+describe("reserve then settle", () => {
+  test("ModelCalled carries a reservation, and a live result settles it", async () => {
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
+    const model = scripted([{ kind: "complete", output: "done", usage }])
+    const { log, result } = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const result = yield* agent.turn({ id: "m-1", text: "hello" })
+          return { result, log: yield* agent.log }
+        }),
+        Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+      )
+    )
+    const called = log.find((event) => event.type === "ModelCalled")
+    expect(Number((called?.reserved as { promptTokens?: number } | undefined)?.promptTokens)).toBeGreaterThan(
+      0
+    )
+    expect(result.usage.settled).toEqual(usage)
+    expect(result.usage.unsettled).toEqual({ promptTokens: 0, completionTokens: 0, costUsd: 0 })
+  })
+
+  test("a price table fills a cost the provider omitted, and a reported zero stays zero", async () => {
+    const pricing = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
+    const omitted = inferWith(
+      async () => ({
+        kind: "complete",
+        output: "ok",
+        usage: { promptTokens: 10, completionTokens: 4 }
+      }),
+      { contextWindow: 200_000, pricing }
+    )
+    const filled = await Effect.runPromise(
+      Effect.provide(
+        agent.turn({ id: "m-1", text: "hello" }),
+        Layer.merge(InMemoryRuntime({ keyOf, session: "user-1" }), omitted)
+      )
+    )
+    expect(filled.usage.settled.costUsd).toBeCloseTo(10 * 0.001 + 4 * 0.002, 10)
+
+    const reported = inferWith(
+      async () => ({
+        kind: "complete",
+        output: "ok",
+        usage: { promptTokens: 10, completionTokens: 4, costUsd: 0 }
+      }),
+      { contextWindow: 200_000, pricing }
+    )
+    const zero = await Effect.runPromise(
+      Effect.provide(
+        agent.turn({ id: "m-2", text: "hello" }),
+        Layer.merge(InMemoryRuntime({ keyOf, session: "user-2" }), reported)
+      )
+    )
+    expect(zero.usage.settled.costUsd).toBe(0)
+  })
+})
+
+describe("per-request options as a projection", () => {
+  test("flex by default, then standard after two deferrals in the turn", async () => {
+    const agent = createAgent({
+      modules: [inference({ contextWindow: 200_000, deferAtMost: 4 }), flexThenStandard()]
+    })
+    const model = scripted([
+      { kind: "defer", error: "queued", retryAfterMs: 1_000, usage },
+      { kind: "defer", error: "queued", retryAfterMs: 1_000, usage },
+      { kind: "complete", output: "done", usage }
+    ])
+    const layer = Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+    const wake = (at: number) => alarmFired({ turn: "m-1", callId: "m-1/infer/0", at })
+
+    await Effect.runPromise(Effect.provide(agent.turn({ id: "m-1", text: "hello" }), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(2)]), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(3)]), layer))
+
+    expect(model.seen.map((request) => request.options?.serviceTier)).toEqual([
+      "flex",
+      "flex",
+      "standard"
+    ])
+  })
+
+  test("agent.request exposes the projected options", () => {
+    const agent = createAgent({
+      modules: [inference({ contextWindow: 200_000 }), flexThenStandard()]
+    })
+    expect(agent.request([]).options).toEqual({ serviceTier: "flex" })
+    expect(Context.get(agent.services, RequestOptionsProjection)([])).toEqual({
+      serviceTier: "flex"
+    })
+    expect(
+      agent.request([
+        { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
+        {
+          type: "ModelDeferred",
+          turn: "m-1",
+          callId: "k",
+          attempt: 1,
+          notBefore: 2,
+          reason: "q",
+          at: 2
+        },
+        {
+          type: "ModelDeferred",
+          turn: "m-1",
+          callId: "k",
+          attempt: 2,
+          notBefore: 3,
+          reason: "q",
+          at: 3
+        }
+      ]).options
+    ).toEqual({ serviceTier: "standard" })
   })
 })

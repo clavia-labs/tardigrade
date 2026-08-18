@@ -1,5 +1,5 @@
 import { Config, Duration, Effect, Redacted } from "effect"
-import type { InferenceProvider } from "../infer"
+import type { InferenceProvider, ModelPricing } from "../infer"
 import { anthropicMessagesInference, type ThinkingEffort } from "./anthropic-messages"
 import { environment, environmentNumber } from "./environment"
 import { openAiChatInference, transport } from "./openai-chat"
@@ -19,6 +19,7 @@ export interface VercelGatewayInferenceOptions {
   readonly retries?: number
   readonly timeout?: Duration.Input
   readonly maxOutputTokens?: number
+  readonly pricing?: ModelPricing
   // How much an Anthropic model thinks before it answers. Ignored by a model on the
   // OpenAI-compatible surface, which takes its reasoning settings from the gateway's own default.
   readonly effort?: ThinkingEffort
@@ -41,6 +42,7 @@ export interface VercelGatewayInferenceOptions {
 interface Limits {
   readonly contextWindow: number
   readonly maxOutputTokens?: number
+  readonly pricing?: ModelPricing
 }
 
 const catalogs = new Map<string, Promise<ReadonlyMap<string, Limits>>>()
@@ -49,6 +51,17 @@ interface CatalogEntry {
   readonly id?: unknown
   readonly context_window?: unknown
   readonly max_tokens?: unknown
+  readonly pricing?: {
+    readonly input?: unknown
+    readonly output?: unknown
+  }
+}
+
+const pricingOf = (entry: CatalogEntry): ModelPricing | undefined => {
+  const promptUsdPerToken = Number(entry.pricing?.input)
+  const completionUsdPerToken = Number(entry.pricing?.output)
+  if (!Number.isFinite(promptUsdPerToken) || !Number.isFinite(completionUsdPerToken)) return undefined
+  return { promptUsdPerToken, completionUsdPerToken }
 }
 
 const readCatalog = async (
@@ -70,7 +83,8 @@ const readCatalog = async (
                 contextWindow: entry.context_window,
                 ...(typeof entry.max_tokens === "number"
                   ? { maxOutputTokens: entry.max_tokens }
-                  : {})
+                  : {}),
+                ...(pricingOf(entry) === undefined ? {} : { pricing: pricingOf(entry) })
               }
             ]
           ] as ReadonlyArray<readonly [string, Limits]>)
@@ -128,8 +142,10 @@ const build = (
   baseUrl: string,
   apiKey: Config.Config<Redacted.Redacted<string>>,
   contextWindow: number,
-  publishedOutputTokens?: number
+  publishedOutputTokens?: number,
+  publishedPricing?: ModelPricing
 ): InferenceProvider => {
+  const pricing = options.pricing ?? publishedPricing
   if (isAnthropic(model)) {
     return anthropicMessagesInference({
       id: `vercel-ai-gateway:${model}`,
@@ -144,6 +160,7 @@ const build = (
       // number that would have been safe for every model at once.
       maxOutputTokens: options.maxOutputTokens ?? publishedOutputTokens ?? SAFE_OUTPUT_TOKENS,
       ...(options.effort === undefined ? {} : { effort: options.effort }),
+      ...(pricing === undefined ? {} : { pricing }),
       ...routed(options)
     })
   }
@@ -155,6 +172,7 @@ const build = (
     endpoint: `${baseUrl}/chat/completions`,
     apiKey,
     ...transport(options),
+    ...(pricing === undefined ? {} : { pricing }),
     ...routed(options)
   })
 }
@@ -210,7 +228,8 @@ export function vercelGatewayInference(
           baseUrl,
           apiKey,
           published.contextWindow,
-          published.maxOutputTokens
+          published.maxOutputTokens,
+          published.pricing
         ),
       catch: (error) => (error instanceof Error ? error : new Error(String(error)))
     })

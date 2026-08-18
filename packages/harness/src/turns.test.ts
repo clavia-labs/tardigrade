@@ -10,6 +10,7 @@ import {
   turnView,
   usageIn
 } from "./turns"
+import { spendOf, ZERO_USAGE, type Usage } from "./infer"
 
 const message = (id: string, at: number): Event => ({ type: "MessageReceived", id, text: id, at })
 const stamped = (type: string, turn: string, at: number): Event => ({ type, turn, at })
@@ -146,24 +147,81 @@ describe("usageIn", () => {
         at: 4
       }
     ]
-    expect(usageIn(log, "m-1")).toEqual({
-      promptTokens: 300,
-      completionTokens: 30,
-      costUsd: 0.003
-    })
+    expect(usageIn(log, "m-1")).toEqual(spendOf(
+      { promptTokens: 300, completionTokens: 30, costUsd: 0.003 },
+      ZERO_USAGE
+    ))
   })
 
   test("reads zero from a turn that never called the model", () => {
-    expect(usageIn([message("m-1", 1)], "m-1")).toEqual({
-      promptTokens: 0,
-      completionTokens: 0,
-      costUsd: 0
-    })
+    expect(usageIn([message("m-1", 1)], "m-1")).toEqual(spendOf(ZERO_USAGE, ZERO_USAGE))
+  })
+
+  test("an in-flight call is unsettled, using the reservation ModelCalled carried", () => {
+    const log: ReadonlyArray<Event> = [
+      message("m-1", 1),
+      {
+        type: "ModelCalled",
+        turn: "m-1",
+        callId: "k-0",
+        reserved: { promptTokens: 80, completionTokens: 0, costUsd: 0.002 },
+        at: 2
+      }
+    ]
+    expect(usageIn(log, "m-1")).toEqual(
+      spendOf(ZERO_USAGE, { promptTokens: 80, completionTokens: 0, costUsd: 0.002 })
+    )
+  })
+
+  test("an orphaned call that settled without a result stays unsettled", () => {
+    const log: ReadonlyArray<Event> = [
+      message("m-1", 1),
+      {
+        type: "ModelCalled",
+        turn: "m-1",
+        callId: "k-0",
+        reserved: { promptTokens: 80, completionTokens: 0, costUsd: 0.002 },
+        at: 2
+      },
+      {
+        type: "ModelSettled",
+        turn: "m-1",
+        callId: "k-0",
+        usage: { promptTokens: 80, completionTokens: 0, costUsd: 0.002 },
+        reason: "the model attempt died",
+        at: 3
+      }
+    ]
+    expect(usageIn(log, "m-1")).toEqual(
+      spendOf(ZERO_USAGE, { promptTokens: 80, completionTokens: 0, costUsd: 0.002 })
+    )
+  })
+
+  test("a provider that omitted cost is unknown, and a reported zero is free", () => {
+    const log: ReadonlyArray<Event> = [
+      message("m-1", 1),
+      {
+        type: "ModelReturned",
+        turn: "m-1",
+        callId: "k-0",
+        usage: { promptTokens: 10, completionTokens: 4 },
+        at: 2
+      },
+      {
+        type: "ModelReturned",
+        turn: "m-2",
+        callId: "k-0",
+        usage: { promptTokens: 10, completionTokens: 4, costUsd: 0 },
+        at: 3
+      }
+    ]
+    expect(usageIn(log, "m-1").costUsd).toBeUndefined()
+    expect(usageIn(log, "m-2").costUsd).toBe(0)
   })
 })
 
 describe("treeUsageIn", () => {
-  const spent = (promptTokens: number, completionTokens: number, costUsd: number) => ({
+  const spent = (promptTokens: number, completionTokens: number, costUsd: number): Usage => ({
     promptTokens,
     completionTokens,
     costUsd
@@ -194,15 +252,15 @@ describe("treeUsageIn", () => {
   ]
 
   test("folds in every tool result that reports spend", () => {
-    expect(treeUsageIn(log, "m-1")).toEqual(spent(15, 8, 0.016))
+    expect(treeUsageIn(log, "m-1")).toEqual(spendOf(spent(15, 8, 0.016), ZERO_USAGE))
   })
 
   test("leaves a tool that spent nothing out of the total", () => {
-    expect(usageIn(log, "m-1")).toEqual(spent(10, 5, 0.01))
+    expect(usageIn(log, "m-1")).toEqual(spendOf(spent(10, 5, 0.01), ZERO_USAGE))
   })
 
   test("reads zero from a turn with nothing recorded", () => {
-    expect(treeUsageIn(log, "m-9")).toEqual(spent(0, 0, 0))
+    expect(treeUsageIn(log, "m-9")).toEqual(spendOf(ZERO_USAGE, ZERO_USAGE))
   })
 })
 

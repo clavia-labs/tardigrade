@@ -4,11 +4,13 @@ import type {
   Action,
   AgentMessage,
   InferenceProvider,
+  ModelPricing,
   ModelRequest,
   NativeToolSpec,
   ProviderContinuation,
   Usage
 } from "../infer"
+import { applyRequestOptions, priced } from "../infer"
 
 const OPENAI_CHAT_PROTOCOL = "openai-chat-completions/v1"
 
@@ -36,6 +38,7 @@ export interface OpenAiChatOptions {
   // Fields an endpoint understands that chat completions does not define. A gateway in front of this
   // API takes routing options here, so this file holds no vendor's routing vocabulary.
   readonly body?: Readonly<Record<string, unknown>>
+  readonly pricing?: ModelPricing
 }
 
 // What a gateway forwards rather than fixes. Every gateway built on this provider takes the same
@@ -50,6 +53,7 @@ export interface TransportOptions {
   // for the model, which is the right answer until a turn asks for a long generated artifact. A
   // default sized for chat can cut that artifact off partway through.
   readonly maxOutputTokens?: number
+  readonly pricing?: ModelPricing
 }
 
 export const transport = (options: TransportOptions) => ({
@@ -57,7 +61,8 @@ export const transport = (options: TransportOptions) => ({
   ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
   ...(options.retries === undefined ? {} : { retries: options.retries }),
   ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-  ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens })
+  ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
+  ...(options.pricing === undefined ? {} : { pricing: options.pricing })
 })
 
 interface ChatToolCall {
@@ -149,16 +154,19 @@ const message = (one: AgentMessage) => {
     : { role: one.role, content: one.content }
 }
 
-const usageOf = (usage: ChatResponse["usage"]): Usage => ({
-  promptTokens: typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : 0,
-  completionTokens: typeof usage?.completion_tokens === "number" ? usage.completion_tokens : 0,
-  costUsd:
+const usageOf = (usage: ChatResponse["usage"]): Usage => {
+  const cost =
     typeof usage?.cost_usd === "number"
       ? usage.cost_usd
       : typeof usage?.cost === "number"
         ? usage.cost
-        : 0
-})
+        : undefined
+  return {
+    promptTokens: typeof usage?.prompt_tokens === "number" ? usage.prompt_tokens : 0,
+    completionTokens: typeof usage?.completion_tokens === "number" ? usage.completion_tokens : 0,
+    ...(cost === undefined ? {} : { costUsd: cost })
+  }
+}
 
 const argumentsOf = (value: unknown): unknown => {
   if (typeof value !== "string") return value ?? {}
@@ -259,7 +267,8 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
   state: () => ({
     provider: options.provider,
     model: options.model,
-    contextWindow: options.contextWindow
+    contextWindow: options.contextWindow,
+    ...(options.pricing === undefined ? {} : { pricing: options.pricing })
   }),
   react: (request: ModelRequest, key: string) =>
     Effect.gen(function* () {
@@ -288,20 +297,23 @@ const reacted = (
   key: string,
   authorization: string
 ) => {
-  const body = JSON.stringify({
-    model: options.model,
-    messages: [
-      ...(request.system === "" ? [] : [{ role: "system", content: request.system }]),
-      ...request.messages.map(message)
-    ],
-    ...(options.maxOutputTokens === undefined
-      ? {}
-      : { max_tokens: options.maxOutputTokens }),
-    ...(request.tools.length === 0
-      ? {}
-      : { tools: request.tools.map(tool), parallel_tool_calls: false }),
-    ...options.body
-  })
+  const body = JSON.stringify(
+    applyRequestOptions(
+      {
+        model: options.model,
+        messages: [
+          ...(request.system === "" ? [] : [{ role: "system", content: request.system }]),
+          ...request.messages.map(message)
+        ],
+        ...(options.maxOutputTokens === undefined ? {} : { max_tokens: options.maxOutputTokens }),
+        ...(request.tools.length === 0
+          ? {}
+          : { tools: request.tools.map(tool), parallel_tool_calls: false }),
+        ...options.body
+      },
+      request.options
+    )
+  )
   const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
   if (refusal !== undefined) return Effect.succeed(refusal)
   return sent({
@@ -319,6 +331,10 @@ const reacted = (
     provider: options.provider,
     ...(options.retries === undefined ? {} : { retries: options.retries }),
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-    read: (parsed) => actionOf(parsed as ChatResponse)
+    read: (parsed) => {
+      const action = actionOf(parsed as ChatResponse)
+      if (action.usage === undefined) return action
+      return { ...action, usage: priced(action.usage, options.pricing) }
+    }
   })
 }

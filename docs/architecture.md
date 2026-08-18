@@ -32,7 +32,7 @@ sequenceDiagram
   Machines->>Log: append ModelCalled
   Machines->>Provider: react(agent.request(log))
   Provider-->>Machines: Action
-  Machines->>Log: append ModelReturned and consequence
+  Machines->>Log: append ModelReturned or ModelSettled, then consequence
   Machines->>Tools: run when ToolCalled
   Tools-->>Log: append ToolReturned
   Machines->>Log: append TurnCompleted or TurnFailed
@@ -58,6 +58,8 @@ This shape keeps common request prefixes stable across turns. Dynamic budget, co
 Effect service keys form the module dependency graph. A producer contributes a typed `Context`. A consumer declares service keys and receives a context containing only those dependencies.
 
 The compaction module demonstrates the pattern. Inference provides a pure projection of the selected model and [context window](modules.md#the-context-window). Compaction reads that projection with `Context.get` and computes its thresholds from the current window. A model switch changes thresholds without a global registry or hidden module state, and a window the projection does not report yet leaves compaction resting rather than dividing a figure the framework chose.
+
+`RequestOptionsProjection` is the same kind of service on the other side of the request. A module contributes a fold from the log to per-request settings, and inference applies it when it builds `agent.request(log)`. A tier policy is then a machine over the log: flex by default, standard after two deferrals in the turn. Replay sends the same choice.
 
 Pure construction services use Effect `Context` directly. Effectful capabilities use Effect requirements and Layers. A service can be a projection when another module needs a typed derived value during construction.
 

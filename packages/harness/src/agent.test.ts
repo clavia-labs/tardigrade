@@ -86,7 +86,9 @@ describe("the smallest agent", () => {
       "ReplyDelivered"
     ])
     expect(result).toMatchObject({ kind: "completed", output: "We are open 9 to 5.", turn: "m-1" })
-    expect(result.usage).toEqual(usage)
+    expect(result.usage).toMatchObject(usage)
+    expect(result.usage.settled).toEqual(usage)
+    expect(result.usage.unsettled).toEqual({ promptTokens: 0, completionTokens: 0, costUsd: 0 })
     // The turn pins the program that ran it, so a replay can verify provenance.
     expect(log[0]?.agent).toBe(agent.definition.id)
     expect(model.seen[0]?.system).toBe("You are a support agent. Answer in plain text.")

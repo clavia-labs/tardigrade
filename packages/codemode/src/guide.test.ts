@@ -100,7 +100,7 @@ describe("building a swarm, as the guide tells it", () => {
     expect(ran.answer.output).toBe("checked")
     const head = ran.childLog.find((event) => event.type === "MessageReceived")
     expect(head?.origin).toMatchObject({ session: "agent:lead", turn: "m-1", call: "c-1" })
-    expect(treeUsageIn(ran.leadLog, "m-1")).toEqual(spent)
+    expect(treeUsageIn(ran.leadLog, "m-1")).toMatchObject(spent)
   })
 
   test("workers spawn by address and fan out from code on Promise.all", async () => {
