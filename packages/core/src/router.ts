@@ -1,22 +1,55 @@
 import { Context, Effect } from "effect"
-import type { Event } from "./event"
+import type { Envelope } from "./envelope"
 
-// The router: how one session reaches another. An address names a session; the runtime resolves it
-// to that session's log and machines. Delivery is at-least-once, and every receiver dedups on its
-// own keys, so a redelivered event is absorbed.
-//
-// `deliver` is the async door: append the event to the target and settle it, eventually. `call` is
-// the sync door: run the target to quiescence and return the event that ended it. Sync is for
-// quick, acyclic sub-calls; a call cycle deadlocks on the single writer per session, and long work
-// goes through `deliver` with the answer coming home as an inbound event.
-//
-// Both doors carry Events in and an Event out, so the core stays free of domain vocabulary. A
-// turn that ends carries its outcome in the event that ended it, and the harness narrows on `type`
-// to read it. Resuming a session that parked is `deliver` of the event the park waits on.
-export class Router extends Context.Service<
+// CallResult is a turn's boundary: a terminal (output or error), or a park on a budget ask
+// (requesting, with the reason, the amount, and the call the parent's decision answers). One
+// shape serves call and resume.
+export interface CallResult {
+  readonly output?: string
+  readonly error?: string
+  readonly requesting?: boolean
+  readonly reason?: string
+  readonly amount?: number
+  readonly callId?: string
+}
+
+// address formats home:facet; readAddress splits on the first colon. The home is the
+// principal; the facet names the lane.
+export const address = (home: string, facet: string): string => `${home}:${facet}`
+export const readAddress = (a: string): { readonly home: string; readonly facet: string } => {
+  const i = a.indexOf(":")
+  return i === -1 ? { home: a, facet: "main" } : { home: a.slice(0, i), facet: a.slice(i + 1) }
+}
+
+// Router reaches one actor from another. An address names an actor; delivery is at-least-once
+// and every receiver dedups by message id. deliver is the async door: append to the target,
+// settle eventually. call is the sync door: run the target to quiescence, return its terminal.
+// A call cycle deadlocks on per-actor serialization, so long work goes through deliver with the
+// reply coming home as an inbound.
+export class Router extends Context.Tag("flamecast/Router")<
   Router,
   {
-    readonly deliver: (address: string, event: Event) => Effect.Effect<void>
-    readonly call: (address: string, event: Event) => Effect.Effect<Event>
+    readonly deliver: (address: string, event: Envelope) => Effect.Effect<void>
+    readonly call: (
+      address: string,
+      message: {
+        readonly id: string
+        readonly text: string
+        readonly output?: unknown
+        readonly model?: string
+        readonly budget?: number
+        readonly escalatable?: boolean
+        readonly actor?: string
+        readonly shadow?: boolean
+        readonly world?: string
+      }
+    ) => Effect.Effect<CallResult>
+    // resume answers a budget ask: grant when amount > 0, deny otherwise, then run the target
+    // to its next boundary.
+    readonly resume: (
+      address: string,
+      turn: string,
+      decision: { readonly amount: number; readonly reason?: string }
+    ) => Effect.Effect<CallResult>
   }
->()("flamecast/Router") {}
+>() {}

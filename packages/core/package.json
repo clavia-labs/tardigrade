@@ -3,18 +3,6 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts"
-  },
-  "scripts": {
-    "typecheck": "tsc --noEmit",
-    "test": "bun test"
-  },
-  "dependencies": {
-    "effect": "4.0.0-rc.108"
-  },
-  "devDependencies": {
-    "fast-check": "^4.9.0"
-  }
+  "exports": { "./*": "./src/*.ts" },
+  "dependencies": { "effect": "^3.22.1" }
 }
