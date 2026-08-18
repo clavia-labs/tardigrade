@@ -1,7 +1,7 @@
 import { Clock, Context, Effect } from "effect"
 import { EventLog } from "@tardigrade/core/event-log"
 import { transition, type Reactor } from "@tardigrade/core/actor"
-import { modelCalled, modelReturned, textReturned, turnFailed } from "./events"
+import { modelCalled, textReturned, turnFailed } from "./events"
 import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
 import { trajectoryOf, turnView } from "@tardigrade/code/turns"
@@ -36,13 +36,17 @@ export class Infer extends Context.Service<
 >()("agent/Infer") {}
 
 // consequenceOf returns the action's recorded answer: the model responds by acting. Every
-// consequence carries the turn it serves.
-const consequenceOf = (action: Action, turn: string, at: number): Event =>
-  action.kind === "call"
-    ? { type: "ToolCalled", callId: action.callId, name: action.name, arguments: action.arguments, turn, at }
+// consequence carries the turn it serves and the attempt's spend: `usage` is always stamped,
+// and an attempt whose binding reported nothing stamps an empty object, so usageIn reads the
+// spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
+const consequenceOf = (action: Action, turn: string, at: number): Event => {
+  const usage = action.usage ?? {}
+  return action.kind === "call"
+    ? { type: "ToolCalled", callId: action.callId, name: action.name, arguments: action.arguments, usage, turn, at }
     : action.kind === "complete"
-      ? { type: "TurnCompleted", output: action.output, turn, at }
-      : { type: "TurnFailed", error: action.error, turn, at }
+      ? { type: "TurnCompleted", output: action.output, usage, turn, at }
+      : { type: "TurnFailed", error: action.error, usage, turn, at }
+}
 
 // diedAttempts counts the `ModelCalled` marks at the end of the turn's slice, with nothing after
 // them. Any committed event after a mark is progress and resets the count. Counting inside the
@@ -125,13 +129,6 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infe
           const action = yield* (yield* Infer).react(input.trajectory, input.attempt)
           const after = yield* Clock.currentTimeMillis
           return [
-            modelReturned({
-              callId: input.attempt,
-              ordinal: input.ordinal,
-              turn: input.turn,
-              at: after,
-              ...(action.usage === undefined ? {} : { usage: action.usage })
-            }),
             ...(action.kind === "call" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),
