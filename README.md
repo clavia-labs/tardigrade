@@ -45,7 +45,7 @@ await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What 
 await host.drive()
 ```
 
-`createRlmAgent` from `@flamecast/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` (infer, tools, reply). Add budget, code, or compaction when the harness needs them.
+`createRlmAgent` from `@flamecast/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
 
 ## Concepts
 

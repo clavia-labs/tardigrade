@@ -20,8 +20,8 @@ import { codeSurface, type ToolSurface } from "./surface"
 
 export { Infer } from "./infer"
 
-// AgentR is the mind: infer, a tool surface, and a reply home. Budget, code, and compaction
-// join at the RLM assembly (rlmAgentFor).
+// AgentR is the mind: Infer for the model, EventLog for settle, Router and Self for reply.
+// Budget, code, and compaction join at the RLM assembly (rlmAgentFor).
 export type AgentR = Infer | EventLog | Router | Self
 export type RlmR = AgentR | Packages | Sandbox | Tmp
 
@@ -32,12 +32,10 @@ export const agentActorKeys = composeKeys(messageKeys, agentKeys)
 export const rlmActorKeys = composeKeys(messageKeys, codeKeys, agentKeys)
 
 // agentFor is the mind: infer decides, tools serve the surface, reply reports the terminal home.
-// A caller adds budget, code, or compaction by listing those reactors beside this actor's.
+// The caller chooses the work half. Code mode is rlmAgentFor(codeSurface()), because execute
+// needs the code reactor.
 export const agentFor = (surface: ToolSurface<AgentR>) =>
   actor<AgentR>([inferReactor, toolsReactorFor(surface), replyReactor], agentActorKeys)
-
-// agent is the mind on the library's code-mode surface.
-export const agent = agentFor(codeSurface())
 
 // rlmAgentFor is the Recursive Language Model default: the mind plus budget, durable code, and
 // compaction. budget precedes tools, so BudgetExhausted is on the log when the dispatch gate

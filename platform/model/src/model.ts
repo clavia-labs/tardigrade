@@ -170,7 +170,7 @@ export interface ModelConfig {
   // The tool surface this binding renders: code mode by default. The actor must be assembled on
   // the same surface, or the model is offered tools its reactor will not serve
   // (@flamecast/agent, surface.ts).
-  readonly surface?: ToolSurface<never>
+  readonly surface?: Pick<ToolSurface, "system" | "tools">
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated

@@ -5,7 +5,7 @@ import type { Event } from "@flamecast/core/event"
 import { turnView } from "@flamecast/code/turns"
 import { budgetSpent } from "./budget"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
-import { codeSurface, type PendingCall, type ToolSurface } from "./surface"
+import { codeSurface, type CodeLaneR, type PendingCall, type ToolSurface } from "./surface"
 
 // The tools reactor: the agent's side of the tool table. The policy here is the same whatever
 // the tools are: the answer contract, the escalation ask, the budget wall, and the unknown-tool
@@ -131,4 +131,4 @@ export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> 
 
 // toolsReactor is the default surface's reactor: code mode. An agent on another surface builds
 // its own with `toolsReactorFor`.
-export const toolsReactor: Reactor<never> = toolsReactorFor(codeSurface())
+export const toolsReactor: Reactor<CodeLaneR> = toolsReactorFor(codeSurface())

@@ -7,9 +7,10 @@ import { Packages, type Package } from "@flamecast/code/packages"
 import { Sandbox, type Bindings } from "@flamecast/code/sandbox"
 import { Router } from "@flamecast/core/router"
 import { Self } from "@flamecast/core/actor"
-import { Infer, agent, rlmAgent, receive } from "./turn"
+import { Infer, agentFor, rlmAgent, receive } from "./turn"
 import { inferReactor } from "./infer"
 import { toolsReactor } from "./tools"
+import { nativeSurface } from "./surface"
 import { Tmp } from "@flamecast/code/tmp"
 const memSpill = () => {
   const store = new Map<string, string>()
@@ -410,9 +411,53 @@ describe("a turn that declares an output schema", () => {
   })
 })
 
-describe("the mind and the RLM default", () => {
-  test("the mind is three reactors; the RLM default adds budget, code, and compaction", () => {
-    expect(agent.reactors).toHaveLength(3)
-    expect(rlmAgent.reactors).toHaveLength(6)
+describe("the mind on a native surface", () => {
+  test("a turn completes with no budget, code, or compaction reactors", async () => {
+    const reads: string[] = []
+    const mind = agentFor(
+      nativeSurface([
+        {
+          spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
+          run: (input) => {
+            const path = String((input as { path?: unknown }).path)
+            reads.push(path)
+            return Effect.succeed(`contents of ${path}`)
+          }
+        }
+      ])
+    )
+    expect(mind.reactors).toHaveLength(3)
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      noRouter,
+      Layer.succeed(Infer, {
+        react: (trajectory: ReadonlyArray<Event>) => {
+          const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
+          return Effect.succeed(
+            returned !== undefined
+              ? { kind: "complete" as const, output: String(returned.result) }
+              : { kind: "call" as const, callId: "n1", name: "read", arguments: { path: "/contract.md" } }
+          )
+        }
+      })
+    )
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(mind, { id: "m1", text: "read the contract" })
+        return yield* readLog
+      }),
+      layers
+    )
+    expect(events.map((e) => e.type)).toEqual([
+      "MessageReceived",
+      "ModelCalled",
+      "ToolCalled",
+      "ToolReturned",
+      "ModelCalled",
+      "TurnCompleted",
+      "ReplyDelivered"
+    ])
+    expect(reads).toEqual(["/contract.md"])
+    expect(events.some((e) => e.type === "CodeDispatched" || e.type === "BudgetExhausted" || e.type === "ContextCompacted")).toBe(false)
   })
 })

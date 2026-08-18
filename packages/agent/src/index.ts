@@ -11,11 +11,7 @@ import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
 import type { ToolSurface } from "./surface"
 
-// createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
-// host, with spawn and a sandbox (tutorials/rlm-agent.md). The mind is agentFor; this function
-// adds budget, code, compaction, host, and the agents package. A caller who wants a thinner
-// harness uses actor([...]) and their own host.
-export { agent, agentFor, rlmAgent, rlmAgentFor, type AgentR, type RlmR } from "./turn"
+export { agentFor, rlmAgent, rlmAgentFor, type AgentR, type RlmR } from "./turn"
 
 // The parts a caller lists: reactors and key tables. An agent is reactors over one log.
 // Adding a capability is adding a reactor to the list.
@@ -51,6 +47,10 @@ export interface RlmAgent {
 
 const ROOT = "ag.root"
 
+// createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
+// host, with spawn and a sandbox (tutorials/rlm-agent.md). The mind is agentFor; this function
+// adds budget, code, compaction, host, and the agents package. A caller who wants a thinner
+// harness uses actor([...]) and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
