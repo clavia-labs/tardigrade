@@ -2,13 +2,10 @@ import { Clock, Effect } from "effect"
 import { transition, type Transition } from "@tardigrade/core/actor"
 import type { Event } from "@tardigrade/core/event"
 import { codeDispatched } from "@tardigrade/code/events"
-import type { Packages } from "@tardigrade/code/packages"
-import type { Sandbox } from "@tardigrade/code/sandbox"
-import type { Tmp } from "@tardigrade/code/tmp"
 import { toolReturned } from "./events"
 import type { ToolSpec } from "./request"
 
-export type CodeLaneR = Packages | Sandbox | Tmp
+export type CodeLaneR = never
 
 // A ToolSurface is the agent's work half: the tools the model may call, the system text that
 // explains them, and how one call becomes events. The turn loop, the budget wall, the answer
