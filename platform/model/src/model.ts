@@ -168,6 +168,11 @@ export interface ModelConfig {
   readonly model: string
   readonly packagesInScope: string
   readonly provider?: string
+  // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
+  // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
+  // configuration. Absent, the ladder falls back to its built-in guesses and the compatible leg
+  // sends its rung explicitly rather than trusting a provider default.
+  readonly maxOutputTokens?: number
   readonly fetch?: FetchImpl // test seam
   readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
 }
@@ -253,6 +258,15 @@ const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTim
 // retries, and the top rung failing truncates LOUDLY as the turn's terminal
 // (model.test.ts, "truncation").
 export const MAX_TOKENS_LADDER = [32_768, 65_536]
+
+// ladderOf bounds the retry ladder by the declared ceiling: never a rung above what the model
+// can produce, and the declared cap is always the last rung, so the loud failure names the
+// model's true limit (model.test.ts, "declared limits").
+export const ladderOf = (declared?: number): ReadonlyArray<number> => {
+  if (declared === undefined) return MAX_TOKENS_LADDER
+  const rungs = MAX_TOKENS_LADDER.filter((r) => r < declared)
+  return [...rungs, declared]
+}
 
 class TruncatedError extends Error {
   readonly truncated = true
@@ -345,6 +359,10 @@ export const realInfer = (config: ModelConfig) => {
       messages: req.messages.map(toMessage) as never,
       tools: req.tools.map(toTool) as never,
       systemPrompts: [req.system],
+      // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
+      // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
+      // is a provider default nobody chose.
+      modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
     const result = await new StreamProcessor().process(bounded(stream))
@@ -354,13 +372,14 @@ export const realInfer = (config: ModelConfig) => {
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
       Effect.promise(async () => {
+        const ladder = ladderOf(config.maxOutputTokens)
         let rung = 0
         for (let attempt = 0; ; attempt++) {
           try {
-            return await attemptOnce(trajectory, key, MAX_TOKENS_LADDER[rung]!)
+            return await attemptOnce(trajectory, key, ladder[rung]!)
           } catch (e) {
             if (isTruncated(e)) {
-              if (rung + 1 < MAX_TOKENS_LADDER.length) {
+              if (rung + 1 < ladder.length) {
                 rung += 1
                 continue
               }
