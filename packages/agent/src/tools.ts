@@ -57,13 +57,22 @@ const settleFor = (
   callId: string
 ): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
   const settle = log.find((e) => e.type === "CodeSettled" && str((e as { execId?: unknown }).execId) === callId) as
-    | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string> }
+    | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string>; tmp?: unknown; size?: unknown; preview?: unknown; note?: unknown }
     | undefined
   if (settle === undefined) return undefined
   // Captured console output rides along: the model reads what its code printed, beside the
   // result (the print-to-inspect habit; packages/code/src/sandbox.ts, SandboxResult.logs).
   const logs = settle.logs !== undefined && settle.logs.length > 0 ? { logs: settle.logs } : {}
-  return settle.error === undefined ? { result: settle.result, ...logs } : { error: String(settle.error), ...logs }
+  if (settle.error !== undefined) return { error: String(settle.error), ...logs }
+  // A settle over TMP_BYTES carries a pointer instead of the value (packages/code/src/execute.ts).
+  // The pointer IS the result the model reads: its preview and its note name the ref and the
+  // call that loads it. Reading `result` alone answers a spilled call with `{}`, so the model
+  // learns neither what it computed nor that anything is there to fetch, and it re-runs the work
+  // it already did (tools.test.ts, "a spilled settle").
+  if (settle.tmp !== undefined) {
+    return { result: { tmp: settle.tmp, size: settle.size, preview: settle.preview, note: settle.note }, ...logs }
+  }
+  return { result: settle.result, ...logs }
 }
 
 // decisionFor returns the parent's decision on an escalation ask, scoped to the call's turn.
