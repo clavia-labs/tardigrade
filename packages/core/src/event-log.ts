@@ -15,7 +15,7 @@ import type { Event } from "./event"
 //
 // `head` is the store's own testimony of progress: the settle loop compares it instead of
 // materializing the log (packages/core/src/actor.ts, settleActor).
-export class EventLog extends Context.Tag("flamecast/EventLog")<
+export class EventLog extends Context.Service<
   EventLog,
   {
     readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
@@ -23,7 +23,7 @@ export class EventLog extends Context.Tag("flamecast/EventLog")<
     readonly head: Effect.Effect<number>
     readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
   }
->() {}
+>()("flamecast/EventLog") {}
 
 // withWatermark derives `head` and `readFrom` for a store that only has `append` and `read`:
 // the watermark is the event count. Correct for any append-only array binding; a real store
@@ -31,7 +31,7 @@ export class EventLog extends Context.Tag("flamecast/EventLog")<
 export const withWatermark = (store: {
   readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
   readonly read: Effect.Effect<ReadonlyArray<Event>>
-}): Context.Tag.Service<EventLog> => ({
+}): Context.Service.Shape<typeof EventLog> => ({
   ...store,
   head: Effect.map(store.read, (events) => events.length),
   readFrom: (mark) => Effect.map(store.read, (events) => events.slice(mark))

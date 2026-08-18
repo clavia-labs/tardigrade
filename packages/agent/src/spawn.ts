@@ -38,7 +38,7 @@ import { replyId } from "@flamecast/core/reply"
 // park on until the child is done asking. An escalatable spawn holds its call open; a plain one
 // parks.
 export const agentsPackage = (
-  router: Context.Tag.Service<typeof Router>,
+  router: Context.Service.Shape<typeof Router>,
   self: string,
   place: (callId: string) => string,
   reader: AgentReader,

@@ -1,5 +1,5 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
-import { SqlClient } from "@effect/sql"
+import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@flamecast/core/event"
 import { EventLog } from "@flamecast/core/event-log"

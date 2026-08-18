@@ -9,11 +9,8 @@
   "dependencies": {
     "@flamecast/core": "workspace:*",
     "@flamecast/host": "workspace:*",
-    "@effect/experimental": "^0.61.1",
-    "@effect/platform": "^0.97.1",
-    "@effect/sql": "^0.52.1",
-    "@effect/sql-sqlite-bun": "^0.53.0",
-    "effect": "^3.22.1"
+    "@effect/sql-sqlite-bun": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

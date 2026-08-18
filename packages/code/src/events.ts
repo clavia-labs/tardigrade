@@ -61,13 +61,13 @@ export const CodeSettled = Schema.Struct({
   at: Schema.Number
 })
 
-export const CodeEvent = Schema.Union(
+export const CodeEvent = Schema.Union([
   CodeDispatched,
   BlockedOn,
   PackageCalled,
   PackageReturned,
   CodeSettled
-)
+])
 export type CodeEvent = typeof CodeEvent.Type
 
 // codeKeys is the code lane's dedup key fragment, owned beside its alphabet. cd/cs name the

@@ -117,7 +117,7 @@ packages/
   host/      the reference in-memory binding
 platform/
   model/     the Infer binding over TanStack AI
-  bun/       the durable host binding: SQLite through @effect/sql
+   bun/       the durable host binding: SQLite through @effect/sql-sqlite-bun
 ```
 
 ## Contributing
