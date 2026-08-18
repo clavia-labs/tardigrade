@@ -309,3 +309,49 @@ describe("retry-after", () => {
     expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 3, NOW)).toBeUndefined()
   })
 })
+
+
+describe("truncation", () => {
+  const sse = (events: ReadonlyArray<Record<string, unknown>>): Response =>
+    new Response(events.map((e) => `data: ${JSON.stringify(e)}\n\n`).join("") + "data: [DONE]\n\n", {
+      status: 200,
+      headers: { "content-type": "text/event-stream" }
+    })
+
+  const cut = (text: string) =>
+    sse([
+      { choices: [{ delta: { content: text }, index: 0 }] },
+      { choices: [{ delta: {}, finish_reason: "length", index: 0 }] }
+    ])
+  const whole = (text: string) =>
+    sse([
+      { choices: [{ delta: { content: text }, index: 0 }] },
+      { choices: [{ delta: {}, finish_reason: "stop", index: 0 }] }
+    ])
+
+  test("a cut answer retries up the ladder and the whole one completes", async () => {
+    let calls = 0
+    const fetchImpl = (async () => (calls++ === 0 ? cut("half an ans") : whole("the whole answer"))) as unknown as typeof fetch
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<{ kind: string; output?: string }>
+    )
+    expect(calls).toBe(2)
+    expect(action.kind).toBe("complete")
+    expect(action.output).toBe("the whole answer")
+  })
+
+  test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
+    const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<{ kind: string; error?: string }>
+    )
+    expect(action.kind).toBe("fail")
+    expect(action.error).toContain("output ceiling")
+  })
+})

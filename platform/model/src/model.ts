@@ -245,11 +245,30 @@ export const throttleDelayMs = (e: unknown, attempt: number, now: number): numbe
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
+// A response cut at the output ceiling is a failed attempt, never an answer: cut prose would
+// terminate the turn half-written, and a cut tool call's arguments stopped mid-JSON, so
+// decoding the fragment executes half a program. The industry answer is retry with a higher
+// ceiling (Anthropic documents exactly this for incomplete tool_use; the AI SDK removed its
+// continuation feature in v5), so the attempt re-runs up the ladder, in-act like the throttle
+// retries, and the top rung failing truncates LOUDLY as the turn's terminal
+// (model.test.ts, "truncation").
+export const MAX_TOKENS_LADDER = [32_768, 65_536]
+
+class TruncatedError extends Error {
+  readonly truncated = true
+  constructor(ceiling: number) {
+    super(`the model's answer was cut at the ${ceiling}-token output ceiling`)
+  }
+}
+
+const isTruncated = (e: unknown): e is TruncatedError =>
+  typeof e === "object" && e !== null && (e as { truncated?: unknown }).truncated === true
+
 // The Converse leg, v5's shape cut to its core: the SDK authenticates to the GATEWAY (its own
 // authorization header is stripped; `cf-aig-authorization` carries our token, the gateway holds
 // the AWS credential), and the dynamic SDK import is resolved statically because wrangler's
 // esbuild cannot follow the adapter's indirection on workerd.
-const bedrockAdapter = (config: ModelConfig) => {
+const bedrockAdapter = (config: ModelConfig, maxTokens: number) => {
   const handler = new (class extends FetchHttpHandler {
     override async handle(request: Parameters<FetchHttpHandler["handle"]>[0], handlerOptions?: Parameters<FetchHttpHandler["handle"]>[1]) {
       request.headers = Object.fromEntries(Object.entries(request.headers).filter(([k]) => k.toLowerCase() !== "authorization"))
@@ -276,7 +295,7 @@ const bedrockAdapter = (config: ModelConfig) => {
       const input = super.buildInput(options) as BedrockRuntime.ConverseStreamCommandInput
       // Converse truncates at its own small default otherwise, and a truncated stream ends an
       // `answer` tool call with EMPTY arguments: a whole generated code body silently gone.
-      input.inferenceConfig = { ...input.inferenceConfig, maxTokens: 32_768 }
+      input.inferenceConfig = { ...input.inferenceConfig, maxTokens }
       return input
     }
   })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
@@ -303,11 +322,11 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
 
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
-  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined): Promise<Action> => {
+  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number): Promise<Action> => {
     const fetcher = withKey(config.fetch, key)
     const adapter =
       config.provider === "bedrock"
-        ? bedrockAdapter(config)
+        ? bedrockAdapter(config, maxTokens)
         : openaiCompatibleText(config.model, {
             name: "flamecast",
             baseURL: config.baseUrl,
@@ -329,15 +348,26 @@ export const realInfer = (config: ModelConfig) => {
       logger: noopLogger
     } as never)
     const result = await new StreamProcessor().process(bounded(stream))
+    if (result.finishReason === "length") throw new TruncatedError(maxTokens)
     return actionOf(result, schema)
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
       Effect.promise(async () => {
+        let rung = 0
         for (let attempt = 0; ; attempt++) {
           try {
-            return await attemptOnce(trajectory, key)
+            return await attemptOnce(trajectory, key, MAX_TOKENS_LADDER[rung]!)
           } catch (e) {
+            if (isTruncated(e)) {
+              if (rung + 1 < MAX_TOKENS_LADDER.length) {
+                rung += 1
+                continue
+              }
+              // The top rung still truncates: the turn fails loudly instead of shipping half an
+              // answer, and the error names the remedy.
+              return { kind: "fail", error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once` }
+            }
             if (!isThrottleShaped(e)) throw e
             const delay = throttleDelayMs(e, attempt, Date.now())
             if (delay === undefined) throw e
