@@ -204,6 +204,45 @@ const isThrottleShaped = (e: unknown): boolean => {
 // throttled at the same instant do not retry in lockstep and re-trip the same limit together.
 const jittered = (baseMs: number): number => Math.random() * baseMs
 
+// retryAfterMsOf reads the provider's own wait from a thrown failure, in both forms the
+// specification allows (a count of seconds, or a date to wait until). The adapters differ in
+// where they carry response headers, so every plausible seat is checked; a failure carrying
+// none falls back to the jittered ladder. A stated wait beats a guessed one: the provider
+// knows its queue (model.test.ts, "retry-after").
+const headerOf = (carrier: unknown, name: string): string | undefined => {
+  if (carrier === null || typeof carrier !== "object") return undefined
+  const h = carrier as { get?: (n: string) => string | null } & Record<string, unknown>
+  if (typeof h.get === "function") return h.get(name) ?? undefined
+  const hit = Object.entries(h).find(([k]) => k.toLowerCase() === name)
+  return hit === undefined ? undefined : String(hit[1])
+}
+
+export const retryAfterMsOf = (e: unknown, now: number): number | undefined => {
+  const err = e as { headers?: unknown; responseHeaders?: unknown; cause?: { headers?: unknown } }
+  for (const carrier of [err.headers, err.responseHeaders, err.cause?.headers]) {
+    const header = headerOf(carrier, "retry-after")
+    if (header === undefined || header === "") continue
+    const seconds = Number(header)
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+    const at = Date.parse(header)
+    if (Number.isFinite(at)) return Math.max(0, at - now)
+  }
+  return undefined
+}
+
+// throttleDelayMs decides one in-flight wait: the provider's stated Retry-After when it fits
+// the ladder's own ceiling (plus up to a second of jitter, so a herd released together does not
+// re-trip the limit), the jittered ladder otherwise, and undefined for a stated wait past the
+// ceiling: holding a turn open longer than the ladder ever would is worse than dying, and a
+// died attempt's mark lets the platform alarm re-drive after the queue clears.
+export const throttleDelayMs = (e: unknown, attempt: number, now: number): number | undefined => {
+  if (attempt >= THROTTLE_RETRY_DELAYS_MS.length) return undefined
+  const ceiling = THROTTLE_RETRY_DELAYS_MS[THROTTLE_RETRY_DELAYS_MS.length - 1]!
+  const stated = retryAfterMsOf(e, now)
+  if (stated !== undefined) return stated > ceiling ? undefined : stated + Math.random() * 1_000
+  return jittered(THROTTLE_RETRY_DELAYS_MS[attempt]!)
+}
+
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
 
 // The Converse leg, v5's shape cut to its core: the SDK authenticates to the GATEWAY (its own
@@ -299,8 +338,10 @@ export const realInfer = (config: ModelConfig) => {
           try {
             return await attemptOnce(trajectory, key)
           } catch (e) {
-            if (attempt >= THROTTLE_RETRY_DELAYS_MS.length || !isThrottleShaped(e)) throw e
-            await sleep(jittered(THROTTLE_RETRY_DELAYS_MS[attempt]!))
+            if (!isThrottleShaped(e)) throw e
+            const delay = throttleDelayMs(e, attempt, Date.now())
+            if (delay === undefined) throw e
+            await sleep(delay)
           }
         }
       })
