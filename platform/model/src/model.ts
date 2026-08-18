@@ -336,8 +336,14 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
 
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
-  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number): Promise<Action> => {
-    const fetcher = withKey(config.fetch, key)
+  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number): Promise<Action> => {
+    // A changed ceiling is a different request, so it mints a different idempotency key: a
+    // provider that dedups would otherwise answer the escalated retry with the cached truncated
+    // response, and the ladder would climb nowhere (the removed driver learned this,
+    // flamework #22). Rung zero keeps the bare key, so crash-retries of the same request still
+    // collapse.
+    const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
+    const fetcher = withKey(config.fetch, keyForRung)
     const adapter =
       config.provider === "bedrock"
         ? bedrockAdapter(config, maxTokens)
@@ -376,7 +382,7 @@ export const realInfer = (config: ModelConfig) => {
         let rung = 0
         for (let attempt = 0; ; attempt++) {
           try {
-            return await attemptOnce(trajectory, key, ladder[rung]!)
+            return await attemptOnce(trajectory, key, ladder[rung]!, rung)
           } catch (e) {
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
