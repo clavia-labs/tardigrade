@@ -6,23 +6,22 @@ import { Packages, type Package } from "@tardigrade/code/packages"
 import { jsSandboxFor, memoryTmp } from "@tardigrade/code/defaults"
 import type { SandboxPolicy } from "@tardigrade/code/sandbox"
 import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
-import { rlmAgentFor, type AgentPolicy, type RlmR } from "./turn"
+import { type AgentPolicy, type RlmR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
-import { codeSurface, type ToolSurface } from "./surface"
+import { actorOf, budgetFor, codeModeFor, compactionFor, reply, type Capability } from "./capability"
 
-export { agentFor, rlmAgent, rlmAgentFor, type AgentPolicy, type AgentR, type RlmR } from "./turn"
+export { type AgentPolicy, type AgentR, type RlmR, receive } from "./turn"
 
-// The parts a caller lists: reactors and key tables. An agent is reactors over one log.
-// Adding a capability is adding a reactor to the list.
-export { agentActorKeys, rlmActorKeys } from "./turn"
-export { inferReactor, inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type InferRequest, type Render } from "./infer"
-export { budgetReactor, budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./budget"
-export { toolsReactor, toolsReactorFor } from "./tools"
+// The parts a caller lists. An agent is capabilities over one log; the reactors underneath
+// remain reachable for a bespoke assembly.
+export { inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type InferRequest, type Render } from "./infer"
+export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./budget"
+export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./tools"
 export { replyReactor } from "./reply"
-export { compactionReactor, compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./compaction"
+export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./compaction"
 export { agentKeys } from "./events"
 export {
   usageIn,
@@ -37,10 +36,9 @@ export {
   type ModelPricing
 } from "./usage"
 
-// The tool surface: code mode is the default, and an agent measured against a fixed tool table
-// brings its own (surface.ts).
-export { actorOf, renderOf, codeMode, toolList, reply, budget, compaction, type Capability } from "./capability"
-export { codeSurface, nativeSurface, type NativeTool, type ToolSurface } from "./surface"
+// The capability assembly: code mode is the default, and an agent measured against a fixed
+// tool list mounts its own (capability.ts).
+export { actorOf, renderOf, codeMode, codeModeFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
 
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
@@ -51,13 +49,13 @@ export interface CreateAgentOptions {
   // only state there is. The next run derives from everything here, and work the log still owes
   // settles on the first drive (index.test.ts, "an agent initialises from a log").
   readonly log?: ReadonlyArray<Event>
-  // The tool surface, code mode by default. The same surface must reach the model binding, so a
-  // caller passing one here passes it to `infer` too (surface.ts).
-  readonly surface?: ToolSurface<RlmR>
+  // The work capabilities, code mode by default. An agent measured against a fixed tool list
+  // passes [toolList([...])]; reply, budget, and compaction are always mounted.
+  readonly capabilities?: ReadonlyArray<Capability<RlmR>>
   // Every policy value the assembled agent applies: the give-up and repair ceilings, the default
-  // tool budget, the context caps, and the spill bound. Absent fields take the exported defaults.
-  // `policy.context` rides the same rule the surface does, because the render lives in the model
-  // binding: a caller stating one here states it to `infer` too (turn.ts, AgentPolicy).
+  // tool budget, the context caps, and the spill bound. Absent fields take the exported
+  // defaults. The context policy reaches the render through the compaction capability, so the
+  // binding truncates against the numbers the guard fires on (capability.ts, compactionFor).
   readonly policy?: Partial<AgentPolicy>
   // The console cap of the sandbox this function binds. It is separate from `policy` because the
   // sandbox is a seam, not a reactor: an assembly that brings its own Sandbox layer sets the cap
@@ -73,9 +71,9 @@ export interface RlmAgent {
 const ROOT = "ag.root"
 
 // createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
-// host, with spawn and a sandbox (tutorials/rlm-agent.md). The mind is agentFor; this function
-// adds budget, code, compaction, host, and the agents package. A caller who wants a thinner
-// harness uses actor([...]) and their own host.
+// host, with spawn and a sandbox (tutorials/rlm-agent.md). It mounts the work capabilities plus
+// reply, budget, and compaction, and adds the host and the agents package. A caller who wants a
+// thinner assembly uses actorOf and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
@@ -111,7 +109,11 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   }
 
   // Every ag. lane runs the RLM default; anything else is a sink.
-  const assembled = rlmAgentFor(options.surface ?? codeSurface(), options.policy ?? {})
+  const policy = options.policy ?? {}
+  const assembled = actorOf(
+    [...(options.capabilities ?? [codeModeFor(policy.code ?? {})]), reply, budgetFor(policy.budget ?? {}), compactionFor(policy.context ?? {})],
+    policy.infer ?? {}
+  )
   const host: Host = createHost<RlmR>({
     principal: "mem",
     actorFor: (lane) => (lane.startsWith("ag.") ? assembled : undefined),

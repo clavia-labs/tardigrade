@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { codeSurface } from "@tardigrade/agent/surface"
+import { codeMode, renderOf } from "@tardigrade/agent/capability"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
-const surfaceRender = codeSurface()
+const surfaceRender = renderOf([codeMode], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, system: surfaceRender.system, tools: surfaceRender.tools })
 import { Infer } from "@tardigrade/agent/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, infer, retryAfterMsOf, throttleDelayMs } from "./model"

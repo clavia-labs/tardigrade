@@ -2,7 +2,6 @@ import type { Event } from "@tardigrade/core/event"
 import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
-import type { ToolSurface } from "./surface"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
 // projection. Domain policy lives with the agent; the platform maps these provider-agnostic
@@ -176,16 +175,16 @@ export const renderMessages = (
 // there too (compaction.ts, ContextPolicy).
 export const modelRequest = (
   trajectory: ReadonlyArray<Event>,
-  surface: Pick<ToolSurface, "system" | "tools">,
+  render: { readonly system: string; readonly tools: ReadonlyArray<ToolSpec> },
   context: Partial<ContextPolicy> = {}
 ): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)
-  const work = spent ? [] : surface.tools
+  const work = spent ? [] : render.tools
   const withAnswer = schema === undefined ? work : [...work, answerTool(schema)]
   const tools = canRequest ? [...withAnswer, REQUEST_BUDGET_TOOL] : withAnswer
-  const framed = SYSTEM(surface.system)
+  const framed = SYSTEM(render.system)
   const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
   return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory, context), tools }

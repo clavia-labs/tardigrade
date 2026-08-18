@@ -3,9 +3,9 @@ import { Effect } from "effect"
 import type { Event } from "@tardigrade/core/event"
 import { trajectoryOf } from "@tardigrade/code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { codeSurface, nativeSurface } from "./surface"
+import { codeMode, renderOf, toolList } from "./capability"
 
-const CODE = codeSurface("none")
+const CODE = renderOf([codeMode], [])
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -119,10 +119,15 @@ describe("modelRequest tool and prompt policy", () => {
 })
 
 describe("the tool surface decides the tool table", () => {
-  const LAB = nativeSurface([
-    { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
-    { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
-  ])
+  const LAB = renderOf(
+    [
+      toolList([
+        { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
+        { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
+      ])
+    ],
+    []
+  )
   const head = (extra: Event[] = [], output?: unknown): Event[] => [
     { type: "MessageReceived", id: "m1", text: "go", ...(output === undefined ? {} : { output }), at: 0 },
     ...extra

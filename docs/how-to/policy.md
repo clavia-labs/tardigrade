@@ -6,30 +6,25 @@ A policy value is a number nobody in the domain chose. How much of a tool result
 
 Every policy follows the same three-part shape, so knowing one is knowing all of them.
 
-A type names the values and what each one bounds. A `DEFAULT_` constant states the framework's answer. The surface that applies the policy takes a partial override and fills the rest from the default, so you state the one number you care about and inherit the rest.
+A type names the values and what each one bounds. A `DEFAULT_` constant states the framework's answer. The capability that applies the policy takes a partial override and fills the rest from the default, so you state the one number you care about and inherit the rest.
 
 ```ts
-// The reactor that applies the policy takes it; the default reactor is the same call with none.
-const compact = compactionReactorFor({ fireTokens: 60_000, keepTokens: 12_000 })
-const agent = rlmAgentFor(codeSurface(), { budget: { defaultToolBudget: 120 } })
+// The capability that applies the policy takes it; the bare capability is the same call with none.
+const agent = actorOf([codeMode, reply, budgetFor({ defaultToolBudget: 120 }), compactionFor({ fireTokens: 60_000, keepTokens: 12_000 })])
 ```
 
 The third part is visibility. When a policy changes what the model sees, the output says so. A truncated message names the cap it was cut at and the length it was cut from, and cut console output ends with a line saying it was cut. A model that reads a silent cut treats a fragment as the whole value, and the summary or the answer it writes then states a partial fact as complete.
 
 ### Where the values live
 
-The agent applies four policies, gathered as `AgentPolicy` at the assembly so one call sets them all. `context` is the render's truncation caps and compaction's fire and keep lines. `budget` is the tool-call ceiling a brief that states none takes. `infer` is the give-up and repair ceilings. `code` is the size at which a result spills to tmp and leaves a pointer.
+The agent applies four policies. Three ride their capabilities: `budget` (the tool-call ceiling a brief that states none takes, `budgetFor`), `context` (the render's truncation caps and compaction's fire and keep lines, `compactionFor`), and `code` (the size at which a result spills to tmp and leaves a pointer, `codeModeFor`). `infer` is the runtime's own give-up and repair ceilings, and `actorOf` takes it beside the list. `createRlmAgent` gathers all four as `AgentPolicy` so one option sets them.
 
 The sandbox and the model binding hold the rest. The sandbox bounds captured console output. The model binding bounds the stream (time to first chunk, idle, total), the throttle backoff ladder, and the output-token ladder a truncated answer climbs.
 
-### The one coupling
+### The one coupling, closed
 
-`context` is the only policy two places apply. Compaction's guard must measure the request the model actually sees, so it counts characters exactly where the render truncates. The reactor runs in the agent; the render runs in the model binding. State the same `context` policy to both, the same way you pass one tool surface to both.
+`context` is the one policy two places apply: compaction's guard must measure the request the model actually sees, so it counts characters exactly where the render truncates. The reactor runs in the agent; the render runs in the model binding. `compactionFor` states the policy once and contributes it to the render, which rides the infer request to the binding, so the guard and the render hold the same numbers by construction and nothing is stated twice.
 
 ```ts
-const context = { messageRenderCap: 40_000, resultRenderCap: 20_000 }
-const mind = infer({ baseUrl, apiKey, model, context })   // the binding renders the request with it
-const agent = rlmAgentFor(codeSurface(), { context })     // the guard measures with the same one
+const agent = actorOf([codeMode, reply, budget, compactionFor({ messageRenderCap: 40_000, resultRenderCap: 20_000 })])
 ```
-
-A policy stated in one place and not the other leaves the guard firing against a size no request ever reaches, or never firing while the request grows past the window.

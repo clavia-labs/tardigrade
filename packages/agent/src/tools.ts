@@ -5,13 +5,32 @@ import type { Event } from "@tardigrade/core/event"
 import { turnView } from "@tardigrade/code/turns"
 import { budgetSpent } from "./budget"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
-import { codeSurface, type CodeLaneR, type PendingCall, type ToolSurface } from "./surface"
-
 // The tools reactor: the agent's side of the tool table. The policy here is the same whatever
 // the tools are: the answer contract, the escalation ask, the budget wall, and the unknown-tool
-// error. The work tools themselves come from a `ToolSurface`, so an agent measured against a
-// fixed tool table swaps the surface and keeps every one of these behaviors (surface.ts).
+// error. The work tools themselves come from the mounted capabilities (capability.ts), so an
+// agent measured against a fixed tool table mounts `toolList` and keeps every behavior here.
 //
+
+// PendingCall is the call being served: the head unanswered `ToolCalled`.
+export interface PendingCall {
+  readonly callId: string
+  readonly name: string
+  readonly arguments: unknown
+  readonly turn?: string
+}
+
+// Answer mints the transition that ends a call with a result. The reactor owns the key and the
+// turn stamp, so a serve cannot key a tool answer wrongly.
+export type Answer = (result: unknown) => Transition<never, never>
+
+// Serve returns the transitions one call owes: an empty array while the world still works, and
+// undefined when the call names no tool of its capability.
+export type Serve<R = never> = (
+  call: PendingCall,
+  log: ReadonlyArray<Event>,
+  answer: Answer
+) => ReadonlyArray<Transition<never, R>> | undefined
+
 // Owed work, derived from the event set: the head pending call (a ToolCalled with no
 // ToolReturned, earliest by its own `at`) owes a routing until its dispatch or ask exists, an
 // answer once its work settled, and an escalation answer once the parent decided.
@@ -60,18 +79,14 @@ const decisionFor = (
 
 // toolsReactorFor derives one transition per pending call, branch by branch. The records each
 // branch appends carry the keys: an answer tr:<callId>, an escalation ask br:<callId>, and
-// whatever key the surface's own dispatch mints. An escalating call with no parental decision
+// whatever key the capability's own dispatch mints. An escalating call with no parental decision
 // derives nothing (the turn is durably paused); the decision's arrival re-derives the answer.
-// Every branch here is surface-independent policy; the surface decides only how a work call
-// becomes events.
-export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> =>
-  toolsReactorFrom(surface.serve, () => surface.tools)
-
-// toolsReactorFrom is the same policy over a routed serve and a derived tool list: the
-// capability assembly's entry (capability.ts), where the tools are a projection of the log
-// rather than a static table.
+// Every branch here is capability-independent policy; a capability's serve decides only how a
+// work call becomes events.
+// toolsReactorFrom is the policy over a routed serve and a derived tool list: the capability
+// assembly's entry (capability.ts), where the tools are a projection of the log.
 export const toolsReactorFrom = <R = never>(
-  serve: ToolSurface<R>["serve"],
+  serve: Serve<R>,
   toolsFor: (log: ReadonlyArray<Event>) => ReadonlyArray<{ readonly name: string }>
 ): Reactor<R> => (log) => {
   const call = pendingCall(log)
@@ -123,7 +138,7 @@ export const toolsReactorFrom = <R = never>(
     return [answering({ error: repairText(errors.length > 0 ? errors : ["the answer tool was called with no arguments"]) })]
   }
   // The budget gate: the wall on the turn refuses the work and keeps what the model has. It
-  // precedes the surface so a spent turn cannot dispatch, whatever the surface would have done.
+  // precedes the serve so a spent turn cannot dispatch, whatever a capability would have done.
   if (budgetSpent(log)) {
     return [
       answering({
@@ -137,7 +152,3 @@ export const toolsReactorFrom = <R = never>(
   }
   return served
 }
-
-// toolsReactor is the default surface's reactor: code mode. An agent on another surface builds
-// its own with `toolsReactorFor`.
-export const toolsReactor: Reactor<CodeLaneR> = toolsReactorFor(codeSurface())
