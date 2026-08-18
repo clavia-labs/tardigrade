@@ -1,19 +1,15 @@
 # Tardigrade
 
-Tardigrade is an agent harness built with the log as its core, inspired by event sourcing and React: state at any point is a pure function of the log, and the harness is a set of transitions derived from it.
-
-Designing a harness is not very different from designing a user interface, except here the user is a language model. React declared the component tree as a function of state, `UI = f(state)`, and the less known half is that the set of valid transitions derives from the same function. A harness needs the same shape with the log as the state:
+Tardigrade is an agent harness built with the log as its core, inspired by event sourcing and React. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
 
 $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
-
-One function implies every state and every valid transition between them, and the log is the source of truth for what happened and for what will happen.
 
 ## Events
 
 An event is a fact, recorded once and never edited. Everything else is derived from the set of them.
 
 ```ts
-// Event is the open record every log stores. Concrete events narrow the shape.
+// An Event is an open record. Concrete events narrow it.
 type Event = { type: string } & Record<string, unknown>
 
 type MessageReceived = { type: "MessageReceived"; id: string; text: string; at: number }
@@ -40,18 +36,14 @@ There is no cache and no invalidation: the log is the source, so a projection ca
 If you know React's `UI = f(state)`, you know the shape here: `transitions = f(log)`.
 
 ```ts
-// Transition is one keyed unit of work: state in, events out. key and input are
-// projections of the event set, so a retried fire is the same work, absorbed by
-// its key (packages/core/tla/Reconcile.tla, CommitOne). act may be nondeterministic.
+// One keyed unit of work: state in, events out. A retried fire is the same work, absorbed by its key.
 interface Transition<T> {
   readonly key: string
   readonly input: T
   readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
 }
 
-// Reactor derives the transitions the log enables. It must ignore event order
-// (packages/core/tla/Projection.tla, ViewFaithful). The runtime fires each key the
-// log does not record and appends the results, keyed record last.
+// Derives the transitions the log enables. The runtime fires each key the log does not record.
 type Reactor = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition>
 ```
 
@@ -79,9 +71,8 @@ const tools: Reactor = (events) =>
     })
   )
 
-// infer: an inference is enabled when every call is answered and no terminal yet.
-// The key is the count of answered calls: a crashed inference never records llm/2,
-// so the next settle derives llm/2 again and retries. Durability, with no retry code.
+// infer: enabled when every call is answered and no terminal yet. A crashed
+// attempt never records its key, so the next settle retries it: durability, no retry code.
 const infer: Reactor = (events) => {
   if (done(events) || unansweredCalls(events).length > 0) return []
   const attempt = events.filter((e) => e.type === "ToolReturned").length
@@ -105,9 +96,9 @@ Every reactor on this page has the same anatomy: a projection derives the input,
 import { createAgent } from "@flamecast/agent/main"
 
 const mind = createAgent({
-  packages: [invoices], // methods the agent's generated code calls, e.g. invoices.lookup({orderId})
-  infer: async (trajectory) => nextAction(trajectory), // one inference over the trajectory, one action out; platform/model binds a real provider
-  log: persisted // an agent initialises from a log, because the log is the only state there is
+  packages: [invoices], // e.g. invoices.lookup({orderId})
+  infer: async (trajectory) => nextAction(trajectory), // one inference, one action; platform/model binds a real provider
+  log: persisted // resume from a persisted log
 })
 
 const reply = await mind.ask("Find the invoice for order 4182.")
