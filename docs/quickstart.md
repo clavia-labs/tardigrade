@@ -57,7 +57,7 @@ An actor is a set of reactors.
 ```mermaid
 flowchart TB
   log[("event log")] -->|"events"| reactor["reactor"]
-  reactor -->|"transitions = f(log)"| transitions["transitions"]
+  reactor -->|"{transitions} = f(log)"| transitions["transitions"]
   transitions -->|"keys the log does not record"| act["act(input)"]
   act -->|"events, keyed record last"| log
 ```

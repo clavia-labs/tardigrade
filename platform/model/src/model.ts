@@ -364,7 +364,7 @@ export const realInfer = (config: ModelConfig) => {
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
-  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number): Promise<Action> => {
+  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
      // response, and the ladder would climb nowhere (the removed driver learned this).
@@ -400,17 +400,21 @@ export const realInfer = (config: ModelConfig) => {
       logger: noopLogger
     } as never)
     const result = await new StreamProcessor().process(bounded(stream, bounds))
+    stats.finish = result.finishReason ?? "stop"
     if (result.finishReason === "length") throw new TruncatedError(maxTokens)
     return actionOf(result, schema)
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const ladder = ladderOf(config.maxOutputTokens)
+        const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
+        const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         for (let attempt = 0; ; attempt++) {
           try {
-            return await attemptOnce(trajectory, key, ladder[rung]!, rung)
+            stats.rung = rung
+            return await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
           } catch (e) {
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
@@ -424,9 +428,26 @@ export const realInfer = (config: ModelConfig) => {
             if (!isThrottleShaped(e)) throw e
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
             if (delay === undefined) throw e
+            stats.waits += 1
             await sleep(delay)
           }
         }
-      })
+        })
+        // The wide-span discipline: everything a failure query filters by rides the one span.
+        // Names follow the GenAI semantic conventions where they exist (registry, 2026).
+        yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
+        yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
+        yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+        return action
+      }).pipe(
+        Effect.withSpan("llm.react", {
+          kind: "client",
+          attributes: {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": config.model,
+            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : "openai"
+          }
+        })
+      )
   })
 }
