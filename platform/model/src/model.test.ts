@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Infer } from "@flamecast/agent/infer"
-import { actionOf, modelAskOf, modelIdOf, realInfer } from "./model"
+import { actionOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -279,5 +279,33 @@ describe("model selection", () => {
         { type: "MessageReceived", id: "m2", text: "b", at: 2 } as never
       ])
     ).toBe("opus")
+  })
+})
+
+describe("retry-after", () => {
+  const NOW = 1_000_000
+
+  test("reads seconds and date forms, from any seat a failure carries headers in", () => {
+    expect(retryAfterMsOf({ headers: { "Retry-After": "7" } }, NOW)).toBe(7_000)
+    expect(retryAfterMsOf({ responseHeaders: { "retry-after": "2" } }, NOW)).toBe(2_000)
+    expect(retryAfterMsOf({ cause: { headers: new Headers({ "retry-after": "3" }) } }, NOW)).toBe(3_000)
+    const at = new Date(NOW + 5_000).toUTCString()
+    expect(retryAfterMsOf({ headers: { "retry-after": at } }, NOW)).toBeGreaterThanOrEqual(4_000)
+    expect(retryAfterMsOf({ headers: {} }, NOW)).toBeUndefined()
+    expect(retryAfterMsOf({}, NOW)).toBeUndefined()
+  })
+
+  test("a stated wait within the ceiling is honored; past it, the attempt dies", () => {
+    const stated = throttleDelayMs({ headers: { "retry-after": "7" } }, 0, NOW)
+    expect(stated).toBeGreaterThanOrEqual(7_000)
+    expect(stated).toBeLessThan(8_000)
+    expect(throttleDelayMs({ headers: { "retry-after": "300" } }, 0, NOW)).toBeUndefined()
+  })
+
+  test("no stated wait falls back to the ladder, and the ladder still bounds retries", () => {
+    const fallback = throttleDelayMs({}, 1, NOW)
+    expect(fallback).toBeGreaterThanOrEqual(0)
+    expect(fallback).toBeLessThanOrEqual(8_000)
+    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 3, NOW)).toBeUndefined()
   })
 })
