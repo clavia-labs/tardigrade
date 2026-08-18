@@ -1,93 +1,61 @@
-# flamecast-core
+# flamework
 
-flamecast-core is a code-first framework for building reliable agent harnesses around frozen language models.
+flamework is a library for durable agents: the event log is the only state, reactors derive work from it, and a reconciler fires what the log does not yet record.
 
-The event log is the source of truth. Modules compile into an agent. Machines react to the log. Rendering is pure. Runtimes bind storage, routing, and concurrency.
+The design in one pass: an actor is the single writer of one log. A reactor is a pure function from the log to keyed transitions, `{key, input, act}`. The runtime fires a transition only when no recorded event derives its key, so a crash, a retry, or a redelivery changes nothing. Replay is re-derivation. Recovery is re-settling.
 
-## Install
+## Layout
 
-Install Effect and a pinned Git revision directly from GitHub:
-
-```sh
-bun add effect@4.0.0-rc.108
-bun add --trust "git+ssh://git@github.com/clavia-inc/flamework.git#<commit>"
-```
-
-Build output is generated from the pinned source during installation and is not committed. Bun requires `--trust` because Git dependencies cannot run lifecycle scripts without the consumer's explicit permission.
-
-The root export is the core package. The other packages use subpath exports:
-
-```ts
-import { EventLog } from "flamecast-core"
-import { createAgent, inference } from "flamecast-core/harness"
-import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
-```
-
-## Quick Start
-
-```ts
-import { Effect, Schema } from "effect"
-import { createAgent, defaultPack, keyOf, tool } from "flamecast-core/harness"
-import { InMemoryRuntime } from "flamecast-core/runtime-in-memory"
-
-const lookupInvoice = tool({
-  name: "lookup_invoice",
-  description: "Look up one invoice by order id.",
-  input: Schema.Struct({ orderId: Schema.String }),
-  run: (input) =>
-    Effect.succeed({
-      invoiceId: `invoice-${input.orderId}`
-    })
-})
-
-const agent = createAgent({
-  modules: defaultPack({
-    inference: {
-      system: "You are a support agent. Use lookup_invoice for order questions.",
-      contextWindow: 200_000
-    },
-    nativeTools: [lookupInvoice],
-    budget: { defaultBudget: 24 }
-  })
-})
-
-const result = await Effect.runPromise(
-  Effect.provide(
-    agent.turn({ id: "m-1", text: "Find the invoice for order 4182." }),
-    InMemoryRuntime({ keyOf, session: "user-42" })
-  )
-)
-
-if (result.kind === "completed") console.log(result.output)
-```
-
-`inference(options)` uses Vercel AI Gateway by default. Set `AI_GATEWAY_API_KEY`, or pass `vercelGatewayInference({ apiKey })`. Cloudflare AI Gateway is available through `cloudflareGatewayInference()`. A module names either a provider or a `contextWindow`, because what a model accepts is not something the framework can guess. `yield* vercelGatewayInference()` reads that number from the gateway's model catalog.
-
-## Design
-
-- Modules own their configuration, services, render contributions, and machines.
-- Effect services inject typed construction dependencies between modules.
-- Static instructions form the cache-friendly system prefix. Conditional nudges are appended near the request tail by default.
-- `AgentDefinition` records module provenance and compiled behavior. Source-controlled programs can supply an explicit agent id such as a commit SHA.
-- `agent.branch(log)` and `agent.fork()` create independent in-memory continuations.
-- `callAgent()`, `subagentTool()`, and `serve()` enable multi-agent systems without imposing a planner or topology. Origin and usage cross the session boundary, so provenance and cost trees are derived from logs.
-- `flamecast-core/codemode` is optional. It lets the model write a script over capabilities the harness developer chose, and fan-out becomes `Promise.all`.
-- Search and evaluation policy stay in application code. Optimizers can use logs, pure request rendering, explicit agent ids, and independent branches without making their problem-specific policy part of the execution engine.
-
-## Public Imports
-
-| Import | Purpose |
+| Directory | Holds |
 | --- | --- |
-| `flamecast-core` | Events, event logs, machines, ports, routing, and conformance |
-| `flamecast-core/harness` | Agents, modules, rendering, inference providers, native tools, budgets, contracts, compaction, and delegation |
-| `flamecast-core/codemode` | Capabilities, the sandbox port, and the tool that runs model-written scripts |
-| `flamecast-core/runtime-in-memory` | Complete runtime for process-local sessions |
+| `packages/core` | The contracts: Envelope, EventLog and its six guarantees, KeyFragment, Transition, Reactor, the reconciler, Router |
+| `packages/code` | Durable code execution: recorded package calls, parks as BlockedOn evidence, replay drift guard, the contract gate |
+| `packages/agent` | The agent as reactors: inference, tools, budget, reply, compaction, and the Infer port |
+| `packages/host` | The reference in-memory binding: the executable statement every platform must match |
+| `platform/model` | The Infer binding over TanStack AI: Bedrock Converse and OpenAI-compatible wires |
+| `platform/bun` | The durable host binding: SQLite through @effect/sql, with recovery from a surviving log |
 
-The internal workspaces are private. The root package exposes them through Git-installable subpaths and is not published to npm.
+The line between the trees is a dependency rule: a package depends on effect and on other packages, and on nothing else. A platform binds one port to the world and owns its own dependencies. `platform/README.md` states the rule in full.
 
-## Documentation
+## Quick start
 
-Start with [docs/README.md](docs/README.md). [docs/building-an-agent.md](docs/building-an-agent.md) is the practical guide.
+The worked example below is `platform/bun/src/host.test.ts`, shortened: one reactor that owes one keyed `Done` per received message, run on the durable host.
+
+```ts
+import { Effect } from "effect"
+import { transition, type Actor, type Reactor } from "@flamecast/core/actor"
+import { createBunHost } from "@flamecast/bun/host"
+
+const keyOf = (e: { type: string; id?: string }) => (e.type === "Done" ? `dn:${e.id}` : undefined)
+
+const echoReactor: Reactor = (events) =>
+  events
+    .filter((e) => e.type === "MessageReceived")
+    .map((e) => {
+      const id = String((e as { id?: unknown }).id)
+      return transition({
+        key: `dn:${id}`,
+        input: id,
+        act: (input: string) => Effect.succeed([{ type: "Done", id: input, at: 1 }])
+      })
+    })
+
+const echo: Actor = { reactors: [echoReactor], keyOf }
+
+const host = await createBunHost({ path: "agents.sqlite", actorFor: (lane) => (lane === "echo" ? echo : undefined), keyOf })
+await host.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 })
+await host.drive()
+```
+
+Kill the process and start again: `host.recover()` re-derives the owed work from the surviving log, and a transition that already committed absorbs instead of firing twice.
+
+## Guarantees
+
+A store that binds the log port owes six guarantees, stated in `packages/core/src/event-log.ts`: append only, total order per log, one writer, atomic batches, dedup by key, and the ordered tail from a watermark. The reconciler's properties are model checked in `packages/core/tla` (Reconcile, Projection, Replay, Driver, Delivery). Every delivered cross-lane event names its occurrence through a key fragment, and both hosts refuse an unkeyed traveler.
+
+## Status
+
+The packages are private workspace packages, consumed in-repo. The docs/ tree predates this design and describes the removed harness and codemode surfaces; it is queued for a rewrite. `platform/model` carries the proven driver; journaled backoff, model-reported limits, provider continuations, and spend reservation are the next behaviors to land on it.
 
 ## Contributing
 
