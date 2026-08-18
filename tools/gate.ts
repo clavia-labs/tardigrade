@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
 const packages = ["core", "code", "agent", "host"]
 const platformPkg = (name: string) => `${root}platform/${name}`
-const platforms = ["model"]
+const platforms = ["model", "bun"]
 
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
