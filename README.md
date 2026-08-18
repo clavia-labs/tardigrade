@@ -35,7 +35,7 @@ type TurnCompleted = { type: "TurnCompleted"; output: string }
 
 ### Projections
 
-A projection is that derivation, named: a pure function from the event set to a value.
+A projection is a pure function from the event log to a value.
 
 ```ts
 type Projection<T> = (events: ReadonlyArray<Event>) => T
@@ -44,11 +44,7 @@ type Projection<T> = (events: ReadonlyArray<Event>) => T
 const done: Projection<boolean> = (events) => events.some((e) => e.type === "TurnCompleted")
 ```
 
-There is no cache and no invalidation: the log is the source, so a projection can never be stale. This is `state = f(log)`, the way React's derived values are `f(state)`. If a piece of logic appends nothing, it is a projection, never a reactor; reactors exist only for work that must land in the log.
-
 ### Transitions and reactors
-
-If you know React's `UI = f(state)`, you know the shape here: `transitions = f(log)`.
 
 ```ts
 // One keyed unit of work: state in, events out. A retried fire is the same work, absorbed by its key.
