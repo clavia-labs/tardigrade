@@ -11,16 +11,28 @@ import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 // earns a qualified name and must keep every guarantee here; the
 // conformance contract is packages/core/tla (Driver, Delivery).
 
+// HostPorts are the services every host binds per lane: the log, the
+// router, and this lane's address. layersFor may require them and must
+// not provide them.
+export type HostPorts = EventLog | Router | Self
+
+// LaneEnv is the rest of an actor's R: what the host does not bind.
+// Construction may require HostPorts; Layer.provideMerge discharges them.
+export type LaneEnv<R> = Layer.Layer<Exclude<R, HostPorts>, never, HostPorts>
+
+type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
+  ? { readonly layersFor?: (lane: string) => LaneEnv<R> }
+  : { readonly layersFor: (lane: string) => LaneEnv<R> }
+
 // HostOptions binds a host to its owner's world. actorFor names a
 // lane's reactors; a lane with none is a sink (a registry, a mirror)
-// and delivery still lands. layersFor supplies the lane's environment
-// beyond what the host provides (EventLog, Router, Self); packages and
-// inference live there. call and resume are the synchronous doors; a
-// host without them refuses synchronous calls with an error result.
-export interface HostOptions<R> {
+// and delivery still lands. layersFor supplies the rest of R; the host
+// binds EventLog, Router, and Self. A missing Infer is a type error.
+// call and resume are the synchronous doors; a host without them
+// refuses synchronous calls with an error result.
+export type HostOptions<R> = {
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly layersFor?: (lane: string) => Layer.Layer<unknown, never, EventLog | Router | Self>
   readonly call?: Parameters<typeof Router.of>[0]["call"]
   readonly resume?: Parameters<typeof Router.of>[0]["resume"]
   // edgesOf arms the deadlock sentinel: after a drive drains, the host
@@ -38,7 +50,7 @@ export interface HostOptions<R> {
   // cross-lane delivery loudly. MessageReceived is exempt only because
   // its key is its own id, deduped by `seen` here.
   readonly keyOf?: (e: Event) => string | undefined
-}
+} & LayersFor<R>
 
 export interface Host {
   // seed appends without waking the lane: test and bootstrap ingress.
@@ -76,7 +88,7 @@ const seen = (events: ReadonlyArray<Event>, event: Event): boolean => {
 
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
-export const createHost = <R>(options: HostOptions<R>): Host => {
+export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const principal = options.principal ?? "mem"
   const lanes = new Map<string, ReadonlyArray<Event>>()
   const dirty = new Set<string>()
@@ -134,7 +146,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
 
   const self = (lane: string): string => `${principal}:${lane}`
 
-  const layersOf = (lane: string) =>
+  const portsOf = (lane: string) =>
     Layer.mergeAll(
       Layer.succeed(
         EventLog,
@@ -144,9 +156,15 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
         })
       ),
       router,
-      Layer.succeed(Self, self(lane)),
-      options.layersFor?.(lane) ?? Layer.empty
+      Layer.succeed(Self, self(lane))
     )
+
+  // Exclude is not distributive over a generic R, so the merge is named
+  // here as the env settleActor requires (tla/Driver.tla, EventuallyServed).
+  const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
+    const extra = (options.layersFor ?? (() => Layer.empty as unknown as LaneEnv<R>))(lane)
+    return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
+  }
 
   const drain = async (): Promise<void> => {
     while (dirty.size > 0) {
@@ -154,9 +172,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
       dirty.delete(lane)
       const actor = options.actorFor(lane)
       if (actor === undefined) continue
-      await Effect.runPromise(
-        settleActor(actor).pipe(Effect.provide(layersOf(lane))) as Effect.Effect<void>
-      )
+      await Effect.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
     }
   }
 

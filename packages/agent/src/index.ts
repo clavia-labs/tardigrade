@@ -1,9 +1,10 @@
 import { Effect, Layer } from "effect"
 import type { Event } from "@tardigrade/core/event"
 import { Router } from "@tardigrade/core/router"
+import { Self } from "@tardigrade/core/actor"
 import { Packages, type Package } from "@tardigrade/code/packages"
 import { jsSandbox, memoryTmp } from "@tardigrade/code/defaults"
-import { createHost, type Host } from "@tardigrade/host/host"
+import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
 import { rlmAgent, rlmAgentFor, type RlmR } from "./turn"
 import { Infer } from "./infer"
 import type { Action } from "./events"
@@ -70,24 +71,25 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   })
   const tmp = memoryTmp()
 
-  // The layers close over the host and are built per serve, so the
-  // spawn package always routes and reads through the live host.
-  const layersFor = (lane: string): Layer.Layer<RlmR> => {
-    const self = host.self(lane)
-    const router = {
-      deliver: (address: string, event: Event) => Effect.sync(() => host.deliver(address, event)),
-      call: () => Effect.succeed({ error: "escalatable spawns need a binding with synchronous calls" }),
-      resume: () => Effect.succeed({ error: "escalatable spawns need a binding with synchronous calls" })
-    }
-    const spawn = agentsPackage(router, self, (callId) => host.self(`ag.${callId}`), {
-      events: (facet: string) => Promise.resolve(host.read(facet))
-    })
-    const all = [...user, spawn]
-    const packages = Layer.succeed(Packages, {
-      resolve: (name: string) => all.find((p) => p.name === name),
-      list: () => Effect.succeed(all.map((p) => ({ name: p.name, description: p.description })))
-    })
-    return Layer.mergeAll(packages, jsSandbox, tmp, infer, Layer.succeed(Router, router)) as unknown as Layer.Layer<RlmR>
+  // Packages is built from the host's Router and Self. place and the
+  // facet reader still close over the host: they name other lanes.
+  const layersFor = (_lane: string): LaneEnv<RlmR> => {
+    const packages = Layer.effect(
+      Packages,
+      Effect.gen(function* () {
+        const router = yield* Router
+        const self = yield* Self
+        const spawn = agentsPackage(router, self, (callId) => host.self(`ag.${callId}`), {
+          events: (facet: string) => Promise.resolve(host.read(facet))
+        })
+        const all = [...user, spawn]
+        return Packages.of({
+          resolve: (name) => all.find((p) => p.name === name),
+          list: () => Effect.succeed(all.map((p) => ({ name: p.name, description: p.description })))
+        })
+      })
+    )
+    return Layer.mergeAll(packages, jsSandbox, tmp, infer)
   }
 
   // Every ag. lane runs the RLM default; anything else is a sink.
@@ -95,7 +97,7 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const host: Host = createHost<RlmR>({
     principal: "mem",
     actorFor: (lane) => (lane.startsWith("ag.") ? assembled : undefined),
-    layersFor: layersFor as never
+    layersFor
   })
 
   if (options.log !== undefined && options.log.length > 0) host.seed(ROOT, options.log)
