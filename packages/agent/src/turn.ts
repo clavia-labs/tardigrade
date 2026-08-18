@@ -48,7 +48,10 @@ export interface AgentPolicy {
 // The caller chooses the work half. Code mode is rlmAgentFor(codeSurface()), because execute
 // needs the code reactor. The mind applies one policy, the model loop's own ceilings.
 export const agentFor = (surface: ToolSurface<AgentR>, policy: Partial<Pick<AgentPolicy, "infer">> = {}) =>
-  actor<AgentR>([inferReactorFor(policy.infer), toolsReactorFor(surface), replyReactor], agentActorKeys)
+  actor<AgentR>(
+    [inferReactorFor(policy.infer ?? {}, () => ({ system: surface.system, tools: surface.tools })), toolsReactorFor(surface), replyReactor],
+    agentActorKeys
+  )
 
 // rlmAgentFor is the Recursive Language Model default: the mind plus budget, durable code, and
 // compaction. budget precedes tools, so BudgetExhausted is on the log when the dispatch gate
@@ -56,7 +59,7 @@ export const agentFor = (surface: ToolSurface<AgentR>, policy: Partial<Pick<Agen
 export const rlmAgentFor = (surface: ToolSurface<RlmR>, policy: Partial<AgentPolicy> = {}) =>
   actor<RlmR>(
     [
-      inferReactorFor(policy.infer),
+      inferReactorFor(policy.infer ?? {}, () => ({ system: surface.system, tools: surface.tools })),
       budgetReactorFor(policy.budget),
       toolsReactorFor(surface),
       codeReactorFor(policy.code),

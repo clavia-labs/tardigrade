@@ -23,7 +23,7 @@ const headText = (trajectory: ReadonlyArray<Event>): string => {
 // The scripted mind honors the Infer seam's contract: fresh tool call
 // ids per call (real providers mint tooluse ids), and it reads only the
 // CURRENT turn's slice, so a second turn genuinely re-runs.
-const scripted = async (trajectory: ReadonlyArray<Event>): Promise<Action> => {
+const scripted = async ({ trajectory }: { trajectory: ReadonlyArray<Event> }): Promise<Action> => {
   const brief = headText(trajectory)
   if (brief.startsWith("sum ")) {
     const [a, b] = brief.slice(4).split("+").map(Number)
@@ -111,7 +111,7 @@ describe("createRlmAgent", () => {
     ])
     const mind = createRlmAgent({
       surface,
-      infer: async (trajectory) => {
+      infer: async ({ trajectory }) => {
         const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
         if (returned !== undefined) return { kind: "complete", output: String(returned.result) }
         return { kind: "call", callId: "n1", name: "read", arguments: { path: "/contract.md" } }
@@ -132,7 +132,7 @@ describe("createRlmAgent", () => {
     ])
     const mind = createRlmAgent({
       surface,
-      infer: async (trajectory) => {
+      infer: async ({ trajectory }) => {
         const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: { error?: string } } | undefined
         if (returned !== undefined) return { kind: "complete", output: String(returned.result?.error) }
         return { kind: "call", callId: "x1", name: "execute", arguments: { code: "return 1" } }

@@ -64,7 +64,16 @@ const decisionFor = (
 // derives nothing (the turn is durably paused); the decision's arrival re-derives the answer.
 // Every branch here is surface-independent policy; the surface decides only how a work call
 // becomes events.
-export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> => (log) => {
+export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> =>
+  toolsReactorFrom(surface.serve, () => surface.tools)
+
+// toolsReactorFrom is the same policy over a routed serve and a derived tool list: the
+// capability assembly's entry (capability.ts), where the tools are a projection of the log
+// rather than a static table.
+export const toolsReactorFrom = <R = never>(
+  serve: ToolSurface<R>["serve"],
+  toolsFor: (log: ReadonlyArray<Event>) => ReadonlyArray<{ readonly name: string }>
+): Reactor<R> => (log) => {
   const call = pendingCall(log)
   if (call === undefined) return []
   const stamp = call.turn === undefined ? {} : { turn: call.turn }
@@ -122,9 +131,9 @@ export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> 
       })
     ]
   }
-  const served = surface.serve(call, log, answering)
+  const served = serve(call, log, answering)
   if (served === undefined) {
-    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${surface.tools.map((t) => t.name).join(", ")}.` })]
+    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${toolsFor(log).map((t) => t.name).join(", ")}.` })]
   }
   return served
 }
