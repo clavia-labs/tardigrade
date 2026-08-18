@@ -110,14 +110,16 @@ const reply = await mind.ask("Find the invoice for order 4182.")
 
 ## Layout
 
-| Directory | Holds |
-| --- | --- |
-| `packages/core` | The contracts: Event, EventLog and its six guarantees, KeyFragment, Transition, Reactor, the reconciler, Router |
-| `packages/code` | Durable code execution: recorded package calls, parks as BlockedOn evidence, replay drift guard, the contract gate |
-| `packages/agent` | The agent as reactors: inference, tools, budget, reply, compaction, the Infer port, and createAgent |
-| `packages/host` | The reference in-memory binding: the executable statement every platform must match |
-| `platform/model` | The Infer binding over TanStack AI: Bedrock Converse and OpenAI-compatible wires |
-| `platform/bun` | The durable host binding: SQLite through @effect/sql, with recovery from a surviving log |
+```
+packages/
+  core/      contracts: Event, EventLog, KeyFragment, Transition, Reactor, Router
+  code/      durable code execution
+  agent/     the agent as reactors, and createAgent
+  host/      the reference in-memory binding
+platform/
+  model/     the Infer binding over TanStack AI
+  bun/       the durable host binding: SQLite through @effect/sql
+```
 
 The line between the trees is a dependency rule: a package depends on effect and on other packages, and on nothing else. A platform binds one port to the world and owns its own dependencies. `platform/README.md` states the rule in full.
 
