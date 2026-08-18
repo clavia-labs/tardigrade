@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
@@ -7,6 +7,7 @@ import type { Event } from "@tardigrade/core/event"
 import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 
 import { createBunHost, type BunHostOptions } from "./host"
+import { fileTelemetry } from "./file"
 
 // The bun binding against the reference host's contract, plus the two behaviors only physics
 // can show: a reopened database keeps the log, and recover() settles work a death interrupted.
@@ -146,5 +147,24 @@ describe("telemetry seam", () => {
     expect(row.traceparent).toMatch(/^00-t-s-01$/)
     expect(linked.some((l) => l.name === "transition.fire" && l.traceId === "t")).toBe(true)
     await h.close()
+  })
+
+  test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the deliver", async () => {
+    const path = join(dir, `spans-${n++}.ndjson`)
+    const h = await createBunHost({ ...options(freshPath()), telemetry: fileTelemetry(path) })
+    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.drive()
+    await h.close()
+    const rows = readFileSync(path, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { SpanName: string; TraceId: string; Duration: number; StatusCode: string; SpanAttributes: Record<string, string>; Links: Array<{ TraceId: string }> })
+    const delivered = rows.find((r) => r.SpanName === "deliver")
+    const fired = rows.find((r) => r.SpanName === "transition.fire")
+    expect(delivered?.SpanAttributes["type"]).toBe("MessageReceived")
+    expect(fired?.SpanAttributes["outcome"]).toBe("committed")
+    expect(fired?.StatusCode).toBe("Ok")
+    expect(fired?.Duration).toBeGreaterThan(0)
+    expect(fired?.Links[0]?.TraceId).toBe(delivered?.TraceId)
   })
 })
