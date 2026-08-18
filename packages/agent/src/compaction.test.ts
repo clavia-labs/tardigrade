@@ -97,7 +97,7 @@ describe("the compaction pass", () => {
         })
       ),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Event>) => {
+        react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
           return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
         }

@@ -4,13 +4,12 @@ import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import { Infer } from "@tardigrade/agent/infer"
+import { Infer, type InferRequest } from "@tardigrade/agent/infer"
 import type { Action } from "@tardigrade/agent/events"
 import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
 import type { ContextPolicy } from "@tardigrade/agent/compaction"
-import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
@@ -177,13 +176,9 @@ export interface ModelConfig {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
-  // The tool surface this binding renders: code mode by default. The actor must be assembled on
-  // the same surface, or the model is offered tools its reactor will not serve
-  // (@tardigrade/agent, surface.ts).
-  readonly surface?: Pick<ToolSurface, "system" | "tools">
-  // What this binding's render truncates, and where. It rides the same rule the surface does:
-  // the agent's compaction reactor must hold the same policy, or its guard fires against a size
-  // the request never reaches (@tardigrade/agent, compaction.ts, ContextPolicy).
+  // What this binding's render truncates, and where: the agent's compaction reactor must hold
+  // the same policy, or its guard fires against a size the request never reaches
+  // (@tardigrade/agent, compaction.ts, ContextPolicy).
   readonly context?: Partial<ContextPolicy>
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
@@ -498,7 +493,7 @@ export const infer = (config: ModelConfig) => {
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
-  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
+  const attemptOnce = async (request: InferRequest, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
      // response, and the ladder would climb nowhere (the removed driver learned this).
@@ -523,9 +518,10 @@ export const infer = (config: ModelConfig) => {
             maxRetries: 0,
             fetch: fetcher
           })
-    // The domain decides the request; the platform maps it to the wire and streams it.
-    const req = modelRequest(trajectory, config.surface ?? codeSurface(), config.context ?? {})
-    const schema = outputSchemaOf(trajectory) // the answer parser needs the turn's declared shape
+    // The actor decides the request, render included; the platform maps it to the wire and
+    // streams it, holding no opinion about tools (@tardigrade/agent, capability.ts).
+    const req = modelRequest(request.trajectory, request, config.context ?? {})
+    const schema = outputSchemaOf(request.trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({
       model: config.model,
       messages: req.messages.map(toMessage) as never,
@@ -563,7 +559,7 @@ export const infer = (config: ModelConfig) => {
     }
   }
   return Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Event>, key?: string) =>
+    react: (request: InferRequest, key?: string) =>
       Effect.gen(function* () {
         const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
         const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
@@ -578,7 +574,7 @@ export const infer = (config: ModelConfig) => {
         for (let attempt = 0; ; attempt++) {
           try {
             stats.rung = rung
-            const action = await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
+            const action = await attemptOnce(request, key, ladder[rung]!, rung, stats)
             remember(action.usage, true)
             return withSpend(action, spentOf(parts, missed))
           } catch (e) {

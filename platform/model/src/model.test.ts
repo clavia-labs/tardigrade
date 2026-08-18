@@ -1,9 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { codeSurface } from "@tardigrade/agent/surface"
+
+// reqOf wraps a trajectory in the render the actor would derive: the code surface half.
+const surfaceRender = codeSurface()
+const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, system: surfaceRender.system, tools: surfaceRender.tools })
 import { Infer } from "@tardigrade/agent/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, infer, retryAfterMsOf, throttleDelayMs } from "./model"
 import type { Action } from "@tardigrade/agent/events"
+import type { Event } from "@tardigrade/core/event"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -104,12 +109,11 @@ describe("infer end to end", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      surface: codeSurface(),
       fetch: fetchImpl
     })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (model) =>
-        model.react([{ type: "MessageReceived", id: "m1", text: "compute", at: 1 }])
+        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "compute", at: 1 }]))
       ).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(action).toMatchObject({ kind: "call", callId: "call_7", name: "execute", arguments: { code: "return 42" }, text: "on it" })
@@ -126,9 +130,9 @@ describe("infer end to end", () => {
         { id: "r2", choices: [{ index: 0, delta: { content: "is 4" } }] },
         { id: "r2", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", surface: codeSurface(), fetch: fetchImpl })
+    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "2+2?", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "2+2?", at: 1 }]))).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<unknown>
     )
@@ -145,13 +149,13 @@ describe("infer end to end", () => {
         { id: "r3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])
     }) as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", surface: codeSurface(), fetch: fetchImpl })
+    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
     const trajectory = [{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]
     await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(trajectory, "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+      Effect.flatMap(Infer, (model) => model.react(reqOf(trajectory), "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(trajectory)).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+      Effect.flatMap(Infer, (model) => model.react(reqOf(trajectory))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(seen).toEqual(["m1/infer/0", null])
   })
@@ -168,15 +172,14 @@ describe("infer: cost provenance", () => {
 
   test("a billed cost is provider, an omitted cost is table or unknown", async () => {
     const billed = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
           infer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
             provider: "openai",
-            surface: codeSurface(),
-            pricing: table,
+                  pricing: table,
             fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4, cost: 0 })])) as unknown as typeof globalThis.fetch
           })
         )
@@ -196,15 +199,14 @@ describe("infer: cost provenance", () => {
     })
 
     const filled = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
           infer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
             provider: "openai",
-            surface: codeSurface(),
-            pricing: table,
+                  pricing: table,
             fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4 })])) as unknown as typeof globalThis.fetch
           })
         )
@@ -220,14 +222,13 @@ describe("infer: cost provenance", () => {
     })
 
     const unknown = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
           infer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
-            surface: codeSurface(),
-            fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
+                  fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
           })
         )
       ) as Effect.Effect<Action>
@@ -258,7 +259,6 @@ describe("infer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -266,7 +266,7 @@ describe("infer: throttle-shaped retry", () => {
       }
     })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<unknown>
     )
@@ -288,7 +288,6 @@ describe("infer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -297,7 +296,7 @@ describe("infer: throttle-shaped retry", () => {
     })
     await expect(
       Effect.runPromise(
-        Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
           Effect.provide(layer)
         ) as Effect.Effect<unknown>
       )
@@ -318,7 +317,6 @@ describe("infer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -327,7 +325,7 @@ describe("infer: throttle-shaped retry", () => {
     })
     await expect(
       Effect.runPromise(
-        Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
           Effect.provide(layer)
         ) as Effect.Effect<unknown>
       )
@@ -427,9 +425,9 @@ describe("truncation", () => {
       keys.push(request.headers.get("Idempotency-Key"))
       return calls++ === 0 ? cut("half an ans") : whole("the whole answer")
     }) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), fetch: fetchImpl as never })
+    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }], "t1/infer/0")).pipe(
+      Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]), "t1/infer/0")).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<{ kind: string; output?: string }>
     )
@@ -454,11 +452,10 @@ describe("truncation", () => {
       model: "m",
       baseUrl: "https://x",
       apiKey: "k",
-      surface: codeSurface(),
       fetch: fetchImpl as never
     })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<Action>
     )
@@ -472,9 +469,9 @@ describe("truncation", () => {
 
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
     const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), fetch: fetchImpl as never })
+    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<{ kind: string; error?: string }>
     )
@@ -484,15 +481,14 @@ describe("truncation", () => {
 
   test("wire-reported provenance beats the configured stamp", async () => {
     const routed = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
           infer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "meta-llama/llama-3.1-70b",
             provider: "openrouter",
-            surface: codeSurface(),
-            fetch: (async () =>
+                  fetch: (async () =>
               sse([
                 { id: "r", provider: "DeepInfra", model: "meta-llama/llama-3.1-70b-instruct", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
                 { id: "r", provider: "DeepInfra", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
@@ -532,14 +528,13 @@ describe("truncation", () => {
         model: "m",
         baseUrl: "https://x",
         apiKey: "k",
-        surface: codeSurface(),
-        fetch: fetchImpl as never,
+          fetch: fetchImpl as never,
         throttleRetryDelaysMs: [0],
         sleep: () => Promise.resolve()
       })
       await expect(
         Effect.runPromise(
-          Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+          Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
             Effect.provide(layer)
           ) as Effect.Effect<unknown>
         )
@@ -571,9 +566,9 @@ describe("declared limits", () => {
         headers: { "content-type": "text/event-stream" }
       })
     }) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), maxOutputTokens: 16_384, fetch: fetchImpl as never })
+    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", maxOutputTokens: 16_384, fetch: fetchImpl as never })
     await Effect.runPromise(
-      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+      Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(body?.max_tokens).toBe(16_384)
   })
