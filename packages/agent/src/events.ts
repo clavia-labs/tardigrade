@@ -178,8 +178,8 @@ export const agentKeys: KeyFragment = {
       case "BudgetRequested":
         return `br:${String(v.callId)}`
       case "CompactionCompleted":
-        // The checkpoint's occurrence is where it reaches.
-        return `cc:${String(v.upTo)}`
+        // The checkpoint's occurrence is the identity it keeps from.
+        return `cc:${String(v.keepFrom)}`
       default:
         return undefined
     }
@@ -231,5 +231,5 @@ export const budgetDenied = (
 ): Event => ({ type: "BudgetDenied", ...fields }) as Event
 
 export const compactionCompleted = (
-  fields: { readonly upTo: number; readonly summary: string; readonly at: number }
+  fields: { readonly keepFrom: string; readonly summary: string; readonly at: number }
 ): Event => ({ type: "CompactionCompleted", ...fields }) as Event

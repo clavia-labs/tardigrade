@@ -112,39 +112,44 @@ Notice the key: the count of answered calls. A crashed inference never records `
 **Compaction.** The loop appends forever, and the trajectory grows with it. Keeping it small is a capability, so it is a reactor. Assume a token estimate `sizeOf(events)` and a `BUDGET` it compares against.
 
 ```ts
-// CompactionCompleted is the checkpoint: the summary so far, and the index it covers.
-// A render reads the summary plus the events after upTo; nothing is deleted.
-type CompactionCompleted = { type: "CompactionCompleted"; summary: string; upTo: number }
+// CompactionCompleted is the checkpoint: the summary so far, and the event it keeps from.
+// A render reads the summary plus the events from keepFrom on; nothing is deleted.
+// The checkpoint names an event, never an index: a reactor folds the log while a render
+// folds a projection of it, and the same index is a different event in each.
+type CompactionCompleted = { type: "CompactionCompleted"; summary: string; keepFrom: string }
 
 // lastCheckpoint: the latest checkpoint, or the empty one.
-const lastCheckpoint: Projection<{ summary: string; upTo: number }> = (events) =>
-  events.findLast((e) => e.type === "CompactionCompleted") ?? { summary: "", upTo: 0 }
+const lastCheckpoint: Projection<{ summary: string; keepFrom: string }> = (events) =>
+  events.findLast((e) => e.type === "CompactionCompleted") ?? { summary: "", keepFrom: "" }
 ```
 
 ```ts
-// A Span is the stretch owed a summary: from the checkpoint it starts at,
-// up to the index the next checkpoint will cover.
-type Span = { summary: string; events: Event[]; from: number; upTo: number }
+// A Span is the stretch owed a summary: the events before the cut, and the
+// event the next checkpoint keeps from.
+type Span = { summary: string; events: Event[]; keepFrom: string }
 
 // spanOf: the span owed a summary, or null while the log is under budget.
+// cutOf picks a boundary a render can open on, so a kept tail never starts
+// with a tool result whose call was summarized away.
 const spanOf: Projection<Span | null> = (events) => {
   const checkpoint = lastCheckpoint(events)
-  const since = events.slice(checkpoint.upTo)
+  const since = events.slice(indexOf(events, checkpoint.keepFrom))
   if (sizeOf(since) <= BUDGET) return null
-  return { summary: checkpoint.summary, events: since, from: checkpoint.upTo, upTo: events.length }
+  const cut = cutOf(since)
+  return { summary: checkpoint.summary, events: since.slice(0, cut.at), keepFrom: cut.id }
 }
 
 // compact folds a span into the next checkpoint.
 const compact = async (span: Span): Promise<CompactionCompleted[]> => {
   const summary = await summarize(span.summary, span.events)
-  return [{ type: "CompactionCompleted", summary, upTo: span.upTo }]
+  return [{ type: "CompactionCompleted", summary, keepFrom: span.keepFrom }]
 }
 
 // compaction: enabled when the events since the checkpoint outgrow the budget.
 const compaction: Reactor = (events) => {
   const span = spanOf(events)
   if (!span) return []
-  return [{ key: `compact/${span.from}`, input: span, act: compact }]
+  return [{ key: `compact/${span.keepFrom}`, input: span, act: compact }]
 }
 ```
 

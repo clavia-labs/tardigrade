@@ -35,17 +35,18 @@ const compact = async (span: Span): Promise<CompactionCompleted[]> => {
 }
 
 // compaction enables one compact transition when the events since the
-// last checkpoint outgrow the budget. The key is the checkpoint index,
-// so a completion moves the checkpoint and retires the key: one fire
-// per crossing.
+// last checkpoint outgrow the budget. The key is the event the next
+// checkpoint keeps from, so a completion moves the checkpoint and
+// retires the key: one fire per crossing.
 const compaction: Reactor = (events) => {
   const checkpoint = lastCheckpoint(events)
-  const since = events.slice(checkpoint.upTo)
+  const since = events.slice(indexOf(events, checkpoint.keepFrom))
   if (estimateTokens(since) <= BUDGET) return []
 
+  const cut = cutOf(since)
   return [{
-    key: `compact/${checkpoint.upTo}`,
-    input: { summary: checkpoint.summary, events: since },
+    key: `compact/${cut.id}`,
+    input: { summary: checkpoint.summary, events: since.slice(0, cut.at) },
     act: compact,
   }]
 }
