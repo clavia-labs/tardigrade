@@ -102,7 +102,7 @@ describe("Vercel AI Gateway", () => {
         { status: 200 }
       )) as unknown as typeof fetch
 
-  test("refuses an answer the gateway stopped at its completion-token limit", async () => {
+  test("records an answer the gateway stopped at its completion-token limit", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
       model: "openai/test-model",
@@ -112,15 +112,14 @@ describe("Vercel AI Gateway", () => {
 
     const action = await Effect.runPromise(provider.react(request, "k"))
 
-    expect(action.kind).toBe("fail")
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("completion-token limit")
-    // The message names the option that moves the ceiling, and that option exists.
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("maxOutputTokens")
-    // The tokens were spent, so the turn still costs what it cost.
-    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 4096, costUsd: 0.02 })
+    expect(action).toEqual({
+      kind: "truncated",
+      text: "The lease was signed on 29 August 2025 and the term",
+      usage: { promptTokens: 900, completionTokens: 4096, costUsd: 0.02 }
+    })
   })
 
-  test("refuses a tool call whose arguments stop mid-JSON", async () => {
+  test("records a tool call whose arguments stop mid-JSON as text", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
       model: "openai/test-model",
@@ -130,7 +129,10 @@ describe("Vercel AI Gateway", () => {
       })
     })
 
-    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({ kind: "fail" })
+    expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({
+      kind: "truncated",
+      text: `[truncated tool call lookup_invoice: {"orderId":"41]`
+    })
   })
 
   test("refuses multiple tool calls instead of dropping all but the first", async () => {
@@ -470,6 +472,25 @@ describe("Vercel AI Gateway", () => {
     expect(action.usage).toBeUndefined()
   })
 
+  test("reserves the output ceiling when it checks the window", async () => {
+    let called = false
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      contextWindow: 5_000,
+      maxOutputTokens: 9_000,
+      fetch: (async () => {
+        called = true
+        return new Response()
+      }) as unknown as typeof fetch
+    })
+
+    const action = await Effect.runPromise(provider.react(request, "k"))
+
+    expect(called).toBe(false)
+    expect(action.kind).toBe("fail")
+    expect(String(action.kind === "fail" ? action.error : "")).toContain("reserved for the answer")
+  })
+
   test("sends a request that fits its configured context window", async () => {
     let called = false
     const provider = vercelGatewayInference({
@@ -489,8 +510,9 @@ describe("Vercel AI Gateway", () => {
   })
 
   // The ceiling on one answer. Without it the gateway's own default for the model decides, and a
-  // default sized for chat cuts off a long generated source file. The provider
-  // that refuses a truncated answer names this option, so the option has to exist.
+  // default sized for chat cuts off a long generated source file. A truncated answer is recorded so
+  // the turn can continue from the fragment, and `maxOutputTokens` is the option that moves the
+  // ceiling.
   test("sends the output ceiling a caller states, and none when they state none", async () => {
     const bodies: Array<Record<string, unknown>> = []
     const stub = (async (_url: string, init: RequestInit) => {

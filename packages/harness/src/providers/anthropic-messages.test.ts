@@ -212,9 +212,9 @@ describe("an Anthropic model on the Vercel gateway", () => {
   })
 
   // A caller who states the window has said they know the model's limits, and this call asks the
-  // gateway nothing. What is left is the lowest ceiling any Claude model accepts, because a figure
-  // above what the model allows is refused on every request rather than on a long one.
-  test("falls back to a ceiling every model accepts, and takes the caller's over it", async () => {
+  // gateway nothing. What is left is a ceiling current Claude models accept. An older model that
+  // refuses that figure takes `maxOutputTokens` set to what it accepts.
+  test("falls back to a ceiling current models accept, and takes the caller's over it", async () => {
     const bodies: Array<Record<string, unknown>> = []
     const stub = (async (_url: string, init: RequestInit) => {
       bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
@@ -225,10 +225,10 @@ describe("an Anthropic model on the Vercel gateway", () => {
     }) as unknown as typeof fetch
 
     await Effect.runPromise(provider(stub).react(request, "k"))
-    await Effect.runPromise(provider(stub, { maxOutputTokens: 64_000 }).react(request, "k"))
+    await Effect.runPromise(provider(stub, { maxOutputTokens: 32_000 }).react(request, "k"))
 
-    expect(bodies[0]?.max_tokens).toBe(8192)
-    expect(bodies[1]?.max_tokens).toBe(64_000)
+    expect(bodies[0]?.max_tokens).toBe(64_000)
+    expect(bodies[1]?.max_tokens).toBe(32_000)
   })
 
   // This API takes a call's input as a value rather than as the string the other format uses. A
@@ -265,7 +265,7 @@ describe("an Anthropic model on the Vercel gateway", () => {
     expect(called).toBe(false)
   })
 
-  test("refuses an answer stopped at the output-token limit", async () => {
+  test("records an answer stopped at the output-token limit", async () => {
     const action = await Effect.runPromise(
       provider(
         replied({
@@ -276,10 +276,11 @@ describe("an Anthropic model on the Vercel gateway", () => {
       ).react(request, "k")
     )
 
-    expect(action.kind).toBe("fail")
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("output-token limit")
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("maxOutputTokens")
-    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 8192 })
+    expect(action).toEqual({
+      kind: "truncated",
+      text: "The lease was signed on 29 August and the",
+      usage: { promptTokens: 900, completionTokens: 8192 }
+    })
   })
 
   test("refuses multiple tool calls instead of dropping all but the first", async () => {

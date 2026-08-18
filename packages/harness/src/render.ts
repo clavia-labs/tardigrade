@@ -143,6 +143,21 @@ export const renderMessages = (
         pendingContinuation = undefined
         break
       }
+      case "AnswerTruncated": {
+        messages.push({
+          role: "assistant",
+          content: String(event.text ?? ""),
+          ...(pendingContinuation === undefined ? {} : { continuation: pendingContinuation })
+        })
+        pendingContinuation = undefined
+        messages.push({
+          role: "user",
+          content:
+            `Your answer stopped at the output-token ceiling after ${String(event.tokens ?? 0)} ` +
+            "tokens. Continue exactly where it stopped."
+        })
+        break
+      }
       default:
         break
     }

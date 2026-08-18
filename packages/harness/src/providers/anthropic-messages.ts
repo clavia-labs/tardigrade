@@ -204,14 +204,26 @@ const actionOf = (body: MessagesResponse): Action => {
     return { kind: "fail", error: "the inference gateway returned no content" }
   }
   const usage = usageOf(body.usage)
-  // An answer stopped at the ceiling is a fragment wearing the shape of an answer, and the tokens
-  // were spent either way.
+  // An answer stopped at the ceiling is a fragment wearing the shape of an answer. The tokens were
+  // spent either way, and the fragment is recorded so the turn can continue from it rather than
+  // restart. A truncated tool call is not valid JSON, so it rides as text and the model re-issues
+  // the call.
   if (body.stop_reason === "max_tokens") {
+    const text = content
+      .filter((block) => block.type === "text")
+      .map((block) => String(block.text ?? ""))
+      .join("")
+    const call = content.find((block) => block.type === "tool_use")
+    const fragment =
+      call === undefined
+        ? text
+        : [text, `[truncated tool call ${String(call.name ?? "")}: ${JSON.stringify(call.input ?? {})}]`]
+            .filter((part) => part !== "")
+            .join("\n")
     return {
-      kind: "fail",
-      error:
-        "the model stopped at its output-token limit, so its answer is incomplete. Raise " +
-        "maxOutputTokens on the provider, or ask for a shorter answer.",
+      kind: "truncated",
+      text: fragment,
+      ...(continuationOf(content) === undefined ? {} : { continuation: continuationOf(content) }),
       usage
     }
   }
@@ -263,6 +275,7 @@ export const anthropicMessagesInference = (
     provider: options.provider,
     model: options.model,
     contextWindow: options.contextWindow,
+    maxOutputTokens: options.maxOutputTokens,
     ...(options.pricing === undefined ? {} : { pricing: options.pricing })
   }),
   react: (request: ModelRequest, key: string) =>
@@ -323,7 +336,13 @@ const reacted = (
       request.options
     )
   )
-  const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
+  const refusal = overWindow(
+    body,
+    options.provider,
+    options.model,
+    options.contextWindow,
+    request.options?.maxOutputTokens ?? options.maxOutputTokens
+  )
   if (refusal !== undefined) return Effect.succeed(refusal)
   return sent({
     call: options.fetch ?? fetch,

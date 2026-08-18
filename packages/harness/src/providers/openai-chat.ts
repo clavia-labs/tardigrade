@@ -209,15 +209,26 @@ const actionOf = (body: ChatResponse): Action => {
   if (answer === undefined) return { kind: "fail", error: "the inference gateway returned no choice" }
   const usage = usageOf(body.usage)
   // A response the gateway stopped at the completion-token limit is a fragment wearing the shape of
-  // an answer. Reading it as one is the silent failure this catches: the turn would complete on half
-  // a sentence, or dispatch a tool call whose arguments stop mid-JSON and parse as a bare string.
-  // The tokens were spent either way, so the usage rides the failure and the turn's cost stays true.
+  // an answer. The tokens were spent either way, so the usage rides the action. The fragment is
+  // recorded so the turn can continue from it. A truncated tool call is not valid JSON, so it rides
+  // as text and the model re-issues the call.
   if (choice?.finish_reason === "length") {
+    const text = typeof answer.content === "string" ? answer.content : ""
+    const call = (answer.tool_calls ?? [])[0]
+    const fragment =
+      call === undefined
+        ? text
+        : [
+            text,
+            `[truncated tool call ${String(call.function?.name ?? "")}: ${String(call.function?.arguments ?? "")}]`
+          ]
+            .filter((part) => part !== "")
+            .join("\n")
+    const continuation = continuationOf(answer, call)
     return {
-      kind: "fail",
-      error:
-        "the model stopped at its completion-token limit, so its answer is incomplete. Raise " +
-        "maxOutputTokens on the provider, or ask for a shorter answer.",
+      kind: "truncated",
+      text: fragment,
+      ...(continuation === undefined ? {} : { continuation }),
       usage
     }
   }
@@ -268,6 +279,7 @@ export const openAiChatInference = (options: OpenAiChatOptions): InferenceProvid
     provider: options.provider,
     model: options.model,
     contextWindow: options.contextWindow,
+    ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
     ...(options.pricing === undefined ? {} : { pricing: options.pricing })
   }),
   react: (request: ModelRequest, key: string) =>
@@ -314,7 +326,13 @@ const reacted = (
       request.options
     )
   )
-  const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
+  const refusal = overWindow(
+    body,
+    options.provider,
+    options.model,
+    options.contextWindow,
+    request.options?.maxOutputTokens ?? options.maxOutputTokens ?? 0
+  )
   if (refusal !== undefined) return Effect.succeed(refusal)
   return sent({
     call: options.fetch ?? fetch,

@@ -205,6 +205,12 @@ export type Action =
       readonly retryAfterMs?: number | undefined
       readonly usage?: Usage | undefined
     }
+  | {
+      readonly kind: "truncated"
+      readonly text: string
+      readonly usage?: Usage | undefined
+      readonly continuation?: ProviderContinuation | undefined
+    }
 
 export interface InferenceState {
   readonly provider: string
@@ -218,6 +224,10 @@ export interface InferenceState {
   // and one that had not, and a machine guard reads this, so the same log would fold two ways and a
   // replay would diverge from the run it replays.
   readonly contextWindow: number
+  // The ceiling on one answer, when the provider states one. The Messages API requires it on every
+  // request, and a request that does not leave room for it is refused by the window check. Absent
+  // leaves the gateway's own default, so the projection cannot reserve a figure it does not have.
+  readonly maxOutputTokens?: number
   // What the model costs, when a catalog or a caller has said. A figure written here would be wrong
   // for every model it was never measured against, so absence means the projection cannot price a
   // turn, and a missing provider cost stays unknown rather than becoming zero.
@@ -245,6 +255,7 @@ export interface CustomInferenceOptions {
   // What the model behind this function accepts. Required for the same reason the projection is:
   // whoever wrote the function is the only one who can say, and nobody downstream can guess.
   readonly contextWindow: number
+  readonly maxOutputTokens?: number
   readonly pricing?: ModelPricing
 }
 
@@ -259,6 +270,7 @@ export const customInference = (
       provider: options.id ?? "custom",
       model,
       contextWindow: options.contextWindow,
+      ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens }),
       ...(options.pricing === undefined ? {} : { pricing: options.pricing })
     }),
     react: (request, key) => Effect.promise(() => react(request, key))

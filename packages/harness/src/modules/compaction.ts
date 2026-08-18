@@ -1,14 +1,13 @@
 import { Clock, Context, Effect } from "effect"
 import { machine, type Event } from "@flamecast/core"
-import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
+import { checkpointOf, estimateTokens, keepUpTo, KEEP_RATIO, suffixOf, TRIGGER_RATIO } from "../context"
 import { compactionCompleted } from "../alphabet"
 import { defineModule } from "../module"
 import { environment } from "../providers/environment"
-import { transcript } from "../turns"
+import { transcript, turnOf } from "../turns"
 import { InferenceStateProjection } from "./inference"
 
-export const TRIGGER_RATIO = 0.8
-export const KEEP_RATIO = 0.2
+export { KEEP_RATIO, TRIGGER_RATIO } from "../context"
 export const COMPRESSION_RATIO = 0.5
 
 const MORPH_URL = "https://api.morphllm.com/v1"
@@ -91,7 +90,7 @@ export const morphCompaction = (options: MorphOptions = {}) => {
   const ratio = options.compressionRatio ?? COMPRESSION_RATIO
   return defineModule({
     id: "compaction",
-    version: "2",
+    version: "3",
     identity: {
       triggerAt,
       keepAt,
@@ -129,6 +128,8 @@ export const morphCompaction = (options: MorphOptions = {}) => {
             act: (log) =>
               Effect.gen(function* () {
                 const at = yield* Clock.currentTimeMillis
+                const turn = turnOf(log)
+                const stamped = turn === "" ? {} : { turn }
                 const prior = checkpointOf(log)
                 const upTo = Math.max(prior.upTo, keepUpTo(log, thresholds(log).keep))
                 const span = log.slice(prior.upTo, upTo)
@@ -138,7 +139,8 @@ export const morphCompaction = (options: MorphOptions = {}) => {
                       upTo: prior.upTo,
                       summary: prior.summary,
                       provider: "fallback",
-                      at
+                      at,
+                      ...stamped
                     })
                   ]
                 }
@@ -154,7 +156,8 @@ export const morphCompaction = (options: MorphOptions = {}) => {
                     upTo,
                     summary: compacted.summary,
                     provider: compacted.provider,
-                    at
+                    at,
+                    ...stamped
                   })
                 ]
               }),

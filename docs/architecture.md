@@ -82,7 +82,7 @@ A figure the framework can not know is asked for. The context window belongs to 
 
 A decision that belongs to a deployment stays with the deployment. Which upstream provider serves a model changes cost, latency, and where data travels, so no provider here states a routing preference. When a route breaks a rule the harness depends on, the turn fails and names the option that reaches a route which holds it.
 
-A result shaped like an answer is checked before it is read as one. An answer stopped at its token ceiling is a fragment, and a turn that accepted it would finish on half a sentence. A tool call whose recorded arguments will not parse would reach the tool with none of what the model asked for.
+A result shaped like an answer is checked before it is read as one. An answer stopped at its token ceiling is a fragment, recorded as `AnswerTruncated`, and the turn continues from it. A tool call whose recorded arguments will not parse would reach the tool with none of what the model asked for.
 
 The failure worth this much care is the quiet one. A gateway that receives a request stripped of its Gemini thought signature answers it anyway, by substituting the sentinel that turns the provider's validation off. The turn succeeds, the model answers without the reasoning it already paid for, and nothing in the reply says so. [inference](modules.md#inference) covers what Flamework carries so that substitution never applies, and `bun run smoke:live` is what checks it against live models, because a stub can not.
 

@@ -23,13 +23,13 @@ const agent = createAgent({
 - the model loop and reply machine
 - the static system instruction
 - provider selection
-- give-up, deferral, and contract-repair bounds
+- give-up, deferral, contract-repair, and continue bounds
 - message and tool-result truncation limits
 - the `InferenceStateProjection` construction service
 
 `messageTruncateAt` and `resultTruncateAt` bound how much of a received message and of a tool result reach the model, in characters. Both are absent until a caller sets one, so a render sends what the log holds. A bound the caller never asked for would drop text that only the rendered request could show was missing, and the log would still read as though the model saw all of it.
 
-A provider states one maximum, `contextWindow`, and it bounds the whole request rather than any one message. A per-message default derived from it would be a policy the framework invented, so there is none. The window is enforced where it applies, in the provider, and [compaction](#compaction) is what keeps a session under it across turns.
+A provider states one maximum, `contextWindow`, and it bounds the whole request rather than any one message. A per-message default derived from it would be a policy the framework invented, so there is none. The window is enforced where it applies, in the provider, and [compaction](#compaction) is what keeps a session under it across turns and, when a request plus its output ceiling would not fit, mid-turn.
 
 A body that meets a bound the caller did set carries a marker naming its original size, so a model holding a fragment can read that it is holding one. `agent.request(log)` renders exactly what goes to the provider, so what a bound removed is readable at any point without running anything.
 
@@ -68,9 +68,13 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `timeout` defaults to ten minutes, which is a guard against a socket that has gone quiet rather than a limit on how long a model may think. A bound inside the range where real answers land discards answers that were on their way, and a reasoning model working for two minutes is inside that range.
 
-`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
+`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is recorded as `AnswerTruncated` so the turn can continue from the fragment, and `continueAtMost` bounds how many times that may happen, defaulting to eight. The recorded partial is rendered as the assistant's prior message plus a prompt to continue exactly where it stopped. Partials of a completed answer are stitched into `TurnCompleted.output`. A truncated tool call is not valid JSON, so the partial rides as text and the model re-issues the call.
 
-The Messages API refuses a request that states no ceiling, so a provider for it always sends one. The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request, so what is left is the lowest ceiling any Claude model accepts. State `maxOutputTokens` to raise it, and a turn that reaches it says so.
+The Messages API refuses a request that states no ceiling, so a provider for it always sends one. The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request, so what is left is 64,000, a ceiling current Claude models accept, or the window itself when that is smaller. State `maxOutputTokens` to raise or lower it. An older model that refuses 64,000 needs the option set to what it accepts.
+
+`InferenceState.maxOutputTokens` is that ceiling when the provider states one, sitting beside `contextWindow` so a fold can reserve output headroom. The window check refuses a request whose estimated input plus that ceiling exceeds the window, because the Messages API requires `input + max_tokens <= window` and a check on input alone would pass a body the API then refuses.
+
+In `thinking`, before a request is issued, the same reservation is checked against 80 percent of the window. If the request would not fit, the loop appends `CompactionFired` and rests until `CompactionCompleted`, then re-renders against the new checkpoint. One compaction per attempt: if the re-rendered request still does not fit, the turn fails with the window error. This is what keeps a long tool-calling turn from growing past the window with no chance to compact. The compaction module is what writes the checkpoint, so a pack that includes it is what completes a mid-turn fire.
 
 `headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
 
@@ -110,11 +114,11 @@ Each family puts its state in a different field, so the adapter preserves fields
 
 The last run, on 2026-08-17, read more with the state preserved for every model: Gemini 3.1 Pro at 431 against 99, GPT 5.6 Sol at 164 against 129, DeepSeek V4 Pro at 563 against 392, Claude Opus 5 at 622 against 571, and Claude Sonnet 4.6 at 706 against 590.
 
-A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
+A response the gateway stopped at its completion-token limit is a truncated action. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The action carries the usage, because those tokens were spent, and the inference loop records it as `AnswerTruncated`.
 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped. The failure names `routes`, because that option reaches a provider that honours the serial request, and it is forwarded on this path the same way it is on the Messages path.
 
-A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
+A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes, the reserved output ceiling, and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
 
 ## requestOptions
 
@@ -156,7 +160,9 @@ A turn declares its output in its own message, so the schema travels as the JSON
 
 Both are ratios of [the model's window](#the-context-window), which the provider holds before it exists, so a model switch moves both and the trigger stays a fold over the log. `fireTokens` and `keepTokens` state the two thresholds directly for a session that would rather set them than derive them.
 
-The module appends `CompactionCompleted` with an `upTo` offset and summary. It deletes no events. Rendering substitutes the latest summary for the compacted prefix.
+The module appends `CompactionCompleted` with an `upTo` offset and summary. It deletes no events. Rendering substitutes the latest summary for the compacted prefix. A cut that would split a `ToolCalled` from its `ToolReturned` snaps back so the pair stays in the tail: both APIs reject a result with no call.
+
+The inference loop can append `CompactionFired` mid-turn, and this module already accepts that event from idle. A mid-turn checkpoint is stamped with the open turn so the model loop can observe `CompactionCompleted` and continue.
 
 When a Morph API key is absent or the call fails, the local deterministic fallback produces the checkpoint.
 

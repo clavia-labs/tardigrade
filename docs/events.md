@@ -16,7 +16,7 @@ Common fields include:
 - `continuation` on a model result for opaque provider state
 - `attempt`, `notBefore`, and `reason` on a model deferral for the journaled wait
 - `reserved` on a model call for the estimated spend of an in-flight attempt
-- `reason` on a model settle for why an attempt closed without a provider result
+- `tokens` and `reason` on a truncated answer for how far the model got and why it stopped
 
 Unknown fields and event types survive reads and folds.
 
@@ -49,7 +49,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 
 | Module | Event types |
 | --- | --- |
-| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelSettled`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
+| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelSettled`, `ModelReturned`, `TextReturned`, `AnswerTruncated`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
 | native-tools | `ToolCalled`, `ToolReturned` |
 | budget | `BudgetExhausted`, `BudgetRequested`, `BudgetGranted`, `BudgetDenied` |
 | contract | `AnswerRejected` |

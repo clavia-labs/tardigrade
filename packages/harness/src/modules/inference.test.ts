@@ -9,6 +9,7 @@ import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { serve } from "../serve"
 import { inference } from "./inference"
+import { morphCompaction } from "./compaction"
 import { flexThenStandard } from "./request-options"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
@@ -319,5 +320,106 @@ describe("per-request options as a projection", () => {
         }
       ]).options
     ).toEqual({ serviceTier: "standard" })
+  })
+})
+
+describe("a truncated answer", () => {
+  test("records the fragment and continues from it", async () => {
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
+    const model = scripted([
+      { kind: "truncated", text: "The lease was signed on ", usage },
+      { kind: "complete", output: "29 August.", usage }
+    ])
+    const { log, result } = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const result = yield* agent.turn({ id: "m-1", text: "Write the addendum." })
+          return { result, log: yield* agent.log }
+        }),
+        Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+      )
+    )
+
+    expect(result).toMatchObject({ kind: "completed", output: "The lease was signed on 29 August." })
+    expect(log.map((event) => event.type)).toEqual([
+      "MessageReceived",
+      "ModelCalled",
+      "ModelReturned",
+      "AnswerTruncated",
+      "ModelCalled",
+      "ModelReturned",
+      "TurnCompleted",
+      "ReplyDelivered"
+    ])
+    expect(model.seen[1]?.messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ role: "assistant", content: "The lease was signed on " }),
+        expect.objectContaining({
+          role: "user",
+          content: expect.stringContaining("Continue exactly where it stopped")
+        })
+      ])
+    )
+  })
+
+  test("gives up once the continuations are spent", async () => {
+    const agent = createAgent({
+      modules: [inference({ contextWindow: 200_000, continueAtMost: 1 })]
+    })
+    const model = scripted([
+      { kind: "truncated", text: "first ", usage },
+      { kind: "truncated", text: "second", usage }
+    ])
+    const result = await Effect.runPromise(
+      Effect.provide(
+        agent.turn({ id: "m-1", text: "Write the addendum." }),
+        Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+      )
+    )
+    expect(result).toMatchObject({
+      kind: "failed",
+      error: "the answer was truncated 1 times and still did not finish"
+    })
+    expect(model.seen).toHaveLength(2)
+  })
+})
+
+describe("mid-turn compaction", () => {
+  test("fires before a request that would not fit, then retries", async () => {
+    const agent = createAgent({
+      modules: [inference({ contextWindow: 200_000 }), morphCompaction({ keepTokens: 1 })]
+    })
+    const seen: Array<ModelRequest> = []
+    const { log, result } = await Effect.runPromise(
+      Effect.provide(
+        Effect.gen(function* () {
+          const result = yield* agent.turn({ id: "m-1", text: "x".repeat(30_000) })
+          return { result, log: yield* agent.log }
+        }),
+        Layer.merge(
+          InMemoryRuntime({ keyOf, session: "user-42" }),
+          inferWith(
+            async (request) => {
+              seen.push(request)
+              return { kind: "complete", output: "done", usage }
+            },
+            { contextWindow: 10_000, maxOutputTokens: 2_000 }
+          )
+        )
+      )
+    )
+
+    expect(result).toMatchObject({ kind: "completed", output: "done" })
+    expect(log.map((event) => event.type)).toEqual([
+      "MessageReceived",
+      "CompactionFired",
+      "CompactionCompleted",
+      "ModelCalled",
+      "ModelReturned",
+      "TurnCompleted",
+      "ReplyDelivered"
+    ])
+    expect(seen).toHaveLength(1)
+    expect(String(seen[0]?.messages[0]?.content)).toContain("Summary of earlier work:")
   })
 })

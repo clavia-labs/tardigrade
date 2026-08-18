@@ -226,4 +226,29 @@ describe("modelRequest", () => {
     const log = [head, { type: "SomethingNew", turn: "m-1", at: 9 }, returned]
     expect(modelRequest(programOf(renderOf()), log).messages).toHaveLength(2)
   })
+
+  test("renders a truncated answer as the assistant's fragment plus a continue prompt", () => {
+    const log: ReadonlyArray<Event> = [
+      head,
+      { type: "ModelReturned", turn: "m-1", callId: "k-0", at: 2 },
+      {
+        type: "AnswerTruncated",
+        turn: "m-1",
+        callId: "k-0",
+        text: "The lease was signed on",
+        tokens: 8192,
+        reason: "the model stopped at its output-token limit",
+        at: 3
+      }
+    ]
+    expect(modelRequest(programOf(renderOf()), log).messages).toEqual([
+      { role: "user", content: "Find order 4182." },
+      { role: "assistant", content: "The lease was signed on" },
+      {
+        role: "user",
+        content:
+          "Your answer stopped at the output-token ceiling after 8192 tokens. Continue exactly where it stopped."
+      }
+    ])
+  })
 })

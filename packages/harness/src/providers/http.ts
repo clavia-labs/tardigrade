@@ -50,22 +50,34 @@ const backoff = Schedule.exponential("500 millis").pipe(Schedule.jittered)
 //
 // A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
 // words. Refusing here spends nothing and answers in the harness's own words, naming both sizes and
-// the model they belong to.
+// the model they belong to. The Messages API also requires `input + max_tokens <= window`, so the
+// check reserves the output ceiling the request will send. A check on input alone would pass a body
+// the API then refuses with a 400 this side never named.
+export const windowError = (
+  estimate: number,
+  provider: string,
+  model: string,
+  window: number,
+  reservedOutput = 0
+) =>
+  `this request is at least ${estimate} tokens` +
+  (reservedOutput > 0 ? ` plus ${reservedOutput} reserved for the answer` : "") +
+  ` and ${provider} reports a context window of ${window} tokens for ${model}, so the model can ` +
+  "not read it. Pass contextWindow to override what the model accepts, bound what reaches the " +
+  "model with messageTruncateAt and resultTruncateAt, or send less."
+
 export const overWindow = (
   body: string,
   provider: string,
   model: string,
-  window: number
+  window: number,
+  reservedOutput = 0
 ): Action | undefined => {
   const estimate = estimateTextTokens(body)
-  if (estimate <= window) return undefined
+  if (estimate + reservedOutput <= window) return undefined
   return {
     kind: "fail",
-    error:
-      `this request is at least ${estimate} tokens and ${provider} reports a context window of ` +
-      `${window} tokens for ${model}, so the model can not read it. Pass contextWindow to override ` +
-      "what the model accepts, bound what reaches the model with messageTruncateAt and " +
-      "resultTruncateAt, or send less."
+    error: windowError(estimate, provider, model, window, reservedOutput)
   }
 }
 

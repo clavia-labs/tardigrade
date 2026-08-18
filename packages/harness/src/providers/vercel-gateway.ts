@@ -126,10 +126,10 @@ const isAnthropic = (model: string) => model.startsWith("anthropic/")
 // The Messages API refuses a request that states no ceiling on the answer, so one is always sent.
 // The model publishes its own, and this is what is left when nobody asked the catalog: a caller who
 // states the context window has said they know the model's limits, and this call makes no network
-// request to check. It is the lowest ceiling any Claude model accepts, because a figure above what
-// the model allows is refused on every request rather than on a long one. A turn that reaches it
-// fails and names `maxOutputTokens`, so a ceiling too low for the work says so.
-const SAFE_OUTPUT_TOKENS = 8192
+// request to check. Current Claude models accept 64,000 output tokens; a figure above what a given
+// model allows is refused on every request, so an older model needs `maxOutputTokens` set to what
+// it accepts. A turn that reaches the ceiling continues from the fragment rather than failing.
+const STATED_OUTPUT_TOKENS = 64_000
 
 const routed = (options: VercelGatewayInferenceOptions) =>
   options.routes === undefined
@@ -158,7 +158,10 @@ const build = (
       // The caller's ceiling, then the model's own, then the floor below. The published figure is
       // why a model that can write 128,000 tokens is allowed to, rather than being held to the one
       // number that would have been safe for every model at once.
-      maxOutputTokens: options.maxOutputTokens ?? publishedOutputTokens ?? SAFE_OUTPUT_TOKENS,
+      maxOutputTokens:
+        options.maxOutputTokens ??
+        publishedOutputTokens ??
+        Math.min(STATED_OUTPUT_TOKENS, contextWindow),
       ...(options.effort === undefined ? {} : { effort: options.effort }),
       ...(pricing === undefined ? {} : { pricing }),
       ...routed(options)

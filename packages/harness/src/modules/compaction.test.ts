@@ -66,6 +66,19 @@ describe("the context projections", () => {
     expect(keepUpTo(history, 100_000)).toBe(0)
     expect(keepUpTo([], 10)).toBe(0)
   })
+
+  test("the cut snaps back so a tool result keeps its call", () => {
+    const paired: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m-1", text: "x".repeat(40), at: 1 },
+      { type: "ToolCalled", turn: "m-1", callId: "c-1", name: "lookup", arguments: {}, at: 2 },
+      { type: "ToolReturned", turn: "m-1", callId: "c-1", name: "lookup", result: { ok: true }, at: 3 }
+    ]
+    expect(keepUpTo(paired, 1)).toBe(1)
+    expect(paired.slice(keepUpTo(paired, 1)).map((event) => event.type)).toEqual([
+      "ToolCalled",
+      "ToolReturned"
+    ])
+  })
 })
 
 describe("the local fallback", () => {

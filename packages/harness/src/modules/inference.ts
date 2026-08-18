@@ -11,6 +11,8 @@ import {
   type InferenceState
 } from "../infer"
 import {
+  answerTruncated,
+  compactionFired,
   messageReceived,
   modelCalled,
   modelDeferred,
@@ -28,6 +30,8 @@ import type { RenderPlan } from "../definition"
 import { modelRequest } from "../render"
 import { replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
+import { TRIGGER_RATIO } from "../context"
+import { windowError } from "../providers/http"
 
 const BASE_SYSTEM =
   "You are an agent. Read the conversation, use the tools you are offered when they help, and " +
@@ -44,6 +48,7 @@ export interface InferenceSettings {
   readonly giveUpAfter?: number
   readonly deferAtMost?: number
   readonly repairAtMost?: number
+  readonly continueAtMost?: number
   readonly messageTruncateAt?: number
   readonly resultTruncateAt?: number
 }
@@ -124,7 +129,38 @@ const deferDelayMs = (attempt: number, retryAfterMs?: number) => {
   return Math.min(DEFER_CAP_MS, 5_000 * 4 ** Math.max(0, attempt - 1))
 }
 
-const consequenceOf = (action: Action, turn: string, at: number): Event =>
+const compactedSinceProgress = (log: ReadonlyArray<Event>): boolean => {
+  for (let index = log.length - 1; index >= 0; index--) {
+    const event = log[index]
+    if (event === undefined) continue
+    if (event.type === "CompactionCompleted" || event.type === "CompactionFired") return true
+    if (
+      event.type === "ModelReturned" ||
+      event.type === "ToolReturned" ||
+      event.type === "MessageReceived" ||
+      event.type === "AnswerTruncated"
+    ) {
+      return false
+    }
+  }
+  return false
+}
+
+const stitchedOutput = (view: ReadonlyArray<Event>, final: string): string => {
+  const parts: Array<string> = []
+  for (const event of view) {
+    if (event.type === "AnswerTruncated") parts.push(String(event.text ?? ""))
+    if (event.type === "ToolCalled" || event.type === "ToolReturned") parts.length = 0
+  }
+  return `${parts.join("")}${final}`
+}
+
+const consequenceOf = (
+  action: Extract<Action, { kind: "call" | "complete" | "fail" }>,
+  view: ReadonlyArray<Event>,
+  turn: string,
+  at: number
+): Event =>
   action.kind === "call"
     ? toolCalled({
         turn,
@@ -134,17 +170,216 @@ const consequenceOf = (action: Action, turn: string, at: number): Event =>
         at
       })
     : action.kind === "complete"
-      ? turnCompleted({ turn, output: action.output, at })
+      ? turnCompleted({ turn, output: stitchedOutput(view, action.output), at })
       : turnFailed({ turn, error: action.error, at })
+
+const OUTPUT_LIMIT_REASON = "the model stopped at its output-token limit"
+
+const inferOn = (truncated: "thinking" | "continuing") => ({
+  ModelDeferred: "deferred" as const,
+  ToolCalled: "waiting" as const,
+  TurnCompleted: "idle" as const,
+  TurnFailed: "idle" as const,
+  AnswerTruncated: truncated,
+  CompactionFired: "compacting" as const
+})
 
 const inferMachine = (
   render: RenderPlan,
   selection: InferenceSelection,
   giveUpAfter: number,
   deferAtMost: number,
-  repairAtMost: number
-) =>
-  machine({
+  repairAtMost: number,
+  continueAtMost: number
+) => {
+  const think = (log: ReadonlyArray<Event>, context: { readonly turn: string }) =>
+    Effect.gen(function* () {
+      const turn = context.turn
+      const view = turnView(log)
+      const at = yield* Clock.currentTimeMillis
+      const died = diedAttempts(view)
+      const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
+      if (died >= giveUpAfter) {
+        return [
+          ...closeOrphan(view, turn, at),
+          turnFailed({
+            turn,
+            error: `the model attempt died ${giveUpAfter} times in a row`,
+            at
+          })
+        ]
+      }
+      const rejections = view.filter((event) => event.type === "AnswerRejected").length
+      if (rejections > repairAtMost) {
+        return [
+          turnFailed({
+            turn,
+            error: `the answer did not satisfy the declared schema after ${repairAtMost} corrections`,
+            at
+          })
+        ]
+      }
+      const truncations = view.filter((event) => event.type === "AnswerTruncated").length
+      if (truncations > continueAtMost) {
+        return [
+          turnFailed({
+            turn,
+            error: `the answer was truncated ${continueAtMost} times and still did not finish`,
+            at
+          })
+        ]
+      }
+      const deferrals = deferralsOf(view, key)
+      if (deferrals >= deferAtMost) {
+        return [
+          ...closeOrphan(view, turn, at),
+          turnFailed({
+            turn,
+            error: `the model was deferred ${deferAtMost} times`,
+            at
+          })
+        ]
+      }
+      // An orphaned mark is a crash mid-call. Close the reservation so cost does not vanish,
+      // then journal the wait so a restart sleeps instead of immediately issuing another
+      // request against a queue that has not moved.
+      if (died > 0) {
+        return [
+          ...closeOrphan(view, turn, at),
+          modelDeferred({
+            turn,
+            callId: key,
+            attempt: died,
+            notBefore: at + deferDelayMs(died),
+            reason: "the model attempt died",
+            at
+          })
+        ]
+      }
+      const store = yield* EventLog
+      const override = yield* Effect.serviceOption(Infer)
+      const provider = Option.getOrElse(override, () => selectedInference(selection, log))
+      const request = modelRequest({ render }, log)
+      const state = provider.state(log)
+      const reserved = reservedUsage(request, state.pricing)
+      const output = request.options?.maxOutputTokens ?? state.maxOutputTokens ?? 0
+      if (reserved.promptTokens + output > state.contextWindow * TRIGGER_RATIO) {
+        if (compactedSinceProgress(log)) {
+          return [
+            turnFailed({
+              turn,
+              error: windowError(
+                reserved.promptTokens,
+                state.provider,
+                state.model,
+                state.contextWindow,
+                output
+              ),
+              at
+            })
+          ]
+        }
+        return [compactionFired({ turn, at })]
+      }
+      yield* store.append([
+        modelCalled({
+          turn,
+          callId: key,
+          reserved,
+          ...(request.options === undefined ? {} : { options: request.options }),
+          at
+        })
+      ])
+      const action = yield* provider.react(request, key)
+      const after = yield* Clock.currentTimeMillis
+      const usage = settledUsage(action.usage, reserved, state.pricing)
+      if (action.kind === "defer") {
+        const attempt = deferrals + 1
+        return [
+          modelSettled({
+            turn,
+            callId: key,
+            usage,
+            reason: action.error,
+            at: after
+          }),
+          modelDeferred({
+            turn,
+            callId: key,
+            attempt,
+            notBefore: after + deferDelayMs(attempt, action.retryAfterMs),
+            reason: action.error,
+            at: after
+          })
+        ]
+      }
+      if (action.kind === "truncated") {
+        const recorded = answerTruncated({
+          turn,
+          callId: key,
+          text: action.text,
+          tokens: usage.completionTokens,
+          reason: OUTPUT_LIMIT_REASON,
+          at: after
+        })
+        const returned = modelReturned({
+          turn,
+          callId: key,
+          usage,
+          ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
+          at: after
+        })
+        const headroom = state.contextWindow - reserved.promptTokens
+        const windowBound = output > headroom
+        if (windowBound) {
+          if (compactedSinceProgress(log)) {
+            return [
+              returned,
+              recorded,
+              turnFailed({
+                turn,
+                error: windowError(
+                  reserved.promptTokens,
+                  state.provider,
+                  state.model,
+                  state.contextWindow,
+                  output
+                ),
+                at: after
+              })
+            ]
+          }
+          return [returned, recorded, compactionFired({ turn, at: after })]
+        }
+        if (truncations + 1 > continueAtMost) {
+          return [
+            returned,
+            recorded,
+            turnFailed({
+              turn,
+              error: `the answer was truncated ${continueAtMost} times and still did not finish`,
+              at: after
+            })
+          ]
+        }
+        return [returned, recorded]
+      }
+      const continuation = action.kind === "fail" ? undefined : action.continuation
+      return [
+        modelReturned({
+          turn,
+          callId: key,
+          usage,
+          ...(continuation === undefined ? {} : { continuation }),
+          at: after
+        }),
+        ...(action.kind === "call" && action.text !== undefined && action.text !== ""
+          ? [textReturned({ turn, text: action.text, at: after })]
+          : []),
+        consequenceOf(action, view, turn, after)
+      ]
+    })
+  return machine({
     id: "inference",
     initial: "idle",
     context: { turn: "" },
@@ -159,123 +394,22 @@ const inferMachine = (
         }
       },
       thinking: {
-        act: (log, context) =>
-          Effect.gen(function* () {
-            const turn = context.turn
-            const view = turnView(log)
-            const at = yield* Clock.currentTimeMillis
-            const died = diedAttempts(view)
-            const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
-            if (died >= giveUpAfter) {
-              return [
-                ...closeOrphan(view, turn, at),
-                turnFailed({
-                  turn,
-                  error: `the model attempt died ${giveUpAfter} times in a row`,
-                  at
-                })
-              ]
-            }
-            const rejections = view.filter((event) => event.type === "AnswerRejected").length
-            if (rejections > repairAtMost) {
-              return [
-                turnFailed({
-                  turn,
-                  error: `the answer did not satisfy the declared schema after ${repairAtMost} corrections`,
-                  at
-                })
-              ]
-            }
-            const deferrals = deferralsOf(view, key)
-            if (deferrals >= deferAtMost) {
-              return [
-                ...closeOrphan(view, turn, at),
-                turnFailed({
-                  turn,
-                  error: `the model was deferred ${deferAtMost} times`,
-                  at
-                })
-              ]
-            }
-            // An orphaned mark is a crash mid-call. Close the reservation so cost does not vanish,
-            // then journal the wait so a restart sleeps instead of immediately issuing another
-            // request against a queue that has not moved.
-            if (died > 0) {
-              return [
-                ...closeOrphan(view, turn, at),
-                modelDeferred({
-                  turn,
-                  callId: key,
-                  attempt: died,
-                  notBefore: at + deferDelayMs(died),
-                  reason: "the model attempt died",
-                  at
-                })
-              ]
-            }
-            const store = yield* EventLog
-            const override = yield* Effect.serviceOption(Infer)
-            const provider = Option.getOrElse(override, () => selectedInference(selection, log))
-            const request = modelRequest({ render }, log)
-            const reserved = reservedUsage(request, provider.state(log).pricing)
-            yield* store.append([
-              modelCalled({
-                turn,
-                callId: key,
-                reserved,
-                ...(request.options === undefined ? {} : { options: request.options }),
-                at
-              })
-            ])
-            const action = yield* provider.react(request, key)
-            const after = yield* Clock.currentTimeMillis
-            const usage = settledUsage(action.usage, reserved, provider.state(log).pricing)
-            if (action.kind === "defer") {
-              const attempt = deferrals + 1
-              return [
-                modelSettled({
-                  turn,
-                  callId: key,
-                  usage,
-                  reason: action.error,
-                  at: after
-                }),
-                modelDeferred({
-                  turn,
-                  callId: key,
-                  attempt,
-                  notBefore: after + deferDelayMs(attempt, action.retryAfterMs),
-                  reason: action.error,
-                  at: after
-                })
-              ]
-            }
-            const continuation = action.kind === "fail" ? undefined : action.continuation
-            return [
-              modelReturned({
-                turn,
-                callId: key,
-                usage,
-                ...(continuation === undefined ? {} : { continuation }),
-                at: after
-              }),
-              ...(action.kind === "call" && action.text !== undefined && action.text !== ""
-                ? [textReturned({ turn, text: action.text, at: after })]
-                : []),
-              consequenceOf(action, turn, after)
-            ]
-          }),
-        on: {
-          ModelDeferred: "deferred",
-          ToolCalled: "waiting",
-          TurnCompleted: "idle",
-          TurnFailed: "idle"
-        }
+        act: think,
+        on: inferOn("continuing")
       },
+      // A self-transition on AnswerTruncated would wedge: the fold would sit in the same active
+      // state. Continuing is the same act under another name, so a truncated answer retries without
+      // resting, and a second truncation ping-pongs back.
+      continuing: {
+        act: think,
+        on: inferOn("thinking")
+      },
+      compacting: { on: { CompactionCompleted: "thinking" } },
       deferred: { on: { AlarmFired: "thinking" } },
       waiting: { on: { ToolReturned: "thinking" } }
     }
   })
+}
 
 const replyMachine = machine({
   id: "reply",
@@ -343,6 +477,7 @@ export const inference = (options: InferenceOptions) => {
   const giveUpAfter = options.giveUpAfter ?? 3
   const deferAtMost = options.deferAtMost ?? 8
   const repairAtMost = options.repairAtMost ?? 2
+  const continueAtMost = options.continueAtMost ?? 8
   // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
   // message down on the way to the model while the log kept the whole thing, so the record and the
   // request would disagree and only the request is what the model answered.
@@ -361,7 +496,7 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "5",
+    version: "6",
     identity: {
       provider: initial.id,
       state: initial.state([]),
@@ -369,12 +504,15 @@ export const inference = (options: InferenceOptions) => {
       giveUpAfter,
       deferAtMost,
       repairAtMost,
+      continueAtMost,
       ...truncation
     },
     services: Context.make(InferenceStateProjection, state),
     setup: () => ({
       // The model loop emits the tool call and then waits on its result, so both belong here even
-      // though the native-tools module is what dispatches one.
+      // though the native-tools module is what dispatches one. CompactionFired and
+      // CompactionCompleted are the same shape: the loop fires mid-turn when a request would not
+      // fit, and the compaction module is what writes the checkpoint.
       events: [
         "MessageReceived",
         "ModelCalled",
@@ -383,11 +521,14 @@ export const inference = (options: InferenceOptions) => {
         "ModelSettled",
         "ModelReturned",
         "TextReturned",
+        "AnswerTruncated",
         "ToolCalled",
         "ToolReturned",
         "TurnCompleted",
         "TurnFailed",
-        "ReplyDelivered"
+        "ReplyDelivered",
+        "CompactionFired",
+        "CompactionCompleted"
       ],
       instructions: [{ id: "inference.system", text: system }],
       render: truncation,
@@ -395,7 +536,7 @@ export const inference = (options: InferenceOptions) => {
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.
       machines: (render): ReadonlyArray<Machine<EventLog | Router | Self, never>> => [
-        erase(inferMachine(render, selection, giveUpAfter, deferAtMost, repairAtMost)),
+        erase(inferMachine(render, selection, giveUpAfter, deferAtMost, repairAtMost, continueAtMost)),
         erase(replyMachine)
       ]
     })

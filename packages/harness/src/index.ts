@@ -93,6 +93,8 @@ export {
   budgetGranted,
   budgetRequested,
   compactionCompleted,
+  compactionFired,
+  answerTruncated,
   messageReceived,
   modelCalled,
   modelDeferred,

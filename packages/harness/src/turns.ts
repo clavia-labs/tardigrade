@@ -222,6 +222,8 @@ const detailOf = (event: Event, callWidth: number): string => {
       return quoted(event.output)
     case "TurnFailed":
       return quoted(event.error)
+    case "AnswerTruncated":
+      return call(`${quoted(event.text)} tokens=${String(event.tokens ?? "")} ${quoted(event.reason)}`)
     case "ReplyDelivered":
       return event.to === undefined ? "" : `to=${String(event.to)}`
     case "BudgetExhausted":
@@ -236,6 +238,8 @@ const detailOf = (event: Event, callWidth: number): string => {
       return call(quoted(event.error))
     case "CompactionCompleted":
       return `upTo=${String(event.upTo ?? "")} provider=${String(event.provider ?? "")} ${quoted(event.summary)}`
+    case "CompactionFired":
+      return ""
     default: {
       // A tolerant read at the transcript too: an event type this build never met still prints its
       // facts rather than an empty line.
