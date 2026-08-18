@@ -2,8 +2,13 @@ import { Clock, Effect } from "effect"
 import { transition, type Transition } from "@flamecast/core/actor"
 import type { Event } from "@flamecast/core/event"
 import { codeDispatched } from "@flamecast/code/events"
+import type { Packages } from "@flamecast/code/packages"
+import type { Sandbox } from "@flamecast/code/sandbox"
+import type { Tmp } from "@flamecast/code/tmp"
 import { toolReturned } from "./events"
 import type { ToolSpec } from "./request"
+
+export type CodeLaneR = Packages | Sandbox | Tmp
 
 // A ToolSurface is the agent's work half: the tools the model may call, the system text that
 // explains them, and how one call becomes events. The turn loop, the budget wall, the answer
@@ -85,9 +90,10 @@ const settleFor = (
   return { result: settle.result, ...logs }
 }
 
-// codeSurface is the default: one `execute` tool, dispatched to the code reactor and answered
-// from its settle. `packagesInScope` is the rendered package list the system text names.
-export const codeSurface = (packagesInScope = "none"): ToolSurface => ({
+// codeSurface is one `execute` tool, dispatched to the code reactor and answered from its settle.
+// The surface's R is the code lane: `agentFor` cannot wear it, because that actor has no code reactor.
+// `packagesInScope` is the rendered package list the system text names.
+export const codeSurface = (packagesInScope = "none"): ToolSurface<CodeLaneR> => ({
   system: CODE_SYSTEM(packagesInScope),
   tools: [EXECUTE_TOOL],
   serve: (call, log, answer) => {
