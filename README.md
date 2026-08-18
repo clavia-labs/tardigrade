@@ -17,6 +17,23 @@ const agent = createAgent({
 const reply = await agent.run("Find the invoice for order 4182.")
 ```
 
+Under the hood a capability is a reactor: a pure function from the log to keyed work. This is the whole tools capability.
+
+```ts
+// One transition per unanswered call. A crashed act never records its key;
+// the next settle derives the same transition and retries: durability, no retry code.
+const tools: Reactor = (events) =>
+  unansweredCalls(events).map((call) =>
+    transition({
+      key: call.callId,
+      input: call,
+      act: (call) => Effect.promise(async () => [{ type: "ToolReturned", callId: call.callId, result: await run(call) }])
+    })
+  )
+```
+
+`packages/agent` composes the agent from six of these: inference, tools, budget, reply, compaction, spawn.
+
 ## Concepts
 
 ### Events
