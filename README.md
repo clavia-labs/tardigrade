@@ -10,8 +10,15 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 // An RLM agent: the model writes code over your packages and can spawn itself.
 import { createRlmAgent } from "@flamecast/agent/main"
 
+// A package is a named object of methods the agent's code can call.
+const invoices: Package = {
+  name: "invoices",
+  description: "invoices.lookup({orderId}) finds one invoice",
+  methods: { lookup: (args) => Effect.promise(() => findInvoice(args)) }
+}
+
 const agent = createRlmAgent({
-  packages: [invoices], // e.g. invoices.lookup({orderId})
+  packages: [invoices],
   infer: async (trajectory) => nextAction(trajectory) // one inference, one action; platform/model binds a real provider
 })
 
