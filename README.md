@@ -6,53 +6,28 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
 ## Quickstart
 
-An agent is reactors over one log. Assemble one from the parts, give it a durable log, and send it a message.
+An agent is reactors over one log. Assemble one, give it a durable log, send it a message.
 
 ```ts
-import { Effect, Layer } from "effect"
 import { actor } from "@flamecast/core/actor"
 import { composeKeys } from "@flamecast/core/event-log"
 import { messageKeys } from "@flamecast/core/message"
-import { codeReactor } from "@flamecast/code/execute"
-import { codeKeys } from "@flamecast/code/events"
-import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
-import { Packages, type Package } from "@flamecast/code/packages"
-import {
-  agentKeys, budgetReactor, compactionReactor, Infer,
-  inferReactor, replyReactor, toolsReactor
-} from "@flamecast/agent"
+import { codeReactor, codeKeys } from "@flamecast/code"
+import { agentKeys, budgetReactor, compactionReactor, inferReactor, replyReactor, toolsReactor } from "@flamecast/agent"
 import { createBunHost } from "@flamecast/bun/host"
 
-// The agent: decide, guard the budget, serve tools, run code durably, report home, compact.
 // Adding a capability is adding a reactor to the list.
 const agent = actor(
   [inferReactor, budgetReactor, toolsReactor, codeReactor, replyReactor, compactionReactor],
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
-// A package is a named object of methods the agent's code can call.
-const invoices: Package = {
-  name: "invoices",
-  description: "find and manage invoices",
-  methods: { lookup: (args) => Effect.promise(() => findInvoice(args)) }
-}
-
-// The durable log: kill the process mid-turn and recover() picks up exactly here.
-const host = await createBunHost({
-  path: "agents.sqlite",
-  actorFor: () => agent,
-  layersFor: () => Layer.mergeAll(
-    Layer.succeed(Packages, { resolve: (n) => (n === "invoices" ? invoices : undefined), list: () => Effect.succeed([invoices]) }),
-    jsSandbox, memoryTmp(),
-    Layer.succeed(Infer, { react: (trajectory) => Effect.promise(() => nextAction(trajectory)) }) // the mind; platform/model binds a real provider
-  )
-})
-
-await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "Find the invoice for order 4182.", at: Date.now() })
+const host = await createBunHost({ path: "agents.sqlite", actorFor: () => agent, layersFor: wiring })
+await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })
 await host.drive()
 ```
 
-`createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host: bring packages and a mind, `run` a brief, get the settled answer.
+`wiring` supplies the mind and the packages; `platform/model` binds a real provider, and [docs/quickstart.md](docs/quickstart.md) builds the whole thing from scratch. `createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host.
 
 ## Concepts
 
