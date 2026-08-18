@@ -12,16 +12,14 @@ import { trajectoryOf, turnView } from "@flamecast/code/turns"
 // is unanswered the turn owes nothing here: the tools and code reactors carry it. The pieces
 // compose over one log through event names alone.
 //
-// `ModelCalled` is appended before the inference, so a died attempt leaves its mark. Consecutive
-// marks with nothing between them are the crash-loop evidence, and the give-up guard turns three
-// of them into the failure terminal instead of a fourth attempt.
-const GIVE_UP_AFTER = 3
+// InferPolicy is the give-up and repair ceilings. The defaults match the old constants; a
+// caller who wants a longer crash loop or more schema repairs lists inferReactorFor.
+export interface InferPolicy {
+  readonly giveUpAfter: number
+  readonly repairAtMost: number
+}
 
-// REPAIR_AT_MOST bounds schema repairs, separately from the died-attempt guard: a model that
-// keeps answering off-schema would repair forever, because each rejected answer is a real tool
-// round trip and reads as progress. Two corrections is generous for an encoding mistake; a third
-// means the model cannot meet the schema, and a named failure beats an endless turn.
-const REPAIR_AT_MOST = 2
+export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, repairAtMost: 2 }
 
 // Infer is the model seam: one inference over the trajectory, one action out. The platform binds this to
 // a provider. Tests bind it to a stub. `key` is the attempt's identity, the same string the
@@ -69,18 +67,20 @@ const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
 
-export const inferReactor: Reactor<Infer | EventLog> = (log) => {
+export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infer | EventLog> => (log) => {
+  const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
+  const repairAtMost = policy.repairAtMost ?? DEFAULT_INFER_POLICY.repairAtMost
   const slice = turnView(log)
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
   const head = slice[0] as { id?: unknown }
   const turn = String(head.id)
   // The give-up and repair bounds are derivations, so each derives its own terminal
   // transition: one terminal per turn (tn:<turn>), and a duplicate of either kind absorbs.
-  if (diedAttempts(slice) >= GIVE_UP_AFTER) {
+  if (diedAttempts(slice) >= giveUpAfter) {
     return [
       transition({
         key: `tn:${turn}`,
-        input: { turn, error: `the model attempt died ${GIVE_UP_AFTER} times in a row` },
+        input: { turn, error: `the model attempt died ${giveUpAfter} times in a row` },
         act: (input) =>
           Effect.gen(function* () {
             const at = yield* Clock.currentTimeMillis
@@ -90,11 +90,11 @@ export const inferReactor: Reactor<Infer | EventLog> = (log) => {
     ]
   }
   const rejections = slice.filter((e) => e.type === "ToolCalled" && String((e as { name?: unknown }).name) === "answer").length
-  if (rejections > REPAIR_AT_MOST) {
+  if (rejections > repairAtMost) {
     return [
       transition({
         key: `tn:${turn}`,
-        input: { turn, error: `the model's answer did not satisfy the declared schema after ${REPAIR_AT_MOST} corrections` },
+        input: { turn, error: `the model's answer did not satisfy the declared schema after ${repairAtMost} corrections` },
         act: (input) =>
           Effect.gen(function* () {
             const at = yield* Clock.currentTimeMillis
@@ -134,3 +134,5 @@ export const inferReactor: Reactor<Infer | EventLog> = (log) => {
     })
   ]
 }
+
+export const inferReactor: Reactor<Infer | EventLog> = inferReactorFor()
