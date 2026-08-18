@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { composeKeys, EventLog, withWatermark } from "@flamecast/core/event-log"
 import { settleActor } from "@flamecast/core/actor"
 import { messageKeys } from "@flamecast/core/message"
@@ -139,13 +139,13 @@ const jsSandbox = Layer.succeed(Sandbox, {
     })
 })
 
-const memoryLog = (initial: ReadonlyArray<Envelope>) =>
+const memoryLog = (initial: ReadonlyArray<Event>) =>
   Layer.effect(
     EventLog,
     Effect.gen(function* () {
-      const ref = yield* Ref.make<ReadonlyArray<Envelope>>(initial)
+      const ref = yield* Ref.make<ReadonlyArray<Event>>(initial)
       return withWatermark({
-        append: (events: ReadonlyArray<Envelope>) => Ref.update(ref, (log) => [...log, ...events]),
+        append: (events: ReadonlyArray<Event>) => Ref.update(ref, (log) => [...log, ...events]),
         read: Ref.get(ref)
       })
     })
@@ -166,9 +166,9 @@ const notesLike: Package = {
   }
 }
 
-const settled = async (code: string): Promise<ReadonlyArray<Envelope>> => {
+const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ran = []
-  const log: Envelope[] = [
+  const log: Event[] = [
     { type: "MessageReceived", id: "m1", text: "go", at: 1 },
     { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }
   ]
@@ -188,7 +188,7 @@ const settled = async (code: string): Promise<ReadonlyArray<Envelope>> => {
           })
         )
       )
-    ) as Effect.Effect<ReadonlyArray<Envelope>>
+    ) as Effect.Effect<ReadonlyArray<Event>>
   )
 }
 

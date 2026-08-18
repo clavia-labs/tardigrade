@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { Router } from "@flamecast/core/router"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { createHost } from "./host"
@@ -16,10 +16,10 @@ import type { AwaitEdge } from "./deadlock"
 
 const str = (v: unknown): string => String(v ?? "")
 
-const has = (events: ReadonlyArray<Envelope>, type: string, id?: string): boolean =>
+const has = (events: ReadonlyArray<Event>, type: string, id?: string): boolean =>
   events.some((e) => e.type === type && (id === undefined || str((e as { id?: unknown }).id) === id))
 
-const knotKeys = (e: Envelope): string | undefined => {
+const knotKeys = (e: Event): string | undefined => {
   const v = e as { id?: unknown; callId?: unknown }
   if (e.type === "MessageReceived") return `msg:${str(v.id)}`
   if (e.type === "Awaiting") return `aw:${str(v.callId)}`
@@ -37,7 +37,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
           key: `aw:${me}.await`,
           input: { partner, callId: `${me}.await` },
           act: (input) =>
-            Effect.succeed([{ type: "Awaiting", target: input.partner, callId: input.callId, at: 1 } as Envelope])
+            Effect.succeed([{ type: "Awaiting", target: input.partner, callId: input.callId, at: 1 } as Event])
         })
       ]
     }
@@ -57,14 +57,14 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
               outcome: "completed",
               text: "done",
               at: 2
-            } as Envelope)
-            return [{ type: "Settled", at: 3 } as Envelope]
+            } as Event)
+            return [{ type: "Settled", at: 3 } as Event]
           })
       })
     ]
   }
 
-const edgesOf = (lane: string, events: ReadonlyArray<Envelope>): ReadonlyArray<AwaitEdge> => {
+const edgesOf = (lane: string, events: ReadonlyArray<Event>): ReadonlyArray<AwaitEdge> => {
   if (has(events, "Settled")) return []
   return events
     .filter((e) => e.type === "Awaiting")
@@ -86,7 +86,7 @@ const knot = (withSentinel: boolean) =>
     ...(withSentinel ? { edgesOf } : {})
   })
 
-const brief: Envelope = { type: "MessageReceived", id: "brief", text: "go", at: 0 } as Envelope
+const brief: Event = { type: "MessageReceived", id: "brief", text: "go", at: 0 } as Event
 
 describe("the deadlock sentinel", () => {
   test("without it, the knot rests forever, honestly", async () => {

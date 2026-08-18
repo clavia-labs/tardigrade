@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { Router } from "@flamecast/core/router"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { createHost, type HostOptions } from "./host"
@@ -16,7 +16,7 @@ const RALLY = 5
 
 const str = (v: unknown): string => String(v ?? "")
 
-const rallyKeys = (e: Envelope): string | undefined => {
+const rallyKeys = (e: Event): string | undefined => {
   const v = e as { id?: unknown }
   if (e.type === "MessageReceived") return `msg:${str(v.id)}`
   if (e.type === "Answered") return `an:${str(v.id)}`
@@ -46,9 +46,9 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Envelope)
+              } as Event)
             }
-            return [{ type: "Answered", id: input.id, at: input.n } as Envelope]
+            return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
       })
     ]
@@ -68,8 +68,8 @@ const scenario = (pick: HostOptions<Router>["pick"]) => {
     },
     ...(pick === undefined ? {} : { pick })
   })
-  host.deliver("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Envelope)
-  host.deliver("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Envelope)
+  host.deliver("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
+  host.deliver("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host
 }
 

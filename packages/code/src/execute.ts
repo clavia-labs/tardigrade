@@ -1,6 +1,6 @@
 import { Clock, Deferred, Effect, Fiber, Runtime } from "effect"
 import { EventLog } from "@flamecast/core/event-log"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { workOwed } from "./projections"
 import { annotationsOf, Packages } from "./packages"
@@ -36,7 +36,7 @@ const executeRecorded = (
   code: string,
   turn?: string,
   dispatchedAt?: number
-): Effect.Effect<ReadonlyArray<Envelope>, never, EventLog | Packages | Sandbox | Tmp> =>
+): Effect.Effect<ReadonlyArray<Event>, never, EventLog | Packages | Sandbox | Tmp> =>
   Effect.gen(function* () {
     const stamp = turn === undefined ? {} : { turn }
     const log = yield* EventLog

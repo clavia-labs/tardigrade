@@ -6,7 +6,7 @@ import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
 import { Infer } from "@flamecast/agent/infer"
 import type { Action } from "@flamecast/agent/events"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { answerErrors, outputSchemaOf } from "@flamecast/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@flamecast/agent/request"
 
@@ -43,7 +43,7 @@ export const modelIdOf = (env: ModelEnv, name?: string): string =>
         ? (env.MODEL_HAIKU_ID ?? env.MODEL_ID!)
         : env.MODEL_ID!
 
-export const modelAskOf = (trajectory: ReadonlyArray<Envelope>): string | undefined => {
+export const modelAskOf = (trajectory: ReadonlyArray<Event>): string | undefined => {
   let name: string | undefined
   for (const e of trajectory) {
     if (e.type !== "MessageReceived") continue
@@ -264,7 +264,7 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
 
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
-  const attemptOnce = async (trajectory: ReadonlyArray<Envelope>, key: string | undefined): Promise<Action> => {
+  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined): Promise<Action> => {
     const fetcher = withKey(config.fetch, key)
     const adapter =
       config.provider === "bedrock"
@@ -293,7 +293,7 @@ export const realInfer = (config: ModelConfig) => {
     return actionOf(result, schema)
   }
   return Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Envelope>, key?: string) =>
+    react: (trajectory: ReadonlyArray<Event>, key?: string) =>
       Effect.promise(async () => {
         for (let attempt = 0; ; attempt++) {
           try {

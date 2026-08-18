@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { factsOf, restingLane, workOwed } from "./projections"
 
 // The isomorphism harness: tla/Reconcile.tla's theorems, run against the
@@ -14,25 +14,25 @@ import { factsOf, restingLane, workOwed } from "./projections"
 // Property 2 mirrors the spec's actions (Serve/CommitOne/Crash/
 // GhostCommit/DeliverReply) as a bounded exhaustive interleaving, and
 // asserts NoVoid and QuietIsBlocked on every reachable state, the same
-// states TLC walked, now producing real Envelope arrays for the real
+// states TLC walked, now producing real Event arrays for the real
 // derivations.
 
-const dispatch = (execId: string): Envelope => ({ type: "CodeDispatched", execId, at: Number(execId.replace(/\D/g, "") || 0) } as Envelope)
-const call = (callId: string, awaits: boolean): Envelope =>
-  ({ type: "PackageCalled", callId, name: awaits ? "agents.run" : "notes.commit" } as Envelope)
+const dispatch = (execId: string): Event => ({ type: "CodeDispatched", execId, at: Number(execId.replace(/\D/g, "") || 0) } as Event)
+const call = (callId: string, awaits: boolean): Event =>
+  ({ type: "PackageCalled", callId, name: awaits ? "agents.run" : "notes.commit" } as Event)
 // The awaited-ness of a call is now evidence the attempt records: BlockedOn carries the reply
 // id the call awaits (no method table, packages/code/src/projections.ts).
-const blocked = (callId: string): Envelope =>
-  ({ type: "BlockedOn", callId, awaiting: `${callId}.reply` } as Envelope)
-const pair = (callId: string): Envelope => ({ type: "PackageReturned", callId } as Envelope)
-const reply = (callId: string): Envelope => ({ type: "MessageReceived", id: `${callId}.reply` } as Envelope)
-const settle = (execId: string): Envelope => ({ type: "CodeSettled", execId } as Envelope)
+const blocked = (callId: string): Event =>
+  ({ type: "BlockedOn", callId, awaiting: `${callId}.reply` } as Event)
+const pair = (callId: string): Event => ({ type: "PackageReturned", callId } as Event)
+const reply = (callId: string): Event => ({ type: "MessageReceived", id: `${callId}.reply` } as Event)
+const settle = (execId: string): Event => ({ type: "CodeSettled", execId } as Event)
 
 describe("the bag law: derivations are permutation-invariant", () => {
   // Histories assembled from a small vocabulary, then shuffled. The
   // generator does not enforce causal order: the bag law must hold for
   // garbage too (a zombie's append does not wait for causality).
-  const vocabulary: ReadonlyArray<Envelope> = [
+  const vocabulary: ReadonlyArray<Event> = [
     dispatch("e1"),
     dispatch("e2"),
     call("e1.0", true),
@@ -52,7 +52,7 @@ describe("the bag law: derivations are permutation-invariant", () => {
     settle("e2")
   ]
 
-  const snapshot = (events: ReadonlyArray<Envelope>): string =>
+  const snapshot = (events: ReadonlyArray<Event>): string =>
     JSON.stringify({
       facts: factsOf(events).map((f) => ({
         execId: f.execId,
@@ -93,9 +93,9 @@ describe("the spec's state graph: NoVoid and QuietIsBlocked on every reachable s
   const MAX_CRASHES = 1
 
   interface S {
-    readonly events: ReadonlyArray<Envelope>
-    readonly pending: ReadonlyArray<Envelope>
-    readonly ghosts: ReadonlyArray<Envelope>
+    readonly events: ReadonlyArray<Event>
+    readonly pending: ReadonlyArray<Event>
+    readonly ghosts: ReadonlyArray<Event>
     readonly crashes: number
   }
 
@@ -105,10 +105,10 @@ describe("the spec's state graph: NoVoid and QuietIsBlocked on every reachable s
   // The plan, from the snapshot: uncalled calls, returns for answers
   // home, the settle when everything is closed. Terminal last is the
   // writer's one ordering obligation: commits pull non-settle first.
-  const plan = (s: S): ReadonlyArray<Envelope> => {
+  const plan = (s: S): ReadonlyArray<Event> => {
     const facts = factsOf(s.events).find((f) => f.execId === "d")
     if (facts === undefined || facts.settled) return []
-    const out: Envelope[] = []
+    const out: Event[] = []
     for (const c of CALLS)
       if (!s.events.some((e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === c)) {
         // The attempt records the send and, on parking, its BlockedOn evidence: both ride the

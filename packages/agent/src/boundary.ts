@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
 // platform's call and resume read it to answer the spawning code. Pure over the log, so a
@@ -12,7 +12,7 @@ export type Boundary =
 // boundaryOf returns the turn's boundary, or undefined while it still runs. A terminal wins
 // over a park: a resumed turn that finished reads completed even though it once asked. A park
 // is the last BudgetRequested no grant or denial has answered.
-export const boundaryOf = (log: ReadonlyArray<Envelope>, turn: string): Boundary | undefined => {
+export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | undefined => {
   const terminal = log.find(
     (e) => (e.type === "TurnCompleted" || e.type === "TurnFailed") && String((e as { turn?: unknown }).turn) === turn
   )
@@ -21,7 +21,7 @@ export const boundaryOf = (log: ReadonlyArray<Envelope>, turn: string): Boundary
       ? { kind: "completed", output: String((terminal as { output?: unknown }).output) }
       : { kind: "failed", error: String((terminal as { error?: unknown }).error) }
   }
-  let pending: Envelope | undefined
+  let pending: Event | undefined
   for (const e of log) {
     if (String((e as { turn?: unknown }).turn) !== turn) continue
     if (e.type === "BudgetRequested") pending = e

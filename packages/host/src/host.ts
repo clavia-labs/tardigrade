@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { EventLog, withWatermark } from "@flamecast/core/event-log"
 import { Router, type CallResult } from "@flamecast/core/router"
 import { Self, restingActor, settleActor, type Actor } from "@flamecast/core/actor"
@@ -37,16 +37,16 @@ export interface HostOptions<R> {
   // given, the host enforces the membrane: it refuses an unkeyed
   // cross-lane delivery loudly. MessageReceived is exempt only because
   // its key is its own id, deduped by `seen` here.
-  readonly keyOf?: (e: Envelope) => string | undefined
+  readonly keyOf?: (e: Event) => string | undefined
 }
 
 export interface Host {
   // seed appends without waking the lane: test and bootstrap ingress.
-  readonly seed: (lane: string, events: ReadonlyArray<Envelope>) => void
-  readonly read: (lane: string) => ReadonlyArray<Envelope>
+  readonly seed: (lane: string, events: ReadonlyArray<Event>) => void
+  readonly read: (lane: string) => ReadonlyArray<Event>
   // deliver is the router's contract: at-least-once, receiver dedup by
   // message id, and the lane is marked owed a visit.
-  readonly deliver: (address: string, event: Envelope) => void
+  readonly deliver: (address: string, event: Event) => void
   // wake marks a lane owed a visit and drives: what a binding's backup
   // alarm does, and what tests do after seeding a lane by hand.
   readonly wake: (lane: string) => Promise<void>
@@ -68,7 +68,7 @@ const laneOf = (address: string): string => {
   return i === -1 ? address : address.slice(i + 1)
 }
 
-const seen = (events: ReadonlyArray<Envelope>, event: Envelope): boolean => {
+const seen = (events: ReadonlyArray<Event>, event: Event): boolean => {
   if (event.type !== "MessageReceived") return false
   const id = (event as { id?: unknown }).id
   return events.some((e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === id)
@@ -78,15 +78,15 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createHost = <R>(options: HostOptions<R>): Host => {
   const principal = options.principal ?? "mem"
-  const lanes = new Map<string, ReadonlyArray<Envelope>>()
+  const lanes = new Map<string, ReadonlyArray<Event>>()
   const dirty = new Set<string>()
 
-  const read = (lane: string): ReadonlyArray<Envelope> => lanes.get(lane) ?? []
+  const read = (lane: string): ReadonlyArray<Event> => lanes.get(lane) ?? []
   // append implements guarantee 5 of the log port (packages/core/src/event-log.ts): a keyed
   // redelivery is absorbed. With keys deciding commitment (Actor.keyOf), the library tier
   // must keep the platform store's promise, or a re-parked attempt's BlockedOn lands twice
   // here and once there.
-  const append = (lane: string, events: ReadonlyArray<Envelope>): void => {
+  const append = (lane: string, events: ReadonlyArray<Event>): void => {
     const current = read(lane)
     if (options.keyOf === undefined) {
       lanes.set(lane, [...current, ...events])
@@ -97,7 +97,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
       const key = options.keyOf(e)
       if (key !== undefined) recorded.add(key)
     }
-    const landing: Envelope[] = []
+    const landing: Event[] = []
     for (const e of events) {
       const key = options.keyOf(e)
       if (key !== undefined) {
@@ -108,9 +108,9 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
     }
     lanes.set(lane, [...current, ...landing])
   }
-  const seed = (lane: string, events: ReadonlyArray<Envelope>): void => append(lane, events)
+  const seed = (lane: string, events: ReadonlyArray<Event>): void => append(lane, events)
 
-  const deliver = (address: string, event: Envelope): void => {
+  const deliver = (address: string, event: Event): void => {
     // The membrane: every cross-lane event names its occurrence, or it does not travel.
     // At-least-once lives on these edges, so an unkeyed traveler is a standing double-effect
     // window. The memory host refuses identically to the platform host, so an unkeyed event
@@ -127,7 +127,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
   }
 
   const router = Layer.succeed(Router, {
-    deliver: (address: string, event: Envelope) => Effect.sync(() => deliver(address, event)),
+    deliver: (address: string, event: Event) => Effect.sync(() => deliver(address, event)),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -139,7 +139,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
       Layer.succeed(
         EventLog,
         withWatermark({
-          append: (events: ReadonlyArray<Envelope>) => Effect.sync(() => append(lane, events)),
+          append: (events: ReadonlyArray<Event>) => Effect.sync(() => append(lane, events)),
           read: Effect.sync(() => read(lane))
         })
       ),
@@ -176,7 +176,7 @@ export const createHost = <R>(options: HostOptions<R>): Host => {
           outcome: "failed",
           text: `deadlock: ${[...knot.members, knot.members[0]].join(" waits for ")}`,
           at: 0
-        } as Envelope)
+        } as Event)
       }
       await drain()
     }

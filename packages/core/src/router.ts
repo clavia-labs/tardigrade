@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // CallResult is a turn's boundary: a terminal (output or error), or a park on a budget ask
 // (requesting, with the reason, the amount, and the call the parent's decision answers). One
@@ -29,7 +29,7 @@ export const readAddress = (a: string): { readonly home: string; readonly facet:
 export class Router extends Context.Tag("flamecast/Router")<
   Router,
   {
-    readonly deliver: (address: string, event: Envelope) => Effect.Effect<void>
+    readonly deliver: (address: string, event: Event) => Effect.Effect<void>
     readonly call: (
       address: string,
       message: {

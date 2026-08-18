@@ -1,7 +1,7 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { compactionCompleted } from "./events"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { Infer } from "./infer"
 
 // The compaction reactor: a pure observer of the context size, with the hysteresis design. A guard
@@ -18,7 +18,7 @@ import { Infer } from "./infer"
 // dependency and an impure path, and every budget decision must fold the same on replay, so the
 // estimate is a pure function of the recorded bytes. The guard and the tail share this one
 // measure.
-export const estimateTokens = (events: ReadonlyArray<Envelope>): number =>
+export const estimateTokens = (events: ReadonlyArray<Event>): number =>
   Math.ceil(events.reduce((n, e) => n + JSON.stringify(e).length, 0) / 4)
 
 // COMPACTION_FIRE_TOKENS is the suffix size that fires a pass; COMPACTION_KEEP_TOKENS bounds the
@@ -28,7 +28,7 @@ export const COMPACTION_KEEP_TOKENS = 4_000
 
 // checkpointOf returns the last checkpoint: the index the next span starts from, and the summary
 // to date.
-export const checkpointOf = (log: ReadonlyArray<Envelope>): { readonly upTo: number; readonly summary: string } => {
+export const checkpointOf = (log: ReadonlyArray<Event>): { readonly upTo: number; readonly summary: string } => {
   let upTo = 0
   let summary = ""
   for (const e of log) {
@@ -41,17 +41,17 @@ export const checkpointOf = (log: ReadonlyArray<Envelope>): { readonly upTo: num
 }
 
 // suffixOf returns everything after the checkpoint: the span a render or a fire decision sees.
-export const suffixOf = (log: ReadonlyArray<Envelope>): ReadonlyArray<Envelope> => log.slice(checkpointOf(log).upTo)
+export const suffixOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => log.slice(checkpointOf(log).upTo)
 
 // overContext reports whether the suffix has passed FIRE tokens. It is pure and total over the
 // log, so the fire decision re-folds identically on replay: it reads only the log, no clock and
 // no random source.
-const overContext = (log: ReadonlyArray<Envelope>): boolean => estimateTokens(suffixOf(log)) > COMPACTION_FIRE_TOKENS
+const overContext = (log: ReadonlyArray<Event>): boolean => estimateTokens(suffixOf(log)) > COMPACTION_FIRE_TOKENS
 
 // keepUpTo returns the index the summary keeps from: the newest events whose tokens fit in KEEP.
 // It walks from the end, so the retained tail is bounded by tokens rather than a fixed event
 // count. The checkpoint never moves backward, so `prior.upTo` is the floor.
-const keepUpTo = (log: ReadonlyArray<Envelope>): number => {
+const keepUpTo = (log: ReadonlyArray<Event>): number => {
   let tokens = 0
   for (let i = log.length - 1; i >= 0; i--) {
     tokens += estimateTokens([log[i]!])
@@ -61,7 +61,7 @@ const keepUpTo = (log: ReadonlyArray<Envelope>): number => {
   return 0
 }
 
-const lineOf = (e: Envelope): string | null => {
+const lineOf = (e: Event): string | null => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
@@ -83,7 +83,7 @@ const lineOf = (e: Envelope): string | null => {
 
 // firedUncovered reports whether an explicit fire stands with no completion covering it, counted
 // over the set.
-const firedUncovered = (log: ReadonlyArray<Envelope>): boolean => {
+const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
   let fires = 0
   let passes = 0
   for (const e of log) {
@@ -94,7 +94,7 @@ const firedUncovered = (log: ReadonlyArray<Envelope>): boolean => {
 }
 
 // turnEndedSinceCheckpoint gates the guard: a pass runs between turns, never mid-turn.
-const turnEndedSinceCheckpoint = (log: ReadonlyArray<Envelope>): boolean =>
+const turnEndedSinceCheckpoint = (log: ReadonlyArray<Event>): boolean =>
   suffixOf(log).some((e) => e.type === "ReplyDelivered")
 
 // compactionReactor derives a pass when the suffix has crossed FIRE at a turn boundary, or an

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import type { Action } from "./events"
 import { createAgent } from "./main"
 
@@ -10,7 +10,7 @@ const ROOT_LANE = "ag.root"
 // routes briefs and replies, parks and wakes the root, and ask returns
 // when the root settles. No app imports anywhere.
 
-const headText = (trajectory: ReadonlyArray<Envelope>): string => {
+const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
     const e = trajectory[i]!
     if (e.type === "MessageReceived") return String((e as { text?: unknown }).text ?? "")
@@ -21,7 +21,7 @@ const headText = (trajectory: ReadonlyArray<Envelope>): string => {
 // The scripted mind honors the Infer seam's contract: fresh tool call
 // ids per call (real providers mint tooluse ids), and it reads only the
 // CURRENT turn's slice, so a second turn genuinely re-runs.
-const scripted = async (trajectory: ReadonlyArray<Envelope>): Promise<Action> => {
+const scripted = async (trajectory: ReadonlyArray<Event>): Promise<Action> => {
   const brief = headText(trajectory)
   if (brief.startsWith("sum ")) {
     const [a, b] = brief.slice(4).split("+").map(Number)
@@ -61,6 +61,22 @@ describe("createAgent", () => {
     }
     // And it is quiet: nothing owed anywhere.
     expect(mind.host.resting()).toBe(true)
+  })
+
+  test("an agent initialises from a log: history carries, new asks continue past it", async () => {
+    // Run one agent to a settled state, carry its log into a fresh one: the resumed agent
+    // reads the same history, and a new ask serves without colliding with a recorded id.
+    const first = createAgent({ infer: scripted })
+    await first.ask("sum 1+2")
+    const carried = first.host.read(ROOT_LANE)
+
+    const resumed = createAgent({ infer: scripted, log: carried })
+    expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
+    const again = await resumed.ask("sum 3+4")
+    expect(again.output).toBe("7")
+    // Both turns live on one log: the carried terminal and the new one.
+    expect(resumed.host.read(ROOT_LANE).filter((e) => e.type === "TurnCompleted")).toHaveLength(2)
+    expect(resumed.host.resting()).toBe(true)
   })
 
   test("a second ask reuses the root lane as a genuinely fresh turn", async () => {

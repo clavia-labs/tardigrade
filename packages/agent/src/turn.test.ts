@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { EventLog, withWatermark } from "@flamecast/core/event-log"
 import { settleActor } from "@flamecast/core/actor"
 import { Packages, type Package } from "@flamecast/code/packages"
@@ -23,13 +23,13 @@ const memSpill = () => {
 // and the turn completes. The sandbox test binding runs real JS with the package objects in
 // scope; no isolation is needed to test the machinery.
 
-const memoryLog = (initial: ReadonlyArray<Envelope> = []) =>
+const memoryLog = (initial: ReadonlyArray<Event> = []) =>
   Layer.effect(
     EventLog,
     Effect.gen(function* () {
-      const ref = yield* Ref.make<ReadonlyArray<Envelope>>(initial)
+      const ref = yield* Ref.make<ReadonlyArray<Event>>(initial)
       return withWatermark({
-        append: (events: ReadonlyArray<Envelope>) => Ref.update(ref, (log) => [...log, ...events]),
+        append: (events: ReadonlyArray<Event>) => Ref.update(ref, (log) => [...log, ...events]),
         read: Ref.get(ref)
       })
     })
@@ -94,7 +94,7 @@ return { jd_record_id: record.id, hits: found.hits }`
 // The model: write the code once, then complete after reading the return.
 const codeThenComplete = (count: { calls: number }) =>
   Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Envelope>) => {
+    react: (trajectory: ReadonlyArray<Event>) => {
       count.calls += 1
       const returned = trajectory.some((e) => e.type === "ToolReturned")
       return Effect.succeed(
@@ -146,7 +146,7 @@ describe("the agent with execute as the only tool", () => {
     // The shape a crash leaves behind: the insert's pair is committed, the search never ran. The
     // re-settle re-runs the body from the top, replays the insert from the log, and runs only
     // the search live. The world sees one insert, ever.
-    const crashed: ReadonlyArray<Envelope> = [
+    const crashed: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "add the JD and search candidates", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: CODE }, turn: "m1", at: 2 },
       { type: "CodeDispatched", execId: "t1", code: CODE, turn: "m1", at: 3 },
@@ -174,7 +174,7 @@ describe("the agent with execute as the only tool", () => {
     memSpill(),
     memoryLog(),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Envelope>) => {
+        react: (trajectory: ReadonlyArray<Event>) => {
           count.calls += 1
           const returned = trajectory.find((e) => e.type === "ToolReturned")
           return Effect.succeed(
@@ -204,12 +204,12 @@ describe("the agent with execute as the only tool", () => {
     // The race that cross-wired run 3: concurrent ingress lands both messages on the log before
     // a settle runs. The stamped fold serves them as two turns in arrival order; each answer
     // carries its own turn.
-    const queued: ReadonlyArray<Envelope> = [
+    const queued: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "first ask", at: 1 },
       { type: "MessageReceived", id: "m2", text: "second ask", at: 2 }
     ]
     const echoHead = Layer.succeed(Infer, {
-      react: (trajectory: ReadonlyArray<Envelope>) => {
+      react: (trajectory: ReadonlyArray<Event>) => {
         let text = ""
         for (const e of trajectory) if (e.type === "MessageReceived") text = String((e as { text?: unknown }).text)
         return Effect.succeed({ kind: "complete" as const, output: `answer to: ${text}` })
@@ -237,7 +237,7 @@ describe("the agent with execute as the only tool", () => {
   test("three dead model attempts settle the turn failed", async () => {
     // Three marks with nothing after them: three inferences died before committing anything. The
     // fourth settle gives up instead of asking again. The model is never called.
-    const crashed: ReadonlyArray<Envelope> = [
+    const crashed: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "hi", at: 1 },
       { type: "ModelCalled", callId: "m1/infer/0", turn: "m1", at: 2 },
       { type: "ModelCalled", callId: "m1/infer/1", turn: "m1", at: 3 },
@@ -309,7 +309,7 @@ describe("a turn that declares an output schema", () => {
       memoryLog(),
       memSpill(),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Envelope>) => {
+        react: (trajectory: ReadonlyArray<Event>) => {
           // The repair is a real tool return, so the model reads why it was refused.
           const refusal = trajectory.find(
             (e) => e.type === "ToolReturned" && String(((e as { result?: { error?: unknown } }).result ?? {}).error ?? "").includes("output schema")

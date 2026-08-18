@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { modelRequest, renderMessages } from "./request"
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
@@ -7,7 +7,7 @@ import { modelRequest, renderMessages } from "./request"
 
 describe("renderMessages", () => {
   test("a full turn renders as user, assistant tool call, tool result", () => {
-    const trajectory: ReadonlyArray<Envelope> = [
+    const trajectory: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "add the JD", at: 1 },
       { type: "ModelCalled", callId: "m1/infer/0", at: 2 },
       { type: "TextReturned", text: "adding it now", at: 3 },
@@ -27,7 +27,7 @@ describe("renderMessages", () => {
 })
 
 describe("modelRequest tool and prompt policy", () => {
-  const head = (extra: Envelope[] = [], output?: unknown): Envelope[] => [
+  const head = (extra: Event[] = [], output?: unknown): Event[] => [
     { type: "MessageReceived", id: "m1", text: "go", ...(output === undefined ? {} : { output }), at: 0 },
     ...extra
   ]
@@ -52,7 +52,7 @@ describe("modelRequest tool and prompt policy", () => {
   })
 
   test("a spent wall from an earlier turn does not drop execute in a fresh turn", () => {
-    const trajectory: Envelope[] = [
+    const trajectory: Event[] = [
       { type: "MessageReceived", id: "m1", text: "old", at: 0 },
       { type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 1 },
       { type: "TurnCompleted", output: "done", turn: "m1", at: 2 },

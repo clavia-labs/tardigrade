@@ -1,5 +1,5 @@
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { Router } from "@flamecast/core/router"
 import { Packages, type Package } from "@flamecast/code/packages"
 import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
@@ -19,7 +19,11 @@ import { agentsPackage } from "./spawn"
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
   // The mind: one inference over the trajectory, one action out.
-  readonly infer: (trajectory: ReadonlyArray<Envelope>, key?: string) => Promise<Action>
+  readonly infer: (trajectory: ReadonlyArray<Event>, key?: string) => Promise<Action>
+  // The root lane's history: an agent initialises from a persisted log, because the log is the
+  // only state there is. The next ask derives from everything here, and work the log still owes
+  // settles on the first drive (main.test.ts, "an agent initialises from a log").
+  readonly log?: ReadonlyArray<Event>
 }
 
 export interface HostedAgent {
@@ -32,7 +36,7 @@ const ROOT = "ag.root"
 export const createAgent = (options: CreateAgentOptions): HostedAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Envelope>, key?: string) => Effect.promise(() => options.infer(trajectory, key))
+    react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.promise(() => options.infer(trajectory, key))
   })
   const tmp = memoryTmp()
 
@@ -41,7 +45,7 @@ export const createAgent = (options: CreateAgentOptions): HostedAgent => {
   const layersFor = (lane: string): Layer.Layer<AgentR> => {
     const self = host.self(lane)
     const router = {
-      deliver: (address: string, event: Envelope) => Effect.sync(() => host.deliver(address, event)),
+      deliver: (address: string, event: Event) => Effect.sync(() => host.deliver(address, event)),
       call: () => Effect.succeed({ error: "escalatable spawns need a binding with synchronous calls" }),
       resume: () => Effect.succeed({ error: "escalatable spawns need a binding with synchronous calls" })
     }
@@ -63,10 +67,14 @@ export const createAgent = (options: CreateAgentOptions): HostedAgent => {
     layersFor: layersFor as never
   })
 
-  let n = 0
+  if (options.log !== undefined && options.log.length > 0) host.seed(ROOT, options.log)
+
+  // Ask ids continue past the seeded history, so a resumed agent's new ask never wears an id
+  // the log already dedups.
+  let n = options.log?.length ?? 0
   const ask = async (brief: string): Promise<{ readonly output?: string; readonly error?: string }> => {
     const id = `ask-${n++}`
-    host.deliver(host.self(ROOT), { type: "MessageReceived", id, text: brief, at: n } as Envelope)
+    host.deliver(host.self(ROOT), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     const boundary = boundaryOf(host.read(ROOT), id)
     if (boundary === undefined) return { error: "the root never settled" }

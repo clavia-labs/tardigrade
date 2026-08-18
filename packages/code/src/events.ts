@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { KeyFragment } from "@flamecast/core/event-log"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 
 // The code lane's domain events. Consumers connect through these and never call in: the
 // agent's execute tool dispatches and awaits, the task's policy dispatches and awaits, and
@@ -93,17 +93,17 @@ export const codeKeys: KeyFragment = {
   }
 }
 
-// The constructors below are the alphabet's writing half: one per letter. The open Envelope
+// The constructors below are the alphabet's writing half: one per letter. The open Event
 // stays the READER's contract (a fold survives an unknown type); the constructors gate the
 // write side, where a misspelled field compiles and the cost is silent (a `calId` derives no
 // dedup key, and the exactly-once membrane degrades with nothing to see). Each returns a plain
-// Envelope, so nothing downstream changes. `at` is a parameter, never a clock read, so an
+// Event, so nothing downstream changes. `at` is a parameter, never a clock read, so an
 // emission stays a pure function of the log and the timestamp the runtime hands it.
 
 type Stamped = { readonly turn?: string; readonly at: number }
 
-export const codeDispatched = (fields: { readonly execId: string; readonly code: string } & Stamped): Envelope =>
-  ({ type: "CodeDispatched", ...fields }) as Envelope
+export const codeDispatched = (fields: { readonly execId: string; readonly code: string } & Stamped): Event =>
+  ({ type: "CodeDispatched", ...fields }) as Event
 
 export const codeSettled = (
   fields: {
@@ -112,11 +112,11 @@ export const codeSettled = (
     readonly error?: string
     readonly logs?: ReadonlyArray<string>
   } & Stamped
-): Envelope => ({ type: "CodeSettled", ...fields }) as Envelope
+): Event => ({ type: "CodeSettled", ...fields }) as Event
 
 export const packageCalled = (
   fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown } & Stamped
-): Envelope => ({ type: "PackageCalled", ...fields }) as Envelope
+): Event => ({ type: "PackageCalled", ...fields }) as Event
 
 export const packageReturned = (
   fields: {
@@ -127,7 +127,7 @@ export const packageReturned = (
     readonly preview?: string
     readonly logs?: ReadonlyArray<string>
   } & Stamped
-): Envelope => ({ type: "PackageReturned", ...fields }) as Envelope
+): Event => ({ type: "PackageReturned", ...fields }) as Event
 
-export const blockedOn = (fields: { readonly callId: string; readonly awaiting: string } & Stamped): Envelope =>
-  ({ type: "BlockedOn", ...fields }) as Envelope
+export const blockedOn = (fields: { readonly callId: string; readonly awaiting: string } & Stamped): Event =>
+  ({ type: "BlockedOn", ...fields }) as Event

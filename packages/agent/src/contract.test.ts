@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
 
 const SCOUT = {
@@ -19,7 +19,7 @@ const SCOUT = {
 
 describe("the turn's output contract", () => {
   test("the turn's head declares the schema; an undeclared turn has none", () => {
-    const withSchema: ReadonlyArray<Envelope> = [
+    const withSchema: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m0", text: "older", at: 1 },
       { type: "MessageReceived", id: "m1", text: "go", output: SCOUT, at: 2 }
     ]

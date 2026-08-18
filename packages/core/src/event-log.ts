@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // EventLog is the one durable thing; append is the only mutation in the system (tla/Log.tla).
 // State is a projection of it: replay is re-derivation, recovery is re-settling.
@@ -18,10 +18,10 @@ import type { Envelope } from "./envelope"
 export class EventLog extends Context.Tag("flamecast/EventLog")<
   EventLog,
   {
-    readonly append: (events: ReadonlyArray<Envelope>) => Effect.Effect<void>
-    readonly read: Effect.Effect<ReadonlyArray<Envelope>>
+    readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
+    readonly read: Effect.Effect<ReadonlyArray<Event>>
     readonly head: Effect.Effect<number>
-    readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Envelope>>
+    readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
   }
 >() {}
 
@@ -29,8 +29,8 @@ export class EventLog extends Context.Tag("flamecast/EventLog")<
 // the watermark is the event count. Correct for any append-only array binding; a real store
 // answers from its own sequence column instead.
 export const withWatermark = (store: {
-  readonly append: (events: ReadonlyArray<Envelope>) => Effect.Effect<void>
-  readonly read: Effect.Effect<ReadonlyArray<Envelope>>
+  readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
+  readonly read: Effect.Effect<ReadonlyArray<Event>>
 }): Context.Tag.Service<EventLog> => ({
   ...store,
   head: Effect.map(store.read, (events) => events.length),
@@ -45,13 +45,13 @@ export const withWatermark = (store: {
 // requested (the Stripe header exists because HTTP is blind; this runtime is not).
 export interface KeyFragment {
   readonly prefixes: ReadonlyArray<string>
-  readonly keyOf: (e: Envelope) => string | undefined
+  readonly keyOf: (e: Event) => string | undefined
 }
 
 // composeKeys folds fragments into one derivation, first answer wins. Two fragments claiming a
 // prefix is a construction-time error: the collision would silently cross-absorb two packages'
 // events, which is the exact class of quiet failure keys exist to prevent.
-export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Envelope) => string | undefined) => {
+export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Event) => string | undefined) => {
   const claimed = new Map<string, number>()
   fragments.forEach((fragment, i) => {
     for (const prefix of fragment.prefixes) {

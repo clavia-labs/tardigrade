@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { EventLog, withWatermark } from "@flamecast/core/event-log"
 import { send, actor } from "@flamecast/core/actor"
 import { Infer } from "./infer"
@@ -19,7 +19,7 @@ import {
 // ordinary Infer seam, stubbed here. The size measure is chars over four.
 
 // A turn with a big tool result, sized so a few turns cross the token budget.
-const bigTurn = (i: number): Envelope[] => [
+const bigTurn = (i: number): Event[] => [
   { type: "MessageReceived", id: `m${i}`, text: `question ${i}`, at: i * 3 },
   { type: "ToolReturned", callId: `c${i}`, result: { data: "x".repeat(20_000) }, turn: `m${i}`, at: i * 3 + 1 },
   { type: "ReplyDelivered", turn: `m${i}`, at: i * 3 + 2 }
@@ -27,20 +27,20 @@ const bigTurn = (i: number): Envelope[] => [
 
 describe("the compaction measure and guard", () => {
   test("estimateTokens is chars over four", () => {
-    expect(estimateTokens([{ type: "X", pad: "y".repeat(396) } as Envelope])).toBeGreaterThan(100)
+    expect(estimateTokens([{ type: "X", pad: "y".repeat(396) } as Event])).toBeGreaterThan(100)
   })
 
   test("the guard fires on a turn end only when the suffix is over budget", () => {
     const small = bigTurn(0).slice(0, 1).concat([{ type: "ReplyDelivered", at: 9 }])
     expect(compactionReactor(small)).toHaveLength(0) // tiny suffix, no fire
-    const big: Envelope[] = []
+    const big: Event[] = []
     for (let i = 0; i < 4; i++) big.push(...bigTurn(i)) // ~20k tokens, past the 16k FIRE
     expect(estimateTokens(suffixOf(big))).toBeGreaterThan(COMPACTION_FIRE_TOKENS)
     expect(compactionReactor(big)).toHaveLength(1) // a turn ended with the suffix over FIRE
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
-    const big: Envelope[] = []
+    const big: Event[] = []
     for (let i = 0; i < 4; i++) big.push(...bigTurn(i))
     const realNow = Date.now
     const realRandom = Math.random
@@ -63,17 +63,17 @@ const mailbox = actor<Infer | EventLog>([compactionReactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   test("a fire summarizes and checkpoints down to a KEEP-token tail", async () => {
-    const initial: Envelope[] = []
+    const initial: Event[] = []
     for (let i = 0; i < 6; i++) initial.push(...bigTurn(i)) // ~30k tokens of suffix
-    const ref = Effect.runSync(Ref.make<ReadonlyArray<Envelope>>(initial))
+    const ref = Effect.runSync(Ref.make<ReadonlyArray<Event>>(initial))
     let briefed = ""
     const layers = Layer.mergeAll(
       Layer.succeed(EventLog, withWatermark({
-        append: (events: ReadonlyArray<Envelope>) => Ref.update(ref, (log) => [...log, ...events]),
+        append: (events: ReadonlyArray<Event>) => Ref.update(ref, (log) => [...log, ...events]),
         read: Ref.get(ref)
       })),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Envelope>) => {
+        react: (trajectory: ReadonlyArray<Event>) => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
           return Effect.succeed({ kind: "complete" as const, output: "the user asked 0..N and got answers" })
         }

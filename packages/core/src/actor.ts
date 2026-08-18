@@ -1,6 +1,6 @@
 import { Context, Effect } from "effect"
 import { EventLog } from "./event-log"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 
 // An actor is the single writer of one log and the reactors over it.
 // All state is a projection of the log: a crash loses nothing, and two
@@ -22,7 +22,7 @@ export class Self extends Context.Tag("flamecast/Self")<Self, string>() {}
 export interface Transition<T = unknown, R = never> {
   readonly key: string
   readonly input: T
-  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Envelope>, never, EventLog | R>
+  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
 }
 
 // Reactor derives the transitions the log enables: a pure projection
@@ -32,7 +32,7 @@ export interface Transition<T = unknown, R = never> {
 // only memory. It derives only enabled work; a transition whose
 // prerequisite is absent from the event set stays underived, so
 // quiescence stays honest (tla/Reconcile.tla, QuietIsBlocked).
-export type Reactor<R = never> = (events: ReadonlyArray<Envelope>) => ReadonlyArray<Transition<never, R>>
+export type Reactor<R = never> = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition<never, R>>
 
 // transition pins T at the construction site, then forgets it: an
 // actor's reactors return heterogeneous transitions, and the runtime
@@ -41,7 +41,7 @@ export type Reactor<R = never> = (events: ReadonlyArray<Envelope>) => ReadonlyAr
 export const transition = <T, R = never>(t: {
   readonly key: string
   readonly input: T
-  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Envelope>, never, EventLog | R>
+  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
 }): Transition<never, R> => t as unknown as Transition<never, R>
 
 // Actor carries the reactors and the key derivation that decides
@@ -50,15 +50,15 @@ export const transition = <T, R = never>(t: {
 // "absorb this redelivery" can never disagree.
 export interface Actor<R = never> {
   readonly reactors: ReadonlyArray<Reactor<R>>
-  readonly keyOf: (e: Envelope) => string | undefined
+  readonly keyOf: (e: Event) => string | undefined
 }
 
 export const actor = <R = never>(
   reactors: ReadonlyArray<Reactor<R>>,
-  keyOf: (e: Envelope) => string | undefined
+  keyOf: (e: Event) => string | undefined
 ): Actor<R> => ({ reactors, keyOf })
 
-const recordedKeys = (events: ReadonlyArray<Envelope>, keyOf: Actor["keyOf"]): Set<string> => {
+const recordedKeys = (events: ReadonlyArray<Event>, keyOf: Actor["keyOf"]): Set<string> => {
   const keys = new Set<string>()
   for (const e of events) {
     const key = keyOf(e)
@@ -70,7 +70,7 @@ const recordedKeys = (events: ReadonlyArray<Envelope>, keyOf: Actor["keyOf"]): S
 // enabled returns the transitions the log enables and does not record:
 // the diff between derived and done, and the only definition of owed
 // work.
-export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Envelope>): ReadonlyArray<Transition<never, R>> => {
+export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Event>): ReadonlyArray<Transition<never, R>> => {
   const recorded = recordedKeys(events, a.keyOf)
   return a.reactors.flatMap((derive) => derive(events)).filter((t) => !recorded.has(t.key))
 }
@@ -79,7 +79,7 @@ export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Envelope>): Readon
 // enables a transition. The alarm may be deleted only on a true answer
 // (tla/Driver.tla, Accounting); recomputing from the log keeps it
 // true.
-export const restingActor = <R>(a: Actor<R>, events: ReadonlyArray<Envelope>): boolean =>
+export const restingActor = <R>(a: Actor<R>, events: ReadonlyArray<Event>): boolean =>
   enabled(a, events).length === 0
 
 // settleActor fires every enabled transition, re-derives, and repeats
@@ -130,7 +130,7 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
   })
 
 // send appends one event and settles the actor.
-export const send = <R>(a: Actor<R>, event: Envelope): Effect.Effect<void, never, EventLog | R> =>
+export const send = <R>(a: Actor<R>, event: Event): Effect.Effect<void, never, EventLog | R> =>
   Effect.gen(function* () {
     const log = yield* EventLog
     yield* log.append([event])

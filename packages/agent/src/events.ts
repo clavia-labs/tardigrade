@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { MessageReceived } from "@flamecast/core/message"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import type { KeyFragment } from "@flamecast/core/event-log"
 
 // The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
@@ -121,7 +121,7 @@ export const BudgetDenied = Schema.Struct({
   at: Schema.Number
 })
 
-export const Event = Schema.Union(
+export const AgentEvent = Schema.Union(
   MessageReceived,
   ModelCalled,
   TextReturned,
@@ -135,7 +135,7 @@ export const Event = Schema.Union(
   BudgetGranted,
   BudgetDenied
 )
-export type Event = typeof Event.Type
+export type AgentEvent = typeof AgentEvent.Type
 
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
 // model emitted alongside a call; it records as `TextReturned`.
@@ -193,43 +193,43 @@ type Stamp = { readonly turn?: string; readonly at: number }
 
 export const toolCalled = (
   fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown } & Stamp
-): Envelope => ({ type: "ToolCalled", ...fields }) as Envelope
+): Event => ({ type: "ToolCalled", ...fields }) as Event
 
-export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Envelope =>
-  ({ type: "ToolReturned", ...fields }) as Envelope
+export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Event =>
+  ({ type: "ToolReturned", ...fields }) as Event
 
 export const modelCalled = (
   fields: { readonly callId: string; readonly ordinal?: number } & Stamp
-): Envelope => ({ type: "ModelCalled", ...fields }) as Envelope
+): Event => ({ type: "ModelCalled", ...fields }) as Event
 
-export const textReturned = (fields: { readonly text: string } & Stamp): Envelope =>
-  ({ type: "TextReturned", ...fields }) as Envelope
+export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
+  ({ type: "TextReturned", ...fields }) as Event
 
-export const turnCompleted = (fields: { readonly output: string } & Stamp): Envelope =>
-  ({ type: "TurnCompleted", ...fields }) as Envelope
+export const turnCompleted = (fields: { readonly output: string } & Stamp): Event =>
+  ({ type: "TurnCompleted", ...fields }) as Event
 
-export const turnFailed = (fields: { readonly error: string } & Stamp): Envelope =>
-  ({ type: "TurnFailed", ...fields }) as Envelope
+export const turnFailed = (fields: { readonly error: string } & Stamp): Event =>
+  ({ type: "TurnFailed", ...fields }) as Event
 
-export const replyDelivered = (fields: { readonly turn: string; readonly to?: string; readonly at: number }): Envelope =>
-  ({ type: "ReplyDelivered", ...fields }) as Envelope
+export const replyDelivered = (fields: { readonly turn: string; readonly to?: string; readonly at: number }): Event =>
+  ({ type: "ReplyDelivered", ...fields }) as Event
 
 export const budgetExhausted = (
   fields: { readonly budget: number; readonly used: number } & Stamp
-): Envelope => ({ type: "BudgetExhausted", ...fields }) as Envelope
+): Event => ({ type: "BudgetExhausted", ...fields }) as Event
 
 export const budgetRequested = (
   fields: { readonly callId: string; readonly reason: string; readonly amount: number } & Stamp
-): Envelope => ({ type: "BudgetRequested", ...fields }) as Envelope
+): Event => ({ type: "BudgetRequested", ...fields }) as Event
 
 export const budgetGranted = (
   fields: { readonly amount: number; readonly callId?: string } & Stamp
-): Envelope => ({ type: "BudgetGranted", ...fields }) as Envelope
+): Event => ({ type: "BudgetGranted", ...fields }) as Event
 
 export const budgetDenied = (
   fields: { readonly reason?: string; readonly callId?: string } & Stamp
-): Envelope => ({ type: "BudgetDenied", ...fields }) as Envelope
+): Event => ({ type: "BudgetDenied", ...fields }) as Event
 
 export const compactionCompleted = (
   fields: { readonly upTo: number; readonly summary: string; readonly at: number }
-): Envelope => ({ type: "CompactionCompleted", ...fields }) as Envelope
+): Event => ({ type: "CompactionCompleted", ...fields }) as Event

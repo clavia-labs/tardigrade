@@ -1,15 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { EventLog, withWatermark } from "@flamecast/core/event-log"
 import { budgetReactor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
 import { toolsReactor } from "./tools"
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
 // except the last), then any extra events appended after.
-const turn = (calls: number, budget?: number, extra: Envelope[] = []): Envelope[] => {
+const turn = (calls: number, budget?: number, extra: Event[] = []): Event[] => {
   const id = "m1"
-  const log: Envelope[] = [{ type: "MessageReceived", id, text: "go", ...(budget === undefined ? {} : { budget }), at: 0 }]
+  const log: Event[] = [{ type: "MessageReceived", id, text: "go", ...(budget === undefined ? {} : { budget }), at: 0 }]
   for (let i = 1; i <= calls; i++) {
     log.push({ type: "ToolCalled", callId: `c${i}`, name: "execute", arguments: { code: `x${i}` }, turn: id, at: i * 2 })
     if (i < calls) log.push({ type: "ToolReturned", callId: `c${i}`, result: {}, turn: id, at: i * 2 + 1 })
@@ -18,15 +18,15 @@ const turn = (calls: number, budget?: number, extra: Envelope[] = []): Envelope[
 }
 
 // Drive the reactor over an in-memory log and return only what serving appended.
-const fire = async (log: ReadonlyArray<Envelope>): Promise<ReadonlyArray<Envelope>> => {
-  const events: Envelope[] = [...log]
+const fire = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> => {
+  const events: Event[] = [...log]
   const memory = Layer.succeed(EventLog, withWatermark({
-    append: (more: ReadonlyArray<Envelope>) => Effect.sync(() => void events.push(...more)),
-    read: Effect.sync(() => events as ReadonlyArray<Envelope>)
+    append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
+    read: Effect.sync(() => events as ReadonlyArray<Event>)
   }))
   const derived = budgetReactor(events)
   if (derived.length > 0) {
-    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Envelope>>)
+    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
     events.push(...out)
   }
   return events.slice(log.length)
@@ -82,15 +82,15 @@ describe("the budget reactor", () => {
 
 describe("the tools gate reacts to BudgetExhausted", () => {
   // Drive the reactor over an in-memory log and return only what serving appended.
-  const dispatch = async (log: ReadonlyArray<Envelope>): Promise<ReadonlyArray<Envelope>> => {
-    const events: Envelope[] = [...log]
+  const dispatch = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> => {
+    const events: Event[] = [...log]
     const memory = Layer.succeed(EventLog, withWatermark({
-      append: (more: ReadonlyArray<Envelope>) => Effect.sync(() => void events.push(...more)),
-      read: Effect.sync(() => events as ReadonlyArray<Envelope>)
+      append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
+      read: Effect.sync(() => events as ReadonlyArray<Event>)
     }))
     const derived = toolsReactor(events)
     if (derived.length > 0) {
-      const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Envelope>>)
+      const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
       events.push(...out)
     }
     return events.slice(log.length)
@@ -111,13 +111,13 @@ describe("the tools gate reacts to BudgetExhausted", () => {
 })
 
 // The lifecycle events, appended after a spent turn's execute calls.
-const exhausted: Envelope = { type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 100 }
-const granted = (amount: number): Envelope => ({ type: "BudgetGranted", amount, turn: "m1", at: 101 })
-const denied: Envelope = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
+const exhausted: Event = { type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 100 }
+const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, turn: "m1", at: 101 })
+const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
 
 describe("the escalation lifecycle", () => {
   test("usedOf counts only execute; answer and request_budget are free", () => {
-    const log: Envelope[] = [
+    const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", budget: 5, at: 0 },
       { type: "ToolCalled", callId: "e1", name: "execute", arguments: {}, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "rb1", name: "request_budget", arguments: {}, turn: "m1", at: 2 },
@@ -144,8 +144,8 @@ describe("the escalation lifecycle", () => {
   })
 
   test("the ask is offered only when escalatable and only at the wall", () => {
-    const head = (escalatable: boolean): Envelope => ({ type: "MessageReceived", id: "m1", text: "go", budget: 2, escalatable, at: 0 })
-    const atWall = (escalatable: boolean): Envelope[] => [head(escalatable), ...turn(3, 2, [exhausted]).slice(1)]
+    const head = (escalatable: boolean): Event => ({ type: "MessageReceived", id: "m1", text: "go", budget: 2, escalatable, at: 0 })
+    const atWall = (escalatable: boolean): Event[] => [head(escalatable), ...turn(3, 2, [exhausted]).slice(1)]
     expect(canRequestBudget(atWall(true))).toBe(true)
     expect(canRequestBudget(atWall(false))).toBe(false) // not escalatable: no ask
     const afterDenial = [head(true), ...turn(3, 2, [exhausted, denied]).slice(1)]

@@ -1,5 +1,5 @@
 import * as Graph from "effect/Graph"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 
 // Deadlock detection over the waits-for graph. Lanes are nodes; an
 // unanswered awaiting call is an edge to the lane whose settle answers
@@ -25,7 +25,7 @@ export interface AwaitEdge {
 
 // EdgesOf derives one lane's awaiting edges from its events. It must
 // be a pure projection: the sentinel re-derives after every drain.
-export type EdgesOf = (lane: string, events: ReadonlyArray<Envelope>) => ReadonlyArray<AwaitEdge>
+export type EdgesOf = (lane: string, events: ReadonlyArray<Event>) => ReadonlyArray<AwaitEdge>
 
 // Deadlock is one await cycle: its member lanes and the taut edges
 // among them.
@@ -37,7 +37,7 @@ export interface Deadlock {
 // deadlocks returns every await cycle among the lanes, each with its
 // member lanes and the taut edges inside it.
 export const deadlocks = (
-  lanes: ReadonlyMap<string, ReadonlyArray<Envelope>>,
+  lanes: ReadonlyMap<string, ReadonlyArray<Event>>,
   edgesOf: EdgesOf
 ): ReadonlyArray<Deadlock> => {
   const taut: AwaitEdge[] = []
@@ -78,7 +78,7 @@ export const victimOf = (deadlock: Deadlock): AwaitEdge =>
 
 // mermaid renders the waits-for graph of the given lanes: the live
 // tension picture, from the same derivation the sentinel checks.
-export const mermaid = (lanes: ReadonlyMap<string, ReadonlyArray<Envelope>>, edgesOf: EdgesOf): string => {
+export const mermaid = (lanes: ReadonlyMap<string, ReadonlyArray<Event>>, edgesOf: EdgesOf): string => {
   const lines = ["flowchart LR"]
   for (const [lane, events] of lanes) {
     for (const edge of edgesOf(lane, events)) {

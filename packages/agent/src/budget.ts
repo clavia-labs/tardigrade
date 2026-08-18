@@ -1,7 +1,7 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { budgetExhausted } from "./events"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { turnHead, turnView } from "@flamecast/code/turns"
 
 // The budget reactor observes the turn's tool spend and fires BudgetExhausted once when it
@@ -15,7 +15,7 @@ export const DEFAULT_TOOL_BUDGET = 40
 // budgetOf returns the turn's budget: the head's `budget` plus every grant the escalation has
 // added, or the default. The budget rides the brief envelope and is read off the raw event. A
 // `BudgetGranted` raises the ceiling, which is what lets a granted turn resume.
-export const budgetOf = (view: ReadonlyArray<Envelope>): number => {
+export const budgetOf = (view: ReadonlyArray<Event>): number => {
   const head = turnHead(view) as { budget?: unknown } | undefined
   const base = typeof head?.budget === "number" && head.budget > 0 ? Math.floor(head.budget) : DEFAULT_TOOL_BUDGET
   const granted = view.reduce((n, e) => (e.type === "BudgetGranted" ? n + Number((e as { amount?: unknown }).amount ?? 0) : n), 0)
@@ -24,18 +24,18 @@ export const budgetOf = (view: ReadonlyArray<Envelope>): number => {
 
 // usedOf counts the tool calls the turn has spent. Only `execute` spends: `answer` and
 // `request_budget` are the turn's exits, so they never draw the budget down.
-export const usedOf = (view: ReadonlyArray<Envelope>): number =>
+export const usedOf = (view: ReadonlyArray<Event>): number =>
   view.filter((e) => e.type === "ToolCalled" && String((e as { name?: unknown }).name) === "execute").length
 
 // escalatableOf reports whether the brief lets this turn escalate at its wall. It rides the
 // envelope like `budget`.
-export const escalatableOf = (view: ReadonlyArray<Envelope>): boolean =>
+export const escalatableOf = (view: ReadonlyArray<Event>): boolean =>
   (turnHead(view) as { escalatable?: unknown } | undefined)?.escalatable === true
 
 // shadowOf reports whether this turn's brief carries the shadow flag. It rides the envelope like
 // `escalatable`: the run's fire sets it once, and every spawn downstream inherits the same
 // reading.
-export const shadowOf = (view: ReadonlyArray<Envelope>): boolean =>
+export const shadowOf = (view: ReadonlyArray<Event>): boolean =>
   (turnHead(view) as { shadow?: unknown } | undefined)?.shadow === true
 
 // worldOf returns the explicit world label this turn's brief carries, present when its fire
@@ -43,7 +43,7 @@ export const shadowOf = (view: ReadonlyArray<Envelope>): boolean =>
 // every spawn the same way, so a whole family stays on one shared world's facets. It is absent
 // for the anonymous case, where a shadow run's own family.run is its world and needs no
 // propagation.
-export const worldOf = (view: ReadonlyArray<Envelope>): string | undefined => {
+export const worldOf = (view: ReadonlyArray<Event>): string | undefined => {
   const w = (turnHead(view) as { world?: unknown } | undefined)?.world
   return typeof w === "string" && w !== "" ? w : undefined
 }
@@ -55,7 +55,7 @@ export const worldOf = (view: ReadonlyArray<Envelope>): string | undefined => {
 // budget, or none was ever spent.
 export type BudgetPhase = "spending" | "exhausted" | "denied"
 
-export const budgetPhase = (trajectory: ReadonlyArray<Envelope>): BudgetPhase => {
+export const budgetPhase = (trajectory: ReadonlyArray<Event>): BudgetPhase => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
     const t = trajectory[i]!.type
     if (t === "BudgetExhausted") return "exhausted"
@@ -69,19 +69,19 @@ export const budgetPhase = (trajectory: ReadonlyArray<Envelope>): BudgetPhase =>
 // budgetSpent reports whether `execute` is withdrawn for this turn: true from the wall until a
 // grant reopens it. The tools gate and the model's tool list both read this one predicate, so
 // they never disagree.
-export const budgetSpent = (trajectory: ReadonlyArray<Envelope>): boolean => budgetPhase(trajectory) !== "spending"
+export const budgetSpent = (trajectory: ReadonlyArray<Event>): boolean => budgetPhase(trajectory) !== "spending"
 
 // canRequestBudget reports whether the model may ask for more: only while the wall is up, no
 // denial has closed it, and the brief made the turn escalatable. A denied turn answers and never
 // asks again.
-export const canRequestBudget = (trajectory: ReadonlyArray<Envelope>): boolean =>
+export const canRequestBudget = (trajectory: ReadonlyArray<Event>): boolean =>
   budgetPhase(trajectory) === "exhausted" && escalatableOf(trajectory)
 
 // overBudget reports whether the spend has passed the budget. It is pure and total over the log,
 // so replay re-folds to the same state: it reads only the log and calls no clock and no random
 // source. It is off by exactly one on purpose: `used > budget` fires on the call after the last
 // allowed one, so the agent gets `budget` dispatched calls and the next is refused.
-const overBudget = (log: ReadonlyArray<Envelope>): boolean => usedOf(log) > budgetOf(log)
+const overBudget = (log: ReadonlyArray<Event>): boolean => usedOf(log) > budgetOf(log)
 
 // budgetReactor derives the wall when the spend has crossed the ceiling and no wall marker
 // stands. The act records `BudgetExhausted` once; the tools reactor reads it and refuses the

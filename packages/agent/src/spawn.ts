@@ -1,7 +1,7 @@
 import { Clock, Context, Effect } from "effect"
 import { Router } from "@flamecast/core/router"
 import type { Package } from "@flamecast/code/packages"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { DEFAULT_TOOL_BUDGET } from "./budget"
 import { Park } from "@flamecast/code/errors"
 import { readAddress } from "@flamecast/core/router"
@@ -228,7 +228,7 @@ export const agentsPackage = (
 // whether a spawned child's reply has already landed, before ever parking: the same shape
 // `tasks.ts` (`TaskReader`) reads its own lane with.
 export interface AgentReader {
-  readonly events: (facet: string) => Promise<ReadonlyArray<Envelope>>
+  readonly events: (facet: string) => Promise<ReadonlyArray<Event>>
 }
 
 // SpawnTerminal is a spawned child's terminal, once its reply has landed on the calling lane.
@@ -238,7 +238,7 @@ interface SpawnTerminal {
 }
 
 // awaitedReply returns the reply row for one spawn, if it has landed on the calling lane. `id`
-// is `replyEnvelope`'s own convention (`src/core/reply.ts`): `<id>.reply` (`replyId`,
+// is `replyEvent`'s own convention (`src/core/reply.ts`): `<id>.reply` (`replyId`,
 // `src/grammar/grammar.ts`), so a redelivered brief dedups at the sender and a redelivered reply
 // dedups at the receiver.
 const awaitedReply = (reader: AgentReader, self: string, id: string): Effect.Effect<SpawnTerminal | undefined> =>
@@ -252,7 +252,7 @@ const awaitedReply = (reader: AgentReader, self: string, id: string): Effect.Eff
     return { outcome: reply.outcome === "failed" ? "failed" : "completed", text: String(reply.text) }
   })
 
-// answerOf strips `replyEnvelope`'s "error: " prefix back off a failed reply, so a foreground
+// answerOf strips `replyEvent`'s "error: " prefix back off a failed reply, so a foreground
 // body's `.error` reads the bare text while the fresh-inbound reading a background reply keeps
 // the convention.
 const ERROR_PREFIX = "error: "

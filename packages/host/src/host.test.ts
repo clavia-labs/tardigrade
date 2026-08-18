@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { Router } from "@flamecast/core/router"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { createHost } from "./host"
@@ -15,7 +15,7 @@ const RALLY = 6
 const str = (v: unknown): string => String(v ?? "")
 
 // The rally's key table: the inbound by id (msg:), the answer by the inbound it answers (an:).
-const rallyKeys = (e: Envelope): string | undefined => {
+const rallyKeys = (e: Event): string | undefined => {
   const v = e as { id?: unknown }
   if (e.type === "MessageReceived") return `msg:${str(v.id)}`
   if (e.type === "Answered") return `an:${str(v.id)}`
@@ -45,9 +45,9 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Envelope)
+              } as Event)
             }
-            return [{ type: "Answered", id: input.id, at: input.n } as Envelope]
+            return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
       })
     ]
@@ -66,7 +66,7 @@ const rally = () => {
 describe("the host", () => {
   test("one serve drives the whole rally to quiescence", async () => {
     const host = rally()
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Envelope)
+    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.resting()).toBe(true)
     const total =
@@ -77,17 +77,17 @@ describe("the host", () => {
 
   test("redelivery is absorbed: same id, no second answer", async () => {
     const host = rally()
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Envelope)
+    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     const before = host.read("a").length
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Envelope)
+    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.read("a").length).toBe(before)
   })
 
   test("a sink lane takes deliveries and owes nothing", async () => {
     const host = rally()
-    host.deliver("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Envelope)
+    host.deliver("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
     expect(host.read("reg")).toHaveLength(1)
     expect(host.resting()).toBe(true)

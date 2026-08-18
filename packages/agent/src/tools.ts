@@ -2,7 +2,7 @@ import { Clock, Effect } from "effect"
 import { transition, type Reactor, type Transition } from "@flamecast/core/actor"
 import { budgetRequested, toolReturned } from "./events"
 import { codeDispatched } from "@flamecast/code/events"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { turnView } from "@flamecast/code/turns"
 import { budgetSpent } from "./budget"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
@@ -28,7 +28,7 @@ const str = (v: unknown): string => String(v ?? "")
 
 // pendingCall returns the head pending call: the earliest ToolCalled with no ToolReturned,
 // ordered by its own `at` with the callId as the tiebreak.
-const pendingCall = (log: ReadonlyArray<Envelope>): PendingCall | undefined => {
+const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
   const answered = new Set(
     log.filter((e) => e.type === "ToolReturned").map((e) => str((e as { callId?: unknown }).callId))
   )
@@ -49,11 +49,11 @@ const pendingCall = (log: ReadonlyArray<Envelope>): PendingCall | undefined => {
   }
 }
 
-const has = (log: ReadonlyArray<Envelope>, type: string, key: string, value: string): boolean =>
+const has = (log: ReadonlyArray<Event>, type: string, key: string, value: string): boolean =>
   log.some((e) => e.type === type && str((e as Record<string, unknown>)[key]) === value)
 
 const settleFor = (
-  log: ReadonlyArray<Envelope>,
+  log: ReadonlyArray<Event>,
   callId: string
 ): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
   const settle = log.find((e) => e.type === "CodeSettled" && str((e as { execId?: unknown }).execId) === callId) as
@@ -68,7 +68,7 @@ const settleFor = (
 
 // decisionFor returns the parent's decision on an escalation ask, scoped to the call's turn.
 const decisionFor = (
-  log: ReadonlyArray<Envelope>,
+  log: ReadonlyArray<Event>,
   turn: string | undefined
 ): { granted: number } | { denied: string } | undefined => {
   for (const e of log) {

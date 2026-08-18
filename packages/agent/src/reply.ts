@@ -2,8 +2,8 @@ import { Clock, Effect } from "effect"
 import { Router } from "@flamecast/core/router"
 import { Self, transition, type Reactor } from "@flamecast/core/actor"
 import { replyDelivered } from "./events"
-import type { Envelope } from "@flamecast/core/envelope"
-import { replyEnvelope } from "@flamecast/core/reply"
+import type { Event } from "@flamecast/core/event"
+import { replyEvent } from "@flamecast/core/reply"
 import { replyView } from "@flamecast/code/turns"
 
 // The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
@@ -17,7 +17,7 @@ import { replyView } from "@flamecast/code/turns"
 
 // owedTurn returns the turn being reported: the view's head, and its stamped terminal.
 const owedTurn = (
-  log: ReadonlyArray<Envelope>
+  log: ReadonlyArray<Event>
 ): { readonly id: string; readonly replyTo?: string; readonly text: string; readonly outcome: "completed" | "failed" } => {
   const view = replyView(log)
   const inbound = view[0] as { id?: unknown; replyTo?: unknown } | undefined
@@ -56,7 +56,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
           const self = yield* Self
           yield* router.deliver(
             input.replyTo,
-            replyEnvelope({ id: input.id, text: input.text, outcome: input.outcome, from: self, at })
+            replyEvent({ id: input.id, text: input.text, outcome: input.outcome, from: self, at })
           )
           return [replyDelivered({ to: input.replyTo, turn: input.id, at })]
         })

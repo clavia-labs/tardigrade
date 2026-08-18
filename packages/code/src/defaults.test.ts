@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { composeKeys, EventLog, withWatermark } from "@flamecast/core/event-log"
 import { settleActor } from "@flamecast/core/actor"
 import { messageKeys } from "@flamecast/core/message"
@@ -97,14 +97,14 @@ describe("replay-stable ambients", () => {
   })
 })
 
-const memoryLog = (initial: ReadonlyArray<Envelope>) =>
+const memoryLog = (initial: ReadonlyArray<Event>) =>
   Layer.effect(
     EventLog,
     Effect.gen(function* () {
-      const ref = yield* Ref.make<ReadonlyArray<Envelope>>(initial)
+      const ref = yield* Ref.make<ReadonlyArray<Event>>(initial)
       return withWatermark({
         read: Ref.get(ref),
-        append: (events: ReadonlyArray<Envelope>) => Ref.update(ref, (log) => [...log, ...events])
+        append: (events: ReadonlyArray<Event>) => Ref.update(ref, (log) => [...log, ...events])
       })
     })
   )
@@ -116,7 +116,7 @@ const packagesLayer = Layer.succeed(Packages, {
 
 describe("logs ride the settle", () => {
   test("CodeSettled carries the body's prints", async () => {
-    const log: Envelope[] = [
+    const log: Event[] = [
       { type: "MessageReceived", id: "t1", text: "go", at: 1 },
       { type: "CodeDispatched", execId: "e1", code: 'console.log("seen"); return "ok"', turn: "t1", at: 2 }
     ]
@@ -125,7 +125,7 @@ describe("logs ride the settle", () => {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memoryTmp()))) as Effect.Effect<
-        ReadonlyArray<Envelope>
+        ReadonlyArray<Event>
       >
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { result?: unknown; logs?: ReadonlyArray<string> }

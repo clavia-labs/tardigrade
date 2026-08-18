@@ -2,7 +2,7 @@ import { Clock, Context, Effect } from "effect"
 import { EventLog } from "@flamecast/core/event-log"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { modelCalled, textReturned, turnFailed } from "./events"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import type { Action } from "./events"
 import { trajectoryOf, turnView } from "@flamecast/code/turns"
 
@@ -34,12 +34,12 @@ const REPAIR_AT_MOST = 2
 // recorded pair and the dispatch dedup absorbs the new work.
 export class Infer extends Context.Tag("agent/Infer")<
   Infer,
-  { readonly react: (trajectory: ReadonlyArray<Envelope>, key?: string) => Effect.Effect<Action> }
+  { readonly react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.Effect<Action> }
 >() {}
 
 // consequenceOf returns the action's recorded answer: the model responds by acting. Every
 // consequence carries the turn it serves.
-const consequenceOf = (action: Action, turn: string, at: number): Envelope =>
+const consequenceOf = (action: Action, turn: string, at: number): Event =>
   action.kind === "call"
     ? { type: "ToolCalled", callId: action.callId, name: action.name, arguments: action.arguments, turn, at }
     : action.kind === "complete"
@@ -49,7 +49,7 @@ const consequenceOf = (action: Action, turn: string, at: number): Envelope =>
 // diedAttempts counts the `ModelCalled` marks at the end of the turn's slice, with nothing after
 // them. Any committed event after a mark is progress and resets the count. Counting inside the
 // slice keeps a queued message on the log from masking a crash loop.
-const diedAttempts = (turn: ReadonlyArray<Envelope>): number => {
+const diedAttempts = (turn: ReadonlyArray<Event>): number => {
   let n = 0
   for (let i = turn.length - 1; i >= 0; i--) {
     if (turn[i]!.type === "ModelCalled") n += 1
@@ -59,14 +59,14 @@ const diedAttempts = (turn: ReadonlyArray<Envelope>): number => {
 }
 
 // awaitingTool reports an unanswered tool call in the turn: the model waits on the world.
-const awaitingTool = (slice: ReadonlyArray<Envelope>): boolean => {
+const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
   const answered = new Set(
     slice.filter((e) => e.type === "ToolReturned").map((e) => String((e as { callId?: unknown }).callId))
   )
   return slice.some((e) => e.type === "ToolCalled" && !answered.has(String((e as { callId?: unknown }).callId)))
 }
 
-const terminated = (slice: ReadonlyArray<Envelope>): boolean =>
+const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
 
 export const inferReactor: Reactor<Infer | EventLog> = (log) => {

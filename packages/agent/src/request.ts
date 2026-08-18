@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { checkpointOf } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
@@ -88,7 +88,7 @@ const ESCALATE_NUDGE =
 // renderMessages rebuilds the trajectory as a conversation: reactions as assistant messages,
 // tool returns as tool messages, terminals as assistant text. Rendering starts from the last
 // checkpoint's summary plus the live suffix. Unknown event types fall through: tolerant reads.
-export const renderMessages = (trajectory: ReadonlyArray<Envelope>): ReadonlyArray<AgentMessage> => {
+export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<AgentMessage> => {
   const messages: AgentMessage[] = []
   const checkpoint = checkpointOf(trajectory)
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
@@ -147,7 +147,7 @@ export const renderMessages = (trajectory: ReadonlyArray<Envelope>): ReadonlyArr
 // modelRequest folds two policies. A declared output schema adds the answer tool and its
 // nudge. A spent budget drops execute and adds the budget nudge, so the model can only answer.
 // Both are pure projections of the log.
-export const modelRequest = (trajectory: ReadonlyArray<Envelope>, packagesInScope: string): ModelRequest => {
+export const modelRequest = (trajectory: ReadonlyArray<Event>, packagesInScope: string): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)

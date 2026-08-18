@@ -1,7 +1,7 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { SqlClient } from "@effect/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { EventLog } from "@flamecast/core/event-log"
 import { Router, type CallResult } from "@flamecast/core/router"
 import { Self, restingActor, settleActor, type Actor } from "@flamecast/core/actor"
@@ -26,13 +26,13 @@ export interface BunHostOptions<R> {
   readonly resume?: Parameters<typeof Router.of>[0]["resume"]
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
-  readonly keyOf?: (e: Envelope) => string | undefined
+  readonly keyOf?: (e: Event) => string | undefined
 }
 
 export interface BunHost {
-  readonly seed: (lane: string, events: ReadonlyArray<Envelope>) => Promise<void>
-  readonly read: (lane: string) => Promise<ReadonlyArray<Envelope>>
-  readonly deliver: (address: string, event: Envelope) => Promise<void>
+  readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
+  readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
+  readonly deliver: (address: string, event: Event) => Promise<void>
   readonly wake: (lane: string) => Promise<void>
   readonly drive: () => Promise<void>
   // recover marks every lane that has an actor as owed a visit and drives: the alarm a real
@@ -70,16 +70,16 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
 
   const dirty = new Set<string>()
 
-  const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Envelope>, never> =>
+  const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>, never> =>
     sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Envelope)),
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
       Effect.orDie
     )
 
   // appendEffect keeps guarantees 4 and 5 in the store itself: the batch lands in one
   // transaction, and a keyed event whose key is already recorded is absorbed inside it, leaving
   // MAX(seq) unchanged, which is exactly the honest no-progress answer the settle compares.
-  const appendEffect = (lane: string, events: ReadonlyArray<Envelope>): Effect.Effect<void, never> =>
+  const appendEffect = (lane: string, events: ReadonlyArray<Event>): Effect.Effect<void, never> =>
     events.length === 0
       ? Effect.void
       : sql.withTransaction(
@@ -104,13 +104,13 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
       Effect.orDie
     )
 
-  const readFromEffect = (lane: string, mark: number): Effect.Effect<ReadonlyArray<Envelope>, never> =>
+  const readFromEffect = (lane: string, mark: number): Effect.Effect<ReadonlyArray<Event>, never> =>
     sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} AND seq > ${mark} ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Envelope)),
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
       Effect.orDie
     )
 
-  const deliverEffect = (address: string, event: Envelope): Effect.Effect<void, never> =>
+  const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
     Effect.gen(function* () {
       // The membrane, identical to the reference host: a cross-lane event names its occurrence
       // or it does not travel (packages/host/src/host.ts).
@@ -145,7 +145,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
   const layersOf = (lane: string) =>
     Layer.mergeAll(
       Layer.succeed(EventLog, {
-        append: (events: ReadonlyArray<Envelope>) => appendEffect(lane, events),
+        append: (events: ReadonlyArray<Event>) => appendEffect(lane, events),
         read: readEffect(lane),
         head: headEffect(lane),
         readFrom: (mark: number) => readFromEffect(lane, mark)
@@ -165,9 +165,9 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
     }
   }
 
-  const lanesMap = async (): Promise<Map<string, ReadonlyArray<Envelope>>> => {
+  const lanesMap = async (): Promise<Map<string, ReadonlyArray<Event>>> => {
     const rows = await runtime.runPromise(sql<{ lane: string }>`SELECT DISTINCT lane FROM events`.pipe(Effect.orDie))
-    const map = new Map<string, ReadonlyArray<Envelope>>()
+    const map = new Map<string, ReadonlyArray<Event>>()
     for (const row of rows) map.set(row.lane, await runtime.runPromise(readEffect(row.lane)))
     return map
   }
@@ -187,7 +187,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
             outcome: "failed",
             text: `deadlock: ${[...knot.members, knot.members[0]].join(" waits for ")}`,
             at: 0
-          } as Envelope)
+          } as Event)
         )
       }
       await drain()

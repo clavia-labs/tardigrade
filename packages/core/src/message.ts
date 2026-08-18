@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import type { Envelope } from "./envelope"
+import type { Event } from "./event"
 import type { KeyFragment } from "./event-log"
 
 // MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's
@@ -40,4 +40,4 @@ export const messageReceived = (fields: {
   readonly text: string
   readonly at: number
   readonly [extra: string]: unknown
-}): Envelope => ({ type: "MessageReceived", ...fields }) as Envelope
+}): Event => ({ type: "MessageReceived", ...fields }) as Event

@@ -1,4 +1,4 @@
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 
 // The code lane's projections: pure functions over the event SET, the TypeScript half of
 // tla/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
@@ -24,7 +24,7 @@ const str = (v: unknown): string => String(v ?? "")
 
 // factsOf derives in two phases, the sets then the questions, so no answer depends on event
 // order.
-export const factsOf = (events: ReadonlyArray<Envelope>): ReadonlyArray<ExecFacts> => {
+export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> => {
   const dispatched = new Map<string, number>()
   const settled = new Set<string>()
   const awaiting = new Map<string, string>()
@@ -97,7 +97,7 @@ export const canProgress = (f: ExecFacts): boolean =>
 // dispatch, when it can progress. Service is serial FIFO: a blocked
 // head rests the whole lane (a later body may depend on an earlier
 // one's effects).
-export const workOwed = (events: ReadonlyArray<Envelope>): ExecFacts | undefined => {
+export const workOwed = (events: ReadonlyArray<Event>): ExecFacts | undefined => {
   const head = factsOf(events).find((f) => !f.settled)
   return head !== undefined && canProgress(head) ? head : undefined
 }
@@ -105,4 +105,4 @@ export const workOwed = (events: ReadonlyArray<Envelope>): ExecFacts | undefined
 // restingLane reports quiescence to the platform alarm: no owed work.
 // The driver adds its own runtime-local "nothing in flight"; the log's
 // half is this.
-export const restingLane = (events: ReadonlyArray<Envelope>): boolean => workOwed(events) === undefined
+export const restingLane = (events: ReadonlyArray<Event>): boolean => workOwed(events) === undefined

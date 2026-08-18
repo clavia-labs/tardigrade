@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 import { composeKeys, EventLog, withWatermark } from "@flamecast/core/event-log"
 import { settleActor } from "@flamecast/core/actor"
 import { messageKeys } from "@flamecast/core/message"
@@ -40,13 +40,13 @@ const jsSandbox = Layer.succeed(Sandbox, {
     })
 })
 
-const memoryLog = (initial: ReadonlyArray<Envelope>) =>
+const memoryLog = (initial: ReadonlyArray<Event>) =>
   Layer.effect(
     EventLog,
     Effect.gen(function* () {
-      const ref = yield* Ref.make<ReadonlyArray<Envelope>>(initial)
+      const ref = yield* Ref.make<ReadonlyArray<Event>>(initial)
       return withWatermark({
-        append: (events: ReadonlyArray<Envelope>) => Ref.update(ref, (log) => [...log, ...events]),
+        append: (events: ReadonlyArray<Event>) => Ref.update(ref, (log) => [...log, ...events]),
         read: Ref.get(ref)
       })
     })
@@ -83,13 +83,13 @@ const code = `
   return { a, b, c, d }
 `
 
-const settled = async (head: Envelope): Promise<ReadonlyArray<Envelope>> => {
-  const log: Envelope[] = [head, { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }]
+const settled = async (head: Event): Promise<ReadonlyArray<Event>> => {
+  const log: Event[] = [head, { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }]
   return Effect.runPromise(
     Effect.gen(function* () {
       yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
-    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Envelope>>
+    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
   )
 }
 
@@ -122,7 +122,7 @@ describe("transience never reaches the body", () => {
       const a = await flaky.read({}).catch(() => ({ fell: "back" }))
       return { a }
     `
-    const log: Envelope[] = [
+    const log: Event[] = [
       { type: "MessageReceived", id: "t1", text: "go", at: 1 },
       { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }
     ]
@@ -130,7 +130,7 @@ describe("transience never reaches the body", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), flakyLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Envelope>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), flakyLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { result?: { a: unknown } } | undefined
     expect(settle).toBeDefined()
@@ -154,7 +154,7 @@ describe("the replay guard", () => {
       const a = await world.ownedWrite({})
       return { a }
     `
-    const log: Envelope[] = [
+    const log: Event[] = [
       { type: "MessageReceived", id: "t1", text: "go", at: 1 },
       { type: "CodeDispatched", execId: "e1", code: drifting, turn: "t1", at: 2 },
       { type: "PackageCalled", callId: "e1.0", name: "world.read", arguments: {}, turn: "t1", at: 3 },
@@ -164,7 +164,7 @@ describe("the replay guard", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Envelope>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")
@@ -177,7 +177,7 @@ describe("the replay guard", () => {
       const a = await world.read({ page: 2 })
       return { a }
     `
-    const log: Envelope[] = [
+    const log: Event[] = [
       { type: "MessageReceived", id: "t1", text: "go", at: 1 },
       { type: "CodeDispatched", execId: "e1", code: drifting, turn: "t1", at: 2 },
       { type: "PackageCalled", callId: "e1.0", name: "world.read", arguments: { page: 1 }, turn: "t1", at: 3 },
@@ -187,7 +187,7 @@ describe("the replay guard", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Envelope>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")

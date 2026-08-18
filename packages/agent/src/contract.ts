@@ -1,5 +1,5 @@
 import { Validator } from "@cfworker/json-schema"
-import type { Envelope } from "@flamecast/core/envelope"
+import type { Event } from "@flamecast/core/event"
 
 // The turn's output contract. A declared schema is checked here before an answer becomes the
 // terminal: a model can produce a well-formed tool call whose arguments still miss the schema,
@@ -7,7 +7,7 @@ import type { Envelope } from "@flamecast/core/envelope"
 // builds the answer tool from the schema; the tools reactor judges answers against it.
 
 // outputSchemaOf reads the current turn's declared schema; the last message heads the turn.
-export const outputSchemaOf = (trajectory: ReadonlyArray<Envelope>): unknown => {
+export const outputSchemaOf = (trajectory: ReadonlyArray<Event>): unknown => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
     const e = trajectory[i]!
     if (e.type === "MessageReceived") return (e as { output?: unknown }).output
