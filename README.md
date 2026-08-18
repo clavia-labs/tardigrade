@@ -1,6 +1,6 @@
 # Tardigrade
 
-Tardigrade is an agent harness built with the log as its core, inspired by event sourcing and React. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
+Tardigrade is a durable agent harness built with the log as its core, inspired by event sourcing and React. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
 
 $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
@@ -15,8 +15,9 @@ import type { Package } from "@flamecast/code/packages"
 // A package is a named object of methods the agent's code can call.
 const invoices: Package = {
   name: "invoices",
-  description: "invoices.lookup({orderId}) finds one invoice",
+  description: "find and manage invoices",
   methods: { lookup: (args) => Effect.promise(() => findInvoice(args)) }
+  // add more methods
 }
 
 const agent = createRlmAgent({
