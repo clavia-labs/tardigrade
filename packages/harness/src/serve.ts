@@ -68,6 +68,16 @@ const terminalOf = (result: TurnResult, log: ReadonlyArray<Event>): Event => {
         amount: result.amount,
         usage
       }
+    case "deferred":
+      return {
+        type: "ModelDeferred",
+        turn: result.turn,
+        callId: result.callId,
+        attempt: result.attempt,
+        notBefore: result.notBefore,
+        reason: result.reason,
+        usage
+      }
     case "open":
       return {
         type: "TurnFailed",
@@ -121,7 +131,8 @@ export const serve = <R = never, Services = unknown>(
         }
       }
       // A message opens a turn. Any other event is a delivery the session absorbs, which is how a
-      // budget grant wakes a parked turn: append, settle, and report where the turn now stands.
+      // budget grant or a due alarm wakes a parked turn: append, settle, and report where the turn
+      // now stands.
       const result =
         event.type === "MessageReceived"
           ? yield* agent.turn(messageOf(event))

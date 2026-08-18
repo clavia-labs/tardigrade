@@ -20,7 +20,7 @@ export {
 export { actor, send, Self, type Actor } from "./actor"
 export { Router } from "./router"
 export { Sessions } from "./sessions"
-export { Writer } from "./ports"
+export { Alarm, Writer } from "./ports"
 export {
   conformance,
   type Check,

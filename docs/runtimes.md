@@ -8,11 +8,12 @@ A runtime binds platform services. Agent modules and machines stay unchanged acr
 | --- | --- |
 | `EventLog` | Append, read, read from a watermark, and report the head offset |
 | `Writer` | Serialize work for one session |
+| `Alarm` | Deliver a wake event to a session at a due time |
 | `Router` | Deliver asynchronous events or perform synchronous calls between sessions |
 | `Sessions` | List the addresses being served and read one session's log |
 | `Self` | Expose the current session address |
 
-The harness turn path requires `EventLog`, `Writer`, `Router`, and `Self`. Session inspection uses `Sessions`.
+The harness turn path requires `EventLog`, `Writer`, `Router`, `Self`, and `Alarm`. Session inspection uses `Sessions`.
 
 ## In-Memory Runtime
 
@@ -31,7 +32,7 @@ const runtime = InMemoryRuntime({
 })
 ```
 
-It uses arrays, maps, and a semaphore. Agents, routing, replay, and concurrent sessions run without external services. State lives for the lifetime of the layer and disappears with the process.
+It uses arrays, maps, and a semaphore. Agents, routing, replay, and concurrent sessions run without external services. State lives for the lifetime of the layer and disappears with the process. An alarm is a timer: `Alarm.set` sleeps until the due time and then delivers the wake event through whatever serves that address.
 
 ## The Session Registry
 
@@ -49,6 +50,6 @@ A call cycle would deadlock on writer leases, so [`serve`](orchestration.md#serv
 
 ## Implementing a Runtime
 
-Use the core conformance utilities for event log and machine guarantees. Preserve append order, dedup behavior, writer exclusion, and deterministic reads. Keep platform vocabulary inside the binding.
+Use the core conformance utilities for event log and machine guarantees. Preserve append order, dedup behavior, writer exclusion, and deterministic reads. Keep platform vocabulary inside the binding. Bind `Alarm` to the platform's due-time primitive: Durable Object storage alarms, a Postgres index on `notBefore`, or an in-memory timer.
 
 [Architecture](architecture.md) shows where runtime ports enter turn execution.

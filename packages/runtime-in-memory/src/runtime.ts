@@ -1,5 +1,6 @@
-import { Context, Effect, Layer, Semaphore } from "effect"
+import { Clock, Context, Duration, Effect, Fiber, Layer, Semaphore } from "effect"
 import {
+  Alarm,
   EventLog,
   Router,
   Self,
@@ -42,6 +43,7 @@ export type SessionPorts =
   | Router
   | Sessions
   | Self
+  | Alarm
 
 // What a family of addresses answers with: the address goes in, and what serves it comes out.
 export type SessionFactory<R = never> = (address: string) => Serve<R>
@@ -202,6 +204,7 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
         Effect.provideService(Writer, writer),
         Effect.provideService(Router, router),
         Effect.provideService(Sessions, sessions),
+        Effect.provideService(Alarm, alarm),
         Effect.provideContext(services)
       ) as Effect.Effect<Event>
     })
@@ -211,12 +214,38 @@ export const InMemoryRuntime = <R = never, const Keys = Readonly<Record<string, 
     call: routed
   }
 
+  // One due wake per session. A later `set` interrupts the earlier timer, which is the in-process
+  // form of Durable Object storage holding a single alarm. The timer is a detached fiber so a turn
+  // that has already returned still wakes. Delivery goes through whatever serves the address, so a
+  // session reached only by `agent.turn` is woken by replaying the wake event.
+  const alarms = new Map<string, Fiber.Fiber<unknown, never>>()
+  const alarm = {
+    set: (address: string, at: number, event: Event) =>
+      Effect.gen(function* () {
+        const prior = alarms.get(address)
+        if (prior !== undefined) {
+          yield* Fiber.interrupt(prior)
+          alarms.delete(address)
+        }
+        if (serveOf(address) === undefined) return
+        const fiber = yield* Effect.forkDetach(
+          Effect.gen(function* () {
+            const now = yield* Clock.currentTimeMillis
+            if (at > now) yield* Effect.sleep(Duration.millis(at - now))
+            yield* routed(address, event)
+          })
+        )
+        alarms.set(address, fiber)
+      })
+  }
+
   return Layer.mergeAll(
     Layer.succeedContext(services),
     Layer.succeed(EventLog, storeOf(session)),
     Layer.succeed(Writer, writer),
     Layer.succeed(Router, router),
     Layer.succeed(Sessions, sessions),
-    Layer.succeed(Self, session)
+    Layer.succeed(Self, session),
+    Layer.succeed(Alarm, alarm)
   )
 }

@@ -9,7 +9,8 @@ import { dedupKey, type DedupKey, type Event } from "@flamecast/core"
 // the log the way the store does.
 //
 // An event type absent from the table has no key and always lands. That is deliberate for a mark:
-// the repetition of `ModelCalled` is the evidence that an attempt died, so the log keeps every copy.
+// the repetition of `ModelCalled` and `ModelDeferred` is the evidence that an attempt died or
+// waited, so the log keeps every copy.
 //
 // THE SCOPE RULE. A key has to name the scope its id is unique in, and no wider. The store already
 // scopes every key to one session, so what is left is the turn. An id the world hands us is unique
