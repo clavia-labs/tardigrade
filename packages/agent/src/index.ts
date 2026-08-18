@@ -4,11 +4,12 @@ import { Router } from "@flamecast/core/router"
 import { Packages, type Package } from "@flamecast/code/packages"
 import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
 import { createHost, type Host } from "@flamecast/host/host"
-import { agent, type AgentR } from "./turn"
+import { agent, agentFor, type AgentR } from "./turn"
 import { Infer } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
+import type { ToolSurface } from "./surface"
 
 // createRlmAgent is the front door: a Recursive Language Model agent, one hosted,
 // spawn-capable agent over an
@@ -24,13 +25,17 @@ export { agent } from "./turn"
 // The parts the actor is assembled from, for a caller composing their own: the six reactors
 // and the agent's key table. An agent is reactors over one log; adding a capability is adding
 // a reactor to the list.
-export { agentActorKeys } from "./turn"
+export { agentActorKeys, agentFor } from "./turn"
 export { inferReactor, Infer } from "./infer"
 export { budgetReactor } from "./budget"
-export { toolsReactor } from "./tools"
+export { toolsReactor, toolsReactorFor } from "./tools"
 export { replyReactor } from "./reply"
 export { compactionReactor } from "./compaction"
 export { agentKeys } from "./events"
+
+// The tool surface: code mode is the default, and an agent measured against a fixed tool table
+// brings its own (surface.ts).
+export { codeSurface, nativeSurface, type NativeTool, type ToolSurface } from "./surface"
 
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
@@ -40,6 +45,9 @@ export interface CreateAgentOptions {
   // only state there is. The next run derives from everything here, and work the log still owes
   // settles on the first drive (index.test.ts, "an agent initialises from a log").
   readonly log?: ReadonlyArray<Event>
+  // The tool surface, code mode by default. The same surface must reach the model binding, so a
+  // caller passing one here passes it to `realInfer` too (surface.ts).
+  readonly surface?: ToolSurface<AgentR>
 }
 
 export interface RlmAgent {
@@ -77,9 +85,10 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   }
 
   // Every ag. lane runs the full turn loop; anything else is a sink.
+  const assembled = options.surface === undefined ? agent : agentFor(options.surface)
   const host: Host = createHost<AgentR>({
     principal: "mem",
-    actorFor: (lane) => (lane.startsWith("ag.") ? agent : undefined),
+    actorFor: (lane) => (lane.startsWith("ag.") ? assembled : undefined),
     layersFor: layersFor as never
   })
 

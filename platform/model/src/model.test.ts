@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import { codeSurface } from "@flamecast/agent/surface"
 import { Infer } from "@flamecast/agent/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
 
@@ -102,7 +103,7 @@ describe("realInfer end to end", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      packagesInScope: "- zohorecruit",
+      surface: codeSurface(),
       fetch: fetchImpl
     })
     const action = await Effect.runPromise(
@@ -124,7 +125,7 @@ describe("realInfer end to end", () => {
         { id: "r2", choices: [{ index: 0, delta: { content: "is 4" } }] },
         { id: "r2", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = realInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", packagesInScope: "", fetch: fetchImpl })
+    const layer = realInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", surface: codeSurface(), fetch: fetchImpl })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "2+2?", at: 1 }])).pipe(
         Effect.provide(layer)
@@ -143,7 +144,7 @@ describe("realInfer end to end", () => {
         { id: "r3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])
     }) as typeof globalThis.fetch
-    const layer = realInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", packagesInScope: "", fetch: fetchImpl })
+    const layer = realInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", surface: codeSurface(), fetch: fetchImpl })
     const trajectory = [{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]
     await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(trajectory, "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
@@ -177,7 +178,7 @@ describe("realInfer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      packagesInScope: "",
+      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -207,7 +208,7 @@ describe("realInfer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      packagesInScope: "",
+      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -237,7 +238,7 @@ describe("realInfer: throttle-shaped retry", () => {
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
-      packagesInScope: "",
+      surface: codeSurface(),
       fetch: fetchImpl,
       sleep: (ms) => {
         slept.push(ms)
@@ -337,7 +338,7 @@ describe("truncation", () => {
       keys.push(request.headers.get("Idempotency-Key"))
       return calls++ === 0 ? cut("half an ans") : whole("the whole answer")
     }) as unknown as typeof fetch
-    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", fetch: fetchImpl as never })
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }], "t1/infer/0")).pipe(
         Effect.provide(layer)
@@ -355,7 +356,7 @@ describe("truncation", () => {
 
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
     const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
-    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", fetch: fetchImpl as never })
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
         Effect.provide(layer)
@@ -385,7 +386,7 @@ describe("declared limits", () => {
         headers: { "content-type": "text/event-stream" }
       })
     }) as unknown as typeof fetch
-    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", maxOutputTokens: 16_384, fetch: fetchImpl as never })
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), maxOutputTokens: 16_384, fetch: fetchImpl as never })
     await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )

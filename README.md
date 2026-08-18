@@ -16,20 +16,25 @@ import { messageKeys } from "@flamecast/core/message"
 import { codeReactor, codeKeys } from "@flamecast/code"
 import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
 import { Packages } from "@flamecast/code/packages"
-import { agentKeys, budgetReactor, compactionReactor, inferReactor, replyReactor, toolsReactor } from "@flamecast/agent"
+import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@flamecast/agent"
 import { realInfer } from "@flamecast/model/model"
 import { createBunHost } from "@flamecast/bun/host"
 
+// The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
+// tools instead, for an agent measured against another harness's surface.
+const surface = codeSurface("none")
+
 // Adding a capability is adding a reactor to the list.
 const agent = actor(
-  [inferReactor, budgetReactor, toolsReactor, codeReactor, replyReactor, compactionReactor],
+  [inferReactor, budgetReactor, toolsReactorFor(surface), codeReactor, replyReactor, compactionReactor],
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
 // The wiring: a real model through platform/model, a sandbox for the agent's code, your packages.
+// The binding renders the same surface the actor serves.
 const wiring = () =>
   Layer.mergeAll(
-    realInfer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock", packagesInScope: "none", maxOutputTokens: 64_000 }),
+    realInfer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock", surface, maxOutputTokens: 64_000 }),
     Layer.succeed(Packages, { resolve: () => undefined, list: () => Effect.succeed([]) }),
     jsSandbox,
     memoryTmp()

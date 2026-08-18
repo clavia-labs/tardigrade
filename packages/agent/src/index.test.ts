@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@flamecast/core/event"
 import type { Action } from "./events"
+import { Effect } from "effect"
 import { createRlmAgent } from "./index"
+import { nativeSurface } from "./surface"
 
 const ROOT_LANE = "ag.root"
 
@@ -89,5 +91,55 @@ describe("createRlmAgent", () => {
     for (const lane of ["ag.t2.0", "ag.t2.1"]) {
       expect(mind.host.read(lane).some((e) => e.type === "TurnCompleted")).toBe(true)
     }
+  })
+
+  test("a native tool surface runs the same turn loop with no code lane", async () => {
+    // The benchmark shape: a fixed table of named tools, called directly. Code mode is the
+    // default rather than the only surface, so an agent measured against another harness keeps
+    // the turn loop, the budget wall, and the answer contract while presenting that harness's
+    // tools (surface.ts).
+    const reads: string[] = []
+    const surface = nativeSurface([
+      {
+        spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
+        run: (input) => {
+          const path = String((input as { path?: unknown }).path)
+          reads.push(path)
+          return Effect.succeed(`contents of ${path}`)
+        }
+      }
+    ])
+    const mind = createRlmAgent({
+      surface,
+      infer: async (trajectory) => {
+        const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
+        if (returned !== undefined) return { kind: "complete", output: String(returned.result) }
+        return { kind: "call", callId: "n1", name: "read", arguments: { path: "/contract.md" } }
+      }
+    })
+    const answer = await mind.run("read the contract")
+    expect(answer.output).toBe("contents of /contract.md")
+    expect(reads).toEqual(["/contract.md"])
+    // The tool answered directly: no code was ever dispatched.
+    const log = mind.host.read(ROOT_LANE)
+    expect(log.some((e) => e.type === "CodeDispatched")).toBe(false)
+    expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(1)
+  })
+
+  test("a call outside the surface comes back as an unknown tool, never a dead turn", async () => {
+    const surface = nativeSurface([
+      { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
+    ])
+    const mind = createRlmAgent({
+      surface,
+      infer: async (trajectory) => {
+        const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: { error?: string } } | undefined
+        if (returned !== undefined) return { kind: "complete", output: String(returned.result?.error) }
+        return { kind: "call", callId: "x1", name: "execute", arguments: { code: "return 1" } }
+      }
+    })
+    const answer = await mind.run("go")
+    expect(answer.output).toContain("unknown tool: execute")
+    expect(answer.output).toContain("read")
   })
 })

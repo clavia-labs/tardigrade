@@ -1,7 +1,11 @@
 import { describe, expect, test } from "bun:test"
+import { Effect } from "effect"
 import type { Event } from "@flamecast/core/event"
 import { trajectoryOf } from "@flamecast/code/turns"
 import { modelRequest, renderMessages } from "./request"
+import { codeSurface, nativeSurface } from "./surface"
+
+const CODE = codeSurface("none")
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -71,14 +75,14 @@ describe("modelRequest tool and prompt policy", () => {
   ]
 
   test("with no schema, offers execute; with a schema, offers execute and answer", () => {
-    expect(modelRequest(head(), undefined as never).tools.map((t) => t.name)).toEqual(["execute"])
+    expect(modelRequest(head(), CODE).tools.map((t) => t.name)).toEqual(["execute"])
     const schema = { type: "object", properties: { a: { type: "string" } } }
-    expect(modelRequest(head([], schema), "").tools.map((t) => t.name)).toEqual(["execute", "answer"])
+    expect(modelRequest(head([], schema), CODE).tools.map((t) => t.name)).toEqual(["execute", "answer"])
   })
 
   test("once the budget is spent, execute is dropped and the nudge is added", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }])
-    const req = modelRequest(spent, "")
+    const req = modelRequest(spent, CODE)
     expect(req.tools.map((t) => t.name)).toEqual([]) // no work tool, no schema, so the model answers in prose
     expect(req.system).toContain("tool budget for this turn is spent")
   })
@@ -86,7 +90,7 @@ describe("modelRequest tool and prompt policy", () => {
   test("spent with a schema leaves only the answer tool", () => {
     const schema = { type: "object", properties: { a: { type: "string" } } }
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], schema)
-    expect(modelRequest(spent, "").tools.map((t) => t.name)).toEqual(["answer"])
+    expect(modelRequest(spent, CODE).tools.map((t) => t.name)).toEqual(["answer"])
   })
 
   test("a spent wall from an earlier turn does not drop execute in a fresh turn", () => {
@@ -96,6 +100,39 @@ describe("modelRequest tool and prompt policy", () => {
       { type: "TurnCompleted", output: "done", turn: "m1", at: 2 },
       { type: "MessageReceived", id: "m2", text: "new", at: 3 }
     ]
-    expect(modelRequest(trajectory, "").tools.map((t) => t.name)).toEqual(["execute"])
+    expect(modelRequest(trajectory, CODE).tools.map((t) => t.name)).toEqual(["execute"])
+  })
+})
+
+describe("the tool surface decides the tool table", () => {
+  const LAB = nativeSurface([
+    { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
+    { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
+  ])
+  const head = (extra: Event[] = [], output?: unknown): Event[] => [
+    { type: "MessageReceived", id: "m1", text: "go", ...(output === undefined ? {} : { output }), at: 0 },
+    ...extra
+  ]
+
+  test("a native surface offers its own tools and never mentions execute", () => {
+    const req = modelRequest(head(), LAB)
+    expect(req.tools.map((t) => t.name)).toEqual(["read", "grep"])
+    expect(req.system).not.toContain("execute")
+    expect(req.system).toContain("read, grep")
+  })
+
+  test("every policy still folds over a swapped surface", () => {
+    const schema = { type: "object", properties: { a: { type: "string" } } }
+    expect(modelRequest(head([], schema), LAB).tools.map((t) => t.name)).toEqual(["read", "grep", "answer"])
+    const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], schema)
+    // The wall drops the work tools whatever they are, and leaves the answer contract standing.
+    expect(modelRequest(spent, LAB).tools.map((t) => t.name)).toEqual(["answer"])
+    expect(modelRequest(spent, LAB).system).toContain("tool budget for this turn is spent")
+  })
+
+  test("the turn frame is surface independent", () => {
+    for (const surface of [CODE, LAB]) {
+      expect(modelRequest(head(), surface).system).toContain("that reply is your final answer")
+    }
   })
 })
