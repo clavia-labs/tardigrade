@@ -27,5 +27,8 @@ examples/.data/
 # Reference checkouts and attachments handed to agents, never part of history
 .context/
 
+# Agent handoff letters: local working notes, never part of history
+.letters/
+
 .claude/*
 !.claude/skills/
