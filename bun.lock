@@ -76,15 +76,15 @@
         "@flamecast/agent": "workspace:*",
         "@flamecast/core": "workspace:*",
         "@smithy/fetch-http-handler": "^5.6.3",
-        "@tanstack/ai": "0.39.1",
-        "@tanstack/ai-bedrock": "0.1.1",
-        "@tanstack/ai-openai": "0.15.10",
+        "@tanstack/ai": "0.44.0",
+        "@tanstack/ai-bedrock": "0.2.1",
+        "@tanstack/ai-openai": "0.19.0",
         "effect": "^3.22.1",
       },
     },
   },
   "packages": {
-    "@ag-ui/core": ["@ag-ui/core@0.0.52", "", { "dependencies": { "zod": "^3.22.4" } }, "sha512-Xo0bUaNV56EqylzcrAuhUkQX7et7+SZIrqZZtEByGwEq/I1EHny6ZMkWHLkKR7UNi0FJZwJyhKYmKJS3B2SEgA=="],
+    "@ag-ui/core": ["@ag-ui/core@0.1.1-canary.beta.0", "", { "peerDependencies": { "zod": "^3.25.18 || ^4.0.0" }, "optionalPeers": ["zod"] }, "sha512-zcP3RH5p3HJTZ0kyQxNOL1blnVFTDpaShitR7UMS/thwFdl48V6CAG+WQBcYEu/dfa8mKonRez88N0Ok+nEI+w=="],
 
     "@aws-crypto/sha256-js": ["@aws-crypto/sha256-js@5.2.0", "", { "dependencies": { "@aws-crypto/util": "^5.2.0", "@aws-sdk/types": "^3.222.0", "tslib": "^2.6.2" } }, "sha512-FFQQyu7edu4ufvIZ+OadFpHHOt+eSTBaYaki44c+akjg7qZg9oOQeLlk77F6tSYqjDAFClrHJk9tMf0HdVyOvA=="],
 
@@ -310,19 +310,19 @@
 
     "@standard-schema/spec": ["@standard-schema/spec@1.1.0", "", {}, "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w=="],
 
-    "@tanstack/ai": ["@tanstack/ai@0.39.1", "", { "dependencies": { "@ag-ui/core": "^0.0.52", "@standard-schema/spec": "^1.1.0", "@tanstack/ai-event-client": "0.6.8", "@tanstack/ai-utils": "0.3.1", "partial-json": "^0.1.7" }, "peerDependencies": { "@opentelemetry/api": ">=1.9.0" }, "optionalPeers": ["@opentelemetry/api"] }, "sha512-lTmwGJ5/hzzr/qGuh56zuD7SjWiZu3jpOQMEEtgw6ImuWjQlsBdw5dKV+oykw3y9FzLLP1LlKb9gAHZ0OR2Fyg=="],
+    "@tanstack/ai": ["@tanstack/ai@0.44.0", "", { "dependencies": { "@ag-ui/core": "0.1.1-canary.beta.0", "@standard-schema/spec": "^1.1.0", "@tanstack/ai-event-client": "^0.8.0", "@tanstack/ai-utils": "^0.4.0", "partial-json": "^0.1.7" }, "peerDependencies": { "@opentelemetry/api": ">=1.9.0" }, "optionalPeers": ["@opentelemetry/api"] }, "sha512-tSHFNYg+x+SQeUUjIOqNmM0Y41+3Fw08LDE3A0vvN4+5O5EG/0SCLl6neCEsPuLPPKCHIJQIItWAfqQeQXR5qA=="],
 
-    "@tanstack/ai-bedrock": ["@tanstack/ai-bedrock@0.1.1", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-sdk/client-bedrock-runtime": "^3.1057.0", "@aws-sdk/credential-providers": "^3.1057.0", "@smithy/signature-v4": "^5.4.5", "@smithy/types": "^4.14.2", "@tanstack/openai-base": "0.9.6", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "0.39.1", "zod": "^4.0.0" } }, "sha512-1xwlUubTV8QeFbuWGtDwZE1UGdS0T+OBBZyJeVTOOdqCBrf+/HHQ+ai3LWx1rlYGCv73EtqKVS5jSQ7hz4BgnQ=="],
+    "@tanstack/ai-bedrock": ["@tanstack/ai-bedrock@0.2.1", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-sdk/client-bedrock-runtime": "^3.1057.0", "@aws-sdk/credential-providers": "^3.1057.0", "@smithy/signature-v4": "^5.4.5", "@smithy/types": "^4.14.2", "@tanstack/openai-base": "^0.9.12", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.44.0", "zod": "^4.0.0" } }, "sha512-dPFnFKplr9xy/li9nEko+NELNc4qhuc+bhfukHqddWPzO3HDSHkDMSibfPV1L4gZfB0IzR8LbM/dXteisR39NA=="],
 
-    "@tanstack/ai-event-client": ["@tanstack/ai-event-client@0.6.8", "", { "dependencies": { "@tanstack/devtools-event-client": "^0.4.1" } }, "sha512-h7/HLz9u2LF9ba6uKFMnSZkFlkzQONJ5u3Hi+4qGxpsHyvcGRtW6v186jaFLoklndhEwyC49ytkC4eafi7Qq8w=="],
+    "@tanstack/ai-event-client": ["@tanstack/ai-event-client@0.8.0", "", { "dependencies": { "@tanstack/devtools-event-client": "^0.4.1" } }, "sha512-UzhGQERwGU0yymziuGiHXNnKRZeR2JaGoPXeNzKuHwQtUmvMu1H8g0C9wpkpksj+pmTQPhdEBUOMlU6NhLDVpA=="],
 
-    "@tanstack/ai-openai": ["@tanstack/ai-openai@0.15.10", "", { "dependencies": { "@tanstack/ai-utils": "0.3.1", "@tanstack/openai-base": "0.9.6", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.39.0", "zod": "^4.0.0" } }, "sha512-S/mbplx7sf3lhJrMZBTIBteaaWID6LuNBW8MkOk1I12x0fCmHxZaisf4fKILekcrZ6WniqVNyOLKrJnDD+T2PQ=="],
+    "@tanstack/ai-openai": ["@tanstack/ai-openai@0.19.0", "", { "dependencies": { "@tanstack/ai-utils": "^0.4.0", "@tanstack/openai-base": "^0.9.11", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.44.0", "zod": "^4.0.0" } }, "sha512-qBPX45oDUdFjphVui9+qN62zxXZU6VgGI/MDxS5n0xhCz1X/RqLbwUmdefLSiyoHAh1gdw4lmpCdURYD/uMObQ=="],
 
-    "@tanstack/ai-utils": ["@tanstack/ai-utils@0.3.1", "", {}, "sha512-fgbjd5DohL3k5rTWr/KInauLVYMiHVm0cnmTsNrzL3cr4wWhEld5vmFSrjiwUWACAuONjZa+uBXuS+ZSO8fwDQ=="],
+    "@tanstack/ai-utils": ["@tanstack/ai-utils@0.4.0", "", {}, "sha512-xqvAgPJkIuGk1m+jZKyb7vBTQIaBmUD9EVzlPkDWWMp80n69uwL0TnBZCVk+OwL9goTQiFy648dnBfLsiJgl6A=="],
 
     "@tanstack/devtools-event-client": ["@tanstack/devtools-event-client@0.4.4", "", { "bin": { "intent": "./bin/intent.js" } }, "sha512-6T5Yop/793YI+H+5J8Hsyj4kCih9sl4t3ElLgKioW5hk3ocn+ZdSJ94tT7vL7uabxSugWYBZlOTMPzEw2puvQw=="],
 
-    "@tanstack/openai-base": ["@tanstack/openai-base@0.9.6", "", { "dependencies": { "@tanstack/ai-utils": "0.3.1", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.39.0" } }, "sha512-vHF5VTKrLrb0c+fLm4hdd5xOKsYUI1/Qt3bLaFYMeUogfYq1LIZlEGUb4EJaFaMYLrjIuep+exjpaHx0TY9kMQ=="],
+    "@tanstack/openai-base": ["@tanstack/openai-base@0.9.12", "", { "dependencies": { "@tanstack/ai-utils": "^0.4.0", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.44.0" } }, "sha512-UZwt+3O2WYQ4rWHc95EfIPFFIlWsZQncNZlyw05tpuogwWoR+9xtPot+uPbx6tGr/XX+/vPwQn0jVljBD1zppQ=="],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 
@@ -405,8 +405,6 @@
     "yaml": ["yaml@2.9.0", "", { "bin": { "yaml": "bin.mjs" } }, "sha512-2AvhNX3mb8zd6Zy7INTtSpl1F15HW6Wnqj0srWlkKLcpYl/gMIMJiyuGq2KeI2YFxUPjdlB+3Lc10seMLtL4cA=="],
 
     "zod": ["zod@4.4.3", "", {}, "sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ=="],
-
-    "@ag-ui/core/zod": ["zod@3.25.76", "", {}, "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ=="],
 
     "@aws-sdk/credential-provider-sso/@aws-sdk/token-providers": ["@aws-sdk/token-providers@3.1111.0", "", { "dependencies": { "@aws-sdk/core": "^3.977.8", "@aws-sdk/nested-clients": "^3.997.43", "@aws-sdk/types": "^3.974.4", "@smithy/core": "^3.31.1", "@smithy/types": "^4.16.1", "tslib": "^2.6.2" } }, "sha512-JfljgoVtl+s3Qy21n9a7Z48uCQaOXcN74KJ3TEQfPoB293GrXFSt6HSQJF1sTZ8c/5QedEvd3NjJQMO4u9qa5A=="],
 
