@@ -160,8 +160,36 @@ describe("Vercel AI Gateway", () => {
     const action = await Effect.runPromise(provider.react(request, "k"))
 
     expect(action.kind).toBe("fail")
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("multiple tool calls")
+    const reason = String(action.kind === "fail" ? action.error : "")
+    expect(reason).toContain("multiple tool calls")
+    expect(reason).toContain("routes")
     expect(action.usage).toEqual({ promptTokens: 10, completionTokens: 4, costUsd: 0.001 })
+  })
+
+  // The defect this pins: `routes` was accepted on the gateway options and applied only on the
+  // Anthropic path, so a DeepSeek (or any other OpenAI-compatible) model silently dropped it.
+  test("pins a route on the OpenAI-compatible path when the caller names one", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        status: 200
+      })
+    }) as unknown as typeof fetch
+    const of = (routes?: ReadonlyArray<string>) =>
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "deepseek/deepseek-v4-pro",
+        contextWindow: 200_000,
+        fetch: stub,
+        ...(routes === undefined ? {} : { routes })
+      })
+
+    await Effect.runPromise(of().react(request, "k"))
+    await Effect.runPromise(of(["deepseek"]).react(request, "k"))
+
+    expect(bodies[0]).not.toHaveProperty("providerOptions")
+    expect(bodies[1]?.providerOptions).toEqual({ gateway: { only: ["deepseek"] } })
   })
 
   // The catalog is cached per gateway for the life of the process, so each of these tests names its

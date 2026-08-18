@@ -33,6 +33,9 @@ export interface OpenAiChatOptions {
   // How many further attempts a transient failure earns, and how long one attempt may take.
   readonly retries?: number
   readonly timeout?: Duration.Input
+  // Fields an endpoint understands that chat completions does not define. A gateway in front of this
+  // API takes routing options here, so this file holds no vendor's routing vocabulary.
+  readonly body?: Readonly<Record<string, unknown>>
 }
 
 // What a gateway forwards rather than fixes. Every gateway built on this provider takes the same
@@ -214,7 +217,11 @@ const actionOf = (body: ChatResponse): Action => {
   if (calls.length > 1) {
     return {
       kind: "fail",
-      error: "the inference gateway returned multiple tool calls, but this agent executes one call at a time",
+      error:
+        "the inference gateway returned multiple tool calls, but this agent executes one call at " +
+        "a time. This request asked for one call at a time, so the route that served it does not " +
+        "honour that setting. Amazon Bedrock is one such route. Name the providers that may serve " +
+        "this model with the routes option to reach one that does.",
       usage
     }
   }
@@ -292,7 +299,8 @@ const reacted = (
       : { max_tokens: options.maxOutputTokens }),
     ...(request.tools.length === 0
       ? {}
-      : { tools: request.tools.map(tool), parallel_tool_calls: false })
+      : { tools: request.tools.map(tool), parallel_tool_calls: false }),
+    ...options.body
   })
   const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
   if (refusal !== undefined) return Effect.succeed(refusal)
