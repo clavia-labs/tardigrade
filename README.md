@@ -58,6 +58,29 @@ await host.drive()
 
 `createRlmAgent` from `@tardigrade/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
 
+The snippet already emits spans to `localhost:4318`. To land them in ClickHouse, front it with the OTel Collector (the contrib distribution from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases); the core one lacks the `clickhouse` exporter):
+
+```bash
+brew install clickhouse && clickhouse server
+otelcol-contrib --config=collector.yaml
+```
+
+```yaml
+# collector.yaml
+receivers:
+  otlp: { protocols: { http: { endpoint: 0.0.0.0:4318 } } }
+exporters:
+  clickhouse: { endpoint: tcp://localhost:9000, database: otel, create_schema: true }
+service:
+  pipelines:
+    traces: { receivers: [otlp], exporters: [clickhouse] }
+```
+
+```sql
+SELECT SpanName, SpanAttributes['outcome'] AS outcome, Duration / 1e6 AS ms
+FROM otel.otel_traces ORDER BY Timestamp
+```
+
 ## Concepts
 
 ### Events
