@@ -7,7 +7,7 @@ import { messageKeys } from "@tardigrade/core/message"
 import { Packages, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { Tmp } from "./tmp"
-import { codeReactor } from "./execute"
+import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
 
 // The shadow router rule, over the one funnel every package call crosses: `executeRecorded`. A
@@ -217,5 +217,34 @@ describe("the shadow router rule", () => {
       c: { ok: "openWrite" },
       d: { ok: "mystery" }
     })
+  })
+})
+
+describe("the spill bound", () => {
+  // The bound is the consumer's: a settle over it carries a pointer instead of the value, and the
+  // preview length is stated the same way (tmp.ts, SpillPolicy).
+  test("a stated bound spills a value the default would have kept whole", async () => {
+    const log: Event[] = [
+      { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+      { type: "CodeDispatched", execId: "e1", code: 'return "q".repeat(60)', turn: "t1", at: 2 }
+    ]
+    const drive = (reactor: typeof codeReactor) =>
+      Effect.runPromise(
+        Effect.gen(function* () {
+          yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
+          return yield* Effect.flatMap(EventLog, (l) => l.read)
+        }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<
+          ReadonlyArray<Event>
+        >
+      )
+    const spilled = (await drive(codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }))).find(
+      (e) => e.type === "CodeSettled"
+    ) as { tmp?: string; size?: number; preview?: string; result?: unknown }
+    expect(spilled.tmp).toBe("e1.result")
+    expect(spilled.size).toBe(62)
+    expect(spilled.preview).toBe('"qqq')
+    const whole = (await drive(codeReactor)).find((e) => e.type === "CodeSettled") as { tmp?: string; result?: unknown }
+    expect(whole.tmp).toBeUndefined()
+    expect(whole.result).toBe("q".repeat(60))
   })
 })

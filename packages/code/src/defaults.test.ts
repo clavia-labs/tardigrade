@@ -4,8 +4,8 @@ import type { Event } from "@tardigrade/core/event"
 import { composeKeys, EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { settleActor } from "@tardigrade/core/actor"
 import { messageKeys } from "@tardigrade/core/message"
-import { Sandbox } from "./sandbox"
-import { jsSandbox, memoryTmp, LOG_CAP_BYTES } from "./defaults"
+import { DEFAULT_SANDBOX_POLICY, Sandbox } from "./sandbox"
+import { jsSandbox, jsSandboxFor, memoryTmp } from "./defaults"
 import { codeReactor } from "./execute"
 import { codeKeys } from "./events"
 import { Packages } from "./packages"
@@ -41,12 +41,25 @@ describe("jsSandbox console capture", () => {
     expect(outcome.logs).toEqual(["before the fall"])
   })
 
-  test("the cap bounds a print loop", async () => {
+  test("the cap bounds a print loop and says where it cut", async () => {
     const outcome = await run('for (let i = 0; i < 1000; i++) console.log("x".repeat(100)); return "done"')
     expect(outcome.result).toBe("done")
     const total = (outcome.logs ?? []).reduce((n, l) => n + l.length, 0)
-    expect(total).toBeLessThanOrEqual(LOG_CAP_BYTES + 100)
+    expect(total).toBeLessThanOrEqual(DEFAULT_SANDBOX_POLICY.logCapBytes + 200)
     expect((outcome.logs ?? []).length).toBeLessThan(1000)
+    expect((outcome.logs ?? []).at(-1)).toContain(`cut at ${DEFAULT_SANDBOX_POLICY.logCapBytes} bytes`)
+  })
+
+  test("the cap is the consumer's: a stated one bounds the same loop lower", async () => {
+    const outcome = await Effect.runPromise(
+      Effect.gen(function* () {
+        const sandbox = yield* Sandbox
+        return yield* sandbox.run('for (let i = 0; i < 100; i++) console.log("x".repeat(100)); return "done"', {})
+      }).pipe(Effect.provide(jsSandboxFor({ logCapBytes: 500 })))
+    )
+    const total = (outcome.logs ?? []).reduce((n, l) => n + l.length, 0)
+    expect(total).toBeLessThanOrEqual(500 + 200)
+    expect((outcome.logs ?? []).at(-1)).toContain("cut at 500 bytes")
   })
 })
 

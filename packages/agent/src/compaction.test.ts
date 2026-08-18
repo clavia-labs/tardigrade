@@ -6,11 +6,10 @@ import { send, actor } from "@tardigrade/core/actor"
 import { Infer } from "./infer"
 import { agentActorKeys } from "./turn"
 import {
-  COMPACTION_FIRE_TOKENS,
-  COMPACTION_KEEP_TOKENS,
-  RESULT_RENDER_CAP,
+  DEFAULT_CONTEXT_POLICY,
   checkpointOf,
   compactionReactor,
+  compactionReactorFor,
   estimateTokens,
   keepFromIndex,
   suffixOf
@@ -38,13 +37,13 @@ const openTurn = (rounds: number): Event[] => {
 describe("the compaction measure and guard", () => {
   test("the measure counts what a render sends: capped results, skipped lanes", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big])).toBe(Math.ceil(RESULT_RENDER_CAP / 4))
+    expect(estimateTokens([big])).toBe(Math.ceil(DEFAULT_CONTEXT_POLICY.resultRenderCap / 4))
     const lane: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([lane])).toBe(0)
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
-    expect(estimateTokens(suffixOf(openTurn(16)))).toBeGreaterThan(COMPACTION_FIRE_TOKENS)
+    expect(estimateTokens(suffixOf(openTurn(16)))).toBeGreaterThan(DEFAULT_CONTEXT_POLICY.fireTokens)
     expect(compactionReactor(openTurn(16))).toHaveLength(1) // no reply anywhere, the turn is live
     expect(compactionReactor(openTurn(2))).toHaveLength(0) // under FIRE
   })
@@ -55,6 +54,14 @@ describe("the compaction measure and guard", () => {
       { type: "ToolCalled", callId: "c99", name: "execute", arguments: {}, turn: "m0", at: 99 }
     ]
     expect(compactionReactor(awaiting)).toHaveLength(0)
+  })
+
+  test("the policy is the consumer's: a raised FIRE holds the guard, a lowered one fires early", () => {
+    expect(compactionReactorFor({ fireTokens: 1_000_000 })(openTurn(16))).toHaveLength(0)
+    expect(compactionReactorFor({ fireTokens: 100 })(openTurn(2))).toHaveLength(1)
+    // The measure moves with the render cap, because one policy states both.
+    const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
+    expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(10)
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
@@ -109,7 +116,7 @@ describe("the compaction pass", () => {
     expect(keepFromIndex(log, checkpoint.keepFrom)).toBeGreaterThan(0)
     // The retained tail fits KEEP plus at most one round of boundary slack.
     const roundTokens = estimateTokens(round(1))
-    expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(COMPACTION_KEEP_TOKENS + 2 * roundTokens)
+    expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(DEFAULT_CONTEXT_POLICY.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
   })

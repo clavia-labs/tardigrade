@@ -66,6 +66,20 @@ describe("renderMessages", () => {
     expect(String(messages[0]!.content)).toContain("Summary of earlier work")
     expect(messages[1]).toMatchObject({ content: "new task" })
   })
+
+  test("the truncation caps are the consumer's, and the render says where it cut", () => {
+    const trajectory: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "y".repeat(50), at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: {}, turn: "m1", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "z".repeat(50), turn: "m1", at: 2 }
+    ]
+    const tight = renderMessages(trajectory, { messageRenderCap: 10, resultRenderCap: 10 })
+    expect(String(tight[0]!.content)).toContain("truncated at 10 of 50 chars")
+    expect(String(tight[2]!.content)).toContain("truncated at 10 of 52 chars")
+    // The default caps are far above this trajectory, so nothing truncates.
+    const whole = renderMessages(trajectory)
+    expect(whole[0]!.content).toBe("y".repeat(50))
+  })
 })
 
 describe("modelRequest tool and prompt policy", () => {
