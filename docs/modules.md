@@ -56,13 +56,15 @@ const asked = yield* vercelGatewayInference({ model: "anthropic/claude-opus-4.5"
 
 `cloudflareGatewayInference()` publishes no catalog on the path its chat requests use, so `contextWindow` or `CLOUDFLARE_AI_CONTEXT_WINDOW` is the only way it can know, and its absence is a construction error. `customInference()` asks for the window outright, because whoever wrote the function is the only one who can say.
 
+Every model reaches its gateway through one adapter, `modelInference()`, which drives an AI SDK language model. The SDK owns the wire format, so a Claude model that returns signed thinking blocks and a Gemini model that returns reasoning items are the same shape here, and a setting means the same thing for both. What the adapter owns is what the SDK has no opinion about: which failures earn another attempt, which earn a journaled wait, and what a turn records about what it spent.
+
 A module says which model answers, and saying that means saying what it accepts, so `inference()` takes either a provider or a `contextWindow` to build the default gateway with. The type rejects a module that names neither. Generated code meets no type, so the construction rejects it too.
 
-A gateway that is busy, unwell, or unreachable earns further attempts on a jittered exponential backoff, bounded by `retries`, and one attempt is bounded by `timeout`. Every attempt carries one idempotency key, so a retry after a reply this side never saw is the same call rather than a second one. A refusal earns no retry: a request refused for a bad key is refused the same way every time.
+A gateway that is busy, unwell, or unreachable earns further attempts, bounded by `retries`, and one attempt is bounded by `timeout`. The provider says which failures those are, and a refusal is not one of them. Every attempt carries one idempotency key, so a retry after a reply this side never saw is the same call rather than a second one. A refusal earns no retry: a request refused for a bad key is refused the same way every time.
 
-A failure that outlives those in-flight retries is still transient. The model loop appends `ModelDeferred` with the attempt, the due time, and the reason, then rests. The runtime wakes the session at `notBefore` by delivering `AlarmFired`, and the loop retries with the same idempotency key. A `Retry-After` of more than two seconds skips the in-flight retries and defers immediately, so a twenty-minute queue is a due time in the log rather than a sleep inside an Effect. `deferAtMost` bounds how many times one call may wait, defaulting to eight. A crash that leaves a `ModelCalled` with no consequence is journaled the same way, so a restart sleeps instead of immediately issuing another request. The next settle also appends `ModelSettled` with the reservation `ModelCalled` carried, so spend that never got a `ModelReturned` stays on the record. A restart whose due time has already passed appends `AlarmFired` from the log and continues.
+A failure that outlives those in-flight retries is still transient. The model loop appends `ModelDeferred` with the attempt, the due time, and the reason, then rests. The runtime wakes the session at `notBefore` by delivering `AlarmFired`, and the loop retries with the same idempotency key. A `Retry-After` of more than two seconds skips the in-flight retries and defers immediately, so a twenty-minute queue is a due time in the log rather than a sleep inside an Effect. It is read in both the forms the specification allows, a count of seconds and a date to wait until. `deferAtMost` bounds how many times one call may wait, defaulting to eight. A crash that leaves a `ModelCalled` with no consequence is journaled the same way, so a restart sleeps instead of immediately issuing another request. The next settle also appends `ModelSettled` with the reservation `ModelCalled` carried, so spend that never got a `ModelReturned` stays on the record. Only a mark no result and no settle has closed is settled that way, so one attempt is counted once. A restart whose due time has already passed appends `AlarmFired` from the log and continues. A wake names the attempt it answers and the due time it comes from, so a redelivered or stale one is absorbed by its dedup key and refused by the machine's guard rather than retrying against a queue that has not moved.
 
-`ModelCalled` carries `reserved`, an estimate of prompt tokens and, when the provider holds a price table, of cost. A gateway catalog that publishes `pricing.input` and `pricing.output` fills that table at construction, and a caller can pass `pricing` on a provider that has no catalog. `usageIn` reports `settled` from `ModelReturned` and `unsettled` from in-flight `ModelCalled` rows plus `ModelSettled`. A cost the provider reported, including zero, is kept. A cost the provider omitted is filled from the table when one exists, and is left absent when none does: absence is unknown.
+`ModelCalled` carries `reserved`, an upper bound on what the attempt could spend: the prompt as the estimator reads it, the answer as the request's own ceiling bounds it, and a cost when the provider holds a price table. A gateway catalog that publishes `pricing.input` and `pricing.output` fills that table at construction, and a caller can pass `pricing` on a provider that has no catalog. `usageIn` reports `settled` from `ModelReturned` and `unsettled` from in-flight `ModelCalled` rows plus `ModelSettled`. A cost the provider reported, including zero, is kept. A cost the provider omitted is filled from the table when one exists, and is left absent when none does: absence is unknown.
 
 An attempt this side stops waiting for is cancelled. Dropping the wait alone leaves the request running: the model finishes it, the gateway bills for it, and the retry asks for the same completion again, so one turn is paid for twice. `timeout` therefore bounds what the gateway is asked to do rather than only what this side waits for.
 
@@ -70,27 +72,19 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is the completion-token failure above, so the option that moves it is the one that failure names.
 
-The Messages API refuses a request that states no ceiling, so a provider for it always sends one. The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request, so what is left is the lowest ceiling any Claude model accepts. State `maxOutputTokens` to raise it, and a turn that reaches it says so.
+The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request and sends no ceiling, so the model's own default decides.
 
-`headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
+`headers`, `fetch`, `retries`, `timeout`, `temperature`, `maxOutputTokens`, and `providerOptions` are settings a gateway forwards rather than fixes.
 
-`openAiChatInference(options)` is the provider those gateways are built from, and it is published. A caller who needs another OpenAI-compatible endpoint, or a header the shipped gateways do not model, writes options rather than a second copy of the request serialization.
+`modelInference(options)` is the adapter those gateways are built from, and it is published. A caller reaching an endpoint the shipped gateways do not model builds an AI SDK language model and passes it here, rather than writing a second copy of the request handling.
 
-Provider continuation data belongs to the provider adapter. The inference module records this opaque value on `ModelReturned`, and the renderer restores it on the related assistant message. Each value names its wire protocol. An incompatible adapter ignores the value.
+Provider continuation data belongs to the adapter. The inference module records this opaque value on `ModelReturned`, and the renderer restores it on the related assistant message. Each value names its wire protocol, so a continuation written by one adapter is ignored by another.
 
-The OpenAI-compatible adapter preserves conversation extension fields from assistant messages and tool calls. These fields include Gemini thought signatures and encrypted reasoning details. Flamework owns this round trip for applications.
+The value is the assistant content the model returned, carried whole. Reasoning parts hold provider state, and a part this build has never met travels with the rest rather than being dropped for being unrecognized. The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now.
 
-The adapter names no model and no field, so a model the gateway adds later travels the same path as one it serves now. This is what keeps the round trip free of a per-provider table.
+This is the round trip that decides whether a model builds on what it already worked out. A gateway answers a request that lost that state with the same success as one that kept it, so nothing downstream says anything was lost. `bun run smoke:live` is what checks it against live models, because a stub cannot: it reads the prompt tokens the provider counted, since state that arrived was read and state that never arrived was not.
 
-A live check against the Vercel AI Gateway on 2026-08-17 measured what each family returns on this surface, and what a second turn does when the fields go missing. Gemini carries its state in the tool call, as a thought signature. Claude Sonnet 4.6 and DeepSeek carry it in the reasoning details, as text with a signature. GPT 5.6 Sol carries it in the reasoning details too, as a summary beside an encrypted block. The adapter preserves all of these, because it copies fields rather than names.
-
-A turn that needs no thought produces no state, so a model looks stateless until the question earns the reasoning. Measure this with a question hard enough to spend reasoning tokens, and read the token counters rather than the presence of a field.
-
-A Claude model returns no reasoning details on this surface at all. Opus 5 and Sonnet 5 spend hundreds of thinking tokens here and return nothing to carry them, so on this wire format their thoughts end with the turn that made them. This is why an Anthropic model is asked on the Anthropic surface instead.
-
-`anthropicMessagesInference(options)` speaks the Messages API, where a Claude model returns its thinking as blocks that carry a signature. `vercelGatewayInference()` chooses it for every `anthropic/` model, because the surface a model is asked on is not a decision a caller can be expected to make. The continuation protocol tag is what lets the two wire formats live beside each other: a continuation written by one adapter names its format, and the other ignores it.
-
-The Messages surface takes the thinking configuration that matches the model's generation, and there is no one setting that suits both. Adaptive thinking is rejected by Claude Sonnet 4 and earlier, and a token budget is rejected by Opus 5 and Sonnet 5. So the adapter asks for neither by default: the Claude 5 generation already thinks without being asked, and an earlier model takes `thinkingBudget`. `effort` sets the adaptive level where the model supports one.
+Reaching every model through one SDK is what makes that round trip one path rather than one per wire format. A Claude model returns thinking blocks that carry a signature, a Gemini model returns a thought signature on its function call, and a GPT model returns an encrypted reasoning item. The SDK normalizes all three, and it normalizes the request vocabulary with them, so `reasoning` means the same thing for every model instead of reaching one API as `output_config` and another as `reasoning_effort`.
 
 That default takes nothing away from an earlier model. Sonnet 4.6 and Sonnet 4 spend no thinking tokens on either surface until something asks them to, so the surface they are asked on changes what is preserved rather than what is produced.
 
@@ -112,21 +106,31 @@ The last run, on 2026-08-17, read more with the state preserved for every model:
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
-The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped. The failure names `routes`, because that option reaches a provider that honours the serial request, and it is forwarded on this path the same way it is on the Messages path.
+The harness action type carries one tool call, so a response that contains several becomes a visible failed action with its usage. No call is silently dropped. The failure names `routes`, because that option reaches a provider that serves one call at a time, and it is forwarded for every model rather than for some of them.
 
 A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
 
 ## requestOptions
 
-`requestOptions(of)` contributes `RequestOptionsProjection`. The projection is a fold from the log to per-request provider settings: service tier, temperature, output ceiling, effort, routes, and a body overlay. Inference reads it when it builds the model request, so the settings are a projection the way `InferenceStateProjection` feeds compaction, and invariant 4 still holds: model requests are pure projections of the log.
+`requestOptions(of)` contributes `RequestOptionsProjection`. The projection is a fold from the log to per-request provider settings, and inference reads it when it builds the model request, so the settings are a projection the way `InferenceStateProjection` feeds compaction. Invariant 4 holds: model requests are pure projections of the log, and a replay sends what the run it replays sent. `agent.request(log)` shows the choice without calling a provider.
 
-`flexThenStandard()` is the shipped policy. It asks for flex until the current turn has two `ModelDeferred` events, then standard. A replay of the same log sends the same tier. `agent.request(log)` shows the choice without calling a provider.
+`RequestOptions` names `reasoning`, `temperature`, and `maxOutputTokens`, which mean the same thing on every provider, and carries everything else in `providerOptions` under the key of the provider that reads it. A service tier is one vendor's word for one vendor's queue, so it travels there rather than as a field that would imply otherwise.
+
+A policy that reads what has already happened is what makes this worth a projection. Asking for more thinking after an answer was rejected, or leaving a cheap queue after it has made this turn wait, is a fold over the log:
 
 ```ts
 const agent = createAgent({
-  modules: [inference({ contextWindow: 200_000 }), flexThenStandard(), nativeTools([lookup])]
+  modules: [
+    inference({ contextWindow: 200_000 }),
+    requestOptions((log) => ({
+      reasoning: log.filter((event) => event.type === "AnswerRejected").length > 0 ? "high" : "low"
+    })),
+    nativeTools([lookup])
+  ]
 })
 ```
+
+The framework ships no such policy, because which setting is worth its cost belongs to a deployment. Changing a setting between attempts changes the request, so the next attempt mints its own call rather than reusing the idempotency key that told the gateway the last one was the same call.
 
 ## nativeTools
 

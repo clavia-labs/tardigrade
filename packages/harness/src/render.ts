@@ -125,6 +125,7 @@ export const renderMessages = (
         messages.push({
           role: "tool",
           toolCallId: String(event.callId ?? ""),
+          toolName: String(event.name ?? ""),
           content: truncate(body, render.resultTruncateAt)
         })
         break

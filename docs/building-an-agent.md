@@ -76,13 +76,18 @@ const inferenceModule = inference({
 
 Provider selection can be a function of the log. The inference module provides its selected-state projection as an Effect construction service, so dependent modules can consume it through typed dependency injection.
 
-Per-request provider settings are a projection too. `flexThenStandard()` asks for flex until the current turn has two deferrals, then standard:
+Per-request provider settings are a projection too. This one asks for more thinking once the current turn has waited on a queue:
 
 ```ts
-import { createAgent, flexThenStandard, inference } from "flamecast-core/harness"
+import { createAgent, inference, requestOptions } from "flamecast-core/harness"
 
 const agent = createAgent({
-  modules: [inference({ contextWindow: 200_000 }), flexThenStandard()]
+  modules: [
+    inference({ contextWindow: 200_000 }),
+    requestOptions((log) => ({
+      reasoning: log.filter((event) => event.type === "ModelDeferred").length >= 2 ? "high" : "low"
+    }))
+  ]
 })
 ```
 

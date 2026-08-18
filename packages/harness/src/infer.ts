@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect"
+import type { ProviderOptions } from "@ai-sdk/provider-utils"
 import type { Event } from "@flamecast/core"
 import { estimateTextTokens } from "./context"
 import type { Projection } from "./projection"
@@ -41,16 +42,26 @@ export interface AgentMessage {
   readonly content: string | null
   readonly toolCalls?: ReadonlyArray<NativeToolCall>
   readonly toolCallId?: string
+  // Which tool a result belongs to. The wire format pairs a result with its call by id and by name,
+  // so the name travels with the result rather than being looked up from the call it answers.
+  readonly toolName?: string
   readonly continuation?: ProviderContinuation
 }
 
+// How much a model thinks before it answers. The SDK translates one vocabulary into each provider's
+// own, so this is the rare provider setting that means the same thing everywhere and can be named
+// here rather than in an adapter.
+export type Effort = "provider-default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+
+// What one request may set beyond the conversation. Only settings that mean the same thing on every
+// provider are named here. Everything else is a provider's own vocabulary, and it travels in
+// `providerOptions` under that provider's key, where it stays typed and stays attributed: a service
+// tier is one vendor's word for one vendor's queue, and a field here would imply otherwise.
 export interface RequestOptions {
-  readonly serviceTier?: string
+  readonly reasoning?: Effort
   readonly temperature?: number
   readonly maxOutputTokens?: number
-  readonly effort?: "low" | "medium" | "high"
-  readonly routes?: ReadonlyArray<string>
-  readonly body?: Readonly<Record<string, unknown>>
+  readonly providerOptions?: ProviderOptions
 }
 
 export class RequestOptionsProjection extends Context.Service<
@@ -100,19 +111,32 @@ export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
   return costUsd === undefined ? usage : { ...usage, costUsd }
 }
 
-export const reservedUsage = (request: ModelRequest, pricing?: ModelPricing): Usage =>
+// What a request could cost before it has answered. It is an upper bound rather than a guess: the
+// prompt is known exactly, and the answer is bounded by the ceiling the request states. A
+// reservation that counted no completion would under-record every attempt that died mid-answer,
+// which is the one case the reservation exists to record.
+export const reservedUsage = (
+  request: ModelRequest,
+  pricing?: ModelPricing,
+  maxOutputTokens?: number
+): Usage =>
   priced(
     {
-      promptTokens: estimateTextTokens(
-        JSON.stringify({
-          system: request.system,
-          messages: request.messages,
-          tools: request.tools
-        })
-      ),
-      completionTokens: 0
+      promptTokens: requestTokens(request),
+      completionTokens: request.options?.maxOutputTokens ?? maxOutputTokens ?? 0
     },
     pricing
+  )
+
+// The size of a whole request, as the estimator reads it. The window is a bound on everything the
+// model reads, so the estimate covers everything the request carries.
+export const requestTokens = (request: ModelRequest): number =>
+  estimateTextTokens(
+    JSON.stringify({
+      system: request.system,
+      messages: request.messages,
+      tools: request.tools
+    })
   )
 
 export const settledUsage = (
@@ -150,37 +174,6 @@ export const spendOf = (settled: Usage, unsettled: Usage): Spend => ({
   settled,
   unsettled
 })
-
-const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
-  typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Readonly<Record<string, unknown>>)
-    : undefined
-
-// Per-request options overlay construction-time fields. The request is a projection of the log, so
-// a tier policy is a fold rather than a mutable argument to `react`.
-export const applyRequestOptions = (
-  body: Readonly<Record<string, unknown>>,
-  options: RequestOptions | undefined
-): Readonly<Record<string, unknown>> => {
-  if (options === undefined) return body
-  const existing = recordOf(body.providerOptions) ?? {}
-  return {
-    ...body,
-    ...(options.maxOutputTokens === undefined ? {} : { max_tokens: options.maxOutputTokens }),
-    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
-    ...(options.serviceTier === undefined ? {} : { service_tier: options.serviceTier }),
-    ...(options.effort === undefined ? {} : { output_config: { effort: options.effort } }),
-    ...(options.routes === undefined
-      ? {}
-      : {
-          providerOptions: {
-            ...existing,
-            gateway: { ...recordOf(existing.gateway), only: options.routes }
-          }
-        }),
-    ...options.body
-  }
-}
 
 export type Action =
   | {
@@ -222,6 +215,9 @@ export interface InferenceState {
   // for every model it was never measured against, so absence means the projection cannot price a
   // turn, and a missing provider cost stays unknown rather than becoming zero.
   readonly pricing?: ModelPricing
+  // The ceiling on one answer, when the model or the caller has stated one. A reservation reads it
+  // to bound what an attempt that never returned could have spent.
+  readonly maxOutputTokens?: number
 }
 
 export interface InferenceProvider {
@@ -246,6 +242,7 @@ export interface CustomInferenceOptions {
   // whoever wrote the function is the only one who can say, and nobody downstream can guess.
   readonly contextWindow: number
   readonly pricing?: ModelPricing
+  readonly maxOutputTokens?: number
 }
 
 export const customInference = (
@@ -259,7 +256,8 @@ export const customInference = (
       provider: options.id ?? "custom",
       model,
       contextWindow: options.contextWindow,
-      ...(options.pricing === undefined ? {} : { pricing: options.pricing })
+      ...(options.pricing === undefined ? {} : { pricing: options.pricing }),
+      ...(options.maxOutputTokens === undefined ? {} : { maxOutputTokens: options.maxOutputTokens })
     }),
     react: (request, key) => Effect.promise(() => react(request, key))
   }

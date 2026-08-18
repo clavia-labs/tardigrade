@@ -1,8 +1,9 @@
-import { Config, Duration, Effect, Redacted } from "effect"
-import type { InferenceProvider, ModelPricing } from "../infer"
-import { anthropicMessagesInference, type ThinkingEffort } from "./anthropic-messages"
+import { createGateway } from "@ai-sdk/gateway"
+import { Duration, Effect } from "effect"
+import type { ProviderOptions } from "@ai-sdk/provider-utils"
+import type { Effort, InferenceProvider, ModelPricing } from "../infer"
 import { environment, environmentNumber } from "./environment"
-import { openAiChatInference, transport } from "./openai-chat"
+import { modelInference } from "./model"
 
 export interface VercelGatewayInferenceOptions {
   readonly apiKey?: string
@@ -10,6 +11,10 @@ export interface VercelGatewayInferenceOptions {
   // What the model accepts. Supplying it builds the provider here and now. Leaving it out asks the
   // gateway, which is why the constructor that has to ask returns an effect.
   readonly contextWindow?: number
+  // The gateway's origin. Two paths hang off it and they are not the same surface: the SDK speaks
+  // its own protocol under `/v4/ai`, and the catalog that publishes context windows is the
+  // OpenAI-compatible one under `/v1`. Naming the origin is what keeps those from being confused
+  // for each other.
   readonly baseUrl?: string
   readonly fetch?: typeof fetch
   // The transport settings, forwarded rather than fixed here. A gateway in front of a reasoning
@@ -19,10 +24,10 @@ export interface VercelGatewayInferenceOptions {
   readonly retries?: number
   readonly timeout?: Duration.Input
   readonly maxOutputTokens?: number
+  readonly temperature?: number
+  readonly reasoning?: Effort
   readonly pricing?: ModelPricing
-  // How much an Anthropic model thinks before it answers. Ignored by a model on the
-  // OpenAI-compatible surface, which takes its reasoning settings from the gateway's own default.
-  readonly effort?: ThinkingEffort
+  readonly providerOptions?: ProviderOptions
   // Which upstream providers may serve this model. Absent leaves the routing to the gateway, because
   // where a request runs is a deployment's decision rather than this framework's. It has one
   // consequence worth knowing: a route that answers with several tool calls at once fails a harness
@@ -34,11 +39,13 @@ export interface VercelGatewayInferenceOptions {
 // it is read from the model rather than assumed: a figure written here would be wrong for every
 // model it was not measured against, and it decides when compaction fires.
 //
+// This is the one request in the package that is not the SDK's to make. The SDK's own metadata
+// carries a model's price but not its context window, and the framework can not invent a window, so
+// the catalog is read where it publishes one.
+//
 // One catalog per gateway per process, shared by every provider built against it, because the
 // answer is the same for all of them and none of it is a secret. A read that fails is dropped from
 // the table so the next construction tries again rather than inheriting one bad morning.
-// The catalog publishes an output ceiling beside the window, and the Messages API requires one in
-// every request, so it is read from the model for the same reason the window is.
 interface Limits {
   readonly contextWindow: number
   readonly maxOutputTokens?: number
@@ -104,83 +111,66 @@ const catalogOf = (baseUrl: string, call: typeof fetch): Promise<ReadonlyMap<str
   return reading
 }
 
+const ORIGIN = "https://ai-gateway.vercel.sh"
+
 const settings = (options: VercelGatewayInferenceOptions) => {
   const configured = options.apiKey === "" ? undefined : options.apiKey
+  const origin = (options.baseUrl ?? ORIGIN).replace(/\/$/, "")
   return {
-    apiKey:
-      configured === undefined
-        ? Config.redacted("AI_GATEWAY_API_KEY")
-        : Config.succeed(Redacted.make(configured)),
+    apiKey: configured,
     model: options.model ?? environment("AI_GATEWAY_MODEL") ?? "anthropic/claude-sonnet-4.6",
-    baseUrl: (options.baseUrl ?? "https://ai-gateway.vercel.sh/v1").replace(/\/$/, "")
+    origin,
+    modelUrl: `${origin}/v4/ai`,
+    catalogUrl: `${origin}/v1`
   }
 }
 
-// An Anthropic model reaches this gateway through two surfaces, and they are not equivalent. The
-// OpenAI-compatible one returns no thinking state for the current models, so a turn's reasoning ends
-// with the turn that made it. The Messages surface returns thinking blocks with their signatures, so
-// the model builds on what it already worked out. A model is asked for on the surface its maker
-// built for it.
-const isAnthropic = (model: string) => model.startsWith("anthropic/")
-
-// The Messages API refuses a request that states no ceiling on the answer, so one is always sent.
-// The model publishes its own, and this is what is left when nobody asked the catalog: a caller who
-// states the context window has said they know the model's limits, and this call makes no network
-// request to check. It is the lowest ceiling any Claude model accepts, because a figure above what
-// the model allows is refused on every request rather than on a long one. A turn that reaches it
-// fails and names `maxOutputTokens`, so a ceiling too low for the work says so.
-const SAFE_OUTPUT_TOKENS = 8192
-
-const routed = (options: VercelGatewayInferenceOptions) =>
-  options.routes === undefined
-    ? {}
-    : { body: { providerOptions: { gateway: { only: options.routes } } } }
-
+// Every model this gateway serves reaches it the same way. The SDK resolves a `provider/model`
+// identifier against the gateway and speaks whichever wire format the model's own maker built,
+// including the reasoning state that a later request has to carry back. One path per gateway is what
+// keeps a setting from meaning one thing for a Claude model and another for a Gemini one.
 const build = (
   options: VercelGatewayInferenceOptions,
   model: string,
-  baseUrl: string,
-  apiKey: Config.Config<Redacted.Redacted<string>>,
+  modelUrl: string,
+  apiKey: string | undefined,
   contextWindow: number,
   publishedOutputTokens?: number,
   publishedPricing?: ModelPricing
 ): InferenceProvider => {
+  const gateway = createGateway({
+    // The SDK reads `AI_GATEWAY_API_KEY` when nobody passes a key, which is the same source the
+    // gateway documents, so an absent key here is deferred to it rather than resolved to an empty
+    // one that would fail as a refusal on the first call.
+    ...(apiKey === undefined ? {} : { apiKey }),
+    baseURL: modelUrl,
+    ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+    ...(options.headers === undefined ? {} : { headers: options.headers })
+  })
   const pricing = options.pricing ?? publishedPricing
-  if (isAnthropic(model)) {
-    return anthropicMessagesInference({
-      id: `vercel-ai-gateway:${model}`,
-      provider: "vercel-ai-gateway",
-      model,
-      contextWindow,
-      endpoint: `${baseUrl}/messages`,
-      apiKey,
-      ...transport(options),
-      // The caller's ceiling, then the model's own, then the floor below. The published figure is
-      // why a model that can write 128,000 tokens is allowed to, rather than being held to the one
-      // number that would have been safe for every model at once.
-      maxOutputTokens: options.maxOutputTokens ?? publishedOutputTokens ?? SAFE_OUTPUT_TOKENS,
-      ...(options.effort === undefined ? {} : { effort: options.effort }),
-      ...(pricing === undefined ? {} : { pricing }),
-      ...routed(options)
-    })
-  }
-  return openAiChatInference({
+  const ceiling = options.maxOutputTokens ?? publishedOutputTokens
+  const routed =
+    options.routes === undefined ? undefined : { gateway: { only: [...options.routes] } }
+  return modelInference({
     id: `vercel-ai-gateway:${model}`,
     provider: "vercel-ai-gateway",
     model,
     contextWindow,
-    endpoint: `${baseUrl}/chat/completions`,
-    apiKey,
-    ...transport(options),
+    languageModel: gateway(model),
+    ...(options.retries === undefined ? {} : { retries: options.retries }),
+    ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+    ...(options.reasoning === undefined ? {} : { reasoning: options.reasoning }),
+    // The caller's ceiling, then the model's own. Absent leaves the provider's default for the
+    // model, and the published figure is why a model that can write 128,000 tokens is allowed to.
+    ...(ceiling === undefined ? {} : { maxOutputTokens: ceiling }),
     ...(pricing === undefined ? {} : { pricing }),
-    ...routed(options)
+    ...(routed === undefined && options.providerOptions === undefined
+      ? {}
+      : { providerOptions: { ...options.providerOptions, ...routed } })
   })
 }
 
-// The key is the one secret here, so it is the one setting read as a `Config`: it is resolved where
-// it is used and stays redacted until the request carries it. The model is read at construction
-// because `state` reports it synchronously, and it is not a secret.
-//
 // The window decides the shape of this call. Stating it builds a provider here, with no network and
 // no effect. Leaving it out means the gateway has to be asked, and asking is an effect, so the
 // answer arrives in one. Nothing in between: a provider always holds a real number, because a
@@ -194,13 +184,13 @@ export function vercelGatewayInference(
 export function vercelGatewayInference(
   options: VercelGatewayInferenceOptions = {}
 ): InferenceProvider | Effect.Effect<InferenceProvider, Error> {
-  const { apiKey, model, baseUrl } = settings(options)
+  const { apiKey, model, modelUrl, catalogUrl } = settings(options)
   const stated = options.contextWindow ?? environmentNumber("AI_GATEWAY_CONTEXT_WINDOW")
-  if (stated !== undefined) return build(options, model, baseUrl, apiKey, stated)
+  if (stated !== undefined) return build(options, model, modelUrl, apiKey, stated)
   const call = options.fetch ?? fetch
   return Effect.gen(function* () {
     const catalog = yield* Effect.tryPromise({
-      try: () => catalogOf(baseUrl, call),
+      try: () => catalogOf(catalogUrl, call),
       catch: (error) =>
         new Error(
           `vercel-ai-gateway could not read its model catalog: ${
@@ -225,7 +215,7 @@ export function vercelGatewayInference(
         build(
           options,
           model,
-          baseUrl,
+          modelUrl,
           apiKey,
           published.contextWindow,
           published.maxOutputTokens,

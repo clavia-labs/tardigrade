@@ -43,6 +43,13 @@
     "setup": "git config core.hooksPath .githooks"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4",
+    "@ai-sdk/openai-compatible": "^3",
+    "@ai-sdk/provider": "^4",
+    "@ai-sdk/provider-utils": "^5",
+    "@types/json-schema": "^7",
+    "@types/node": "^24",
+    "ai": "^7",
     "effect": "4.0.0-rc.108",
     "tsdown": "0.22.14",
     "typescript": "6.0.3"

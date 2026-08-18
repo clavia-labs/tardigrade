@@ -180,6 +180,7 @@ describe("a turn with native tools", () => {
       {
         role: "tool",
         toolCallId: "c-02",
+        toolName: "lookup_invoice",
         content: '{"invoice":"INV-4182","total":"312.00"}'
       }
     ])
@@ -358,17 +359,51 @@ describe("the give-up policy", () => {
     expect(result).toMatchObject({ kind: "failed", error: "the provider refused" })
   })
 
-  test("three marks with nothing after them end the turn", async () => {
-    const agent = createAgent({ modules: [inference({ contextWindow: 200_000 })] })
-    // A log whose last three events are attempts that died: the model call never landed a
-    // consequence. Replay reads that as the crash loop it is.
+  // A crash loop and a queue that never drains are the same shape on the log, so one bound covers
+  // both. An attempt that died is settled and journaled as a wait, and the turn gives up once the
+  // waits are spent rather than after a count of marks that a wait now prevents from accumulating.
+  test("a mark with nothing after it becomes a wait rather than an immediate retry", async () => {
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000, deferAtMost: 2 })] })
+    const seeded: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
+      { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 }
+    ]
+
+    const result = await run(agent.replay(seeded), refuses)
+
+    expect(result).toMatchObject({
+      kind: "deferred",
+      callId: "m-1/infer/0",
+      reason: "the model attempt died"
+    })
+  })
+
+  test("a turn that keeps dying gives up once its waits are spent", async () => {
+    const agent = createAgent({ modules: [inference({ contextWindow: 200_000, deferAtMost: 1 })] })
     const seeded: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
       { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
-      { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 3 },
-      { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 4 }
+      {
+        type: "ModelSettled",
+        turn: "m-1",
+        callId: "m-1/infer/0",
+        usage: { promptTokens: 0, completionTokens: 0, costUsd: 0 },
+        reason: "the model attempt died",
+        at: 3
+      },
+      {
+        type: "ModelDeferred",
+        turn: "m-1",
+        callId: "m-1/infer/0",
+        attempt: 1,
+        notBefore: 0,
+        reason: "the model attempt died",
+        at: 4
+      }
     ]
+
     const result = await run(agent.replay(seeded), refuses)
-    expect(result).toMatchObject({ kind: "failed", error: "the model attempt died 3 times in a row" })
+
+    expect(result).toMatchObject({ kind: "failed", error: "the model was deferred 1 times" })
   })
 })
