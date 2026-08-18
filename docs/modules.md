@@ -102,7 +102,7 @@ Each family puts its state in a different field, so the adapter preserves fields
 
 `bun run smoke:live` is what checks that the preserved state reaches the model, because no test that stubs the gateway can. It runs one tool-calling turn per model twice, once replaying what the provider returned and once replaying only what an event log holds, and reads the prompt tokens the provider counted. A model that reads the same either way never received the state. It calls live models and costs money, so it runs from a command rather than from the gate.
 
-The last run, on 2026-08-17, read more with the state preserved for every model: Gemini 3.1 Pro at 431 against 99, GPT 5.6 Sol at 164 against 129, DeepSeek V4 Pro at 563 against 392, Claude Opus 5 at 622 against 571, and Claude Sonnet 4.6 at 706 against 590.
+The last run, on 2026-08-18, read more with the state preserved for every model: Gemini 3.1 Pro at 390 against 106, GPT 5.6 Sol at 163 against 129, DeepSeek V4 Pro at 551 against 433, Claude Opus 5 at 622 against 569, and Claude Sonnet 4.6 at 899 against 775. Every one of those reached its model through the one adapter, which is what says a Claude model keeps its thinking without a surface of its own.
 
 A response the gateway stopped at its completion-token limit is a failed action too. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The failure carries the usage, because those tokens were spent.
 
