@@ -9,11 +9,15 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 An agent is reactors over one log. Assemble one, give it a durable log, send it a message.
 
 ```ts
+import { Effect, Layer } from "effect"
 import { actor } from "@flamecast/core/actor"
 import { composeKeys } from "@flamecast/core/event-log"
 import { messageKeys } from "@flamecast/core/message"
 import { codeReactor, codeKeys } from "@flamecast/code"
+import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
+import { Packages } from "@flamecast/code/packages"
 import { agentKeys, budgetReactor, compactionReactor, inferReactor, replyReactor, toolsReactor } from "@flamecast/agent"
+import { realInfer } from "@flamecast/model/model"
 import { createBunHost } from "@flamecast/bun/host"
 
 // Adding a capability is adding a reactor to the list.
@@ -22,12 +26,21 @@ const agent = actor(
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
+// The wiring: a real model through platform/model, a sandbox for the agent's code, your packages.
+const wiring = () =>
+  Layer.mergeAll(
+    realInfer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock", packagesInScope: "none", maxOutputTokens: 64_000 }),
+    Layer.succeed(Packages, { resolve: () => undefined, list: () => Effect.succeed([]) }),
+    jsSandbox,
+    memoryTmp()
+  )
+
 const host = await createBunHost({ path: "agents.sqlite", actorFor: () => agent, layersFor: wiring })
 await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })
 await host.drive()
 ```
 
-`wiring` supplies the mind and the packages; `platform/model` binds a real provider, and [docs/quickstart.md](docs/quickstart.md) builds the whole thing from scratch. `createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host.
+`createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host, packages and spawning included.
 
 ## Concepts
 
