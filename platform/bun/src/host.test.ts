@@ -109,31 +109,30 @@ describe("telemetry seam", () => {
   test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
     const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
     const linked: Array<{ name: string; traceId: string }> = []
-    const capture = Layer.setTracer(
+    const capture = Layer.succeed(Tracer.Tracer)(
       Tracer.make({
-        span: (name, parent, context, links, startTime, kind) => {
-          for (const l of links) linked.push({ name, traceId: l.span.traceId })
+        span(options) {
+          for (const l of options.links) linked.push({ name: options.name, traceId: l.span.traceId })
+          const record = (k: string, v: unknown) =>
+            names.push({ name: options.name, ...(k === "key" ? { key: v } : {}), ...(k === "type" ? { type: v } : {}) })
           return {
-          _tag: "Span",
-          spanId: "s",
-          traceId: "t",
-          name,
-          parent,
-          context,
-          links,
-          kind,
-          sampled: true,
-          status: { _tag: "Started", startTime },
-          attributes: new Map(),
-          attribute(k: string, v: unknown) {
-            names.push({ name, ...(k === "key" ? { key: v } : {}), ...(k === "type" ? { type: v } : {}) })
-          },
-          end() {},
-          event() {},
-          addLinks() {}
-          }
-        },
-        context: (f) => f()
+            _tag: "Span",
+            spanId: "s",
+            traceId: "t",
+            name: options.name,
+            parent: options.parent,
+            annotations: options.annotations,
+            links: options.links,
+            kind: options.kind,
+            sampled: true,
+            status: { _tag: "Started", startTime: options.startTime },
+            attributes: new Map(),
+            attribute: record,
+            end() {},
+            event() {},
+            addLinks() {}
+          } as never
+        }
       })
     )
     const h = await createBunHost({ ...options(freshPath()), telemetry: capture })

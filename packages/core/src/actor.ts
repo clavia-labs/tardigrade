@@ -130,7 +130,7 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
             attributes: { key: t.key },
             // The link to the delivery that woke this work: the cross-lane seam of the trace
             // (packages/core/src/trace.ts, triggerOf).
-            ...(trigger === undefined ? {} : { links: [{ _tag: "SpanLink", span: trigger, attributes: {} } as const] })
+            ...(trigger === undefined ? {} : { links: [{ span: trigger, attributes: {} }] })
           })
         )
         if (fired === "committed" || fired === "advanced") {
