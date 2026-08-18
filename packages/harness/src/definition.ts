@@ -1,6 +1,7 @@
 import type { Context } from "effect"
 import type { Event, Machine } from "@flamecast/core"
-import type { NativeToolSpec } from "./infer"
+import type { NativeToolSpec, RequestOptions } from "./infer"
+import type { Projection } from "./projection"
 import { sha256 } from "./sha256"
 
 export interface Instruction {
@@ -33,6 +34,7 @@ export interface RenderPlan {
   // compaction module checkpoints the log against the provider's window.
   readonly messageTruncateAt?: number
   readonly resultTruncateAt?: number
+  readonly requestOptions?: Projection<RequestOptions>
 }
 
 export interface ModuleManifest {

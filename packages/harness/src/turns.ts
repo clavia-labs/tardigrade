@@ -1,5 +1,5 @@
 import type { Event } from "@flamecast/core"
-import { usageOf, type Usage } from "./infer"
+import { spendOf, sumUsage, usageOf, type Spend, type Usage } from "./infer"
 
 // Turn attribution. A turn is headed by one `MessageReceived`, and every event emitted while
 // serving it carries `turn: <head id>`. Attribution is a fact in the log, never a derivation from
@@ -115,23 +115,33 @@ export const servedLog = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   return out
 }
 
-const summed = (parts: ReadonlyArray<Usage>): Usage =>
-  parts.reduce(
-    (total, one) => ({
-      promptTokens: total.promptTokens + one.promptTokens,
-      completionTokens: total.completionTokens + one.completionTokens,
-      costUsd: total.costUsd + one.costUsd
-    }),
-    { promptTokens: 0, completionTokens: 0, costUsd: 0 }
-  )
-
-// What one turn spent on the model.
-export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
-  summed(
-    log
-      .filter((event) => event.type === "ModelReturned" && stampOf(event) === turn)
-      .map((event) => usageOf(event.usage))
-  )
+// What one turn spent on the model. Settled figures come from `ModelReturned`. Unsettled figures
+// come from a `ModelCalled` still in flight and from a `ModelSettled` that closed an attempt that
+// never returned a result, using the reservation `ModelCalled` carried.
+export const usageIn = (log: ReadonlyArray<Event>, turn: string): Spend => {
+  const settled: Array<Usage> = []
+  const unsettled: Array<Usage> = []
+  let open: Usage | undefined
+  for (const event of log) {
+    if (stampOf(event) !== turn) continue
+    if (event.type === "ModelCalled") {
+      if (open !== undefined) unsettled.push(open)
+      open = usageOf(event.reserved)
+      continue
+    }
+    if (event.type === "ModelReturned") {
+      settled.push(usageOf(event.usage))
+      open = undefined
+      continue
+    }
+    if (event.type === "ModelSettled") {
+      unsettled.push(usageOf(event.usage))
+      open = undefined
+    }
+  }
+  if (open !== undefined) unsettled.push(open)
+  return spendOf(sumUsage(settled), sumUsage(unsettled))
+}
 
 // A tool result that reports what it spent. A sub-agent reports its own tree usage, and so does a
 // tool that reached a model by another route, such as a script that delegated inside a sandbox.
@@ -146,20 +156,21 @@ const reportedUsage = (event: Event): Usage | undefined => {
 
 // What one turn spent including everything it reached. The sum is inclusive over the whole
 // delegation tree without reading another session's log.
-export const treeUsageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
-  summed([
-    usageIn(log, turn),
-    ...log
-      .filter((event) => stampOf(event) === turn)
-      .map(reportedUsage)
-      .filter((usage): usage is Usage => usage !== undefined)
-  ])
+export const treeUsageIn = (log: ReadonlyArray<Event>, turn: string): Spend => {
+  const local = usageIn(log, turn)
+  const nested = log
+    .filter((event) => stampOf(event) === turn)
+    .map(reportedUsage)
+    .filter((usage): usage is Usage => usage !== undefined)
+  return spendOf(sumUsage([local.settled, ...nested]), local.unsettled)
+}
 
 const quoted = (value: unknown): string => `"${String(value ?? "")}"`
 
 const usageLine = (value: unknown): string => {
   const usage = usageOf(value)
-  return `${usage.promptTokens} in / ${usage.completionTokens} out / $${usage.costUsd.toFixed(4)}`
+  const cost = usage.costUsd === undefined ? "unknown" : `$${usage.costUsd.toFixed(4)}`
+  return `${usage.promptTokens} in / ${usage.completionTokens} out / ${cost}`
 }
 
 // The columns the readable rendering lines up on: the ordinal, the event type, the turn (or the
@@ -186,13 +197,15 @@ const detailOf = (event: Event, callWidth: number): string => {
     case "MessageReceived":
       return `${quoted(event.text)}   agent=${String(event.agent ?? "")}`
     case "ModelCalled":
-      return call("")
+      return call(event.reserved === undefined ? "" : `reserved ${usageLine(event.reserved)}`)
     case "ModelDeferred":
       return call(
         `attempt=${String(event.attempt ?? "")} notBefore=${String(event.notBefore ?? "")} ${quoted(event.reason)}`
       )
     case "AlarmFired":
       return call("")
+    case "ModelSettled":
+      return call(`${usageLine(event.usage)} ${quoted(event.reason)}`)
     case "ModelReturned":
       return call(usageLine(event.usage))
     case "TextReturned":

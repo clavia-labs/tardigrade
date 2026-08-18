@@ -76,6 +76,16 @@ const inferenceModule = inference({
 
 Provider selection can be a function of the log. The inference module provides its selected-state projection as an Effect construction service, so dependent modules can consume it through typed dependency injection.
 
+Per-request provider settings are a projection too. `flexThenStandard()` asks for flex until the current turn has two deferrals, then standard:
+
+```ts
+import { createAgent, flexThenStandard, inference } from "flamecast-core/harness"
+
+const agent = createAgent({
+  modules: [inference({ contextWindow: 200_000 }), flexThenStandard()]
+})
+```
+
 ## Add Tools Through the Default Pack
 
 A tool declares its input once, as a `Schema`. The declaration is lowered to the JSON Schema the model reads, and arguments are decoded against it before the handler runs, so the handler receives the type its own schema describes.

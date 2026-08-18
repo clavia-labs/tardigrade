@@ -192,6 +192,57 @@ describe("Vercel AI Gateway", () => {
     expect(bodies[1]?.providerOptions).toEqual({ gateway: { only: ["deepseek"] } })
   })
 
+  test("sends a per-request service tier on the OpenAI-compatible path", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ choices: [{ message: { content: "ok" } }] }), {
+        status: 200
+      })
+    }) as unknown as typeof fetch
+    const provider = vercelGatewayInference({
+      apiKey: "vercel-key",
+      model: "google/gemini-3.1-pro",
+      contextWindow: 200_000,
+      fetch: stub
+    })
+
+    await Effect.runPromise(provider.react({ ...request, options: { serviceTier: "flex" } }, "k"))
+
+    expect(bodies[0]?.service_tier).toBe("flex")
+  })
+
+  test("a reported zero stays zero, and an omitted cost stays absent", async () => {
+    const of = (usage: unknown) =>
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "openai/test-model",
+        contextWindow: 200_000,
+        fetch: (async () =>
+          new Response(
+            JSON.stringify({ choices: [{ message: { content: "ok" } }], usage }),
+            { status: 200 }
+          )) as unknown as typeof fetch
+      })
+
+    const zero = await Effect.runPromise(
+      of({ prompt_tokens: 8, completion_tokens: 3, cost: 0 }).react(request, "k")
+    )
+    const omitted = await Effect.runPromise(
+      of({ prompt_tokens: 8, completion_tokens: 3 }).react(request, "k")
+    )
+
+    expect(zero.kind === "complete" ? zero.usage : undefined).toEqual({
+      promptTokens: 8,
+      completionTokens: 3,
+      costUsd: 0
+    })
+    expect(omitted.kind === "complete" ? omitted.usage : undefined).toEqual({
+      promptTokens: 8,
+      completionTokens: 3
+    })
+  })
+
   // The catalog is cached per gateway for the life of the process, so each of these tests names its
   // own gateway and reads its own catalog.
   const gateway = (
@@ -282,6 +333,44 @@ describe("Vercel AI Gateway", () => {
 
     expect(fresh.state([])).toEqual(used.state([]))
     expect(fresh.state([]).contextWindow).toBe(750_000)
+  })
+
+  test("reads published pricing from the catalog and prices an omitted cost", async () => {
+    const provider = await Effect.runPromise(
+      vercelGatewayInference({
+        apiKey: "vercel-key",
+        model: "openai/test-model",
+        baseUrl: "https://catalog-price.invalid/v1",
+        fetch: gateway(
+          [],
+          {
+            object: "list",
+            data: [
+              {
+                id: "openai/test-model",
+                context_window: 100_000,
+                pricing: { input: "0.001", output: "0.002" }
+              }
+            ]
+          },
+          {
+            choices: [{ message: { content: "ok" } }],
+            usage: { prompt_tokens: 10, completion_tokens: 4 }
+          }
+        )
+      })
+    )
+
+    expect(provider.state([]).pricing).toEqual({
+      promptUsdPerToken: 0.001,
+      completionUsdPerToken: 0.002
+    })
+    const action = await Effect.runPromise(provider.react(request, "k"))
+    expect(action.kind === "complete" ? action.usage : undefined).toEqual({
+      promptTokens: 10,
+      completionTokens: 4,
+      costUsd: 10 * 0.001 + 4 * 0.002
+    })
   })
 
   test("takes the caller's context window and asks the gateway nothing", async () => {
@@ -530,7 +619,7 @@ describe("Cloudflare AI Gateway", () => {
     expect(await Effect.runPromise(provider.react(request, "k"))).toEqual({
       kind: "complete",
       output: "Invoice INV-4182.",
-      usage: { promptTokens: 8, completionTokens: 3, costUsd: 0 }
+      usage: { promptTokens: 8, completionTokens: 3 }
     })
     expect(calls[0]?.url).toBe(
       "https://api.cloudflare.com/client/v4/accounts/account-1/ai/v1/chat/completions"

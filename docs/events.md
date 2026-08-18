@@ -15,6 +15,8 @@ Common fields include:
 - `usage` on a cross-session reply for the sender's inclusive spend
 - `continuation` on a model result for opaque provider state
 - `attempt`, `notBefore`, and `reason` on a model deferral for the journaled wait
+- `reserved` on a model call for the estimated spend of an in-flight attempt
+- `reason` on a model settle for why an attempt closed without a provider result
 
 Unknown fields and event types survive reads and folds.
 
@@ -36,6 +38,7 @@ Examples:
 
 - an inbound message dedups by message id
 - a model result dedups by turn and call id
+- a model settle has no key, so every closed reservation stays in the log as evidence
 - a tool result dedups by turn and call id
 - a budget grant or denial dedups by turn and request call id
 - a model deferral has no key, so every wait stays in the log as evidence
@@ -46,7 +49,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 
 | Module | Event types |
 | --- | --- |
-| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
+| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelSettled`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
 | native-tools | `ToolCalled`, `ToolReturned` |
 | budget | `BudgetExhausted`, `BudgetRequested`, `BudgetGranted`, `BudgetDenied` |
 | contract | `AnswerRejected` |

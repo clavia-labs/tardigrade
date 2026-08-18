@@ -1,5 +1,5 @@
 import type { Event } from "@flamecast/core"
-import type { ProviderContinuation, Usage } from "./infer"
+import type { ProviderContinuation, RequestOptions, Usage } from "./infer"
 import type { MessageOrigin } from "./module"
 
 // The harness's own events, as constructors. `Event` is open because a reader must survive an
@@ -48,10 +48,18 @@ export const messageReceived = (fields: {
   ...(fields.usage === undefined ? {} : { usage: fields.usage })
 })
 
-export const modelCalled = (fields: Stamped & { readonly callId: string }): Event => ({
+export const modelCalled = (
+  fields: Stamped & {
+    readonly callId: string
+    readonly reserved: Usage
+    readonly options?: RequestOptions
+  }
+): Event => ({
   type: "ModelCalled",
   turn: fields.turn,
   callId: fields.callId,
+  reserved: fields.reserved,
+  ...(fields.options === undefined ? {} : { options: fields.options }),
   at: fields.at
 })
 
@@ -68,6 +76,21 @@ export const modelDeferred = (
   callId: fields.callId,
   attempt: fields.attempt,
   notBefore: fields.notBefore,
+  reason: fields.reason,
+  at: fields.at
+})
+
+export const modelSettled = (
+  fields: Stamped & {
+    readonly callId: string
+    readonly usage: Usage
+    readonly reason: string
+  }
+): Event => ({
+  type: "ModelSettled",
+  turn: fields.turn,
+  callId: fields.callId,
+  usage: fields.usage,
   reason: fields.reason,
   at: fields.at
 })

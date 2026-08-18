@@ -7,6 +7,16 @@ export {
   customInference,
   inferWith,
   selectedInference,
+  usageOf,
+  sumUsage,
+  spendOf,
+  priced,
+  costOf,
+  reservedUsage,
+  settledUsage,
+  applyRequestOptions,
+  ZERO_USAGE,
+  RequestOptionsProjection,
   type Action,
   type AgentMessage,
   type NativeToolCall,
@@ -14,11 +24,14 @@ export {
   type InferenceProvider,
   type InferenceSelection,
   type InferenceState,
+  type ModelPricing,
   type ModelRequest,
   type NativeTool,
   type NativeToolContext,
   type NativeToolSpec,
   type ProviderContinuation,
+  type RequestOptions,
+  type Spend,
   type Usage
 } from "./infer"
 export {
@@ -84,6 +97,7 @@ export {
   modelCalled,
   modelDeferred,
   modelReturned,
+  modelSettled,
   replyDelivered,
   textReturned,
   toolCalled,
@@ -125,6 +139,7 @@ export {
   type InferenceOptions,
   type InferenceSettings
 } from "./modules/inference"
+export { flexThenStandard, requestOptions, type RequestOptionsModule } from "./modules/request-options"
 export { nativeTools } from "./modules/native-tools"
 export {
   budgetOf,
