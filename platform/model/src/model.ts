@@ -10,7 +10,7 @@ import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
 import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
-import { usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
+import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -191,7 +191,7 @@ export interface ModelConfig {
   readonly stream?: Partial<StreamBounds>
   // What the model costs, when a catalog or a caller has said. A billed figure from the
   // provider is preferred; this table fills only a cost the provider omitted
-  // (packages/agent/src/usage.ts, priced).
+  // (packages/agent/src/usage.ts, priced). Cached prompt tokens price at the full input rate.
   readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
@@ -363,11 +363,37 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
   }
 }
 
+const concatBytes = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    out.set(c, offset)
+    offset += c.byteLength
+  }
+  return out
+}
+
+type BodyReader = {
+  read: () => Promise<{ done: boolean; value?: Uint8Array }>
+  cancel: () => Promise<unknown>
+}
+
 // captureRawUsage reads the last `usage` object off an SSE (or JSON) body. The OpenAI-compat
 // adapter normalizes tokens and drops extra keys; a gateway's billed dollar lives on those keys
 // (packages/agent/src/usage.ts, costNumber).
-const captureRawUsage = async (stream: ReadableStream<Uint8Array>): Promise<unknown> => {
-  const text = await new Response(stream).text()
+const captureRawUsage = async (reader: BodyReader): Promise<unknown> => {
+  const chunks: Uint8Array[] = []
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value !== undefined) chunks.push(value)
+    }
+  } catch {
+    // the live branch already failed; bytes read so far may still hold a usage chunk
+  }
+  const text = new TextDecoder().decode(concatBytes(chunks))
   let last: unknown
   for (const line of text.split(/\r?\n/)) {
     const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
@@ -391,14 +417,16 @@ const captureRawUsage = async (stream: ReadableStream<Uint8Array>): Promise<unkn
 const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
-  sink: { promise: Promise<unknown> }
+  sink: { promise: Promise<unknown>; reader?: BodyReader }
 ): FetchImpl => {
   const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
   return async (input, init) => {
     const res = await inner(input, init)
     if (res.body === null) return res
     const [live, copy] = res.body.tee()
-    sink.promise = captureRawUsage(copy)
+    const reader = copy.getReader()
+    sink.reader = reader
+    sink.promise = captureRawUsage(reader).catch(() => undefined)
     return new Response(live, { status: res.status, statusText: res.statusText, headers: res.headers })
   }
 }
@@ -424,6 +452,21 @@ const stampOf = (config: ModelConfig) => ({
   model: config.model
 })
 
+const usageOn = (e: unknown): Usage | undefined =>
+  e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
+
+const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined => {
+  if (parts.length === 0) return undefined
+  const summed = sumUsage(parts)
+  if (!missed) return summed
+  return {
+    promptTokens: summed.promptTokens,
+    completionTokens: summed.completionTokens,
+    ...(summed.provider === undefined ? {} : { provider: summed.provider }),
+    ...(summed.model === undefined ? {} : { model: summed.model })
+  }
+}
+
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
@@ -439,7 +482,9 @@ export const realInfer = (config: ModelConfig) => {
      // Rung zero keeps the bare key, so crash-retries of the same request still
     // collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
-    const sink: { promise: Promise<unknown> } = { promise: Promise.resolve(undefined) }
+    const sink: { promise: Promise<unknown>; reader?: BodyReader } = {
+      promise: Promise.resolve(undefined)
+    }
     const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
     const fetcher = withCapture(config.fetch, keyForRung, sink)
     const adapter =
@@ -469,12 +514,22 @@ export const realInfer = (config: ModelConfig) => {
       modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
-    const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
-    const raw = await sink.promise
-    const usage = usageFrom([held.tokens, raw], config.pricing, stampOf(config))
-    stats.finish = result.finishReason ?? "stop"
-    if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
-    return withSpend(actionOf(result, schema), usage)
+    const spendOf = async (): Promise<Usage | undefined> =>
+      usageFrom([await sink.promise, held.tokens], config.pricing, stampOf(config))
+    try {
+      const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
+      const usage = await spendOf()
+      stats.finish = result.finishReason ?? "stop"
+      if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
+      return withSpend(actionOf(result, schema), usage)
+    } catch (e) {
+      await sink.reader?.cancel().catch(() => undefined)
+      if (isTruncated(e)) throw e
+      const usage = await spendOf()
+      if (usage === undefined) throw e
+      if (e !== null && typeof e === "object") throw Object.assign(e, { usage })
+      throw Object.assign(new Error(String(e)), { usage })
+    }
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
@@ -483,11 +538,21 @@ export const realInfer = (config: ModelConfig) => {
         const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
         const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
+        const parts: Usage[] = []
+        let missed = false
+        const remember = (usage: Usage | undefined, billed: boolean) => {
+          if (usage !== undefined) parts.push(usage)
+          else if (billed) missed = true
+        }
         for (let attempt = 0; ; attempt++) {
           try {
             stats.rung = rung
-            return await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
+            const action = await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
+            remember(action.usage, true)
+            return withSpend(action, spentOf(parts, missed))
           } catch (e) {
+            const usage = isTruncated(e) ? e.usage : usageOn(e)
+            remember(usage, isTruncated(e) || usage !== undefined)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
                 rung += 1
@@ -500,7 +565,7 @@ export const realInfer = (config: ModelConfig) => {
                   kind: "fail",
                   error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`
                 },
-                e.usage
+                spentOf(parts, missed)
               )
             }
             if (!isThrottleShaped(e)) throw e

@@ -19,6 +19,8 @@ export interface Usage {
 }
 
 export interface ModelPricing {
+  // Per-token rates for a table fill. Cached prompt tokens have no cheaper seat here, so a
+  // fill prices them at the full input rate (usage.test.ts, "a price table fills an omitted cost").
   readonly promptUsdPerToken: number
   readonly completionUsdPerToken: number
 }
@@ -85,6 +87,7 @@ export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
 // usageFrom builds spend from a provider reply. A billed dollar, including zero, is provider.
 // Token counts with no bill are filled from the table when one exists, and left without a
 // cost when none does. Nothing at all (no tokens, no bill) is undefined: unknown, not zero.
+// Later parts win on tokens, so the adapter's counts (held last) beat the raw SSE object.
 export const usageFrom = (
   reported: unknown,
   pricing?: ModelPricing,
@@ -171,13 +174,22 @@ export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
   }
 }
 
+const ofTurn = (event: Event, turn: string): boolean => {
+  const stamped = turnOf(event)
+  if (stamped === turn) return true
+  if (stamped !== undefined) return false
+  const callId = String(asRecord(event)?.callId ?? "")
+  return callId === turn || callId.startsWith(`${turn}/`)
+}
+
 // usageIn sums what one turn spent on the model. Settled figures come from ModelReturned.
-// An attempt that died after ModelCalled has no return, so it does not invent a cost.
+// A return with no usage is unknown cost, so it poisons the total (usage.test.ts, "unknown is
+// sticky"). An attempt that died after ModelCalled has no return, so it does not invent a cost.
 export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   sumUsage(
     log.flatMap((event) => {
-      if (event.type !== "ModelReturned" || turnOf(event) !== turn) return []
+      if (event.type !== "ModelReturned" || !ofTurn(event, turn)) return []
       const carried = asRecord(event)?.usage
-      return carried === undefined ? [] : [usageOf(carried)]
+      return [carried === undefined ? ZERO_USAGE : usageOf(carried)]
     })
   )

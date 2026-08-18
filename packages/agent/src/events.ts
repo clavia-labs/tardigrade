@@ -10,7 +10,7 @@ import type { Usage } from "./usage"
 // answer lives on `TurnCompleted` alone.
 //
 // The union projects onto OpenEnv RFC 005's HarnessEvent stream: `ModelCalled` -> LLM_REQUEST,
-// `ModelReturned` carries spend, `TextReturned` -> LLM_RESPONSE, `ToolCalled` -> TOOL_CALL,
+// `ModelReturned` -> no RFC 005 event, `TextReturned` -> LLM_RESPONSE, `ToolCalled` -> TOOL_CALL,
 // `ToolReturned` -> TOOL_RESULT, `TurnCompleted` -> TURN_COMPLETE with TEXT_OUTPUT as payload,
 // `TurnFailed` -> ERROR. `MessageReceived` is the step() input on their side of the wire.
 

@@ -406,15 +406,17 @@ describe("truncation", () => {
       headers: { "content-type": "text/event-stream" }
     })
 
-  const cut = (text: string) =>
+  const cut = (text: string, usage?: Record<string, unknown>) =>
     sse([
       { choices: [{ delta: { content: text }, index: 0 }] },
-      { choices: [{ delta: {}, finish_reason: "length", index: 0 }] }
+      { choices: [{ delta: {}, finish_reason: "length", index: 0 }] },
+      ...(usage === undefined ? [] : [{ choices: [], usage }])
     ])
-  const whole = (text: string) =>
+  const whole = (text: string, usage?: Record<string, unknown>) =>
     sse([
       { choices: [{ delta: { content: text }, index: 0 }] },
-      { choices: [{ delta: {}, finish_reason: "stop", index: 0 }] }
+      { choices: [{ delta: {}, finish_reason: "stop", index: 0 }] },
+      ...(usage === undefined ? [] : [{ choices: [], usage }])
     ])
 
   test("a cut answer retries up the ladder under a fresh idempotency key, and completes", async () => {
@@ -441,6 +443,33 @@ describe("truncation", () => {
     expect(keys[1]).not.toBe(keys[0])
   })
 
+  test("every truncated rung's bill rides the action, not only the winner's", async () => {
+    let calls = 0
+    const fetchImpl = (async () =>
+      calls++ === 0
+        ? cut("half an ans", { prompt_tokens: 10, completion_tokens: 32768, cost: 5 })
+        : whole("the whole answer", { prompt_tokens: 10, completion_tokens: 4, cost: 1 })) as unknown as typeof fetch
+    const layer = realInfer({
+      provider: "openai",
+      model: "m",
+      baseUrl: "https://x",
+      apiKey: "k",
+      surface: codeSurface(),
+      fetch: fetchImpl as never
+    })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<Action>
+    )
+    expect(calls).toBe(2)
+    expect(action).toMatchObject({
+      kind: "complete",
+      output: "the whole answer",
+      usage: { promptTokens: 20, completionTokens: 32772, costUsd: 6, costSource: "provider" }
+    })
+  })
+
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
     const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
     const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", surface: codeSurface(), fetch: fetchImpl as never })
@@ -451,6 +480,47 @@ describe("truncation", () => {
     )
     expect(action.kind).toBe("fail")
     expect(action.error).toContain("output ceiling")
+  })
+
+  test("a mid-stream drop does not leak an unhandled rejection from the usage tee", async () => {
+    const leaked: unknown[] = []
+    const onLeak = (reason: unknown) => {
+      leaked.push(reason)
+    }
+    process.on("unhandledRejection", onLeak)
+    try {
+      const fetchImpl = (async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"x"},"index":0}]}\n\n'))
+              controller.error(new Error("ECONNRESET mid-stream"))
+            }
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } }
+        )) as unknown as typeof fetch
+      const layer = realInfer({
+        provider: "openai",
+        model: "m",
+        baseUrl: "https://x",
+        apiKey: "k",
+        surface: codeSurface(),
+        fetch: fetchImpl as never,
+        throttleRetryDelaysMs: [0],
+        sleep: () => Promise.resolve()
+      })
+      await expect(
+        Effect.runPromise(
+          Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+            Effect.provide(layer)
+          ) as Effect.Effect<unknown>
+        )
+      ).rejects.toBeTruthy()
+      await Promise.resolve()
+      expect(leaked).toEqual([])
+    } finally {
+      process.off("unhandledRejection", onLeak)
+    }
   })
 })
 

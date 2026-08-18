@@ -99,6 +99,29 @@ describe("usageIn", () => {
     expect(usageIn(log, "m2")).toEqual(ZERO_USAGE)
   })
 
+  test("a return with no usage poisons the total, and an unstamped return still belongs by callId", () => {
+    const billed = {
+      promptTokens: 10,
+      completionTokens: 4,
+      costUsd: 0.01,
+      costSource: "provider" as const,
+      provider: "openai",
+      model: "m"
+    }
+    const log: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ModelReturned", callId: "m1/infer/0", ordinal: 0, turn: "m1", at: 1 },
+      { type: "ModelReturned", callId: "m1/infer/1", ordinal: 1, turn: "m1", usage: billed, at: 2 }
+    ]
+    expect(usageIn(log, "m1")).toEqual({ promptTokens: 10, completionTokens: 4 })
+    expect(
+      usageIn(
+        [{ type: "ModelReturned", callId: "m1/infer/0", ordinal: 0, usage: billed, at: 1 }],
+        "m1"
+      )
+    ).toEqual(billed)
+  })
+
   test("usageOf keeps a labeled figure and drops a source with no cost", () => {
     expect(usageOf({ promptTokens: 3, completionTokens: 1, costUsd: 0, costSource: "provider" })).toEqual({
       promptTokens: 3,
