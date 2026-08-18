@@ -8,6 +8,8 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
 ## Quickstart
 
+Prerequisites: bun 1.1 or later, and a model endpoint.
+
 An agent is reactors over one log.
 
 ```ts
