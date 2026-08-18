@@ -65,13 +65,16 @@ export {
   turnHead,
   turnOf,
   turnView,
-  usageIn
+  usageIn,
+  pendingDeferral,
+  type PendingDeferral
 } from "./turns"
 export { checkpointOf, estimateTokens, keepUpTo, suffixOf, type Checkpoint } from "./context"
 export { boundaryOf, type CallResult } from "./boundary"
 export { keyOf } from "./keys"
 export {
   answerRejected,
+  alarmFired,
   budgetDenied,
   budgetExhausted,
   budgetGranted,
@@ -79,6 +82,7 @@ export {
   compactionCompleted,
   messageReceived,
   modelCalled,
+  modelDeferred,
   modelReturned,
   replyDelivered,
   textReturned,

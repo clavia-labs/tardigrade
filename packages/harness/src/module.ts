@@ -1,5 +1,6 @@
-import { Clock, Context, Effect } from "effect"
+import { Clock, Context, Effect, Option } from "effect"
 import {
+  Alarm,
   EventLog,
   Router,
   Self,
@@ -11,6 +12,7 @@ import {
   type EventLogStore,
   type Machine
 } from "@flamecast/core"
+import { alarmFired } from "./alphabet"
 import { boundaryOf, type CallResult } from "./boundary"
 import { type ModelRequest, type NativeToolSpec, type Usage } from "./infer"
 import { keyOf } from "./keys"
@@ -24,9 +26,9 @@ import {
   type Nudge,
   type RenderPlan
 } from "./definition"
-import { turnHead, usageIn } from "./turns"
+import { pendingDeferral, turnHead, usageIn } from "./turns"
 
-export type AgentServices = EventLog | Writer | Router | Self
+export type AgentServices = EventLog | Writer | Router | Self | Alarm
 
 export interface ModulePart<R = never> {
   readonly events?: ReadonlyArray<string>
@@ -275,6 +277,31 @@ const build = <R, Services>(
       const writer = yield* Writer
       return yield* writer.hold(yield* Self, work)
     })
+  const settleDue = (turn: string) =>
+    Effect.gen(function* () {
+      const store = yield* EventLog
+      while (true) {
+        yield* settleAll(machines.machines)
+        const log = yield* store.read
+        const pending = pendingDeferral(log)
+        if (pending === undefined || pending.turn !== turn) return resultOf(log, turn)
+        const now = yield* Clock.currentTimeMillis
+        if (now < pending.notBefore) {
+          const alarm = yield* Effect.serviceOption(Alarm)
+          if (Option.isSome(alarm)) {
+            yield* alarm.value.set(
+              yield* Self,
+              pending.notBefore,
+              alarmFired({ turn: pending.turn, callId: pending.callId, at: now })
+            )
+          }
+          return resultOf(log, turn)
+        }
+        yield* store.append([
+          alarmFired({ turn: pending.turn, callId: pending.callId, at: now })
+        ])
+      }
+    })
   const branch = (recorded: ReadonlyArray<Event>, options: BranchOptions = {}) => {
     const upTo = Math.max(0, Math.min(options.at ?? recorded.length, recorded.length))
     const seed = recorded.slice(0, upTo)
@@ -290,10 +317,9 @@ const build = <R, Services>(
       scoped(
         held(
           Effect.gen(function* () {
-            const store = yield* EventLog
             const at = yield* Clock.currentTimeMillis
             yield* send(machines, headOf(message, definition, at))
-            return resultOf(yield* store.read, message.id)
+            return yield* settleDue(message.id)
           })
         )
       ),
@@ -307,9 +333,8 @@ const build = <R, Services>(
           Effect.gen(function* () {
             const store = yield* EventLog
             yield* store.append(recorded)
-            yield* settleAll(machines.machines)
             const log = yield* store.read
-            return resultOf(log, lastTurnOf(log))
+            return yield* settleDue(lastTurnOf(log))
           })
         )
       ),

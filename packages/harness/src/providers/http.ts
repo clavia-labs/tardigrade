@@ -12,6 +12,7 @@ import type { Action } from "../infer"
 // same way every time, so retrying it spends money and time to learn nothing.
 interface Transient {
   readonly reason: string
+  readonly retryAfterMs?: number
 }
 
 const RETRYABLE = new Set([408, 409, 425, 429])
@@ -19,6 +20,18 @@ const RETRYABLE = new Set([408, 409, 425, 429])
 const isTransient = (status: number) => status >= 500 || RETRYABLE.has(status)
 
 const DEFAULT_RETRIES = 2
+
+// A Retry-After of more than two seconds is a queue, not a blip. Honouring it inside this Effect
+// would hold the turn open for the wait, and a crash would lose it. Returning it on the action lets
+// the log record the due time and the runtime wake the session.
+const QUEUE_RETRY_AFTER_MS = 2_000
+
+const retryAfterMsOf = (header: string | null) => {
+  if (header === null || header === "") return undefined
+  const seconds = Number(header)
+  if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000
+  return undefined
+}
 
 // How long one attempt may take before this side stops waiting. It is a guard against a socket that
 // has gone quiet, so it sits well outside the range where real answers land: a reasoning model
@@ -71,7 +84,10 @@ export interface Attempt {
 
 // The request, its retries, and the one outcome they settle on.
 export const sent = (attempt: Attempt) => {
-  const failed = (reason: string): Transient => ({ reason })
+  const failed = (reason: string, retryAfterMs?: number): Transient => ({
+    reason,
+    ...(retryAfterMs === undefined ? {} : { retryAfterMs })
+  })
   const one = Effect.gen(function* () {
     const response = yield* Effect.tryPromise({
       // The signal is what makes an interruption reach the gateway. Without it, a timed-out attempt
@@ -93,7 +109,17 @@ export const sent = (attempt: Attempt) => {
     })
     if (!response.ok) {
       const reason = `${attempt.provider} returned HTTP ${response.status}: ${text}`
-      if (isTransient(response.status)) return yield* Effect.fail(failed(reason))
+      const retryAfterMs = retryAfterMsOf(response.headers.get("retry-after"))
+      if (isTransient(response.status)) {
+        if (retryAfterMs !== undefined && retryAfterMs > QUEUE_RETRY_AFTER_MS) {
+          return {
+            kind: "defer",
+            error: reason,
+            retryAfterMs
+          } satisfies Action
+        }
+        return yield* Effect.fail(failed(reason, retryAfterMs))
+      }
       return { kind: "fail", error: reason } satisfies Action
     }
     try {
@@ -113,12 +139,13 @@ export const sent = (attempt: Attempt) => {
       orElse: () => Effect.fail(failed("no response within the request timeout"))
     }),
     Effect.retry({ schedule: backoff, times: attempt.retries ?? DEFAULT_RETRIES }),
-    // A failure that outlived its retries becomes the turn's evidence. The inference module reads
-    // it, and the log carries what happened.
+    // A failure that outlived its retries is still transient: the log records a deferral and the
+    // runtime wakes the session at the due time, so a restart can wait out the queue.
     Effect.catch((failure) =>
       Effect.succeed({
-        kind: "fail",
-        error: `${attempt.provider} request failed: ${failure.reason}`
+        kind: "defer",
+        error: `${attempt.provider} request failed: ${failure.reason}`,
+        ...(failure.retryAfterMs === undefined ? {} : { retryAfterMs: failure.retryAfterMs })
       } satisfies Action)
     ),
     Effect.catchDefect((defect) =>

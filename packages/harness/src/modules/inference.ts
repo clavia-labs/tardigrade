@@ -11,6 +11,7 @@ import {
 import {
   messageReceived,
   modelCalled,
+  modelDeferred,
   modelReturned,
   replyDelivered,
   textReturned,
@@ -38,6 +39,7 @@ export class InferenceStateProjection extends Context.Service<
 export interface InferenceSettings {
   readonly system?: string
   readonly giveUpAfter?: number
+  readonly deferAtMost?: number
   readonly repairAtMost?: number
   readonly messageTruncateAt?: number
   readonly resultTruncateAt?: number
@@ -69,6 +71,34 @@ const diedAttempts = (view: ReadonlyArray<Event>): number => {
   return died
 }
 
+const openCallId = (view: ReadonlyArray<Event>): string | undefined => {
+  for (let index = view.length - 1; index >= 0; index--) {
+    const event = view[index]
+    if (event?.type === "ModelReturned") return undefined
+    if (event?.type === "ModelCalled") return String(event.callId ?? "")
+  }
+  return undefined
+}
+
+const completedCalls = (view: ReadonlyArray<Event>) =>
+  view.filter((event) => event.type === "ModelReturned").length
+
+const deferralsOf = (view: ReadonlyArray<Event>, callId: string) =>
+  view.filter((event) => event.type === "ModelDeferred" && String(event.callId ?? "") === callId)
+    .length
+
+// A single wait is capped at twenty minutes, which is long enough for a queued tier to drain and
+// short enough that a missing Retry-After still bounds the park. Exponential backoff without a
+// header starts at five seconds, then twenty, then eighty, and hits the cap on the fifth wait.
+const DEFER_CAP_MS = 20 * 60 * 1000
+
+const deferDelayMs = (attempt: number, retryAfterMs?: number) => {
+  if (retryAfterMs !== undefined && Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.min(DEFER_CAP_MS, retryAfterMs)
+  }
+  return Math.min(DEFER_CAP_MS, 5_000 * 4 ** Math.max(0, attempt - 1))
+}
+
 const consequenceOf = (action: Action, turn: string, at: number): Event =>
   action.kind === "call"
     ? toolCalled({
@@ -86,6 +116,7 @@ const inferMachine = (
   render: RenderPlan,
   selection: InferenceSelection,
   giveUpAfter: number,
+  deferAtMost: number,
   repairAtMost: number
 ) =>
   machine({
@@ -128,14 +159,50 @@ const inferMachine = (
                 })
               ]
             }
-            const marks = view.filter((event) => event.type === "ModelCalled").length
-            const key = `${turn}/infer/${marks - died}`
+            const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
+            const deferrals = deferralsOf(view, key)
+            if (deferrals >= deferAtMost) {
+              return [
+                turnFailed({
+                  turn,
+                  error: `the model was deferred ${deferAtMost} times`,
+                  at
+                })
+              ]
+            }
+            // An orphaned mark is a crash mid-call. Journal the wait so a restart sleeps instead of
+            // immediately issuing another request against a queue that has not moved.
+            if (died > 0) {
+              return [
+                modelDeferred({
+                  turn,
+                  callId: key,
+                  attempt: died,
+                  notBefore: at + deferDelayMs(died),
+                  reason: "the model attempt died",
+                  at
+                })
+              ]
+            }
             const store = yield* EventLog
             yield* store.append([modelCalled({ turn, callId: key, at })])
             const override = yield* Effect.serviceOption(Infer)
             const provider = Option.getOrElse(override, () => selectedInference(selection, log))
             const action = yield* provider.react(modelRequest({ render }, log), key)
             const after = yield* Clock.currentTimeMillis
+            if (action.kind === "defer") {
+              const attempt = deferrals + 1
+              return [
+                modelDeferred({
+                  turn,
+                  callId: key,
+                  attempt,
+                  notBefore: after + deferDelayMs(attempt, action.retryAfterMs),
+                  reason: action.error,
+                  at: after
+                })
+              ]
+            }
             const continuation = action.kind === "fail" ? undefined : action.continuation
             return [
               modelReturned({
@@ -151,8 +218,14 @@ const inferMachine = (
               consequenceOf(action, turn, after)
             ]
           }),
-        on: { ToolCalled: "waiting", TurnCompleted: "idle", TurnFailed: "idle" }
+        on: {
+          ModelDeferred: "deferred",
+          ToolCalled: "waiting",
+          TurnCompleted: "idle",
+          TurnFailed: "idle"
+        }
       },
+      deferred: { on: { AlarmFired: "thinking" } },
       waiting: { on: { ToolReturned: "thinking" } }
     }
   })
@@ -221,6 +294,7 @@ export const inference = (options: InferenceOptions) => {
   const selection = selectionOf(options)
   const system = options.system ?? BASE_SYSTEM
   const giveUpAfter = options.giveUpAfter ?? 3
+  const deferAtMost = options.deferAtMost ?? 8
   const repairAtMost = options.repairAtMost ?? 2
   // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
   // message down on the way to the model while the log kept the whole thing, so the record and the
@@ -240,12 +314,13 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "3",
+    version: "4",
     identity: {
       provider: initial.id,
       state: initial.state([]),
       system,
       giveUpAfter,
+      deferAtMost,
       repairAtMost,
       ...truncation
     },
@@ -256,6 +331,8 @@ export const inference = (options: InferenceOptions) => {
       events: [
         "MessageReceived",
         "ModelCalled",
+        "ModelDeferred",
+        "AlarmFired",
         "ModelReturned",
         "TextReturned",
         "ToolCalled",
@@ -270,7 +347,7 @@ export const inference = (options: InferenceOptions) => {
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.
       machines: (render): ReadonlyArray<Machine<EventLog | Router | Self, never>> => [
-        erase(inferMachine(render, selection, giveUpAfter, repairAtMost)),
+        erase(inferMachine(render, selection, giveUpAfter, deferAtMost, repairAtMost)),
         erase(replyMachine)
       ]
     })
