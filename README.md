@@ -22,8 +22,7 @@ import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
-// The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
-// tools instead, for an agent measured against another harness's surface.
+// surface is the work the model is offered: code mode here, `nativeSurface` for a fixed table.
 const surface = codeSurface()
 
 // Adding a capability is adding a reactor to the list.
@@ -32,10 +31,8 @@ const agent = actor(
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
-// The model is the one seam with no default: sandbox, tmp, and packages (an empty registry)
-// bind themselves until a layer overrides them. The binding also defaults to the code surface;
-// a changed surface goes to both the actor and `infer`, so the model is offered the tools the
-// reactors serve. Telemetry is one NDJSON row per span (docs/how-to/observe.md).
+// infer is the one seam with no default; sandbox, tmp, and packages bind themselves.
+// A changed surface goes to both the actor and `infer`.
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
