@@ -142,6 +142,38 @@ describe("the agent with execute as the only tool", () => {
     expect(toolsReactor(events)).toHaveLength(0)
   })
 
+  test("a spilled settle answers with its pointer, never an empty result", async () => {
+    // Over TMP_BYTES the settle carries a pointer instead of the value. Answering the call from
+    // `result` alone hands the model `{}`: it learns neither what its code computed nor that a
+    // ref holds it, so it re-runs the work. The pointer and its note are the result.
+    const big = "y".repeat(20_000)
+    const spilled: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "read the contract", at: 1 },
+      { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: "return await docs.read()" }, turn: "m1", at: 2 },
+      { type: "CodeDispatched", execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
+      {
+        type: "CodeSettled",
+        execId: "t1",
+        tmp: "t1.result",
+        size: big.length,
+        preview: big.slice(0, 500),
+        note: "full value: workspace.read({ref: 't1.result'})",
+        turn: "m1",
+        at: 4
+      }
+    ]
+    const events = await run(readLog, memoryLog(spilled))
+    const [answer] = toolsReactor(events)
+    expect(answer).toBeDefined()
+    const returned = await run(answer!.act(answer!.input as never) as Effect.Effect<ReadonlyArray<Event>>, memoryLog())
+    expect(returned[0]!.type).toBe("ToolReturned")
+    const result = (returned[0] as unknown as { result: { result: Record<string, unknown> } }).result.result
+    expect(result.tmp).toBe("t1.result")
+    expect(result.size).toBe(big.length)
+    expect(result.note).toBe("full value: workspace.read({ref: 't1.result'})")
+    expect(String(result.preview)).toHaveLength(500)
+  })
+
   test("a committed package call replays: the insert is never re-executed", async () => {
     // The shape a crash leaves behind: the insert's pair is committed, the search never ran. The
     // re-settle re-runs the body from the top, replays the insert from the log, and runs only

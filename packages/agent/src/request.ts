@@ -1,5 +1,5 @@
 import type { Event } from "@flamecast/core/event"
-import { checkpointOf } from "./compaction"
+import { MESSAGE_RENDER_CAP, RESULT_RENDER_CAP, checkpointOf, keepFromIndex } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
 
@@ -85,26 +85,45 @@ const BUDGET_NUDGE =
 const ESCALATE_NUDGE =
   "If the work genuinely needs more and the extra spend is worth it, you may call request_budget with a reason and an amount instead of answering. Ask only when it changes the result; otherwise answer now."
 
+const userMessageOf = (e: Event): AgentMessage => {
+  const v = e as Record<string, unknown>
+  const text = String(v.text ?? "")
+  return {
+    role: "user",
+    content:
+      text.length > MESSAGE_RENDER_CAP
+        ? `${text.slice(0, MESSAGE_RENDER_CAP)}…[truncated ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
+        : text
+  }
+}
+
 // renderMessages rebuilds the trajectory as a conversation: reactions as assistant messages,
 // tool returns as tool messages, terminals as assistant text. Rendering starts from the last
-// checkpoint's summary plus the live suffix. Unknown event types fall through: tolerant reads.
+// checkpoint's summary plus the kept suffix, resolved by the checkpoint's identity so the same
+// event anchors the render and the reactor whatever the projection reordered
+// (request.test.ts, "a checkpoint survives the projection"). The open turn's head renders
+// verbatim ahead of the summary when the checkpoint passed it: the live task never shrinks to a
+// summary paragraph mid-turn. Unknown event types fall through: tolerant reads.
 export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<AgentMessage> => {
   const messages: AgentMessage[] = []
   const checkpoint = checkpointOf(trajectory)
+  const from = keepFromIndex(trajectory, checkpoint.keepFrom)
+  const terminated = new Set(
+    trajectory
+      .filter((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
+      .map((e) => String((e as { turn?: unknown }).turn))
+  )
+  const openHead = trajectory.findIndex(
+    (e) => e.type === "MessageReceived" && !terminated.has(String((e as { id?: unknown }).id))
+  )
+  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(trajectory[openHead]!))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   let pendingText: string | null = null
-  for (const e of trajectory.slice(checkpoint.upTo)) {
+  for (const e of trajectory.slice(from)) {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "MessageReceived": {
-        const text = String(v.text ?? "")
-        messages.push({
-          role: "user",
-          content:
-            text.length > 12000
-              ? `${text.slice(0, 12000)}…[truncated ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
-              : text
-        })
+        messages.push(userMessageOf(e))
         break
       }
       case "TextReturned": {
@@ -125,7 +144,7 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
         messages.push({
           role: "tool",
           toolCallId: String(v.callId),
-          content: body.length > 6000 ? `${body.slice(0, 6000)}…[truncated ${body.length} chars]` : body
+          content: body.length > RESULT_RENDER_CAP ? `${body.slice(0, RESULT_RENDER_CAP)}…[truncated ${body.length} chars]` : body
         })
         break
       }
