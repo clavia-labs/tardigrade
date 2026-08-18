@@ -1,12 +1,14 @@
 # Tardigrade
 
+### Log is all you need
+
 Tardigrade is a durable agent harness built with the log as its core, inspired by event sourcing and React. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
 
 $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
 ## Quickstart
 
-An agent is reactors over one log. Assemble one, give it a durable log, send it a message.
+An agent is reactors over one log.
 
 ```ts
 import { Effect, Layer } from "effect"
@@ -51,7 +53,7 @@ await host.drive()
 
 ### Events
 
-An event is a fact, recorded once and never edited. Everything else is derived from the set of them.
+An event is the smallest primitive. It's an immutable fact, recorded once in the event log. You define events based on what's meaningful in your domain. For example, when building an agent, your events could be `MessageReceived`, `ToolCalled` etc.
 
 ```ts
 // An Event is an open record. Concrete events narrow it.
@@ -65,7 +67,7 @@ type TurnCompleted = { type: "TurnCompleted"; output: string }
 
 ### Projections
 
-A projection is a pure function from the event log to a value.
+A projection is a pure function that takes an event log and returns a value. Projections help to slice an event log into different views based on the consumer.
 
 ```ts
 type Projection<T> = (events: ReadonlyArray<Event>) => T
@@ -76,8 +78,10 @@ const done: Projection<boolean> = (events) => events.some((e) => e.type === "Tur
 
 ### Transitions and reactors
 
+A transition is a keyed unit of state change. It takes in state, and returns new events. Reactors compute the transitions enabled by a given event log.
+
 ```ts
-// One keyed unit of work: state in, events out. A retried fire is the same work, absorbed by its key.
+// state in, events out. A retried fire is the same work, absorbed by its key.
 interface Transition<T> {
   readonly key: string
   readonly input: T
@@ -96,8 +100,6 @@ An actor is a set of reactors over one log, plus the key derivation that decides
 </picture>
 
 ## Docs
-
-Organized on the Diátaxis grid: learning, tasks, information, understanding.
 
 - [Quickstart](docs/quickstart.md): the concepts in one page: events, projections, transitions, reactors, an agent in three reactors.
 - [Tutorial: an RLM agent](docs/tutorials/rlm-agent.md): a Recursive Language Model agent with durable code execution, killed mid-recursion.
