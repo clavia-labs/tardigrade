@@ -13,7 +13,11 @@ const DIAGRAMS: Record<string, string> = {
   log[("event log")] -->|"events"| reactor["reactor"]
   reactor -->|"{transitions} = f(log)"| transitions["transitions"]
   transitions -->|"unrecorded keys fire"| act["act(input)"]
-  act -->|"events, keyed record last"| log`
+  act -->|"events, keyed record last"| log`,
+  "one-trace": `flowchart TB
+  send["sending span"] -->|"stamps traceparent, first stamp wins"| event[("persisted event")]
+  event -->|"newest carried context"| fire["transition.fire"]
+  fire -.->|"link: the delivery that woke this work"| send`
 }
 
 const LIGHT = { bg: "#ffffff", fg: "#1f2328", accent: "#d97706", muted: "#656d76" }

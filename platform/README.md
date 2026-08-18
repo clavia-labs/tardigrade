@@ -4,7 +4,7 @@ The packages state contracts and semantics: the log, the reconciler, the code la
 and the ports they leave open (EventLog, Router, Sandbox, Infer). A package depends on effect
 and on other packages, and on nothing else. That invariant is the line between the two trees.
 
-A platform binds one port to the world. Storage and delivery on Cloudflare, a model provider
+A platform binds one port to the world. A binding that delivers events also stamps the sending span's context onto each event it persists (one traceparent string, first stamp wins), or every cross-lane trace it serves arrives fragmented (docs/how-to/observe.md). Storage and delivery on Cloudflare, a model provider
 behind Infer, a Bun process: each binding is one subdirectory here, and it owns its own
 dependencies. `packages/host` stays a package by the same rule: the reference runtime is
 in-memory and dependency-free, and it is the executable contract a platform binding is tested
