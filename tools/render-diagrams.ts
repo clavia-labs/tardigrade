@@ -9,12 +9,12 @@ import { fileURLToPath } from "node:url"
 const root = fileURLToPath(new URL("../", import.meta.url))
 
 const DIAGRAMS: Record<string, string> = {
-  "reconciler-loop": `flowchart TB
+  "reconciler-loop": `flowchart LR
   log[("event log")] -->|"events"| reactor["reactor"]
   reactor -->|"transitions = f(log)"| transitions["transitions"]
   transitions -->|"keys the log does not record"| act["act(input)"]
   act -->|"events, keyed record last"| log`,
-  "agent-loop": `flowchart TB
+  "agent-loop": `flowchart LR
   log[("event log")]
   log --> infer & tools & compaction
   infer -->|"ToolCalled or TurnCompleted"| log

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 332.99299999999994 389.3" width="332.99299999999994" height="389.3" style="background:var(--bg)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 756.2909999999999 169.5" width="756.2909999999999" height="169.5" style="background:var(--bg)">
 <style>
   :root { --bg:#ffffff;--fg:#1f2328;--accent:#d97706;--muted:#656d76; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0d1117;--fg:#e6edf3;--accent:#f59e0b;--muted:#8b949e; } }
@@ -29,42 +29,42 @@
     <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
   </marker>
 </defs>
-<polyline class="edge" data-from="log" data-to="infer" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="114.40069999999996,169.2 114.40069999999996,157.2 16.039999999999964,157.2 16.039999999999964,88.9 44.51333333333329,88.9 44.51333333333329,52.900000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="log" data-to="tools" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="152.22509999999997,169.2 152.22509999999997,145.2 184.49799999999996,145.2 184.49799999999996,88.9 196.30059999999995,88.9 196.30059999999995,52.900000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="log" data-to="compaction" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="127.0088333333333,220.10000000000002 127.0088333333333,256.1 108.76899999999996,256.1 108.76899999999996,324.40000000000003 124.6623333333333,324.40000000000003 124.6623333333333,336.40000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="infer" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ToolCalled or TurnCompleted" points="67.38866666666664,52.900000000000006 67.38866666666664,88.9 101.03999999999996,88.9 101.03999999999996,145.2 133.31289999999996,145.2 133.31289999999996,169.2" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="tools" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ToolReturned" points="219.6699333333333,52.900000000000006 219.6699333333333,88.9 232.99799999999996,88.9 232.99799999999996,157.2 171.13729999999998,157.2 171.13729999999998,169.2" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="compaction" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="CompactionCompleted" points="160.87566666666663,336.40000000000003 160.87566666666663,324.40000000000003 176.76899999999995,324.40000000000003 176.76899999999995,256.1 158.52916666666664,256.1 158.52916666666664,220.10000000000002" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="log" data-to="infer" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="328.084,51.63 316.084,51.63 316.084,23.450000000000003 316.084,23.450000000000003 316.084,28.300000000000004 84.62599999999999,28.300000000000004" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="log" data-to="tools" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="328.084,71.99000000000001 304.084,71.99000000000001 304.084,88.35000000000001 304.084,88.35000000000001 304.084,93.2 157.094,93.2" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="log" data-to="compaction" data-style="solid" data-arrow-start="false" data-arrow-end="true" points="422.64500000000004,58.41666666666667 619.651,58.41666666666667 619.651,55.900000000000006 619.651,55.900000000000006 619.651,60.75000000000001 631.651,60.75000000000001" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="infer" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ToolCalled or TurnCompleted" points="84.62599999999999,40.60000000000001 120.62599999999999,40.60000000000001 120.62599999999999,45.45 304.084,45.45 304.084,61.81 328.084,61.81" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="tools" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ToolReturned" points="157.094,105.50000000000001 193.094,105.50000000000001 193.094,110.35000000000001 316.084,110.35000000000001 316.084,82.17000000000002 328.084,82.17000000000002" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="compaction" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="CompactionCompleted" points="631.651,73.05000000000001 619.651,73.05000000000001 619.651,77.9 458.64500000000004,77.9 458.64500000000004,75.38333333333334 422.64500000000004,75.38333333333334" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <g class="edge-label" data-from="infer" data-to="log" data-label="ToolCalled or TurnCompleted">
-  <rect x="23.039999999999964" y="95.9" width="155.458" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="100.76899999999996" y="111.05000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ToolCalled or TurnCompleted</text>
+  <rect x="128.62599999999998" y="29.450000000000003" width="155.458" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="206.35499999999996" y="44.6" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ToolCalled or TurnCompleted</text>
 </g>
 <g class="edge-label" data-from="tools" data-to="log" data-label="ToolReturned">
-  <rect x="191.49799999999996" y="95.9" width="82.99000000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="232.99299999999997" y="111.05000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ToolReturned</text>
+  <rect x="201.094" y="94.35000000000001" width="82.99000000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="242.589" y="109.50000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ToolReturned</text>
 </g>
 <g class="edge-label" data-from="compaction" data-to="log" data-label="CompactionCompleted">
-  <rect x="115.76899999999996" y="263.1" width="121.006" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="176.27199999999996" y="278.25" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">CompactionCompleted</text>
+  <rect x="466.64500000000004" y="61.90000000000001" width="121.006" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="527.148" y="77.05000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">CompactionCompleted</text>
 </g>
 <g class="node" data-id="log" data-label="event log" data-shape="cylinder">
-  <rect x="95.48849999999996" y="176.2" width="94.561" height="36.900000000000006" fill="var(--_node-fill)" stroke="none" />
-  <line x1="95.48849999999996" y1="176.2" x2="95.48849999999996" y2="213.1" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <line x1="190.04949999999997" y1="176.2" x2="190.04949999999997" y2="213.1" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <ellipse cx="142.76899999999995" cy="213.1" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <ellipse cx="142.76899999999995" cy="176.2" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="142.76899999999995" y="194.64999999999998" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">event log</text>
+  <rect x="328.084" y="48.45" width="94.561" height="36.900000000000006" fill="var(--_node-fill)" stroke="none" />
+  <line x1="328.084" y1="48.45" x2="328.084" y2="85.35000000000001" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <line x1="422.645" y1="48.45" x2="422.645" y2="85.35000000000001" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="375.3645" cy="85.35000000000001" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="375.3645" cy="48.45" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="375.3645" y="66.9" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">event log</text>
 </g>
 <g class="node" data-id="infer" data-label="infer" data-shape="rectangle">
-  <rect x="21.637999999999977" y="16" width="68.62599999999999" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="55.95099999999997" y="34.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">infer</text>
+  <rect x="16" y="16" width="68.62599999999999" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="50.312999999999995" y="34.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">infer</text>
 </g>
 <g class="node" data-id="tools" data-label="tools" data-shape="rectangle">
-  <rect x="172.9312666666666" y="16" width="70.108" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="207.9852666666666" y="34.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">tools</text>
+  <rect x="86.98599999999998" y="80.9" width="70.108" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="122.03999999999998" y="99.35000000000001" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">tools</text>
 </g>
 <g class="node" data-id="compaction" data-label="compaction" data-shape="rectangle">
-  <rect x="88.44899999999996" y="336.40000000000003" width="108.64" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="142.76899999999995" y="354.85" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">compaction</text>
+  <rect x="631.651" y="48.45" width="108.64" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="685.971" y="66.9" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">compaction</text>
 </g>
 </svg>
