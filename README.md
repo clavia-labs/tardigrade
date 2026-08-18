@@ -7,9 +7,10 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 ## Quickstart
 
 ```ts
-import { createAgent } from "@flamecast/agent/main"
+// An RLM agent: the model writes code over your packages and can spawn itself.
+import { createRlmAgent } from "@flamecast/agent/main"
 
-const agent = createAgent({
+const agent = createRlmAgent({
   packages: [invoices], // e.g. invoices.lookup({orderId})
   infer: async (trajectory) => nextAction(trajectory) // one inference, one action; platform/model binds a real provider
 })
@@ -71,7 +72,7 @@ An actor is a set of reactors over one log, plus the key derivation that decides
 packages/
   core/      contracts: Event, EventLog, KeyFragment, Transition, Reactor, Router
   code/      durable code execution
-  agent/     the agent as reactors, and createAgent
+  agent/     the agent as reactors, and createRlmAgent
   host/      the reference in-memory binding
 platform/
   model/     the Infer binding over TanStack AI

@@ -10,8 +10,9 @@ import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
 
-// createAgent is the front door: one hosted, spawn-capable agent over an
-// ambient in-process host. No actor exists outside a host (the Erlang-node
+// createRlmAgent is the front door: a Recursive Language Model agent, one hosted,
+// spawn-capable agent over an
+// ambient in-process host (tutorials/rlm-agent.md). No actor exists outside a host (the Erlang-node
 // shape); the user brings packages and a mind, the graph is whatever
 // their agent's code decides to spawn, and run answers when the ROOT
 // settles, however many lanes exist by then.
@@ -26,14 +27,14 @@ export interface CreateAgentOptions {
   readonly log?: ReadonlyArray<Event>
 }
 
-export interface HostedAgent {
+export interface RlmAgent {
   readonly run: (brief: string) => Promise<{ readonly output?: string; readonly error?: string }>
   readonly host: Host
 }
 
 const ROOT = "ag.root"
 
-export const createAgent = (options: CreateAgentOptions): HostedAgent => {
+export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.promise(() => options.infer(trajectory, key))
