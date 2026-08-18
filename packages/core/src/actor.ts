@@ -1,6 +1,7 @@
 import { Context, Effect } from "effect"
 import { EventLog } from "./event-log"
 import type { Event } from "./event"
+import { triggerOf } from "./trace"
 
 // An actor is the single writer of one log and the reactors over it.
 // All state is a projection of the log: a crash loses nothing, and two
@@ -98,6 +99,7 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
       const events = yield* log.read
       const fires = enabled(a, events)
       if (fires.length === 0) return
+      const trigger = triggerOf(events)
       let moved = false
       for (const t of fires) {
         const before = yield* log.head
@@ -123,7 +125,14 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
                 : "wedged"
           yield* Effect.annotateCurrentSpan("outcome", outcome)
           return outcome
-        }).pipe(Effect.withSpan("transition.fire", { attributes: { key: t.key } }))
+        }).pipe(
+          Effect.withSpan("transition.fire", {
+            attributes: { key: t.key },
+            // The link to the delivery that woke this work: the cross-lane seam of the trace
+            // (packages/core/src/trace.ts, triggerOf).
+            ...(trigger === undefined ? {} : { links: [{ _tag: "SpanLink", span: trigger, attributes: {} } as const] })
+          })
+        )
         if (fired === "committed" || fired === "advanced") {
           moved = true
         } else if (fired === "wedged") {

@@ -108,9 +108,12 @@ describe("the bun host", () => {
 describe("telemetry seam", () => {
   test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
     const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
+    const linked: Array<{ name: string; traceId: string }> = []
     const capture = Layer.setTracer(
       Tracer.make({
-        span: (name, parent, context, links, startTime, kind) => ({
+        span: (name, parent, context, links, startTime, kind) => {
+          for (const l of links) linked.push({ name, traceId: l.span.traceId })
+          return {
           _tag: "Span",
           spanId: "s",
           traceId: "t",
@@ -128,7 +131,8 @@ describe("telemetry seam", () => {
           end() {},
           event() {},
           addLinks() {}
-        }),
+          }
+        },
         context: (f) => f()
       })
     )
@@ -137,6 +141,11 @@ describe("telemetry seam", () => {
     await h.drive()
     expect(names.some((s) => s.name === "deliver" && s.type === "MessageReceived")).toBe(true)
     expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
+    // The cross-lane seam: the delivered event carries the deliver span's context, and the
+    // fire links back to it: one business event, one trace.
+    const row = (await h.read("echo"))[0] as { traceparent?: string }
+    expect(row.traceparent).toMatch(/^00-t-s-01$/)
+    expect(linked.some((l) => l.name === "transition.fire" && l.traceId === "t")).toBe(true)
     await h.close()
   })
 })

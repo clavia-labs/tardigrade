@@ -6,6 +6,7 @@ import { EventLog } from "@tardigrade/core/event-log"
 import { Router, type CallResult } from "@tardigrade/core/router"
 import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/actor"
 import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
+import { traceparentOf } from "@tardigrade/core/trace"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -126,6 +127,15 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
         )
       }
       const lane = laneOf(address)
+      // The platform stamps the sending span's context onto the event it persists (the W3C
+      // header form), so a later settle on the receiving lane links back to this delivery: one
+      // business event, one trace, across lanes (packages/core/src/trace.ts). An event already
+      // carrying a context keeps it: the first stamp is the causal one.
+      const current = yield* Effect.currentSpan.pipe(Effect.option)
+      const stamped =
+        current._tag === "Some" && (event as { traceparent?: unknown }).traceparent === undefined
+          ? ({ ...event, traceparent: traceparentOf(current.value) } as Event)
+          : event
       if (event.type === "MessageReceived") {
         const id = String((event as { id?: unknown }).id)
         const seen = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events
@@ -134,7 +144,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
         )
         if (Number(seen[0]?.n ?? 0) > 0) return
       }
-      yield* appendEffect(lane, [event])
+      yield* appendEffect(lane, [stamped])
       dirty.add(lane)
     }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
 
