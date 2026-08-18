@@ -1,7 +1,7 @@
 import { Clock, Context, Effect } from "effect"
 import { EventLog } from "@tardigrade/core/event-log"
 import { transition, type Reactor } from "@tardigrade/core/actor"
-import { modelCalled, textReturned, turnFailed } from "./events"
+import { modelCalled, modelReturned, textReturned, turnFailed } from "./events"
 import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
 import { trajectoryOf, turnView } from "@tardigrade/code/turns"
@@ -125,6 +125,13 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infe
           const action = yield* (yield* Infer).react(input.trajectory, input.attempt)
           const after = yield* Clock.currentTimeMillis
           return [
+            modelReturned({
+              callId: input.attempt,
+              ordinal: input.ordinal,
+              turn: input.turn,
+              at: after,
+              ...(action.usage === undefined ? {} : { usage: action.usage })
+            }),
             ...(action.kind === "call" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),

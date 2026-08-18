@@ -10,6 +10,7 @@ import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
 import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
+import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -188,6 +189,10 @@ export interface ModelConfig {
   // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
   // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
   readonly stream?: Partial<StreamBounds>
+  // What the model costs, when a catalog or a caller has said. A billed figure from the
+  // provider is preferred; this table fills only a cost the provider omitted
+  // (packages/agent/src/usage.ts, priced). Cached prompt tokens price at the full input rate.
+  readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
   readonly fetch?: FetchImpl // test seam
@@ -292,8 +297,10 @@ export const ladderOf = (declared?: number): ReadonlyArray<number> => {
 
 class TruncatedError extends Error {
   readonly truncated = true
-  constructor(ceiling: number) {
+  readonly usage: Usage | undefined
+  constructor(ceiling: number, usage: Usage | undefined) {
     super(`the model's answer was cut at the ${ceiling}-token output ceiling`)
+    this.usage = usage
   }
 }
 
@@ -356,6 +363,110 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
   }
 }
 
+const concatBytes = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
+  const total = chunks.reduce((n, c) => n + c.byteLength, 0)
+  const out = new Uint8Array(total)
+  let offset = 0
+  for (const c of chunks) {
+    out.set(c, offset)
+    offset += c.byteLength
+  }
+  return out
+}
+
+type BodyReader = {
+  read: () => Promise<{ done: boolean; value?: Uint8Array }>
+  cancel: () => Promise<unknown>
+}
+
+// captureRawUsage reads the last `usage` object off an SSE (or JSON) body. The OpenAI-compat
+// adapter normalizes tokens and drops extra keys; a gateway's billed dollar lives on those keys
+// (packages/agent/src/usage.ts, costNumber).
+const captureRawUsage = async (reader: BodyReader): Promise<unknown> => {
+  const chunks: Uint8Array[] = []
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value !== undefined) chunks.push(value)
+    }
+  } catch {
+    // the live branch already failed; bytes read so far may still hold a usage chunk
+  }
+  const text = new TextDecoder().decode(concatBytes(chunks))
+  let last: unknown
+  for (const line of text.split(/\r?\n/)) {
+    const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
+    if (payload === "" || payload === "[DONE]") continue
+    try {
+      const parsed = JSON.parse(payload) as { usage?: unknown }
+      if (parsed.usage !== undefined) last = parsed.usage
+    } catch {
+      // a keep-alive or a malformed line is not usage
+    }
+  }
+  if (last !== undefined) return last
+  try {
+    const parsed = JSON.parse(text) as { usage?: unknown }
+    return parsed.usage
+  } catch {
+    return undefined
+  }
+}
+
+const withCapture = (
+  base: FetchImpl | undefined,
+  key: string | undefined,
+  sink: { promise: Promise<unknown>; reader?: BodyReader }
+): FetchImpl => {
+  const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
+  return async (input, init) => {
+    const res = await inner(input, init)
+    if (res.body === null) return res
+    const [live, copy] = res.body.tee()
+    const reader = copy.getReader()
+    sink.reader = reader
+    sink.promise = captureRawUsage(reader).catch(() => undefined)
+    return new Response(live, { status: res.status, statusText: res.statusText, headers: res.headers })
+  }
+}
+
+const tapTokens = (
+  stream: AsyncIterable<StreamChunk>,
+  into: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } }
+): AsyncIterable<StreamChunk> => ({
+  async *[Symbol.asyncIterator]() {
+    for await (const chunk of stream) {
+      const tokens = (chunk as { usage?: { promptTokens: number; completionTokens: number; cost?: number } }).usage
+      if (tokens !== undefined) into.tokens = tokens
+      yield chunk
+    }
+  }
+})
+
+const withSpend = (action: Action, usage: Usage | undefined): Action =>
+  usage === undefined ? action : { ...action, usage }
+
+const stampOf = (config: ModelConfig) => ({
+  ...(config.provider === undefined ? {} : { provider: config.provider }),
+  model: config.model
+})
+
+const usageOn = (e: unknown): Usage | undefined =>
+  e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
+
+const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined => {
+  if (parts.length === 0) return undefined
+  const summed = sumUsage(parts)
+  if (!missed) return summed
+  return {
+    promptTokens: summed.promptTokens,
+    completionTokens: summed.completionTokens,
+    ...(summed.provider === undefined ? {} : { provider: summed.provider }),
+    ...(summed.model === undefined ? {} : { model: summed.model })
+  }
+}
+
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
@@ -371,7 +482,11 @@ export const realInfer = (config: ModelConfig) => {
      // Rung zero keeps the bare key, so crash-retries of the same request still
     // collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
-    const fetcher = withKey(config.fetch, keyForRung)
+    const sink: { promise: Promise<unknown>; reader?: BodyReader } = {
+      promise: Promise.resolve(undefined)
+    }
+    const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
+    const fetcher = withCapture(config.fetch, keyForRung, sink)
     const adapter =
       config.provider === "bedrock"
         ? bedrockAdapter(config, maxTokens)
@@ -383,7 +498,7 @@ export const realInfer = (config: ModelConfig) => {
             // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
             // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
             maxRetries: 0,
-            ...(fetcher === undefined ? {} : { fetch: fetcher })
+            fetch: fetcher
           })
     // The domain decides the request; the platform maps it to the wire and streams it.
     const req = modelRequest(trajectory, config.surface ?? codeSurface())
@@ -399,10 +514,22 @@ export const realInfer = (config: ModelConfig) => {
       modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
-    const result = await new StreamProcessor().process(bounded(stream, bounds))
-    stats.finish = result.finishReason ?? "stop"
-    if (result.finishReason === "length") throw new TruncatedError(maxTokens)
-    return actionOf(result, schema)
+    const spendOf = async (): Promise<Usage | undefined> =>
+      usageFrom([await sink.promise, held.tokens], config.pricing, stampOf(config))
+    try {
+      const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
+      const usage = await spendOf()
+      stats.finish = result.finishReason ?? "stop"
+      if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
+      return withSpend(actionOf(result, schema), usage)
+    } catch (e) {
+      await sink.reader?.cancel().catch(() => undefined)
+      if (isTruncated(e)) throw e
+      const usage = await spendOf()
+      if (usage === undefined) throw e
+      if (e !== null && typeof e === "object") throw Object.assign(e, { usage })
+      throw Object.assign(new Error(String(e)), { usage })
+    }
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
@@ -411,11 +538,21 @@ export const realInfer = (config: ModelConfig) => {
         const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
         const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
+        const parts: Usage[] = []
+        let missed = false
+        const remember = (usage: Usage | undefined, billed: boolean) => {
+          if (usage !== undefined) parts.push(usage)
+          else if (billed) missed = true
+        }
         for (let attempt = 0; ; attempt++) {
           try {
             stats.rung = rung
-            return await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
+            const action = await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
+            remember(action.usage, true)
+            return withSpend(action, spentOf(parts, missed))
           } catch (e) {
+            const usage = isTruncated(e) ? e.usage : usageOn(e)
+            remember(usage, isTruncated(e) || usage !== undefined)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
                 rung += 1
@@ -423,7 +560,13 @@ export const realInfer = (config: ModelConfig) => {
               }
               // The top rung still truncates: the turn fails loudly instead of shipping half an
               // answer, and the error names the remedy.
-              return { kind: "fail", error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once` }
+              return withSpend(
+                {
+                  kind: "fail",
+                  error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`
+                },
+                spentOf(parts, missed)
+              )
             }
             if (!isThrottleShaped(e)) throw e
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
@@ -438,6 +581,16 @@ export const realInfer = (config: ModelConfig) => {
         yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
         yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
         yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+        if (action.usage !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+          if (action.usage.costUsd !== undefined) {
+            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
+            if (action.usage.costSource !== undefined) {
+              yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
+            }
+          }
+        }
         return action
       }).pipe(
         Effect.withSpan("llm.react", {
