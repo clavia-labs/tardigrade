@@ -379,10 +379,20 @@ type BodyReader = {
   cancel: () => Promise<unknown>
 }
 
-// captureRawUsage reads the last `usage` object off an SSE (or JSON) body. The OpenAI-compat
-// adapter normalizes tokens and drops extra keys; a gateway's billed dollar lives on those keys
-// (packages/agent/src/usage.ts, costNumber).
-const captureRawUsage = async (reader: BodyReader): Promise<unknown> => {
+// Wire is what the raw body said about the attempt beyond the adapter's view: the last `usage`
+// object, and the serving provider and resolved model when the gateway names them (OpenRouter
+// stamps `provider` on each chunk; `model` is standard). Wire-reported provenance beats the
+// configured stamp: it is observed, never declared.
+interface Wire {
+  readonly usage?: unknown
+  readonly provider?: string
+  readonly model?: string
+}
+
+// captureWire reads the last `usage` object (and provenance) off an SSE (or JSON) body. The
+// OpenAI-compat adapter normalizes tokens and drops extra keys; a gateway's billed dollar
+// lives on those keys (packages/agent/src/usage.ts, costNumber).
+const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
   const chunks: Uint8Array[] = []
   try {
     for (;;) {
@@ -394,21 +404,25 @@ const captureRawUsage = async (reader: BodyReader): Promise<unknown> => {
     // the live branch already failed; bytes read so far may still hold a usage chunk
   }
   const text = new TextDecoder().decode(concatBytes(chunks))
-  let last: unknown
+  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => ({
+    ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
+    ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
+    ...(typeof parsed.model === "string" ? { model: parsed.model } : {})
+  })
+  let last: Wire = {}
   for (const line of text.split(/\r?\n/)) {
     const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
     if (payload === "" || payload === "[DONE]") continue
     try {
-      const parsed = JSON.parse(payload) as { usage?: unknown }
-      if (parsed.usage !== undefined) last = parsed.usage
+      last = { ...last, ...wireOf(JSON.parse(payload) as never) }
     } catch {
       // a keep-alive or a malformed line is not usage
     }
   }
-  if (last !== undefined) return last
+  if (Object.keys(last).length > 0) return last
   try {
-    const parsed = JSON.parse(text) as { usage?: unknown }
-    return parsed.usage
+    const wire = wireOf(JSON.parse(text) as never)
+    return Object.keys(wire).length > 0 ? wire : undefined
   } catch {
     return undefined
   }
@@ -417,7 +431,7 @@ const captureRawUsage = async (reader: BodyReader): Promise<unknown> => {
 const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
-  sink: { promise: Promise<unknown>; reader?: BodyReader }
+  sink: { promise: Promise<Wire | undefined>; reader?: BodyReader }
 ): FetchImpl => {
   const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
   return async (input, init) => {
@@ -426,7 +440,7 @@ const withCapture = (
     const [live, copy] = res.body.tee()
     const reader = copy.getReader()
     sink.reader = reader
-    sink.promise = captureRawUsage(reader).catch(() => undefined)
+    sink.promise = captureWire(reader).catch(() => undefined)
     return new Response(live, { status: res.status, statusText: res.statusText, headers: res.headers })
   }
 }
@@ -482,7 +496,7 @@ export const infer = (config: ModelConfig) => {
      // Rung zero keeps the bare key, so crash-retries of the same request still
     // collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
-    const sink: { promise: Promise<unknown>; reader?: BodyReader } = {
+    const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
       promise: Promise.resolve(undefined)
     }
     const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
@@ -514,8 +528,16 @@ export const infer = (config: ModelConfig) => {
       modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
-    const spendOf = async (): Promise<Usage | undefined> =>
-      usageFrom([await sink.promise, held.tokens], config.pricing, stampOf(config))
+    const spendOf = async (): Promise<Usage | undefined> => {
+      const wire = await sink.promise
+      // Wire-reported provenance wins: a router that names the upstream it served from records
+      // the true split; the configured stamp covers a wire that stays silent.
+      return usageFrom([wire?.usage, held.tokens], config.pricing, {
+        ...stampOf(config),
+        ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
+        ...(wire?.model === undefined ? {} : { model: wire.model })
+      })
+    }
     try {
       const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
       const usage = await spendOf()
@@ -582,6 +604,10 @@ export const infer = (config: ModelConfig) => {
         yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
         yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
         if (action.usage !== undefined) {
+          // The usage stamp may carry wire-reported provenance; the span follows the same rule.
+          if (action.usage.provider !== undefined) {
+            yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
+          }
           yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
           yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
           if (action.usage.costUsd !== undefined) {
@@ -598,7 +624,7 @@ export const infer = (config: ModelConfig) => {
           attributes: {
             "gen_ai.operation.name": "chat",
             "gen_ai.request.model": config.model,
-            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : "openai"
+            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
           }
         })
       )
