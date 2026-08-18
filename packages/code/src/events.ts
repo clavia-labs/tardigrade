@@ -1,6 +1,6 @@
 import { Schema } from "effect"
-import type { KeyFragment } from "@flamecast/core/event-log"
-import type { Event } from "@flamecast/core/event"
+import type { KeyFragment } from "@tardigrade/core/event-log"
+import type { Event } from "@tardigrade/core/event"
 
 // The code lane's domain events. Consumers connect through these and never call in: the
 // agent's execute tool dispatches and awaits, the task's policy dispatches and awaits, and

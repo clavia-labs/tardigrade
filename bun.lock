@@ -2,7 +2,7 @@
   "lockfileVersion": 1,
   "workspaces": {
     "": {
-      "name": "flamecast-core",
+      "name": "tardigrade",
       "dependencies": {
         "@types/node": "^24",
         "typescript": "6.0.3",
@@ -15,21 +15,21 @@
       },
     },
     "packages/agent": {
-      "name": "@flamecast/agent",
+      "name": "@tardigrade/agent",
       "version": "0.0.0",
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
-        "@flamecast/code": "workspace:*",
-        "@flamecast/core": "workspace:*",
-        "@flamecast/host": "workspace:*",
+        "@tardigrade/code": "workspace:*",
+        "@tardigrade/core": "workspace:*",
+        "@tardigrade/host": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
     },
     "packages/code": {
-      "name": "@flamecast/code",
+      "name": "@tardigrade/code",
       "version": "0.0.0",
       "dependencies": {
-        "@flamecast/core": "workspace:*",
+        "@tardigrade/core": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
       "devDependencies": {
@@ -37,17 +37,17 @@
       },
     },
     "packages/core": {
-      "name": "@flamecast/core",
+      "name": "@tardigrade/core",
       "version": "0.0.0",
       "dependencies": {
         "effect": "4.0.0-rc.110",
       },
     },
     "packages/host": {
-      "name": "@flamecast/host",
+      "name": "@tardigrade/host",
       "version": "0.0.0",
       "dependencies": {
-        "@flamecast/core": "workspace:*",
+        "@tardigrade/core": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
       "devDependencies": {
@@ -55,26 +55,26 @@
       },
     },
     "platform/bun": {
-      "name": "@flamecast/bun",
+      "name": "@tardigrade/bun",
       "version": "0.0.0",
       "dependencies": {
         "@effect/sql-sqlite-bun": "4.0.0-rc.110",
-        "@flamecast/core": "workspace:*",
-        "@flamecast/host": "workspace:*",
+        "@tardigrade/core": "workspace:*",
+        "@tardigrade/host": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
     },
     "platform/model": {
-      "name": "@flamecast/model",
+      "name": "@tardigrade/model",
       "version": "0.0.0",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-        "@flamecast/agent": "workspace:*",
-        "@flamecast/core": "workspace:*",
         "@smithy/fetch-http-handler": "^5.6.3",
         "@tanstack/ai": "0.44.0",
         "@tanstack/ai-bedrock": "0.2.1",
         "@tanstack/ai-openai": "0.19.0",
+        "@tardigrade/agent": "workspace:*",
+        "@tardigrade/core": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
     },
@@ -137,18 +137,6 @@
     "@emnapi/runtime": ["@emnapi/runtime@1.11.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-kyOl3X0DuTiT1h2ft8r2fYO8JYtU9a9Xis/zBSiGArNaagCOWx90N1k2wxp18czFDH+OgcWGb5ZP/XMt3dcyPA=="],
 
     "@emnapi/wasi-threads": ["@emnapi/wasi-threads@1.2.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-c95qOXkHdydNKhscBTebqEC1CVAZpyqOfVfBzQ1qgzyl3gfeldUjIggDbIZgDKsHLgnsM+igH7TJ/eAasaVuMA=="],
-
-    "@flamecast/agent": ["@flamecast/agent@workspace:packages/agent"],
-
-    "@flamecast/bun": ["@flamecast/bun@workspace:platform/bun"],
-
-    "@flamecast/code": ["@flamecast/code@workspace:packages/code"],
-
-    "@flamecast/core": ["@flamecast/core@workspace:packages/core"],
-
-    "@flamecast/host": ["@flamecast/host@workspace:packages/host"],
-
-    "@flamecast/model": ["@flamecast/model@workspace:platform/model"],
 
     "@msgpackr-extract/msgpackr-extract-darwin-arm64": ["@msgpackr-extract/msgpackr-extract-darwin-arm64@3.0.4", "", { "os": "darwin", "cpu": "arm64" }, "sha512-LCkGo6JDfaBhgST7UpPWgNgLINpcpabaHfyz5OBx75nUYxBsaEPxjnyNjWpeb/xBup/682QnBfRBy2/LvPutZQ=="],
 
@@ -313,6 +301,18 @@
     "@tanstack/devtools-event-client": ["@tanstack/devtools-event-client@0.4.4", "", { "bin": { "intent": "./bin/intent.js" } }, "sha512-6T5Yop/793YI+H+5J8Hsyj4kCih9sl4t3ElLgKioW5hk3ocn+ZdSJ94tT7vL7uabxSugWYBZlOTMPzEw2puvQw=="],
 
     "@tanstack/openai-base": ["@tanstack/openai-base@0.9.12", "", { "dependencies": { "@tanstack/ai-utils": "^0.4.0", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.44.0" } }, "sha512-UZwt+3O2WYQ4rWHc95EfIPFFIlWsZQncNZlyw05tpuogwWoR+9xtPot+uPbx6tGr/XX+/vPwQn0jVljBD1zppQ=="],
+
+    "@tardigrade/agent": ["@tardigrade/agent@workspace:packages/agent"],
+
+    "@tardigrade/bun": ["@tardigrade/bun@workspace:platform/bun"],
+
+    "@tardigrade/code": ["@tardigrade/code@workspace:packages/code"],
+
+    "@tardigrade/core": ["@tardigrade/core@workspace:packages/core"],
+
+    "@tardigrade/host": ["@tardigrade/host@workspace:packages/host"],
+
+    "@tardigrade/model": ["@tardigrade/model@workspace:platform/model"],
 
     "@tybys/wasm-util": ["@tybys/wasm-util@0.10.3", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-F3fo1MYrRJYL3zER0OUOmkutjr1Vp23m7OsSgp7nq4SP6OqX6C/56XFIPAl5bt3zaBRjmW7SGz3u/6LwFpYcOg=="],
 

@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
-import type { Event } from "@flamecast/core/event"
-import { Router } from "@flamecast/core/router"
-import { transition, type Reactor } from "@flamecast/core/actor"
+import type { Event } from "@tardigrade/core/event"
+import { Router } from "@tardigrade/core/router"
+import { transition, type Reactor } from "@tardigrade/core/actor"
 import { createHost, type HostOptions } from "./host"
 
 // The driver's confluence property: the order the driver services dirty

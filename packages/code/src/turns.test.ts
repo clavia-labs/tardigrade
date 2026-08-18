@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@flamecast/core/event"
+import type { Event } from "@tardigrade/core/event"
 import { turnHead } from "./turns"
 
 // `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every

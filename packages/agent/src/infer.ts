@@ -1,10 +1,10 @@
 import { Clock, Context, Effect } from "effect"
-import { EventLog } from "@flamecast/core/event-log"
-import { transition, type Reactor } from "@flamecast/core/actor"
+import { EventLog } from "@tardigrade/core/event-log"
+import { transition, type Reactor } from "@tardigrade/core/actor"
 import { modelCalled, textReturned, turnFailed } from "./events"
-import type { Event } from "@flamecast/core/event"
+import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
-import { trajectoryOf, turnView } from "@flamecast/code/turns"
+import { trajectoryOf, turnView } from "@tardigrade/code/turns"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
