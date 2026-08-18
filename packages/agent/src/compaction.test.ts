@@ -4,7 +4,11 @@ import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { send, actor } from "@tardigrade/core/actor"
 import { Infer } from "./infer"
-import { agentActorKeys } from "./turn"
+import { composeKeys } from "@tardigrade/core/event-log"
+import { messageKeys } from "@tardigrade/core/message"
+import { agentKeys } from "./events"
+
+const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
   DEFAULT_CONTEXT_POLICY,
   checkpointOf,

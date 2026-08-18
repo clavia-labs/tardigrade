@@ -1,28 +1,28 @@
-import { actor, type Actor, type Reactor, type Self, type Transition } from "@tardigrade/core/actor"
-import { composeKeys } from "@tardigrade/core/event-log"
+import { Clock, Effect } from "effect"
+import { actor, transition, type Actor, type Reactor, type Self } from "@tardigrade/core/actor"
+import { composeKeys, type KeyFragment } from "@tardigrade/core/event-log"
 import { messageKeys } from "@tardigrade/core/message"
 import type { Event } from "@tardigrade/core/event"
-import type { KeyFragment } from "@tardigrade/core/event-log"
-import { codeKeys } from "@tardigrade/code/events"
-import { codeReactor } from "@tardigrade/code/execute"
-import type { ToolSpec } from "./request"
-import { codeSurface, nativeSurface, type Answer, type NativeTool, type PendingCall } from "./surface"
-import { agentKeys } from "./events"
+import { codeDispatched, codeKeys } from "@tardigrade/code/events"
+import { codeReactorFor, type CodePolicy } from "@tardigrade/code/execute"
 import type { Router } from "@tardigrade/core/router"
+import type { ToolSpec } from "./request"
+import { agentKeys, toolReturned } from "./events"
 import { inferReactorFor, type Infer, type InferPolicy } from "./infer"
-import { toolsReactorFrom } from "./tools"
-import { budgetReactor } from "./budget"
+import { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./tools"
+import { budgetReactorFor, type BudgetPolicy } from "./budget"
 import { replyReactor } from "./reply"
-import { compactionReactor } from "./compaction"
+import { compactionReactorFor, type ContextPolicy } from "./compaction"
 import type { AgentR } from "./turn"
 
-// A Capability is one component of an agent: what the model is shown and how that work settles,
-// as one value. `tools` and `system` are the capability's render into the model's context,
-// re-derived from the log each attempt, and `reactors` and `serve` are its handlers. Mounting a
-// capability is adding it to the actorOf list; there is no second place to update.
+// A Capability is one component of an agent: it provides the model its context and services
+// the calls that come back, as one value. `tools`, `system`, and `context` are the capability's
+// render into the model's request, re-derived from the log each attempt; `reactors` and `serve`
+// are its handlers. Mounting a capability is adding it to the actorOf list; there is no second
+// place to update.
 //
 // Every field but `name` is optional, because capabilities come in shapes: a policy capability
-// (reply, budget, compaction) has reactors with nothing to show; a tool-table capability has
+// (reply, budget, compaction) has reactors with nothing to show; a tool-list capability has
 // tools and a serve with no lane of its own; code mode has all four.
 export interface Capability<R = never> {
   // The capability's name, for the collision error and span attributes.
@@ -39,29 +39,35 @@ export interface Capability<R = never> {
   readonly tools?: (log: ReadonlyArray<Event>) => ReadonlyArray<ToolSpec>
   // The system fragment explaining the tools. Fragments join in actorOf order.
   readonly system?: string
+  // What the render truncates and where. The capability that applies a context policy to its
+  // reactor states the same one here, so the binding renders against the policy the guard
+  // holds and the two cannot drift (compactionFor).
+  readonly context?: Partial<ContextPolicy>
   // serve returns the transitions one call owes: an empty array while the world still works,
   // undefined when the call names no tool of this capability (actorOf asks the next capability,
   // and the reactor answers unknown-tool when every capability declines). The reactor owns the
   // key and the turn stamp through `answer`.
-  readonly serve?: (
-    call: PendingCall,
-    log: ReadonlyArray<Event>,
-    answer: Answer
-  ) => ReadonlyArray<Transition<never, R>> | undefined
+  readonly serve?: Serve<R>
 }
 
-// renderOf is the composed system and tools for one derivation: what the model would be shown
-// over this log. The infer reactor is its one production reader; tests read it directly.
+// renderOf is the composed request half for one derivation: what the model would be shown over
+// this log, and the context policy the render obeys. The infer reactor is its one production
+// reader; tests read it directly. Context fields merge in mount order, last statement wins.
 export const renderOf = <R>(
   capabilities: ReadonlyArray<Capability<R>>,
   log: ReadonlyArray<Event>
-): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec> } => ({
+): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } => ({
   system: capabilities
     .map((c) => c.system)
     .filter((s): s is string => s !== undefined && s !== "")
     .join("\n"),
-  tools: capabilities.flatMap((c) => c.tools?.(log) ?? [])
+  tools: capabilities.flatMap((c) => c.tools?.(log) ?? []),
+  context: Object.assign({}, ...capabilities.map((c) => c.context ?? {})) as Partial<ContextPolicy>
 })
+
+// RequirementsOf extracts one capability's R, so a mixed list infers the union of what its
+// members need rather than failing on the first element's R.
+type RequirementsOf<C> = C extends Capability<infer R> ? R : never
 
 // actorOf mounts capabilities into an actor. The infer and call-routing reactors are the
 // runtime of the component model: actorOf injects them, and they are never listed as
@@ -70,10 +76,6 @@ export const renderOf = <R>(
 // and a prefix collision is composeKeys' construction-time error. Two capabilities deriving the
 // same tool name collide at construction too, checked over the empty log (a log-gated duplicate
 // still routes to the first capability that recognizes it).
-// RequirementsOf extracts one capability's R, so a mixed list infers the union of what its
-// members need rather than failing on the first element's R.
-type RequirementsOf<C> = C extends Capability<infer R> ? R : never
-
 export const actorOf = <const Caps extends ReadonlyArray<Capability<never> | Capability<AgentR>>>(
   caps: Caps,
   policy: Partial<InferPolicy> = {}
@@ -104,29 +106,137 @@ export const actorOf = <const Caps extends ReadonlyArray<Capability<never> | Cap
   )
 }
 
-// codeMode is the code-execution capability: one `execute` tool, served by dispatching to the
-// code reactor and answered from its settle. The library default.
-const cs = codeSurface()
-export const codeMode: Capability = {
-  name: "code",
-  keys: codeKeys,
-  reactors: [codeReactor],
-  tools: () => cs.tools,
-  system: cs.system,
-  serve: cs.serve
+// EXECUTE_TOOL is code mode's one work tool: the model acts by writing JavaScript against the
+// packages in scope.
+const EXECUTE_TOOL: ToolSpec = {
+  name: "execute",
+  description:
+    "Run JavaScript against the connected packages. Packages are objects in scope; await their methods and end with `return <value>`. The returned value comes back as this call's result, and console output comes back beside it as `logs` (capped; return the value you need, print to inspect).",
+  inputSchema: {
+    type: "object",
+    properties: { code: { type: "string", description: "The JavaScript body to run." } },
+    required: ["code"],
+    additionalProperties: false
+  }
 }
 
-// toolList is a fixed table of named tools, the shape every provider's tool calling takes and
+const CODE_SYSTEM = `You act on the world by calling the execute tool with JavaScript; the packages in scope are:\nnone`
+
+// settleFor reads one execution's outcome, once the code reactor has recorded it.
+const settleFor = (
+  log: ReadonlyArray<Event>,
+  callId: string
+): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
+  const settle = log.find((e) => e.type === "CodeSettled" && String((e as { execId?: unknown }).execId) === callId) as
+    | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string>; tmp?: unknown; size?: unknown; preview?: unknown; note?: unknown }
+    | undefined
+  if (settle === undefined) return undefined
+  // Captured console output rides along: the model reads what its code printed, beside the
+  // result (the print-to-inspect habit; packages/code/src/sandbox.ts, SandboxResult.logs).
+  const logs = settle.logs !== undefined && settle.logs.length > 0 ? { logs: settle.logs } : {}
+  if (settle.error !== undefined) return { error: String(settle.error), ...logs }
+  // A settle over the spill bound carries a pointer instead of the value: the pointer IS the
+  // result the model reads, its preview and note naming the ref and the call that loads it
+  // (turn.test.ts, "a spilled settle").
+  if (settle.tmp !== undefined) {
+    return { result: { tmp: settle.tmp, size: settle.size, preview: settle.preview, note: settle.note }, ...logs }
+  }
+  return { result: settle.result, ...logs }
+}
+
+const codeServe: Serve = (call, log, answer) => {
+  if (call.name !== "execute") return undefined
+  const stamp = call.turn === undefined ? {} : { turn: call.turn }
+  // Dispatched already: the answer exists once the code reactor settles the execution.
+  if (log.some((e) => e.type === "CodeDispatched" && String((e as { execId?: unknown }).execId) === call.callId)) {
+    const outcome = settleFor(log, call.callId)
+    return outcome === undefined ? [] : [answer(outcome)]
+  }
+  const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
+  return [
+    transition({
+      key: `cd:${call.callId}`,
+      input: { execId: call.callId, code },
+      act: (input) =>
+        Effect.gen(function* () {
+          const at = yield* Clock.currentTimeMillis
+          return [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
+        })
+    })
+  ]
+}
+
+// codeModeFor is the code-execution capability: one `execute` tool, served by dispatching to
+// the code reactor and answered from its settle. The policy is the code lane's own
+// (packages/code/src/execute.ts, CodePolicy).
+export const codeModeFor = (policy: Partial<CodePolicy>): Capability => ({
+  name: "code",
+  keys: codeKeys,
+  reactors: [codeReactorFor(policy)],
+  tools: () => [EXECUTE_TOOL],
+  system: CODE_SYSTEM,
+  serve: codeServe
+})
+
+// codeMode is that capability on defaults: the library default work surface.
+export const codeMode: Capability = codeModeFor({})
+
+// A NativeTool is one named tool the model calls directly: its wire shape, and the effect that
+// runs it. The effect's failures are the tool's own answer, so a tool that throws returns an
+// error the model reads rather than killing the turn.
+export interface NativeTool<R = never> {
+  readonly spec: ToolSpec
+  readonly run: (input: unknown, context: { readonly callId: string; readonly turn?: string }) => Effect.Effect<unknown, never, R>
+}
+
+// toolList is a fixed list of named tools, the shape every provider's tool calling takes and
 // the shape a replicated harness is measured on: each call runs its tool and records the
 // return, no lane of its own.
 export const toolList = <R = never>(tools: ReadonlyArray<NativeTool<R>>, system = ""): Capability<R> => {
-  const ns = nativeSurface(tools, system)
-  return { name: "tools", tools: () => ns.tools, system: ns.system, serve: ns.serve }
+  const table = new Map(tools.map((t) => [t.spec.name, t]))
+  return {
+    name: "tools",
+    system:
+      system === ""
+        ? `You act on the world by calling the tools available to you: ${tools.map((t) => t.spec.name).join(", ")}.`
+        : system,
+    tools: () => tools.map((t) => t.spec),
+    serve: (call, _log, _answer) => {
+      const tool = table.get(call.name)
+      if (tool === undefined) return undefined
+      const stamp = call.turn === undefined ? {} : { turn: call.turn }
+      return [
+        transition({
+          key: `tr:${call.callId}`,
+          input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
+          act: (input) =>
+            Effect.gen(function* () {
+              const result = yield* tool.run(input.arguments, { callId: input.callId, ...(input.turn === undefined ? {} : { turn: input.turn }) })
+              const at = yield* Clock.currentTimeMillis
+              return [toolReturned({ callId: input.callId, result, ...stamp, at })]
+            })
+        })
+      ]
+    }
+  }
 }
 
 // The policy capabilities: behavior with nothing to show. Their keys live in the runtime's own
 // agent alphabet, so they carry none. Their R names what each reactor needs, all within the
 // AgentR the runtime already requires.
+export const budgetFor = (policy: Partial<BudgetPolicy>): Capability => ({
+  name: "budget",
+  reactors: [budgetReactorFor(policy)]
+})
+export const budget: Capability = budgetFor({})
+
+// compactionFor states its policy twice on purpose: to its reactor (the guard) and to the
+// render (`context`), so the binding truncates against the same numbers the guard fires on.
+export const compactionFor = (policy: Partial<ContextPolicy>): Capability<Infer> => ({
+  name: "compaction",
+  reactors: [compactionReactorFor(policy)],
+  context: policy
+})
+export const compaction: Capability<Infer> = compactionFor({})
+
 export const reply: Capability<Router | Self> = { name: "reply", reactors: [replyReactor] }
-export const budget: Capability = { name: "budget", reactors: [budgetReactor] }
-export const compaction: Capability<Infer> = { name: "compaction", reactors: [compactionReactor] }

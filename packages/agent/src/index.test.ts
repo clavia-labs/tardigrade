@@ -3,7 +3,7 @@ import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
 import { Effect } from "effect"
 import { createRlmAgent } from "./index"
-import { nativeSurface } from "./surface"
+import { toolList } from "./capability"
 
 const ROOT_LANE = "ag.root"
 
@@ -99,7 +99,7 @@ describe("createRlmAgent", () => {
     // the turn loop, the budget wall, and the answer contract while presenting that harness's
     // tools (surface.ts).
     const reads: string[] = []
-    const surface = nativeSurface([
+    const capabilities = [toolList([
       {
         spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
         run: (input) => {
@@ -108,9 +108,9 @@ describe("createRlmAgent", () => {
           return Effect.succeed(`contents of ${path}`)
         }
       }
-    ])
+    ])]
     const mind = createRlmAgent({
-      surface,
+      capabilities,
       infer: async ({ trajectory }) => {
         const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
         if (returned !== undefined) return { kind: "complete", output: String(returned.result) }
@@ -127,11 +127,11 @@ describe("createRlmAgent", () => {
   })
 
   test("a call outside the surface comes back as an unknown tool, never a dead turn", async () => {
-    const surface = nativeSurface([
+    const capabilities = [toolList([
       { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
-    ])
+    ])]
     const mind = createRlmAgent({
-      surface,
+      capabilities,
       infer: async ({ trajectory }) => {
         const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: { error?: string } } | undefined
         if (returned !== undefined) return { kind: "complete", output: String(returned.result?.error) }

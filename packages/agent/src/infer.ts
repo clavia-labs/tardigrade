@@ -5,7 +5,7 @@ import { modelCalled, textReturned, turnFailed } from "./events"
 import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
 import { trajectoryOf, turnView } from "@tardigrade/code/turns"
-import { codeSurface } from "./surface"
+import type { ContextPolicy } from "./compaction"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -29,6 +29,9 @@ export interface InferRequest {
   readonly trajectory: ReadonlyArray<Event>
   readonly system: string
   readonly tools: ReadonlyArray<import("./request").ToolSpec>
+  // What the render truncates and where, stated by the assembly so the binding renders against
+  // the same numbers the compaction guard fires on (capability.ts, compactionFor).
+  readonly context?: Partial<ContextPolicy>
 }
 
 // Infer is the model seam: one inference over the request, one action out. The platform binds
@@ -82,10 +85,14 @@ const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
 
 // Render derives what the model is shown over this log: the assembly owns it (capability.ts,
-// renderOf), and a surface assembly passes its constant half (turn.ts).
-export type Render = (log: ReadonlyArray<Event>) => { readonly system: string; readonly tools: ReadonlyArray<import("./request").ToolSpec> }
+// renderOf).
+export type Render = (log: ReadonlyArray<Event>) => {
+  readonly system: string
+  readonly tools: ReadonlyArray<import("./request").ToolSpec>
+  readonly context?: Partial<ContextPolicy>
+}
 
-export const inferReactorFor = (policy: Partial<InferPolicy> = {}, render: Render = codeRender): Reactor<Infer | EventLog> => (log) => {
+export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): Reactor<Infer | EventLog> => (log) => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const repairAtMost = policy.repairAtMost ?? DEFAULT_INFER_POLICY.repairAtMost
   const slice = turnView(log)
@@ -152,9 +159,3 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}, render: Rende
     })
   ]
 }
-
-// codeRender is the default render: the code surface's constant half.
-const cs = codeSurface()
-export const codeRender: Render = () => ({ system: cs.system, tools: cs.tools })
-
-export const inferReactor: Reactor<Infer | EventLog> = inferReactorFor()

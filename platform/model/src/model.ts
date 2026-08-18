@@ -9,7 +9,6 @@ import type { Action } from "@tardigrade/agent/events"
 import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
-import type { ContextPolicy } from "@tardigrade/agent/compaction"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
@@ -176,10 +175,6 @@ export interface ModelConfig {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
-  // What this binding's render truncates, and where: the agent's compaction reactor must hold
-  // the same policy, or its guard fires against a size the request never reaches
-  // (@tardigrade/agent, compaction.ts, ContextPolicy).
-  readonly context?: Partial<ContextPolicy>
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
@@ -520,7 +515,7 @@ export const infer = (config: ModelConfig) => {
           })
     // The actor decides the request, render included; the platform maps it to the wire and
     // streams it, holding no opinion about tools (@tardigrade/agent, capability.ts).
-    const req = modelRequest(request.trajectory, request, config.context ?? {})
+    const req = modelRequest(request.trajectory, request, request.context ?? {})
     const schema = outputSchemaOf(request.trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({
       model: config.model,

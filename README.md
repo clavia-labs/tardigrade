@@ -110,7 +110,7 @@ An actor is a set of reactors over one log, plus the key derivation that decides
 packages/
   core/      contracts: Event, EventLog, KeyFragment, Transition, Reactor, Router
   code/      durable code execution
-  agent/     reactors, the mind (`agentFor`), and the RLM default (`createRlmAgent`)
+  agent/     capabilities, the runtime (`actorOf`), and the RLM default (`createRlmAgent`)
   host/      the reference in-memory binding
 platform/
   model/     the Infer binding over TanStack AI
