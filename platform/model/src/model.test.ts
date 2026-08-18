@@ -329,18 +329,28 @@ describe("truncation", () => {
       { choices: [{ delta: {}, finish_reason: "stop", index: 0 }] }
     ])
 
-  test("a cut answer retries up the ladder and the whole one completes", async () => {
+  test("a cut answer retries up the ladder under a fresh idempotency key, and completes", async () => {
     let calls = 0
-    const fetchImpl = (async () => (calls++ === 0 ? cut("half an ans") : whole("the whole answer"))) as unknown as typeof fetch
+    const keys: Array<string | null> = []
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      keys.push(request.headers.get("Idempotency-Key"))
+      return calls++ === 0 ? cut("half an ans") : whole("the whole answer")
+    }) as unknown as typeof fetch
     const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }], "t1/infer/0")).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<{ kind: string; output?: string }>
     )
     expect(calls).toBe(2)
     expect(action.kind).toBe("complete")
     expect(action.output).toBe("the whole answer")
+    // The escalated retry is a different request, so it wears a different key: a deduping
+    // provider must not answer it with the cached truncated response.
+    expect(keys[0]).not.toBeNull()
+    expect(keys[1]).not.toBeNull()
+    expect(keys[1]).not.toBe(keys[0])
   })
 
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
