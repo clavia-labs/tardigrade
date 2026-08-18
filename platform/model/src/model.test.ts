@@ -482,6 +482,34 @@ describe("truncation", () => {
     expect(action.error).toContain("output ceiling")
   })
 
+  test("wire-reported provenance beats the configured stamp", async () => {
+    const routed = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(
+          infer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "meta-llama/llama-3.1-70b",
+            provider: "openrouter",
+            surface: codeSurface(),
+            fetch: (async () =>
+              sse([
+                { id: "r", provider: "DeepInfra", model: "meta-llama/llama-3.1-70b-instruct", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
+                { id: "r", provider: "DeepInfra", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
+                usageChunk({ prompt_tokens: 10, completion_tokens: 4, cost: 0.002 })
+              ])) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(routed.usage).toMatchObject({
+      costUsd: 0.002,
+      costSource: "provider",
+      provider: "DeepInfra",
+      model: "meta-llama/llama-3.1-70b-instruct"
+    })
+  })
+
   test("a mid-stream drop does not leak an unhandled rejection from the usage tee", async () => {
     const leaked: unknown[] = []
     const onLeak = (reason: unknown) => {
