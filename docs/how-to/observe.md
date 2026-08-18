@@ -26,6 +26,33 @@ const host = await createBunHost({
 
 Absent `telemetry`, every span is inert and costs nothing. Point a backend at the stream and the span inventory enumerates itself (`transition.fire`, `deliver`, `llm.react`, `package.call`, `code.run`, with GenAI semantic-convention keys on the model span).
 
+## Traces in ClickHouse
+
+Jaeger reads one trace; questions across many take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
+
+```yaml
+# collector.yaml
+receivers:
+  otlp: { protocols: { http: { endpoint: 0.0.0.0:4318 } } }
+exporters:
+  clickhouse:
+    endpoint: tcp://localhost:9000
+    database: otel
+    create_schema: true
+service:
+  pipelines:
+    traces: { receivers: [otlp], exporters: [clickhouse] }
+```
+
+Every attribute is then one query away (`Duration` is nanoseconds; `SpanAttributes` is a Map):
+
+```sql
+SELECT SpanAttributes['key'] AS key, count() AS fires
+FROM otel.otel_traces
+WHERE SpanName = 'transition.fire' AND SpanAttributes['outcome'] = 'wedged'
+GROUP BY key
+```
+
 ## The one-trace contract
 
 One business event stays one trace across every lane it touches. The rule that holds it: every platform binding stamps the sending span's context onto each event it persists, as one `traceparent` string in W3C header form. An event that already carries one keeps it; the first stamp is the causal one. A binding that skips the stamp fragments every cross-lane trace, and nothing says why: the traces arrive orphaned.
