@@ -11,9 +11,9 @@
     "@flamecast/agent": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@tanstack/ai": "0.39.1",
-    "@tanstack/ai-bedrock": "0.1.1",
-    "@tanstack/ai-openai": "0.15.10",
+    "@tanstack/ai": "0.44.0",
+    "@tanstack/ai-bedrock": "0.2.1",
+    "@tanstack/ai-openai": "0.19.0",
     "effect": "^3.22.1"
   },
   "scripts": {
