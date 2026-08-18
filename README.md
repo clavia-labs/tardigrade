@@ -1,10 +1,10 @@
-# flamework
+# Tardigrade
 
-flamework is a library for durable agents: the event log is the only state, reactors derive work from it, and a reconciler fires what the log does not yet record.
+Tardigrade is a library for durable agents: the event log is the only state, reactors derive work from it, and a reconciler fires what the log does not yet record.
 
 ## Events
 
-Events are things that you care about. An event is a fact, recorded once and never edited. Everything else is derived from the set of them.
+An event is a fact, recorded once and never edited. Everything else is derived from the set of them.
 
 ```ts
 // Event is the open record every log stores. Concrete events narrow the shape.
@@ -51,13 +51,10 @@ type Reactor = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition>
 
 An actor is a set of reactors over one log, plus the key derivation that decides commitment.
 
-```mermaid
-flowchart TB
-  log[("event log")] -->|"events"| reactor["reactor"]
-  reactor -->|"transitions = f(log)"| transitions["transitions"]
-  transitions -->|"keys the log does not record"| act["act(input)"]
-  act -->|"events, keyed record last"| log
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/reconciler-loop-dark.svg">
+  <img alt="The reconciler loop: the log feeds reactors, reactors derive transitions, unrecorded keys fire, events land keyed record last" src="docs/assets/reconciler-loop-light.svg">
+</picture>
 
 ## Example: an agent
 
@@ -93,14 +90,10 @@ const agent: Actor = { reactors: [infer, tools, compaction], keyOf }
 
 Every reactor on this page has the same anatomy: a projection derives the input, the reactor keys it, the act does the work. Adding a capability is adding a reactor to the list.
 
-```mermaid
-flowchart TB
-  log[("event log")]
-  log --> infer & tools & compaction
-  infer -->|"ToolCalled or TurnCompleted"| log
-  tools -->|"ToolReturned"| log
-  compaction -->|"CompactionCompleted"| log
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agent-loop-dark.svg">
+  <img alt="The agent as the loop: one log, three reactors deriving from it, fires landing back in it" src="docs/assets/agent-loop-light.svg">
+</picture>
 
 `packages/agent` ships this agent grown up: inference with died-attempt marks and a give-up guard, tool dispatch through durable code execution, budgets, replies, and compaction, each one a reactor.
 
