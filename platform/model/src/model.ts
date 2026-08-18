@@ -405,7 +405,7 @@ export const realInfer = (config: ModelConfig) => {
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
-      Effect.promise(async () => {
+      Effect.promise<Action>(async () => {
         const ladder = ladderOf(config.maxOutputTokens)
         let rung = 0
         for (let attempt = 0; ; attempt++) {
@@ -427,6 +427,10 @@ export const realInfer = (config: ModelConfig) => {
             await sleep(delay)
           }
         }
-      })
+      }).pipe(
+        // One span per react: the model, the wire, and the ceiling that bounded it. Attempt-level
+        // detail (rungs, throttle waits) stays inside; the log records what landed.
+        Effect.withSpan("llm.react", { attributes: { model: config.model, provider: config.provider ?? "openai-compatible" } })
+      )
   })
 }

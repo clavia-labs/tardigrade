@@ -101,7 +101,9 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
       let moved = false
       for (const t of fires) {
         const before = yield* log.head
-        const returned = yield* t.act(t.input)
+        // The fire is the reconciler's unit of work, so it is the span: the transition key is
+        // the one attribute that joins a trace to the log. Inert without a tracer.
+        const returned = yield* t.act(t.input).pipe(Effect.withSpan("transition.fire", { attributes: { key: t.key } }))
         if (returned.length > 0) yield* log.append(returned)
         if (recordedKeys(yield* log.read, a.keyOf).has(t.key)) {
           moved = true

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
+import { Effect, Layer, Tracer } from "effect"
 import type { Event } from "@tardigrade/core/event"
 import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 
@@ -101,6 +101,42 @@ describe("the bun host", () => {
       { type: "Done", id: "c", at: 4 } as Event
     ])
     expect((await h.read("echo")).map((e) => String((e as { id?: unknown }).id))).toEqual(["a", "b", "c"])
+    await h.close()
+  })
+})
+
+describe("telemetry seam", () => {
+  test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
+    const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
+    const capture = Layer.setTracer(
+      Tracer.make({
+        span: (name, parent, context, links, startTime, kind) => ({
+          _tag: "Span",
+          spanId: "s",
+          traceId: "t",
+          name,
+          parent,
+          context,
+          links,
+          kind,
+          sampled: true,
+          status: { _tag: "Started", startTime },
+          attributes: new Map(),
+          attribute(k: string, v: unknown) {
+            names.push({ name, ...(k === "key" ? { key: v } : {}), ...(k === "type" ? { type: v } : {}) })
+          },
+          end() {},
+          event() {},
+          addLinks() {}
+        }),
+        context: (f) => f()
+      })
+    )
+    const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
+    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.drive()
+    expect(names.some((s) => s.name === "deliver" && s.type === "MessageReceived")).toBe(true)
+    expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
     await h.close()
   })
 })

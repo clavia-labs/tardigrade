@@ -19,6 +19,10 @@ import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
 
 export interface BunHostOptions<R> {
   readonly path: string // SQLite file, or ":memory:" for a volatile run
+  // The tracer the spans flow to, when the app brings one (an @effect/opentelemetry layer, a
+  // test capture). Absent, every span is inert: instrumentation lives in the packages, export
+  // is the platform's, and this seam is the whole of it.
+  readonly telemetry?: Layer.Layer<never>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly layersFor?: (lane: string) => Layer.Layer<unknown, never, EventLog | Router | Self>
@@ -52,7 +56,7 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunHost> => {
   const principal = options.principal ?? "bun"
-  const runtime = ManagedRuntime.make(SqliteClient.layer({ filename: options.path }))
+  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.path }), options.telemetry ?? Layer.empty))
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
   // is one database and the per-lane writer stays this process.
   const sql = await runtime.runPromise(SqlClient.SqlClient)
@@ -132,7 +136,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
       }
       yield* appendEffect(lane, [event])
       dirty.add(lane)
-    })
+    }).pipe(Effect.withSpan("deliver", { attributes: { to: address, type: event.type } }))
 
   const router = Layer.succeed(Router, {
     deliver: deliverEffect,
