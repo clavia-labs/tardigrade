@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Event } from "@flamecast/core/event"
-import { EventLog, withWatermark } from "@flamecast/core/event-log"
-import { send, actor } from "@flamecast/core/actor"
+import type { Event } from "@tardigrade/core/event"
+import { EventLog, withWatermark } from "@tardigrade/core/event-log"
+import { send, actor } from "@tardigrade/core/actor"
 import { Infer } from "./infer"
 import { agentActorKeys } from "./turn"
 import {

@@ -1,12 +1,13 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import type { Event } from "@flamecast/core/event"
-import { EventLog } from "@flamecast/core/event-log"
-import { Router, type CallResult } from "@flamecast/core/router"
-import { Self, restingActor, settleActor, type Actor } from "@flamecast/core/actor"
-import { deadlocks, victimOf, type EdgesOf } from "@flamecast/host/deadlock"
-import type { HostPorts, LaneEnv } from "@flamecast/host/host"
+import type { Event } from "@tardigrade/core/event"
+import { EventLog } from "@tardigrade/core/event-log"
+import { Router, type CallResult } from "@tardigrade/core/router"
+import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/actor"
+import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
+import type { HostPorts, LaneEnv } from "@tardigrade/host/host"
+import { traceparentOf } from "@tardigrade/core/trace"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -24,6 +25,10 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 
 export type BunHostOptions<R> = {
   readonly path: string // SQLite file, or ":memory:" for a volatile run
+  // The tracer the spans flow to, when the app brings one (an @effect/opentelemetry layer, a
+  // test capture). Absent, every span is inert: instrumentation lives in the packages, export
+  // is the platform's, and this seam is the whole of it.
+  readonly telemetry?: Layer.Layer<never>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly call?: Parameters<typeof Router.of>[0]["call"]
@@ -56,7 +61,7 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   const principal = options.principal ?? "bun"
-  const runtime = ManagedRuntime.make(SqliteClient.layer({ filename: options.path }))
+  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.path }), options.telemetry ?? Layer.empty))
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
   // is one database and the per-lane writer stays this process.
   const sql = await runtime.runPromise(SqlClient.SqlClient)
@@ -126,6 +131,15 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         )
       }
       const lane = laneOf(address)
+      // The platform stamps the sending span's context onto the event it persists (the W3C
+      // header form), so a later settle on the receiving lane links back to this delivery: one
+      // business event, one trace, across lanes (packages/core/src/trace.ts). An event already
+      // carrying a context keeps it: the first stamp is the causal one.
+      const current = yield* Effect.currentSpan.pipe(Effect.option)
+      const stamped =
+        current._tag === "Some" && (event as { traceparent?: unknown }).traceparent === undefined
+          ? ({ ...event, traceparent: traceparentOf(current.value) } as Event)
+          : event
       if (event.type === "MessageReceived") {
         const id = String((event as { id?: unknown }).id)
         const seen = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events
@@ -134,9 +148,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         )
         if (Number(seen[0]?.n ?? 0) > 0) return
       }
-      yield* appendEffect(lane, [event])
+      yield* appendEffect(lane, [stamped])
       dirty.add(lane)
-    })
+    }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
 
   const router = Layer.succeed(Router, {
     deliver: deliverEffect,

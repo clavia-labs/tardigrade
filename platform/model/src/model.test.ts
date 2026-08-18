@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { codeSurface } from "@flamecast/agent/surface"
-import { Infer } from "@flamecast/agent/infer"
+import { codeSurface } from "@tardigrade/agent/surface"
+import { Infer } from "@tardigrade/agent/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply

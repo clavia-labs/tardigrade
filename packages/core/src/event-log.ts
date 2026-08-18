@@ -23,7 +23,7 @@ export class EventLog extends Context.Service<
     readonly head: Effect.Effect<number>
     readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
   }
->()("flamecast/EventLog") {}
+>()("tardigrade/EventLog") {}
 
 // withWatermark derives `head` and `readFrom` for a store that only has `append` and `read`:
 // the watermark is the event count. Correct for any append-only array binding; a real store

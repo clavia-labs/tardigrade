@@ -4,12 +4,12 @@ import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import { Infer } from "@flamecast/agent/infer"
-import type { Action } from "@flamecast/agent/events"
-import type { Event } from "@flamecast/core/event"
-import { answerErrors, outputSchemaOf } from "@flamecast/agent/contract"
-import { modelRequest, type AgentMessage, type ToolSpec } from "@flamecast/agent/request"
-import { codeSurface, type ToolSurface } from "@flamecast/agent/surface"
+import { Infer } from "@tardigrade/agent/infer"
+import type { Action } from "@tardigrade/agent/events"
+import type { Event } from "@tardigrade/core/event"
+import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
+import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
+import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -177,7 +177,7 @@ export interface ModelConfig {
   readonly model: string
   // The tool surface this binding renders: code mode by default. The actor must be assembled on
   // the same surface, or the model is offered tools its reactor will not serve
-  // (@flamecast/agent, surface.ts).
+  // (@tardigrade/agent, surface.ts).
   readonly surface?: Pick<ToolSurface, "system" | "tools">
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
@@ -364,11 +364,11 @@ export const realInfer = (config: ModelConfig) => {
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
-  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number): Promise<Action> => {
+  const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
-    // response, and the ladder would climb nowhere (the removed driver learned this,
-    // flamework #22). Rung zero keeps the bare key, so crash-retries of the same request still
+     // response, and the ladder would climb nowhere (the removed driver learned this).
+     // Rung zero keeps the bare key, so crash-retries of the same request still
     // collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
     const fetcher = withKey(config.fetch, keyForRung)
@@ -376,7 +376,7 @@ export const realInfer = (config: ModelConfig) => {
       config.provider === "bedrock"
         ? bedrockAdapter(config, maxTokens)
         : openaiCompatibleText(config.model, {
-            name: "flamecast",
+            name: "tardigrade",
             baseURL: config.baseUrl,
             apiKey: config.apiKey,
             // The openai SDK client retries a throttle-shaped failure on its own schedule by
@@ -400,17 +400,21 @@ export const realInfer = (config: ModelConfig) => {
       logger: noopLogger
     } as never)
     const result = await new StreamProcessor().process(bounded(stream, bounds))
+    stats.finish = result.finishReason ?? "stop"
     if (result.finishReason === "length") throw new TruncatedError(maxTokens)
     return actionOf(result, schema)
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
-      Effect.promise(async () => {
+      Effect.gen(function* () {
         const ladder = ladderOf(config.maxOutputTokens)
+        const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
+        const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         for (let attempt = 0; ; attempt++) {
           try {
-            return await attemptOnce(trajectory, key, ladder[rung]!, rung)
+            stats.rung = rung
+            return await attemptOnce(trajectory, key, ladder[rung]!, rung, stats)
           } catch (e) {
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
@@ -424,9 +428,26 @@ export const realInfer = (config: ModelConfig) => {
             if (!isThrottleShaped(e)) throw e
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
             if (delay === undefined) throw e
+            stats.waits += 1
             await sleep(delay)
           }
         }
-      })
+        })
+        // The wide-span discipline: everything a failure query filters by rides the one span.
+        // Names follow the GenAI semantic conventions where they exist (registry, 2026).
+        yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
+        yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
+        yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+        return action
+      }).pipe(
+        Effect.withSpan("llm.react", {
+          kind: "client",
+          attributes: {
+            "gen_ai.operation.name": "chat",
+            "gen_ai.request.model": config.model,
+            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : "openai"
+          }
+        })
+      )
   })
 }

@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect } from "effect"
-import type { Event } from "@flamecast/core/event"
-import { transition, type Actor, type Reactor } from "@flamecast/core/actor"
+import { Effect, Layer, Tracer } from "effect"
+import type { Event } from "@tardigrade/core/event"
+import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 
 import { createBunHost, type BunHostOptions } from "./host"
 
@@ -29,7 +29,7 @@ const echoReactor: Reactor = (events) =>
 
 const echo: Actor = { reactors: [echoReactor], keyOf }
 
-const dir = mkdtempSync(join(tmpdir(), "flamework-bun-"))
+const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
@@ -101,6 +101,50 @@ describe("the bun host", () => {
       { type: "Done", id: "c", at: 4 } as Event
     ])
     expect((await h.read("echo")).map((e) => String((e as { id?: unknown }).id))).toEqual(["a", "b", "c"])
+    await h.close()
+  })
+})
+
+describe("telemetry seam", () => {
+  test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
+    const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
+    const linked: Array<{ name: string; traceId: string }> = []
+    const capture = Layer.succeed(Tracer.Tracer)(
+      Tracer.make({
+        span(options) {
+          for (const l of options.links) linked.push({ name: options.name, traceId: l.span.traceId })
+          const record = (k: string, v: unknown) =>
+            names.push({ name: options.name, ...(k === "key" ? { key: v } : {}), ...(k === "type" ? { type: v } : {}) })
+          return {
+            _tag: "Span",
+            spanId: "s",
+            traceId: "t",
+            name: options.name,
+            parent: options.parent,
+            annotations: options.annotations,
+            links: options.links,
+            kind: options.kind,
+            sampled: true,
+            status: { _tag: "Started", startTime: options.startTime },
+            attributes: new Map(),
+            attribute: record,
+            end() {},
+            event() {},
+            addLinks() {}
+          } as never
+        }
+      })
+    )
+    const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
+    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.drive()
+    expect(names.some((s) => s.name === "deliver" && s.type === "MessageReceived")).toBe(true)
+    expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
+    // The cross-lane seam: the delivered event carries the deliver span's context, and the
+    // fire links back to it: one business event, one trace.
+    const row = (await h.read("echo"))[0] as { traceparent?: string }
+    expect(row.traceparent).toMatch(/^00-t-s-01$/)
+    expect(linked.some((l) => l.name === "transition.fire" && l.traceId === "t")).toBe(true)
     await h.close()
   })
 })

@@ -1,8 +1,8 @@
 import { Clock, Effect } from "effect"
-import { transition, type Reactor } from "@flamecast/core/actor"
+import { transition, type Reactor } from "@tardigrade/core/actor"
 import { budgetExhausted } from "./events"
-import type { Event } from "@flamecast/core/event"
-import { turnHead, turnView } from "@flamecast/code/turns"
+import type { Event } from "@tardigrade/core/event"
+import { turnHead, turnView } from "@tardigrade/code/turns"
 
 // The budget reactor observes the turn's tool spend and fires BudgetExhausted once when it
 // passes the brief's budget. Detection lives here; enforcement lives with the tools reactor,

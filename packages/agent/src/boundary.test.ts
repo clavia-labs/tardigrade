@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@flamecast/core/event"
+import type { Event } from "@tardigrade/core/event"
 import { boundaryOf } from "./boundary"
 
 const base: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }]

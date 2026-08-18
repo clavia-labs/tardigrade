@@ -1,6 +1,6 @@
 If you're familiar with React, you know the concept of `UI = f(state)`. 
 
-$$\mathrm{transitions} = f(\mathrm{log})$$
+$$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 ### Interface
 
 ```ts

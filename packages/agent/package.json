@@ -1,5 +1,5 @@
 {
-  "name": "@flamecast/agent",
+  "name": "@tardigrade/agent",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,11 +8,11 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@flamecast/core": "workspace:*",
-    "@flamecast/code": "workspace:*",
+    "@tardigrade/core": "workspace:*",
+    "@tardigrade/code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
     "effect": "4.0.0-rc.110",
-    "@flamecast/host": "workspace:*"
+    "@tardigrade/host": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
