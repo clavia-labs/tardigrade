@@ -76,7 +76,8 @@ const settleFor = (
   // result (the print-to-inspect habit; packages/code/src/sandbox.ts, SandboxResult.logs).
   const logs = settle.logs !== undefined && settle.logs.length > 0 ? { logs: settle.logs } : {}
   if (settle.error !== undefined) return { error: String(settle.error), ...logs }
-  // A settle over TMP_BYTES carries a pointer instead of the value (packages/code/src/execute.ts).
+  // A settle over the spill bound carries a pointer instead of the value (packages/code/src/tmp.ts,
+  // SpillPolicy).
   // The pointer IS the result the model reads: its preview and its note name the ref and the
   // call that loads it. Reading `result` alone answers a spilled call with `{}`, so the model
   // learns neither what it computed nor that anything is there to fetch, and it re-runs the work

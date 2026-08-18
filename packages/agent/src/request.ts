@@ -1,5 +1,5 @@
 import type { Event } from "@tardigrade/core/event"
-import { MESSAGE_RENDER_CAP, RESULT_RENDER_CAP, checkpointOf, keepFromIndex } from "./compaction"
+import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
 import type { ToolSurface } from "./surface"
@@ -75,14 +75,17 @@ const BUDGET_NUDGE =
 const ESCALATE_NUDGE =
   "If the work genuinely needs more and the extra spend is worth it, you may call request_budget with a reason and an amount instead of answering. Ask only when it changes the result; otherwise answer now."
 
-const userMessageOf = (e: Event): AgentMessage => {
+// A truncation names the cap it cut at as well as the size it cut from: the model reads why the
+// text stops, and a consumer who moved the cap sees the new number in the request itself
+// (request.test.ts, "the truncation caps are the consumer's").
+const userMessageOf = (e: Event, policy: ContextPolicy): AgentMessage => {
   const v = e as Record<string, unknown>
   const text = String(v.text ?? "")
   return {
     role: "user",
     content:
-      text.length > MESSAGE_RENDER_CAP
-        ? `${text.slice(0, MESSAGE_RENDER_CAP)}…[truncated ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
+      text.length > policy.messageRenderCap
+        ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
         : text
   }
 }
@@ -94,7 +97,14 @@ const userMessageOf = (e: Event): AgentMessage => {
 // (request.test.ts, "a checkpoint survives the projection"). The open turn's head renders
 // verbatim ahead of the summary when the checkpoint passed it: the live task never shrinks to a
 // summary paragraph mid-turn. Unknown event types fall through: tolerant reads.
-export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<AgentMessage> => {
+//
+// `policy` sets the truncation caps. It must be the policy the compaction reactor took, or the
+// guard fires against a size this render never sends (compaction.ts, ContextPolicy).
+export const renderMessages = (
+  trajectory: ReadonlyArray<Event>,
+  policy: Partial<ContextPolicy> = {}
+): ReadonlyArray<AgentMessage> => {
+  const resolved = contextPolicyOf(policy)
   const messages: AgentMessage[] = []
   const checkpoint = checkpointOf(trajectory)
   const from = keepFromIndex(trajectory, checkpoint.keepFrom)
@@ -106,14 +116,14 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
   const openHead = trajectory.findIndex(
     (e) => e.type === "MessageReceived" && !terminated.has(String((e as { id?: unknown }).id))
   )
-  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(trajectory[openHead]!))
+  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(trajectory[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   let pendingText: string | null = null
   for (const e of trajectory.slice(from)) {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "MessageReceived": {
-        messages.push(userMessageOf(e))
+        messages.push(userMessageOf(e, resolved))
         break
       }
       case "TextReturned": {
@@ -134,7 +144,10 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
         messages.push({
           role: "tool",
           toolCallId: String(v.callId),
-          content: body.length > RESULT_RENDER_CAP ? `${body.slice(0, RESULT_RENDER_CAP)}…[truncated ${body.length} chars]` : body
+          content:
+            body.length > resolved.resultRenderCap
+              ? `${body.slice(0, resolved.resultRenderCap)}…[truncated at ${resolved.resultRenderCap} of ${body.length} chars]`
+              : body
         })
         break
       }
@@ -157,9 +170,14 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
 // the answer tool and its nudge. A spent budget drops the work tools and adds the budget nudge,
 // so the model can only answer. Both are pure projections of the log, and neither knows what the
 // work tools are.
+//
+// `context` sets what the render truncates. It rides the same rule the surface does: the actor's
+// compaction reactor must hold the same policy, so the caller that states one here states it
+// there too (compaction.ts, ContextPolicy).
 export const modelRequest = (
   trajectory: ReadonlyArray<Event>,
-  surface: Pick<ToolSurface, "system" | "tools">
+  surface: Pick<ToolSurface, "system" | "tools">,
+  context: Partial<ContextPolicy> = {}
 ): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
@@ -170,5 +188,5 @@ export const modelRequest = (
   const framed = SYSTEM(surface.system)
   const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
-  return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory), tools }
+  return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory, context), tools }
 }

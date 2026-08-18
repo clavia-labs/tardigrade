@@ -24,10 +24,24 @@ export const Tmp: Context.Reference<TmpService> = Context.Reference("code/Tmp", 
   defaultValue: memoryTmpService
 })
 
-// TMP_BYTES is the bound: a larger value goes to tmp and the event keeps a pointer.
-export const TMP_BYTES = 8_192
+// SpillPolicy is the bound and what a bounded value shows: a JSON value longer than
+// `spillBytes` goes to tmp and the event keeps a pointer with the first `previewChars` of it.
+// The reactor that applies it takes an override (execute.ts, codeReactorFor), because the right
+// bound is the consumer's context window and storage, not this module's guess.
+export interface SpillPolicy {
+  readonly spillBytes: number
+  readonly previewChars: number
+}
 
-// tmpPointer is the pointer a bounded value leaves behind.
+export const DEFAULT_SPILL_POLICY: SpillPolicy = { spillBytes: 8_192, previewChars: 500 }
+
+export const spillPolicyOf = (policy: Partial<SpillPolicy> = {}): SpillPolicy => ({
+  spillBytes: policy.spillBytes ?? DEFAULT_SPILL_POLICY.spillBytes,
+  previewChars: policy.previewChars ?? DEFAULT_SPILL_POLICY.previewChars
+})
+
+// tmpPointer is the pointer a bounded value leaves behind. `size` is the whole value's length,
+// so the reader sees how much the preview left out.
 export const tmpPointer = (ref: string, size: number, preview: string) => ({
   tmp: ref,
   size,

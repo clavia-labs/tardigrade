@@ -41,13 +41,28 @@ const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as
   ...args: ReadonlyArray<string>
 ) => (...bindings: ReadonlyArray<unknown>) => Promise<unknown>
 
-// consoleShim captures a body's console output into `lines`, capped in bytes so a print loop
-// stays harmless. Past the cap, lines drop silently: prints are telemetry, never control flow.
-export const LOG_CAP_BYTES = 8192
-const consoleShim = (lines: string[]) => {
+// SandboxPolicy bounds what one execution's console output costs: past `logCapBytes` a print
+// loop stays harmless. The cap decides how much of its own output a model reads back, so
+// `jsSandboxServiceFor` takes an override rather than this file deciding for every consumer.
+export interface SandboxPolicy {
+  readonly logCapBytes: number
+}
+
+export const DEFAULT_SANDBOX_POLICY: SandboxPolicy = { logCapBytes: 8_192 }
+
+// consoleShim captures a body's console output into `lines`, capped in bytes. At the cap it
+// pushes one line naming the cap and drops the rest: a silent drop reads as a body that stopped
+// printing, and the model then trusts a partial log as the whole of it.
+const consoleShim = (lines: string[], policy: SandboxPolicy) => {
   let bytes = 0
+  let cut = false
   const push = (args: ReadonlyArray<unknown>) => {
-    if (bytes >= LOG_CAP_BYTES) return
+    if (bytes >= policy.logCapBytes) {
+      if (cut) return
+      cut = true
+      lines.push(`…[console output cut at ${policy.logCapBytes} bytes; later lines dropped]`)
+      return
+    }
     const line = args.map(String).join(" ")
     lines.push(line)
     bytes += line.length
@@ -99,29 +114,35 @@ const ambientShims = (ambient: Ambient): Record<string, unknown> => {
   return { Date: PinnedDate, Math: PinnedMath }
 }
 
-// jsSandboxService runs the body as a plain async function. The body must stay deterministic
+// jsSandboxServiceFor runs the body as a plain async function. The body must stay deterministic
 // between package calls (the contract above); nothing here enforces it. `console` is shadowed
 // by a capturing shim (printed lines come back on the result's `logs`), and with an ambient,
 // Date and Math are shadowed by replay-stable pins.
-export const jsSandboxService: SandboxService = {
-  run: (code: string, bindings: Bindings, ambient?: Ambient) =>
-    Effect.promise(async () => {
-      const lines: string[] = []
-      const logs = () => (lines.length === 0 ? {} : { logs: lines })
-      const scope: Bindings = {
-        ...bindings,
-        console: consoleShim(lines),
-        ...(ambient === undefined ? {} : ambientShims(ambient))
-      }
-      try {
-        const names = Object.keys(scope)
-        const body = new AsyncFunction(...names, code)
-        return { result: await body(...names.map((name) => scope[name])), ...logs() }
-      } catch (e) {
-        return { error: String(e), ...logs() }
-      }
-    })
+export const jsSandboxServiceFor = (policy: Partial<SandboxPolicy> = {}): SandboxService => {
+  const resolved: SandboxPolicy = { logCapBytes: policy.logCapBytes ?? DEFAULT_SANDBOX_POLICY.logCapBytes }
+  return {
+    run: (code: string, bindings: Bindings, ambient?: Ambient) =>
+      Effect.promise(async () => {
+        const lines: string[] = []
+        const logs = () => (lines.length === 0 ? {} : { logs: lines })
+        const scope: Bindings = {
+          ...bindings,
+          console: consoleShim(lines, resolved),
+          ...(ambient === undefined ? {} : ambientShims(ambient))
+        }
+        try {
+          const names = Object.keys(scope)
+          const body = new AsyncFunction(...names, code)
+          return { result: await body(...names.map((name) => scope[name])), ...logs() }
+        } catch (e) {
+          return { error: String(e), ...logs() }
+        }
+      })
+  }
 }
+
+// jsSandboxService is that sandbox on the default cap.
+export const jsSandboxService: SandboxService = jsSandboxServiceFor()
 
 export const Sandbox: Context.Reference<SandboxService> = Context.Reference("code/Sandbox", {
   defaultValue: () => jsSandboxService
