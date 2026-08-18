@@ -75,6 +75,18 @@ An actor is a set of reactors over one log, plus the key derivation that decides
   <img alt="The reconciler loop: the log feeds reactors, reactors derive transitions, unrecorded keys fire, events land keyed record last" src="docs/assets/reconciler-loop-light.svg">
 </picture>
 
+## Docs
+
+Organized on the Diátaxis grid: learning, tasks, information, understanding.
+
+- [Quickstart](docs/quickstart.md): the concepts in one page: events, projections, transitions, reactors, an agent in three reactors.
+- [Tutorial: an RLM agent](docs/tutorials/rlm-agent.md): a Recursive Language Model agent with durable code execution, killed mid-recursion.
+- [How-to: gate tools](docs/how-to/gate-tools.md): hide, reveal, or revoke tools from the log.
+- [Reference: API](docs/reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting.
+- [Why tardigrade](docs/explanations/why.md): state = f(log), the convergence of durable systems, agents as the new users.
+- [Reactors](docs/explanations/reactors.md): the reactor model, with the React analogy and the math.
+- [Actors](docs/explanations/actors.md): one log, its reactors, and the settle loop.
+
 ## Layout
 
 ```
