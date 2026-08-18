@@ -17,8 +17,6 @@ const mind = createAgent({
 const reply = await mind.ask("Find the invoice for order 4182.")
 ```
 
-One ask serves the whole turn: inference, generated code calling the packages, replies, and the settled answer, all recorded on one log. Pass `log` to resume an agent from a persisted history, and run it on `platform/bun` to survive process death.
-
 ## Concepts
 
 ### Events
@@ -119,6 +117,18 @@ platform/
 ```
 
 The line between the trees is a dependency rule: a package depends on effect and on other packages, and on nothing else. A platform binds one port to the world and owns its own dependencies. `platform/README.md` states the rule in full.
+
+## Guarantees
+
+A store that binds the log port owes six guarantees, stated in `packages/core/src/event-log.ts`: append only, total order per log, one writer, atomic batches, dedup by key, and the ordered tail from a watermark. The reconciler's properties are model checked in `packages/core/tla` (Reconcile, Projection, Replay, Driver, Delivery). Every delivered cross-lane event names its occurrence through a key fragment, and both hosts refuse an unkeyed traveler.
+
+## Status
+
+The packages are private workspace packages, consumed in-repo. The docs/ tree predates this design and describes the removed harness and codemode surfaces; it is queued for a rewrite. `platform/model` carries the proven driver; journaled backoff, model-reported limits, provider continuations, and spend reservation are the next behaviors to land on it.
+
+## Why tardigrade
+
+Tardigrades are the most indestructible animals we know of. They survive vacuum, radiation, freezing, and decades without water by turning into a kernel that holds everything needed to come back alive. This harness tries to be the same for agents: everything it is, and everything it will be, derives from a durable append-only log, and a log is very hard to kill.
 
 ## Contributing
 
