@@ -16,7 +16,9 @@ Common fields include:
 - `continuation` on a model result for opaque provider state
 - `attempt`, `notBefore`, and `reason` on a model deferral for the journaled wait
 - `reserved` on a model call for the estimated spend of an in-flight attempt
-- `tokens` and `reason` on a truncated answer for how far the model got and why it stopped
+- `reason` on a model settle for why an attempt closed without a provider result
+- `text` and `tokens` on a truncated answer for what the model said and how far it got
+- `tool` and `arguments` on a truncated answer when a tool call was the thing cut
 
 Unknown fields and event types survive reads and folds.
 

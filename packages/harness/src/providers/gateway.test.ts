@@ -119,7 +119,9 @@ describe("Vercel AI Gateway", () => {
     })
   })
 
-  test("records a tool call whose arguments stop mid-JSON as text", async () => {
+  // The cut call is reported as itself. Folding it into the text would mean inventing a notation
+  // for a partial call, and the model that reads it back was trained on no such notation.
+  test("records a tool call whose arguments stop mid-JSON as the call it was", async () => {
     const provider = vercelGatewayInference({
       apiKey: "vercel-key",
       model: "openai/test-model",
@@ -131,7 +133,8 @@ describe("Vercel AI Gateway", () => {
 
     expect(await Effect.runPromise(provider.react(request, "k"))).toMatchObject({
       kind: "truncated",
-      text: `[truncated tool call lookup_invoice: {"orderId":"41]`
+      text: "",
+      call: { name: "lookup_invoice", arguments: '{"orderId":"41' }
     })
   })
 

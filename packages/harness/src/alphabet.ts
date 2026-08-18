@@ -263,12 +263,16 @@ export const compactionCompleted = (fields: {
   ...(fields.turn === undefined ? {} : { turn: fields.turn })
 })
 
+// What the model said before the provider stopped it at its output ceiling. `tool` and `arguments`
+// are present when a tool call was the thing cut, and the arguments are the raw partial, which does
+// not parse. They are recorded rather than described so a nudge can read which tool was cut.
 export const answerTruncated = (
   fields: Stamped & {
     readonly callId: string
     readonly text: string
     readonly tokens: number
-    readonly reason: string
+    readonly tool?: string
+    readonly arguments?: string
   }
 ): Event => ({
   type: "AnswerTruncated",
@@ -276,6 +280,7 @@ export const answerTruncated = (
   callId: fields.callId,
   text: fields.text,
   tokens: fields.tokens,
-  reason: fields.reason,
+  ...(fields.tool === undefined ? {} : { tool: fields.tool }),
+  ...(fields.arguments === undefined ? {} : { arguments: fields.arguments }),
   at: fields.at
 })

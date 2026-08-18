@@ -169,6 +169,33 @@ const joined = (entries: ReadonlyArray<Entry>): ReadonlyArray<Entry> =>
     return all
   }, [])
 
+const textBlock = (block: unknown): { readonly text: string } | undefined => {
+  const one = block as { readonly type?: unknown; readonly text?: unknown }
+  return one?.type === "text" ? { text: String(one.text ?? "") } : undefined
+}
+
+// A conversation ending on an assistant turn is a prefill: this API continues it rather than
+// answering it, which is exactly what a turn resuming from a truncated fragment wants. It refuses
+// one that ends in whitespace, and a fragment cut mid-sentence often does.
+//
+// The trim is on the request. The log keeps what the model actually said, so the fragments stitched
+// into the finished answer are still exact, and a trailing space the model would have written next
+// is a space it can write again.
+const prefillable = (entries: ReadonlyArray<Entry>): ReadonlyArray<Entry> => {
+  const last = entries[entries.length - 1]
+  if (last?.role !== "assistant") return entries
+  const tail = textBlock(last.content[last.content.length - 1])
+  if (tail === undefined) return entries
+  const trimmed = tail.text.trimEnd()
+  if (trimmed === tail.text) return entries
+  const content = [
+    ...last.content.slice(0, -1),
+    ...(trimmed === "" ? [] : [{ type: "text", text: trimmed }])
+  ]
+  const kept = entries.slice(0, -1)
+  return content.length === 0 ? kept : [...kept, { role: last.role, content }]
+}
+
 const messagesOf = (request: ModelRequest) => {
   const entries = request.messages.flatMap((one) => {
     const entry = entryOf(one)
@@ -180,7 +207,7 @@ const messagesOf = (request: ModelRequest) => {
   if (broken !== undefined) {
     return { name: String((broken as { readonly name?: unknown }).name ?? "") }
   }
-  return { messages: joined(entries) }
+  return { messages: prefillable(joined(entries)) }
 }
 
 const usageOf = (usage: MessagesResponse["usage"]): Usage => {
@@ -206,24 +233,28 @@ const actionOf = (body: MessagesResponse): Action => {
   const usage = usageOf(body.usage)
   // An answer stopped at the ceiling is a fragment wearing the shape of an answer. The tokens were
   // spent either way, and the fragment is recorded so the turn can continue from it rather than
-  // restart. A truncated tool call is not valid JSON, so it rides as text and the model re-issues
-  // the call.
+  // restart. A tool call cut partway through is reported as itself rather than folded into the
+  // text: this adapter would have to invent a notation for it, and no model reads a notation this
+  // file made up. Naming the tool and its partial arguments leaves that decision to a module.
   if (body.stop_reason === "max_tokens") {
     const text = content
       .filter((block) => block.type === "text")
       .map((block) => String(block.text ?? ""))
       .join("")
-    const call = content.find((block) => block.type === "tool_use")
-    const fragment =
-      call === undefined
-        ? text
-        : [text, `[truncated tool call ${String(call.name ?? "")}: ${JSON.stringify(call.input ?? {})}]`]
-            .filter((part) => part !== "")
-            .join("\n")
+    const cut = content.find((block) => block.type === "tool_use")
+    const continuation = continuationOf(content)
     return {
       kind: "truncated",
-      text: fragment,
-      ...(continuationOf(content) === undefined ? {} : { continuation: continuationOf(content) }),
+      text,
+      ...(cut === undefined
+        ? {}
+        : {
+            call: {
+              name: String(cut.name ?? ""),
+              arguments: JSON.stringify(cut.input ?? {})
+            }
+          }),
+      ...(continuation === undefined ? {} : { continuation }),
       usage
     }
   }

@@ -30,7 +30,6 @@ import type { RenderPlan } from "../definition"
 import { modelRequest } from "../render"
 import { replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
-import { TRIGGER_RATIO } from "../context"
 import { windowError } from "../providers/http"
 
 const BASE_SYSTEM =
@@ -49,6 +48,12 @@ export interface InferenceSettings {
   readonly deferAtMost?: number
   readonly repairAtMost?: number
   readonly continueAtMost?: number
+  // Whether the loop may compact in the middle of a turn, when the next request plus its answer
+  // would not fit the window. It is off by default because it names a dependency this module cannot
+  // satisfy alone: something has to answer `CompactionFired` with a checkpoint. Turning it on
+  // without a compaction module is a construction error rather than a turn that never returns.
+  // `defaultPack` turns it on, because that pack ships compaction.
+  readonly compactMidTurn?: boolean
   readonly messageTruncateAt?: number
   readonly resultTruncateAt?: number
 }
@@ -129,30 +134,32 @@ const deferDelayMs = (attempt: number, retryAfterMs?: number) => {
   return Math.min(DEFER_CAP_MS, 5_000 * 4 ** Math.max(0, attempt - 1))
 }
 
-const compactedSinceProgress = (log: ReadonlyArray<Event>): boolean => {
-  for (let index = log.length - 1; index >= 0; index--) {
-    const event = log[index]
+// Compactions fired since the last model attempt in this turn. One is a request that would not fit
+// being given a smaller log to fit in. A second, with no attempt in between, means the checkpoint
+// the first produced did not buy enough room, and firing again would ask the same question of the
+// same log forever. Anchoring on `ModelCalled` rather than on the newest event keeps the count
+// honest when another module appends between the checkpoint and this decide.
+const firedSinceCall = (view: ReadonlyArray<Event>): number => {
+  let fired = 0
+  for (let index = view.length - 1; index >= 0; index--) {
+    const event = view[index]
     if (event === undefined) continue
-    if (event.type === "CompactionCompleted" || event.type === "CompactionFired") return true
-    if (
-      event.type === "ModelReturned" ||
-      event.type === "ToolReturned" ||
-      event.type === "MessageReceived" ||
-      event.type === "AnswerTruncated"
-    ) {
-      return false
-    }
+    if (event.type === "ModelCalled") break
+    if (event.type === "CompactionFired") fired += 1
   }
-  return false
+  return fired
 }
 
-const stitchedOutput = (view: ReadonlyArray<Event>, final: string): string => {
-  const parts: Array<string> = []
+// The fragments of the answer being written now. A tool call ends an answer, so the count and the
+// stitch both start again after one: a turn that writes three long documents gets its continuations
+// for each of them rather than spending one turn's worth on the first.
+const fragmentsOf = (view: ReadonlyArray<Event>): ReadonlyArray<string> => {
+  let parts: Array<string> = []
   for (const event of view) {
     if (event.type === "AnswerTruncated") parts.push(String(event.text ?? ""))
-    if (event.type === "ToolCalled" || event.type === "ToolReturned") parts.length = 0
+    if (event.type === "ToolCalled" || event.type === "ToolReturned") parts = []
   }
-  return `${parts.join("")}${final}`
+  return parts
 }
 
 const consequenceOf = (
@@ -170,18 +177,26 @@ const consequenceOf = (
         at
       })
     : action.kind === "complete"
-      ? turnCompleted({ turn, output: stitchedOutput(view, action.output), at })
+      ? turnCompleted({
+          turn,
+          // One answer the provider split across attempts, put back together. The fragments were
+          // paid for and the caller asked for an answer rather than its last instalment, and a
+          // sub-agent's parent reads this field alone.
+          output: `${fragmentsOf(view).join("")}${action.output}`,
+          at
+        })
       : turnFailed({ turn, error: action.error, at })
 
-const OUTPUT_LIMIT_REASON = "the model stopped at its output-token limit"
-
+// A truncation resumes in the same slot that made it, so the loop needs two names for one act:
+// emitting `AnswerTruncated` while resting in `thinking` would leave the fold in `thinking`, and
+// the runtime reads a state that emitted without moving as a wedge and dies. Continuing is the
+// same act under the other name, and a second truncation moves back.
 const inferOn = (truncated: "thinking" | "continuing") => ({
   ModelDeferred: "deferred" as const,
   ToolCalled: "waiting" as const,
   TurnCompleted: "idle" as const,
   TurnFailed: "idle" as const,
-  AnswerTruncated: truncated,
-  CompactionFired: "compacting" as const
+  AnswerTruncated: truncated
 })
 
 const inferMachine = (
@@ -190,7 +205,8 @@ const inferMachine = (
   giveUpAfter: number,
   deferAtMost: number,
   repairAtMost: number,
-  continueAtMost: number
+  continueAtMost: number,
+  compactMidTurn: boolean
 ) => {
   const think = (log: ReadonlyArray<Event>, context: { readonly turn: string }) =>
     Effect.gen(function* () {
@@ -219,7 +235,7 @@ const inferMachine = (
           })
         ]
       }
-      const truncations = view.filter((event) => event.type === "AnswerTruncated").length
+      const truncations = fragmentsOf(view).length
       if (truncations > continueAtMost) {
         return [
           turnFailed({
@@ -263,8 +279,17 @@ const inferMachine = (
       const state = provider.state(log)
       const reserved = reservedUsage(request, state.pricing)
       const output = request.options?.maxOutputTokens ?? state.maxOutputTokens ?? 0
-      if (reserved.promptTokens + output > state.contextWindow * TRIGGER_RATIO) {
-        if (compactedSinceProgress(log)) {
+      // The model has to read the conversation and still have room to answer it, so the request is
+      // measured against the window with its output ceiling reserved. This is the same sum the
+      // provider refuses on, checked one step earlier, where a checkpoint can still make it fit. It
+      // is the hard limit rather than a ratio: how full a log may get before it is worth compacting
+      // is the compaction module's policy, and a second copy of that ratio here would be a policy
+      // this loop invented that could disagree with the one the author set.
+      //
+      // Without a compaction module there is nothing this could wait for, so the request goes and
+      // the provider refuses it by name.
+      if (compactMidTurn && reserved.promptTokens + output > state.contextWindow) {
+        if (firedSinceCall(view) > 0) {
           return [
             turnFailed({
               turn,
@@ -313,15 +338,10 @@ const inferMachine = (
           })
         ]
       }
+      // The ceiling stopped the answer, not the window: the request was measured with its output
+      // reserved before it was sent, so there was room for an answer this size. The fragment and
+      // its cost are recorded, and the next pass renders it as what the model has said so far.
       if (action.kind === "truncated") {
-        const recorded = answerTruncated({
-          turn,
-          callId: key,
-          text: action.text,
-          tokens: usage.completionTokens,
-          reason: OUTPUT_LIMIT_REASON,
-          at: after
-        })
         const returned = modelReturned({
           turn,
           callId: key,
@@ -329,28 +349,16 @@ const inferMachine = (
           ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
           at: after
         })
-        const headroom = state.contextWindow - reserved.promptTokens
-        const windowBound = output > headroom
-        if (windowBound) {
-          if (compactedSinceProgress(log)) {
-            return [
-              returned,
-              recorded,
-              turnFailed({
-                turn,
-                error: windowError(
-                  reserved.promptTokens,
-                  state.provider,
-                  state.model,
-                  state.contextWindow,
-                  output
-                ),
-                at: after
-              })
-            ]
-          }
-          return [returned, recorded, compactionFired({ turn, at: after })]
-        }
+        const recorded = answerTruncated({
+          turn,
+          callId: key,
+          text: action.text,
+          tokens: usage.completionTokens,
+          ...(action.call === undefined
+            ? {}
+            : { tool: action.call.name, arguments: action.call.arguments }),
+          at: after
+        })
         if (truncations + 1 > continueAtMost) {
           return [
             returned,
@@ -379,34 +387,47 @@ const inferMachine = (
         consequenceOf(action, view, turn, after)
       ]
     })
+  const idle = {
+    on: {
+      MessageReceived: {
+        target: "thinking",
+        assign: (_: { readonly turn: string }, event: Event) => ({ turn: String(event.id ?? "") })
+      }
+    }
+  } as const
+  const deferred = { on: { AlarmFired: "thinking" } } as const
+  const waiting = { on: { ToolReturned: "thinking" } } as const
+  const common = { id: "inference", initial: "idle", context: { turn: "" }, view: turnView } as const
+  // Two shapes rather than one with an optional state. A machine's states are the alphabet its
+  // targets are checked against, so a state that is only sometimes there would weaken that check
+  // for the states that are always there.
+  //
+  // Resting in `compacting` until the checkpoint exists is the whole point of firing: the request
+  // this loop would have sent does not fit, and re-rendering before the summary lands would send it
+  // anyway. `CompactionCompleted` is deliberately absent from this module's alphabet, so an agent
+  // that asks for mid-turn compaction without a module that writes checkpoints fails to compile
+  // rather than resting here for good.
+  if (compactMidTurn) {
+    return machine({
+      ...common,
+      states: {
+        idle,
+        thinking: { act: think, on: { ...inferOn("continuing"), CompactionFired: "compacting" } },
+        continuing: { act: think, on: { ...inferOn("thinking"), CompactionFired: "compacting" } },
+        compacting: { on: { CompactionCompleted: "thinking" } },
+        deferred,
+        waiting
+      }
+    })
+  }
   return machine({
-    id: "inference",
-    initial: "idle",
-    context: { turn: "" },
-    view: turnView,
+    ...common,
     states: {
-      idle: {
-        on: {
-          MessageReceived: {
-            target: "thinking",
-            assign: (_, event) => ({ turn: String(event.id ?? "") })
-          }
-        }
-      },
-      thinking: {
-        act: think,
-        on: inferOn("continuing")
-      },
-      // A self-transition on AnswerTruncated would wedge: the fold would sit in the same active
-      // state. Continuing is the same act under another name, so a truncated answer retries without
-      // resting, and a second truncation ping-pongs back.
-      continuing: {
-        act: think,
-        on: inferOn("thinking")
-      },
-      compacting: { on: { CompactionCompleted: "thinking" } },
-      deferred: { on: { AlarmFired: "thinking" } },
-      waiting: { on: { ToolReturned: "thinking" } }
+      idle,
+      thinking: { act: think, on: inferOn("continuing") },
+      continuing: { act: think, on: inferOn("thinking") },
+      deferred,
+      waiting
     }
   })
 }
@@ -478,6 +499,7 @@ export const inference = (options: InferenceOptions) => {
   const deferAtMost = options.deferAtMost ?? 8
   const repairAtMost = options.repairAtMost ?? 2
   const continueAtMost = options.continueAtMost ?? 8
+  const compactMidTurn = options.compactMidTurn ?? false
   // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
   // message down on the way to the model while the log kept the whole thing, so the record and the
   // request would disagree and only the request is what the model answered.
@@ -505,14 +527,16 @@ export const inference = (options: InferenceOptions) => {
       deferAtMost,
       repairAtMost,
       continueAtMost,
+      compactMidTurn,
       ...truncation
     },
     services: Context.make(InferenceStateProjection, state),
     setup: () => ({
       // The model loop emits the tool call and then waits on its result, so both belong here even
-      // though the native-tools module is what dispatches one. CompactionFired and
-      // CompactionCompleted are the same shape: the loop fires mid-turn when a request would not
-      // fit, and the compaction module is what writes the checkpoint.
+      // though the native-tools module is what dispatches one. `CompactionFired` joins them when
+      // the loop may fire mid-turn, because the loop is what emits it. `CompactionCompleted` does
+      // not: this module reads that event but never writes one, and declaring an event no module
+      // emits is what would let a missing compaction module rest here forever.
       events: [
         "MessageReceived",
         "ModelCalled",
@@ -527,8 +551,7 @@ export const inference = (options: InferenceOptions) => {
         "TurnCompleted",
         "TurnFailed",
         "ReplyDelivered",
-        "CompactionFired",
-        "CompactionCompleted"
+        ...(compactMidTurn ? ["CompactionFired"] : [])
       ],
       instructions: [{ id: "inference.system", text: system }],
       render: truncation,
@@ -536,7 +559,17 @@ export const inference = (options: InferenceOptions) => {
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.
       machines: (render): ReadonlyArray<Machine<EventLog | Router | Self, never>> => [
-        erase(inferMachine(render, selection, giveUpAfter, deferAtMost, repairAtMost, continueAtMost)),
+        erase(
+          inferMachine(
+            render,
+            selection,
+            giveUpAfter,
+            deferAtMost,
+            repairAtMost,
+            continueAtMost,
+            compactMidTurn
+          )
+        ),
         erase(replyMachine)
       ]
     })

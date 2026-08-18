@@ -265,6 +265,66 @@ describe("an Anthropic model on the Vercel gateway", () => {
     expect(called).toBe(false)
   })
 
+  // A conversation ending on an assistant turn asks this API to continue it, which is how a turn
+  // resumes from a fragment. The API refuses one ending in whitespace, and a fragment cut
+  // mid-sentence is exactly the message that ends that way.
+  test("trims a trailing assistant turn so a fragment can be continued", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), {
+        status: 200
+      })
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(
+      provider(stub).react(
+        {
+          system: "",
+          tools: [],
+          messages: [
+            { role: "user", content: "Write the addendum." },
+            { role: "assistant", content: "The lease was signed on " }
+          ]
+        },
+        "k"
+      )
+    )
+
+    expect(asRecords(bodies[0]?.messages)[1]).toEqual({
+      role: "assistant",
+      content: [{ type: "text", text: "The lease was signed on" }]
+    })
+  })
+
+  // Whitespace was the whole of it, so there is no assistant turn left to send. Dropping it asks
+  // the model for the answer rather than sending a message this API would refuse.
+  test("drops a trailing assistant turn that was only whitespace", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const stub = (async (_url: string, init: RequestInit) => {
+      bodies.push(JSON.parse(String(init.body)) as Record<string, unknown>)
+      return new Response(JSON.stringify({ content: [{ type: "text", text: "ok" }] }), {
+        status: 200
+      })
+    }) as unknown as typeof fetch
+
+    await Effect.runPromise(
+      provider(stub).react(
+        {
+          system: "",
+          tools: [],
+          messages: [
+            { role: "user", content: "Write the addendum." },
+            { role: "assistant", content: "   " }
+          ]
+        },
+        "k"
+      )
+    )
+
+    expect(asRecords(bodies[0]?.messages)).toHaveLength(1)
+  })
+
   test("records an answer stopped at the output-token limit", async () => {
     const action = await Effect.runPromise(
       provider(

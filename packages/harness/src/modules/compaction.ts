@@ -1,13 +1,14 @@
 import { Clock, Context, Effect } from "effect"
 import { machine, type Event } from "@flamecast/core"
-import { checkpointOf, estimateTokens, keepUpTo, KEEP_RATIO, suffixOf, TRIGGER_RATIO } from "../context"
+import { checkpointOf, estimateTokens, keepUpTo, suffixOf } from "../context"
 import { compactionCompleted } from "../alphabet"
 import { defineModule } from "../module"
 import { environment } from "../providers/environment"
 import { transcript, turnOf } from "../turns"
 import { InferenceStateProjection } from "./inference"
 
-export { KEEP_RATIO, TRIGGER_RATIO } from "../context"
+export const TRIGGER_RATIO = 0.8
+export const KEEP_RATIO = 0.2
 export const COMPRESSION_RATIO = 0.5
 
 const MORPH_URL = "https://api.morphllm.com/v1"

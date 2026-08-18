@@ -223,7 +223,11 @@ const detailOf = (event: Event, callWidth: number): string => {
     case "TurnFailed":
       return quoted(event.error)
     case "AnswerTruncated":
-      return call(`${quoted(event.text)} tokens=${String(event.tokens ?? "")} ${quoted(event.reason)}`)
+      return call(
+        `${quoted(event.text)} tokens=${String(event.tokens ?? "")}${
+          event.tool === undefined ? "" : ` cut=${String(event.tool)}`
+        }`
+      )
     case "ReplyDelivered":
       return event.to === undefined ? "" : `to=${String(event.to)}`
     case "BudgetExhausted":

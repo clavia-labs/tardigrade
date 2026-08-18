@@ -210,24 +210,24 @@ const actionOf = (body: ChatResponse): Action => {
   const usage = usageOf(body.usage)
   // A response the gateway stopped at the completion-token limit is a fragment wearing the shape of
   // an answer. The tokens were spent either way, so the usage rides the action. The fragment is
-  // recorded so the turn can continue from it. A truncated tool call is not valid JSON, so it rides
-  // as text and the model re-issues the call.
+  // recorded so the turn can continue from it. A tool call cut partway through is reported as
+  // itself rather than folded into the text: its arguments stop mid-JSON, and a notation this file
+  // invented for them is one no model reads. Naming the tool leaves that decision to a module.
   if (choice?.finish_reason === "length") {
     const text = typeof answer.content === "string" ? answer.content : ""
-    const call = (answer.tool_calls ?? [])[0]
-    const fragment =
-      call === undefined
-        ? text
-        : [
-            text,
-            `[truncated tool call ${String(call.function?.name ?? "")}: ${String(call.function?.arguments ?? "")}]`
-          ]
-            .filter((part) => part !== "")
-            .join("\n")
-    const continuation = continuationOf(answer, call)
+    const cut = (answer.tool_calls ?? [])[0]
+    const continuation = continuationOf(answer, cut)
     return {
       kind: "truncated",
-      text: fragment,
+      text,
+      ...(cut === undefined
+        ? {}
+        : {
+            call: {
+              name: String(cut.function?.name ?? ""),
+              arguments: String(cut.function?.arguments ?? "")
+            }
+          }),
       ...(continuation === undefined ? {} : { continuation }),
       usage
     }

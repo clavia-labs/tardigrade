@@ -8,6 +8,8 @@ Built-in modules are useful policies built from the concepts in [Concepts](conce
 
 Module ids, instruction ids, nudge ids, machine ids, service providers, and static native-tool names must be unique. Each render bound has one owner and must be a nonnegative integer. A dynamic nudge cannot add a tool name that is already active. Replacing a built-in means constructing a different module tuple. Silent last-write replacement is rejected.
 
+A machine may only transition on an event some module in the tuple declares. A module declares what it emits, so a transition on an undeclared event is a module missing from the tuple, and the state waiting on it would rest for good: no error, no answer, no sign of which module was left out. The check reads the tuple at construction, where the missing module is still visible. The rule runs one way, because declaring an event nothing transitions on is ordinary: a module records facts for a projection or a reader, and no machine has to care.
+
 ```ts
 const agent = createAgent({
   modules: [inference({ contextWindow: 200_000 }), nativeTools([lookup]), budget(), contract(), morphCompaction()]
@@ -68,13 +70,21 @@ An attempt this side stops waiting for is cancelled. Dropping the wait alone lea
 
 `timeout` defaults to ten minutes, which is a guard against a socket that has gone quiet rather than a limit on how long a model may think. A bound inside the range where real answers land discards answers that were on their way, and a reasoning model working for two minutes is inside that range.
 
-`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is recorded as `AnswerTruncated` so the turn can continue from the fragment, and `continueAtMost` bounds how many times that may happen, defaulting to eight. The recorded partial is rendered as the assistant's prior message plus a prompt to continue exactly where it stopped. Partials of a completed answer are stitched into `TurnCompleted.output`. A truncated tool call is not valid JSON, so the partial rides as text and the model re-issues the call.
+`maxOutputTokens` is the ceiling on one answer. Absent leaves it to the gateway's own default for the model. A long generated artifact can exceed a default sized for chat and stop partway through. That stop is recorded as `AnswerTruncated`, and the turn continues rather than starting the artifact again. `continueAtMost` bounds how many times one answer may be cut, defaulting to eight, and it counts the answer being written now: a tool call ends an answer, so a turn that writes several long documents gets the bound for each of them. Fragments of a completed answer are stitched into `TurnCompleted.output`, because a caller asked for an answer rather than its last instalment.
+
+A tool call cut before its arguments closed is recorded as `tool` and `arguments` rather than described in the fragment's text. Nothing was dispatched: the partial arguments never parsed, so no tool ran and nothing has to be undone. Naming the tool is what lets a module tell that case from cut prose, which is the difference between asking the model to continue and asking it to make a smaller call.
+
+What to say about either case is [a nudge](#truncation), not something this loop or the renderer writes.
 
 The Messages API refuses a request that states no ceiling, so a provider for it always sends one. The gateway's catalog publishes the ceiling each model accepts, and a provider built from the catalog sends that figure, which is how a model that can write 128,000 tokens is allowed to. A provider built from a stated context window makes no catalog request, so what is left is 64,000, a ceiling current Claude models accept, or the window itself when that is smaller. State `maxOutputTokens` to raise or lower it. An older model that refuses 64,000 needs the option set to what it accepts.
 
 `InferenceState.maxOutputTokens` is that ceiling when the provider states one, sitting beside `contextWindow` so a fold can reserve output headroom. The window check refuses a request whose estimated input plus that ceiling exceeds the window, because the Messages API requires `input + max_tokens <= window` and a check on input alone would pass a body the API then refuses.
 
-In `thinking`, before a request is issued, the same reservation is checked against 80 percent of the window. If the request would not fit, the loop appends `CompactionFired` and rests until `CompactionCompleted`, then re-renders against the new checkpoint. One compaction per attempt: if the re-rendered request still does not fit, the turn fails with the window error. This is what keeps a long tool-calling turn from growing past the window with no chance to compact. The compaction module is what writes the checkpoint, so a pack that includes it is what completes a mid-turn fire.
+`compactMidTurn` lets the loop checkpoint in the middle of a turn. Before a request is issued, the same reservation is measured against the window. If it would not fit, the loop appends `CompactionFired` and rests until `CompactionCompleted`, then re-renders against the new checkpoint. It is the window itself rather than a fraction of it, because how full a log may get before compacting is worth doing is [compaction's](#compaction) policy, and a second ratio here could disagree with the one the author set. This is what keeps a long tool-calling turn from growing past the window with no chance to compact, since the between-turn trigger cannot fire while a turn is open.
+
+One checkpoint per attempt. A summary that does not buy enough room would reach the same verdict on the same log for ever, so a second fire with no model call between them fails with the window error instead.
+
+The option is off by default, and `defaultPack` turns it on. It names a dependency `inference` cannot satisfy alone: something has to answer `CompactionFired` with a checkpoint. Asking for it without a module that writes them is a construction error, because the loop's `compacting` state transitions on an event no module declares, which is [the check that catches a missing module](#composition). A turn that rested there for good would return nothing and say nothing.
 
 `headers`, `fetch`, `retries`, `timeout`, and `maxOutputTokens` are settings a gateway forwards rather than fixes.
 
@@ -114,7 +124,7 @@ Each family puts its state in a different field, so the adapter preserves fields
 
 The last run, on 2026-08-17, read more with the state preserved for every model: Gemini 3.1 Pro at 431 against 99, GPT 5.6 Sol at 164 against 129, DeepSeek V4 Pro at 563 against 392, Claude Opus 5 at 622 against 571, and Claude Sonnet 4.6 at 706 against 590.
 
-A response the gateway stopped at its completion-token limit is a truncated action. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The action carries the usage, because those tokens were spent, and the inference loop records it as `AnswerTruncated`.
+A response the gateway stopped at its completion-token limit is a truncated action. The fragment it returns has the shape of an answer, so reading it as one would finish a turn on half a sentence or dispatch a tool call whose arguments stop mid-JSON. The action carries the usage, because those tokens were spent, and it carries the cut tool call as a name and its raw partial arguments rather than as prose. A provider that wrote that call into the text would be inventing a notation for it, and the model that reads the conversation back was trained on no such notation. The inference loop records all of it as `AnswerTruncated`.
 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped. The failure names `routes`, because that option reaches a provider that honours the serial request, and it is forwarded on this path the same way it is on the Messages path.
 
@@ -162,7 +172,7 @@ Both are ratios of [the model's window](#the-context-window), which the provider
 
 The module appends `CompactionCompleted` with an `upTo` offset and summary. It deletes no events. Rendering substitutes the latest summary for the compacted prefix. A cut that would split a `ToolCalled` from its `ToolReturned` snaps back so the pair stays in the tail: both APIs reject a result with no call.
 
-The inference loop can append `CompactionFired` mid-turn, and this module already accepts that event from idle. A mid-turn checkpoint is stamped with the open turn so the model loop can observe `CompactionCompleted` and continue.
+The inference loop can append `CompactionFired` mid-turn, and this module already accepts that event from idle. A mid-turn checkpoint is stamped with the open turn so the model loop can observe `CompactionCompleted` and continue. The two triggers ask different questions: this module's ratio asks whether a log has grown enough to be worth summarizing, and the loop asks whether the next request can be sent at all.
 
 When a Morph API key is absent or the call fails, the local deterministic fallback produces the checkpoint.
 
@@ -173,6 +183,14 @@ When a Morph API key is absent or the call fails, the local deterministic fallba
 Use a nudge for conditional prompt text or conditional native-tool surfaces that are pure projections of the log. Use a machine when behavior must append facts, wait for events, or perform effects.
 
 A nudge can depend on machine state. For example, a machine can record `ReminderShown`, while the nudge predicate projects whether the reminder should still appear. The durable lifecycle belongs to the machine and the request contribution remains a projection.
+
+## truncation
+
+`truncationNudge(options)` returns the two nudges that speak to a model whose answer was cut at [the output ceiling](#inference), and `defaultPack` includes them. `continueText` answers cut prose and `reissueText` answers a cut tool call.
+
+The split is the point. Cut prose can be continued from the fragment. A cut tool call cannot: its arguments stopped mid-JSON, so nothing was dispatched, and the call has to be made again at a size that finishes. Both are read from `AnswerTruncated`, which carries the tool's name when a call was what stopped.
+
+These words are agent design, so they are a module rather than something the loop or the renderer writes. The renderer replays the fragment as the assistant turn it was and says nothing about it, because what to ask for next depends on what the agent was building. An agent whose tools can append wants to name that affordance. An agent that would rather split the work or shorten the deliverable says so instead. An agent that wants none of this composes its modules without these two.
 
 ## Custom Module
 

@@ -4,11 +4,6 @@ import type { Event } from "@flamecast/core"
 // much tail a checkpoint keeps verbatim. The render reads them and the compaction module writes
 // the checkpoint, so they live between the two rather than inside either.
 
-// Default ratios of the model's window. Compaction divides the window by these, and the model loop
-// uses the trigger when it decides a request would not fit, so both folds share one pair of numbers.
-export const TRIGGER_RATIO = 0.8
-export const KEEP_RATIO = 0.2
-
 // Tokens estimated as characters over four. A real tokenizer is a dependency and a non-pure path,
 // and every size decision has to fold the same on replay, so the estimate is a pure function of the
 // recorded bytes. This is the one measure the guard, the retained tail, and the window check share.
