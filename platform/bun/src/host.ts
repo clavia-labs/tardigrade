@@ -6,6 +6,7 @@ import { EventLog } from "@flamecast/core/event-log"
 import { Router, type CallResult } from "@flamecast/core/router"
 import { Self, restingActor, settleActor, type Actor } from "@flamecast/core/actor"
 import { deadlocks, victimOf, type EdgesOf } from "@flamecast/host/deadlock"
+import type { HostPorts, LaneEnv } from "@flamecast/host/host"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -17,17 +18,20 @@ import { deadlocks, victimOf, type EdgesOf } from "@flamecast/host/deadlock"
 // tests, plus the two only physics can show (a reopen keeps the log; a reopen recovers owed
 // work).
 
-export interface BunHostOptions<R> {
+type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
+  ? { readonly layersFor?: (lane: string) => LaneEnv<R> }
+  : { readonly layersFor: (lane: string) => LaneEnv<R> }
+
+export type BunHostOptions<R> = {
   readonly path: string // SQLite file, or ":memory:" for a volatile run
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly layersFor?: (lane: string) => Layer.Layer<unknown, never, EventLog | Router | Self>
   readonly call?: Parameters<typeof Router.of>[0]["call"]
   readonly resume?: Parameters<typeof Router.of>[0]["resume"]
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
-}
+} & LayersFor<R>
 
 export interface BunHost {
   readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
@@ -50,7 +54,7 @@ const laneOf = (address: string): string => {
 
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
-export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunHost> => {
+export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   const principal = options.principal ?? "bun"
   const runtime = ManagedRuntime.make(SqliteClient.layer({ filename: options.path }))
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
@@ -142,7 +146,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
 
   const self = (lane: string): string => `${principal}:${lane}`
 
-  const layersOf = (lane: string) =>
+  const portsOf = (lane: string) =>
     Layer.mergeAll(
       Layer.succeed(EventLog, {
         append: (events: ReadonlyArray<Event>) => appendEffect(lane, events),
@@ -151,9 +155,13 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
         readFrom: (mark: number) => readFromEffect(lane, mark)
       }),
       router,
-      Layer.succeed(Self, self(lane)),
-      options.layersFor?.(lane) ?? Layer.empty
+      Layer.succeed(Self, self(lane))
     )
+
+  const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
+    const extra = (options.layersFor ?? (() => Layer.empty as unknown as LaneEnv<R>))(lane)
+    return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
+  }
 
   const drain = async (): Promise<void> => {
     while (dirty.size > 0) {
@@ -161,7 +169,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
       dirty.delete(lane)
       const actor = options.actorFor(lane)
       if (actor === undefined) continue
-      await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))) as Effect.Effect<void>)
+      await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
     }
   }
 

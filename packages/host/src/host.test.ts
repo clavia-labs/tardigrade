@@ -96,7 +96,7 @@ describe("the host", () => {
 
 describe("the router membrane", () => {
   test("an unkeyed cross-lane event refuses loudly; a keyed one travels", () => {
-    const host = createHost({
+    const host = createHost<never>({
       actorFor: () => undefined,
       keyOf: (e) => (e.type === "MessageReceived" || e.type === "Keyed" ? `k:${String((e as { id?: unknown }).id)}` : undefined)
     })
