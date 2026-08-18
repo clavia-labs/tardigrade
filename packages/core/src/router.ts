@@ -52,4 +52,4 @@ export class Router extends Context.Service<
       decision: { readonly amount: number; readonly reason?: string }
     ) => Effect.Effect<CallResult>
   }
->()("flamecast/Router") {}
+>()("tardigrade/Router") {}

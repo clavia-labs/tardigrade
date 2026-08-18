@@ -3,8 +3,8 @@ import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import type { Event } from "@flamecast/core/event"
-import { transition, type Actor, type Reactor } from "@flamecast/core/actor"
+import type { Event } from "@tardigrade/core/event"
+import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 
 import { createBunHost, type BunHostOptions } from "./host"
 
@@ -29,7 +29,7 @@ const echoReactor: Reactor = (events) =>
 
 const echo: Actor = { reactors: [echoReactor], keyOf }
 
-const dir = mkdtempSync(join(tmpdir(), "flamework-bun-"))
+const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 

@@ -1,4 +1,4 @@
-import type { Event } from "@flamecast/core/event"
+import type { Event } from "@tardigrade/core/event"
 import { MESSAGE_RENDER_CAP, RESULT_RENDER_CAP, checkpointOf, keepFromIndex } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
