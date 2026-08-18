@@ -101,24 +101,32 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
       let moved = false
       for (const t of fires) {
         const before = yield* log.head
-        // The fire is the reconciler's unit of work, so it is the span: the transition key is
-        // the one attribute that joins a trace to the log. Inert without a tracer.
-        const returned = yield* t.act(t.input).pipe(Effect.withSpan("transition.fire", { attributes: { key: t.key } }))
-        if (returned.length > 0) yield* log.append(returned)
-        if (recordedKeys(yield* log.read, a.keyOf).has(t.key)) {
+        // The fire is the reconciler's unit of work, so it is the span: the transition key
+        // joins the trace to the log, and the outcome is the one question every trace query
+        // starts with. Inert without a tracer.
+        const fired = yield* Effect.gen(function* () {
+          const returned = yield* t.act(t.input)
+          if (returned.length > 0) yield* log.append(returned)
+          const committed = recordedKeys(yield* log.read, a.keyOf).has(t.key)
+          const outcome = committed
+            ? "committed"
+            : (yield* log.head) > before
+              ? // Progress without the key: the act recorded evidence (its sends, a BlockedOn)
+                // and stopped. Re-derive: a transient attempt that recorded its send retries in
+                // this settle, and a genuine park's evidence suppresses its own re-derivation
+                // until the world moves.
+                "advanced"
+              : returned.length === 0
+                ? // Blocked with nothing to say: a park already on record, or a transient
+                  // failure with none. Legal; the platform alarm re-drives when the world moves.
+                  "blocked"
+                : "wedged"
+          yield* Effect.annotateCurrentSpan("outcome", outcome)
+          return outcome
+        }).pipe(Effect.withSpan("transition.fire", { attributes: { key: t.key } }))
+        if (fired === "committed" || fired === "advanced") {
           moved = true
-        } else if ((yield* log.head) > before) {
-          // Progress without the key: the act recorded evidence (its
-          // sends, a BlockedOn) and stopped. Re-derive: a transient
-          // attempt that recorded its send retries in this settle,
-          // and a genuine park's evidence suppresses its own
-          // re-derivation until the world moves.
-          moved = true
-        } else if (returned.length === 0) {
-          // Blocked with nothing to say: a park already on record, or
-          // a transient failure with none. Legal; the platform alarm
-          // re-drives when the world moves.
-        } else {
+        } else if (fired === "wedged") {
           return yield* Effect.die(
             new Error(`transition "${t.key}" wedged: its events carry no committing key and none landed`)
           )

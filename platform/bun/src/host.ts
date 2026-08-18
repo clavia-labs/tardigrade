@@ -136,7 +136,7 @@ export const createBunHost = async <R>(options: BunHostOptions<R>): Promise<BunH
       }
       yield* appendEffect(lane, [event])
       dirty.add(lane)
-    }).pipe(Effect.withSpan("deliver", { attributes: { to: address, type: event.type } }))
+    }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
 
   const router = Layer.succeed(Router, {
     deliver: deliverEffect,
