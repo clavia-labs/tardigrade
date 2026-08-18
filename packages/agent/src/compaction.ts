@@ -25,26 +25,58 @@ import { Infer } from "./infer"
 // Nothing is deleted; the full log stays for the rubric and replay. Consecutive fires with no
 // completion between them are a crash-looping summarizer, and the usual give-up evidence applies.
 
-// The render's truncation caps, stated once beside the measure that must agree with them;
-// request.ts renders with these.
-export const MESSAGE_RENDER_CAP = 12_000
-export const RESULT_RENDER_CAP = 6_000
+// ContextPolicy is every number that decides how much of the log the model sees: the render's
+// truncation caps, the fire and keep lines, and the per-event cap on a summary brief's lines.
+// They are one object because the render and the measure must agree; two policies would let a
+// consumer raise the render's cap and leave the guard firing against a size no request reaches.
+// The same policy therefore goes to the reactor and to the render (request.ts, modelRequest).
+export interface ContextPolicy {
+  // Chars of one inbound message the render sends; past it the message truncates with a pointer.
+  readonly messageRenderCap: number
+  // Chars of one tool result the render sends; past it the result truncates.
+  readonly resultRenderCap: number
+  // Rendered suffix size, in estimated tokens, that fires a compaction pass.
+  readonly fireTokens: number
+  // Estimated tokens of the tail a pass keeps verbatim. Below fireTokens, which is the
+  // hysteresis (module comment).
+  readonly keepTokens: number
+  // Chars of one event's line in the summary brief a pass sends its summarizer.
+  readonly summaryLineCap: number
+}
+
+export const DEFAULT_CONTEXT_POLICY: ContextPolicy = {
+  messageRenderCap: 12_000,
+  resultRenderCap: 6_000,
+  fireTokens: 16_000,
+  keepTokens: 4_000,
+  summaryLineCap: 200
+}
+
+// contextPolicyOf fills an override with the defaults. Every surface that applies context policy
+// takes `Partial<ContextPolicy>` and resolves it here, so a caller states only what it changes.
+export const contextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => ({
+  messageRenderCap: policy.messageRenderCap ?? DEFAULT_CONTEXT_POLICY.messageRenderCap,
+  resultRenderCap: policy.resultRenderCap ?? DEFAULT_CONTEXT_POLICY.resultRenderCap,
+  fireTokens: policy.fireTokens ?? DEFAULT_CONTEXT_POLICY.fireTokens,
+  keepTokens: policy.keepTokens ?? DEFAULT_CONTEXT_POLICY.keepTokens,
+  summaryLineCap: policy.summaryLineCap ?? DEFAULT_CONTEXT_POLICY.summaryLineCap
+})
 
 // renderedChars counts the characters a render sends for one event: capped where the render
 // caps, zero for an event the render skips. The guard must measure the request the model sees;
 // a measure over raw event JSON counts tool results the render truncates and lanes the render
 // never shows, and fires against a size no request ever reaches.
-const renderedChars = (e: Event): number => {
+const renderedChars = (e: Event, policy: ContextPolicy): number => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
-      return Math.min(String(v.text ?? "").length, MESSAGE_RENDER_CAP)
+      return Math.min(String(v.text ?? "").length, policy.messageRenderCap)
     case "TextReturned":
       return String(v.text ?? "").length
     case "ToolCalled":
       return JSON.stringify(v.arguments ?? {}).length
     case "ToolReturned":
-      return Math.min(JSON.stringify(v.result ?? null).length, RESULT_RENDER_CAP)
+      return Math.min(JSON.stringify(v.result ?? null).length, policy.resultRenderCap)
     case "TurnCompleted":
       return String(v.output ?? "").length
     case "TurnFailed":
@@ -57,13 +89,10 @@ const renderedChars = (e: Event): number => {
 // estimateTokens estimates the span's rendered tokens as chars over four. A real tokenizer would
 // be a dependency and an impure path, and every budget decision must fold the same on replay, so
 // the estimate is a pure function of the recorded events (compaction.test.ts, "the measure").
-export const estimateTokens = (events: ReadonlyArray<Event>): number =>
-  Math.ceil(events.reduce((n, e) => n + renderedChars(e), 0) / 4)
-
-// COMPACTION_FIRE_TOKENS is the rendered suffix size that fires a pass; COMPACTION_KEEP_TOKENS
-// bounds the retained tail the pass summarizes down to.
-export const COMPACTION_FIRE_TOKENS = 16_000
-export const COMPACTION_KEEP_TOKENS = 4_000
+export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number => {
+  const resolved = contextPolicyOf(policy)
+  return Math.ceil(events.reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
+}
 
 // checkpointOf returns the last checkpoint: the identity the next span starts from, and the
 // summary to date.
@@ -100,7 +129,8 @@ export const suffixOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
 // overContext reports whether the suffix has passed FIRE tokens. It is pure and total over the
 // log, so the fire decision re-folds identically on replay: it reads only the log, no clock and
 // no random source.
-const overContext = (log: ReadonlyArray<Event>): boolean => estimateTokens(suffixOf(log)) > COMPACTION_FIRE_TOKENS
+const overContext = (log: ReadonlyArray<Event>, policy: ContextPolicy): boolean =>
+  estimateTokens(suffixOf(log), policy) > policy.fireTokens
 
 // atRoundBoundary gates the guard: a pass may land whenever the open turn awaits no tool call,
 // between turns included. A checkpoint landing mid-round would cut a call from the return the
@@ -128,14 +158,17 @@ const boundaryIdOf = (e: Event, served: ReadonlySet<string>): string | undefined
 // that the first boundary past the KEEP line, so the checkpoint always advances when a boundary
 // exists at all. The checkpoint never moves backward; no boundary past the prior one means no
 // cut, and the fire waits for the next round to offer one.
-const cutOf = (log: ReadonlyArray<Event>): { readonly keepFrom: string; readonly index: number } | undefined => {
+const cutOf = (
+  log: ReadonlyArray<Event>,
+  policy: ContextPolicy
+): { readonly keepFrom: string; readonly index: number } | undefined => {
   const priorIndex = keepFromIndex(log, checkpointOf(log).keepFrom)
   const served = new Set(log.map(turnOf).filter((t): t is string => t !== undefined))
   let tokens = 0
   let raw = priorIndex
   for (let i = log.length - 1; i >= priorIndex; i--) {
-    tokens += estimateTokens([log[i]!])
-    if (tokens > COMPACTION_KEEP_TOKENS) {
+    tokens += estimateTokens([log[i]!], policy)
+    if (tokens > policy.keepTokens) {
       raw = i + 1
       break
     }
@@ -151,7 +184,13 @@ const cutOf = (log: ReadonlyArray<Event>): { readonly keepFrom: string; readonly
   return undefined
 }
 
-const lineOf = (e: Event): string | null => {
+// clip cuts one summary line to the policy's cap and says so where it cut. A silent cut reads to
+// the summarizer as the whole value, and the summary it writes then states a truncated fact as
+// complete.
+const clip = (text: string, cap: number): string =>
+  text.length > cap ? `${text.slice(0, cap)}…[cut at ${cap} of ${text.length} chars]` : text
+
+const lineOf = (e: Event, policy: ContextPolicy): string | null => {
   const v = e as Record<string, unknown>
   switch (e.type) {
     case "MessageReceived":
@@ -159,9 +198,9 @@ const lineOf = (e: Event): string | null => {
     case "TextReturned":
       return `agent (working): ${String(v.text ?? "")}`
     case "ToolCalled":
-      return `agent ran: ${JSON.stringify(v.arguments ?? {}).slice(0, 200)}`
+      return `agent ran: ${clip(JSON.stringify(v.arguments ?? {}), policy.summaryLineCap)}`
     case "ToolReturned":
-      return `result: ${JSON.stringify(v.result ?? null).slice(0, 200)}`
+      return `result: ${clip(JSON.stringify(v.result ?? null), policy.summaryLineCap)}`
     case "TurnCompleted":
       return `agent: ${String(v.output ?? "")}`
     case "TurnFailed":
@@ -183,16 +222,20 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
   return fires > passes
 }
 
-// compactionReactor derives a pass when the suffix has crossed FIRE at a round boundary, or an
+// compactionReactorFor derives a pass when the suffix has crossed FIRE at a round boundary, or an
 // explicit `CompactionFired` stands uncovered. The act always advances the checkpoint (the
 // retained tail is bounded by KEEP < FIRE), so a served pass quiets the derivation instead of
 // re-firing. The checkpoint's key is the identity it keeps from: cc:<keepFrom>. Its input is the
 // span to fold, a projection, so a retried fire summarizes the same span. A crash-looping
 // summarizer re-derives the same key and its retries absorb, while a later fire reaches further
 // and keys anew.
-export const compactionReactor: Reactor<Infer> = (log) => {
-  if (!(firedUncovered(log) || (overContext(log) && atRoundBoundary(log)))) return []
-  const cut = cutOf(log)
+//
+// The policy this takes must be the one the render takes, or the guard measures a request the
+// model never sees (ContextPolicy above).
+export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): Reactor<Infer> => (log) => {
+  const resolved = contextPolicyOf(policy)
+  if (!(firedUncovered(log) || (overContext(log, resolved) && atRoundBoundary(log)))) return []
+  const cut = cutOf(log, resolved)
   if (cut === undefined) return []
   const prior = checkpointOf(log)
   const span = log.slice(keepFromIndex(log, prior.keepFrom), cut.index)
@@ -203,7 +246,7 @@ export const compactionReactor: Reactor<Infer> = (log) => {
       act: (input) =>
         Effect.gen(function* () {
           const at = yield* Clock.currentTimeMillis
-          const lines = input.span.map(lineOf).filter((l): l is string => l !== null)
+          const lines = input.span.map((e) => lineOf(e, resolved)).filter((l): l is string => l !== null)
           if (lines.length === 0) {
             return [compactionCompleted({ keepFrom: input.keepFrom, summary: input.summary, at })]
           }
@@ -222,3 +265,7 @@ export const compactionReactor: Reactor<Infer> = (log) => {
     })
   ]
 }
+
+// compactionReactor is that reactor on the default policy. An agent on another policy builds its
+// own with `compactionReactorFor` and hands the same policy to its render.
+export const compactionReactor: Reactor<Infer> = compactionReactorFor()

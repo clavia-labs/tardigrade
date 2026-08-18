@@ -9,6 +9,7 @@ import type { Action } from "@tardigrade/agent/events"
 import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
+import type { ContextPolicy } from "@tardigrade/agent/compaction"
 import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
@@ -180,12 +181,20 @@ export interface ModelConfig {
   // the same surface, or the model is offered tools its reactor will not serve
   // (@tardigrade/agent, surface.ts).
   readonly surface?: Pick<ToolSurface, "system" | "tools">
+  // What this binding's render truncates, and where. It rides the same rule the surface does:
+  // the agent's compaction reactor must hold the same policy, or its guard fires against a size
+  // the request never reaches (@tardigrade/agent, compaction.ts, ContextPolicy).
+  readonly context?: Partial<ContextPolicy>
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
   // configuration. Absent, the ladder falls back to its built-in guesses and the compatible leg
   // sends its rung explicitly rather than trusting a provider default.
   readonly maxOutputTokens?: number
+  // The rungs the truncation ladder climbs, smallest first. Absent, MAX_TOKENS_LADDER. A model
+  // whose useful answers start above the first rung wastes an attempt on every turn, so the
+  // rungs are the operator's to state, bounded by `maxOutputTokens` either way (ladderOf).
+  readonly maxTokensLadder?: ReadonlyArray<number>
   // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
   // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
   readonly stream?: Partial<StreamBounds>
@@ -288,11 +297,11 @@ export const MAX_TOKENS_LADDER = [32_768, 65_536]
 
 // ladderOf bounds the retry ladder by the declared ceiling: never a rung above what the model
 // can produce, and the declared cap is always the last rung, so the loud failure names the
-// model's true limit (model.test.ts, "declared limits").
-export const ladderOf = (declared?: number): ReadonlyArray<number> => {
-  if (declared === undefined) return MAX_TOKENS_LADDER
-  const rungs = MAX_TOKENS_LADDER.filter((r) => r < declared)
-  return [...rungs, declared]
+// model's true limit (model.test.ts, "declared limits"). `rungs` is the ladder to bound,
+// MAX_TOKENS_LADDER when the caller states none.
+export const ladderOf = (declared?: number, rungs: ReadonlyArray<number> = MAX_TOKENS_LADDER): ReadonlyArray<number> => {
+  if (declared === undefined) return rungs
+  return [...rungs.filter((r) => r < declared), declared]
 }
 
 class TruncatedError extends Error {
@@ -515,7 +524,7 @@ export const infer = (config: ModelConfig) => {
             fetch: fetcher
           })
     // The domain decides the request; the platform maps it to the wire and streams it.
-    const req = modelRequest(trajectory, config.surface ?? codeSurface())
+    const req = modelRequest(trajectory, config.surface ?? codeSurface(), config.context ?? {})
     const schema = outputSchemaOf(trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({
       model: config.model,
@@ -556,7 +565,7 @@ export const infer = (config: ModelConfig) => {
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
       Effect.gen(function* () {
-        const ladder = ladderOf(config.maxOutputTokens)
+        const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
         const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
         const action = yield* Effect.promise<Action>(async () => {
         let rung = 0

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
-import { budgetReactor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
+import { budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
 import { toolsReactor } from "./tools"
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
@@ -43,6 +43,14 @@ describe("the budget reactor", () => {
 
   test("with no budget it rests up to the generous default", () => {
     expect(budgetReactor(turn(5))).toHaveLength(0)
+  })
+
+  test("the default is the consumer's: a stated ceiling walls a brief that states none", () => {
+    expect(budgetReactorFor({ defaultToolBudget: 2 })(turn(3))).toHaveLength(1)
+    expect(budgetReactorFor({ defaultToolBudget: 2 })(turn(2))).toHaveLength(0)
+    expect(budgetOf(turn(1), { defaultToolBudget: 2 })).toBe(2)
+    // A brief that states its own budget still outranks the default.
+    expect(budgetOf(turn(1, 9), { defaultToolBudget: 2 })).toBe(9)
   })
 
   test("serving fires BudgetExhausted once, with the counts", async () => {

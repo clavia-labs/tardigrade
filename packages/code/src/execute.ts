@@ -7,7 +7,7 @@ import { annotationsOf, Packages } from "./packages"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
-import { Tmp, TMP_BYTES, tmpPointer } from "./tmp"
+import { Tmp, spillPolicyOf, tmpPointer, type SpillPolicy } from "./tmp"
 import { callId as callIdOf } from "./ids"
 import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
@@ -34,6 +34,7 @@ type CallOutcome = { readonly parked: true } | { readonly parked: false; readonl
 const executeRecorded = (
   execId: string,
   code: string,
+  spill: SpillPolicy,
   turn?: string,
   dispatchedAt?: number
 ): Effect.Effect<ReadonlyArray<Event>, never, EventLog> =>
@@ -183,10 +184,15 @@ const executeRecorded = (
               // receives the whole value, and replay hydrates the ref.
               const answeredAt = yield* Clock.currentTimeMillis
               const json = JSON.stringify(attempt.result ?? null)
-              if (json.length > TMP_BYTES) {
+              if (json.length > spill.spillBytes) {
                 yield* (yield* Tmp).store(callId, json)
                 yield* log.append([
-                  packageReturned({ callId, ...tmpPointer(callId, json.length, json.slice(0, 500)), ...stamp, at: answeredAt })
+                  packageReturned({
+                    callId,
+                    ...tmpPointer(callId, json.length, json.slice(0, spill.previewChars)),
+                    ...stamp,
+                    at: answeredAt
+                  })
                 ])
               } else {
                 yield* log.append([packageReturned({ callId, result: attempt.result, ...stamp, at: answeredAt })])
@@ -248,22 +254,31 @@ const executeRecorded = (
       // The settle is what the model will read: a large one goes to tmp and the settle carries
       // the pointer, so no result can nuke the turn context.
       const json = JSON.stringify(outcome.result ?? null)
-      if (json.length > TMP_BYTES) {
+      if (json.length > spill.spillBytes) {
         const ref = `${execId}.result`
         yield* (yield* Tmp).store(ref, json)
-        return [codeSettled({ execId, ...tmpPointer(ref, json.length, json.slice(0, 500)), ...logs, ...stamp, at })]
+        return [
+          codeSettled({ execId, ...tmpPointer(ref, json.length, json.slice(0, spill.previewChars)), ...logs, ...stamp, at })
+        ]
       }
       return [codeSettled({ execId, result: outcome.result, ...logs, ...stamp, at })]
     }
     return [{ type: "CodeSettled", execId, error: outcome.error, ...logs, ...stamp, at }]
   })
 
-// codeReactor derives the executable head as one transition: the settle is the record
+// CodePolicy is the lane's policy: where a result stops fitting in an agent's context and
+// spills to tmp instead (tmp.ts, SpillPolicy).
+export interface CodePolicy {
+  readonly spill: Partial<SpillPolicy>
+}
+
+// codeReactorFor derives the executable head as one transition: the settle is the record
 // (`cs:<execId>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the lane
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
-export const codeReactor: Reactor = (events) => {
+export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor => (events) => {
+  const spill = spillPolicyOf(policy.spill)
   const owed = workOwed(events)
   if (owed === undefined) return []
   const dispatch = events.find(
@@ -280,7 +295,10 @@ export const codeReactor: Reactor = (events) => {
         turn: turnOf(dispatch),
         at: typeof d.at === "number" ? d.at : undefined
       },
-      act: (input) => executeRecorded(input.execId, input.code, input.turn, input.at)
+      act: (input) => executeRecorded(input.execId, input.code, spill, input.turn, input.at)
     })
   ]
 }
+
+// codeReactor is that reactor on the default spill bound.
+export const codeReactor: Reactor = codeReactorFor()

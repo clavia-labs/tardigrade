@@ -10,6 +10,10 @@ State each fact in one place. If `docs/` contains a fact, link to it from this f
 
 Keep the docs conceptual. Use diagrams, invariants, and links to explain concepts. Write what a thing is and why it has its shape. Do not include file maps or descriptions of documents.
 
+## Design
+
+No silent hardcoding. When the framework applies a policy value, such as a cap, a threshold, a timeout, or a limit, the consumer must be able to see it and set it. Export the default, accept an override at the call site or on the surface that applies it, and make the effect visible in the output when the policy changes what the model sees. A constant a consumer can read but cannot change is a leaky abstraction; be explicit instead.
+
 ## Pull requests
 
 - Title a pull request in the commit format, the same as any commit: `type(scope?): message`, 3 to 5 words. The title becomes the squash commit subject, so it lands in the log as written.

@@ -144,7 +144,7 @@ describe("the agent with execute as the only tool", () => {
   })
 
   test("a spilled settle answers with its pointer, never an empty result", async () => {
-    // Over TMP_BYTES the settle carries a pointer instead of the value. Answering the call from
+    // Over the spill bound the settle carries a pointer instead of the value. Answering the call from
     // `result` alone hands the model `{}`: it learns neither what its code computed nor that a
     // ref holds it, so it re-runs the work. The pointer and its note are the result.
     const big = "y".repeat(20_000)

@@ -3,25 +3,26 @@ import type { Event } from "@tardigrade/core/event"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
 import { Packages, type Package } from "@tardigrade/code/packages"
-import { jsSandbox, memoryTmp } from "@tardigrade/code/defaults"
+import { jsSandboxFor, memoryTmp } from "@tardigrade/code/defaults"
+import type { SandboxPolicy } from "@tardigrade/code/sandbox"
 import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
-import { rlmAgent, rlmAgentFor, type RlmR } from "./turn"
+import { rlmAgentFor, type AgentPolicy, type RlmR } from "./turn"
 import { Infer } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
-import type { ToolSurface } from "./surface"
+import { codeSurface, type ToolSurface } from "./surface"
 
-export { agentFor, rlmAgent, rlmAgentFor, type AgentR, type RlmR } from "./turn"
+export { agentFor, rlmAgent, rlmAgentFor, type AgentPolicy, type AgentR, type RlmR } from "./turn"
 
 // The parts a caller lists: reactors and key tables. An agent is reactors over one log.
 // Adding a capability is adding a reactor to the list.
 export { agentActorKeys, rlmActorKeys } from "./turn"
 export { inferReactor, inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy } from "./infer"
-export { budgetReactor } from "./budget"
+export { budgetReactor, budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./budget"
 export { toolsReactor, toolsReactorFor } from "./tools"
 export { replyReactor } from "./reply"
-export { compactionReactor } from "./compaction"
+export { compactionReactor, compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./compaction"
 export { agentKeys } from "./events"
 export {
   usageIn,
@@ -51,6 +52,15 @@ export interface CreateAgentOptions {
   // The tool surface, code mode by default. The same surface must reach the model binding, so a
   // caller passing one here passes it to `infer` too (surface.ts).
   readonly surface?: ToolSurface<RlmR>
+  // Every policy value the assembled agent applies: the give-up and repair ceilings, the default
+  // tool budget, the context caps, and the spill bound. Absent fields take the exported defaults.
+  // `policy.context` rides the same rule the surface does, because the render lives in the model
+  // binding: a caller stating one here states it to `infer` too (turn.ts, AgentPolicy).
+  readonly policy?: Partial<AgentPolicy>
+  // The console cap of the sandbox this function binds. It is separate from `policy` because the
+  // sandbox is a seam, not a reactor: an assembly that brings its own Sandbox layer sets the cap
+  // there instead (packages/code/src/sandbox.ts, SandboxPolicy).
+  readonly sandbox?: Partial<SandboxPolicy>
 }
 
 export interface RlmAgent {
@@ -70,6 +80,7 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
     react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.promise(() => options.infer(trajectory, key))
   })
   const tmp = memoryTmp()
+  const sandbox = jsSandboxFor(options.sandbox ?? {})
 
   // Packages is built from the host's Router and Self. place and the
   // facet reader still close over the host: they name other lanes.
@@ -79,9 +90,14 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
       Effect.gen(function* () {
         const router = yield* Router
         const self = yield* Self
-        const spawn = agentsPackage(router, self, (callId) => host.self(`ag.${callId}`), {
-          events: (facet: string) => Promise.resolve(host.read(facet))
-        })
+        const spawn = agentsPackage(
+          router,
+          self,
+          (callId) => host.self(`ag.${callId}`),
+          { events: (facet: string) => Promise.resolve(host.read(facet)) },
+          // A child with no stated budget takes the same ceiling this agent's own wall reads.
+          { budget: options.policy?.budget ?? {} }
+        )
         const all = [...user, spawn]
         return Packages.of({
           resolve: (name) => all.find((p) => p.name === name),
@@ -89,11 +105,11 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
         })
       })
     )
-    return Layer.mergeAll(packages, jsSandbox, tmp, infer)
+    return Layer.mergeAll(packages, sandbox, tmp, infer)
   }
 
   // Every ag. lane runs the RLM default; anything else is a sink.
-  const assembled = options.surface === undefined ? rlmAgent : rlmAgentFor(options.surface)
+  const assembled = rlmAgentFor(options.surface ?? codeSurface(), options.policy ?? {})
   const host: Host = createHost<RlmR>({
     principal: "mem",
     actorFor: (lane) => (lane.startsWith("ag.") ? assembled : undefined),

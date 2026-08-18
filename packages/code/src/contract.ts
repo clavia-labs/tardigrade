@@ -48,13 +48,18 @@ const objectBody = (node: SchemaNode, depth: number): string => {
   return `{${fields.join(", ")}}`
 }
 
+// DEFAULT_SIGNATURE_DEPTH is how far a rendered signature nests before an object stands for its
+// own contents. It bounds the line a wrong call reads back, so a caller with deeper schemas
+// raises it at the call site rather than losing the fields that would teach the fix.
+export const DEFAULT_SIGNATURE_DEPTH = 2
+
 // renderSignature folds a method's declared input schema into one calling line:
 // `put({name: string, body: string, title?: string})`. A method with no usable object schema
 // renders bare: `list()`.
-export const renderSignature = (method: string, input: unknown): string => {
+export const renderSignature = (method: string, input: unknown, depth = DEFAULT_SIGNATURE_DEPTH): string => {
   const node = asNode(input)
   if (node === undefined || node.type !== "object" || node.properties === undefined) return `${method}()`
-  const body = objectBody(node, 2)
+  const body = objectBody(node, depth)
   return body === "{}" ? `${method}()` : `${method}(${body})`
 }
 
