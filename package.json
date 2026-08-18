@@ -3,7 +3,8 @@
   "version": "0.0.0",
   "type": "module",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "platform/*"
   ],
   "scripts": {
     "gate": "bun run tools/gate.ts",

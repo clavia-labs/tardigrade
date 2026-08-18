@@ -1,0 +1,308 @@
+import { Effect, Layer } from "effect"
+import { StreamProcessor, type ModelMessage, type ProcessorResult, type StreamChunk, type Tool, type ToolCall } from "@tanstack/ai"
+import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
+import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
+import { FetchHttpHandler } from "@smithy/fetch-http-handler"
+import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
+import { Infer } from "@flamecast/agent/infer"
+import type { Action } from "@flamecast/agent/events"
+import type { Envelope } from "@flamecast/core/envelope"
+import { answerErrors, outputSchemaOf } from "@flamecast/agent/contract"
+import { modelRequest, type AgentMessage, type ToolSpec } from "@flamecast/agent/request"
+
+// The real model binding: one inference per react, streamed through a TanStack adapter and
+// decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
+// layered: the stream bounds below catch a hung provider inside the call, the platform's 30s
+// liveness alarm catches a hung binding, and the marks-and-give-up fold bounds the retries. A
+// thrown attempt here is an attempt that died, and the next settle retries it.
+
+export interface ModelEnv {
+  readonly MODEL_BASE_URL?: string // OpenAI-compat endpoint, or the gateway's bedrock-runtime URL
+  readonly MODEL_API_KEY?: string
+  readonly MODEL_ID?: string
+  readonly MODEL_SONNET_ID?: string
+  readonly MODEL_OPUS_ID?: string
+  readonly MODEL_HAIKU_ID?: string
+  // "bedrock" speaks Converse through the gateway's aws-bedrock route (v5's proven leg);
+  // anything else is the OpenAI-compat wire.
+  readonly MODEL_PROVIDER?: string
+}
+
+export const modelConfigured = (env: ModelEnv): boolean =>
+  env.MODEL_BASE_URL !== undefined && env.MODEL_API_KEY !== undefined && env.MODEL_ID !== undefined
+
+// The model vocabulary agents speak: short names, resolved to provider ids by env. An unknown
+// or absent name is the default. The asked name rides the brief's MessageReceived envelope, so
+// the choice is in the log and replay agrees by construction; latest brief wins.
+export const modelIdOf = (env: ModelEnv, name?: string): string =>
+  name === "opus"
+    ? (env.MODEL_OPUS_ID ?? env.MODEL_ID!)
+    : name === "sonnet"
+      ? (env.MODEL_SONNET_ID ?? env.MODEL_ID!)
+      : name === "haiku"
+        ? (env.MODEL_HAIKU_ID ?? env.MODEL_ID!)
+        : env.MODEL_ID!
+
+export const modelAskOf = (trajectory: ReadonlyArray<Envelope>): string | undefined => {
+  let name: string | undefined
+  for (const e of trajectory) {
+    if (e.type !== "MessageReceived") continue
+    const v = (e as { model?: unknown }).model
+    if (typeof v === "string" && v !== "") name = v
+  }
+  return name
+}
+
+// The unrecorded stream bounds (v5's stream-idle lesson): time to first chunk, idle between
+// chunks, and the whole stream. Each timeout throws; the attempt dies and the marks count it.
+const FIRST_CHUNK_MS = 90_000
+const IDLE_MS = 90_000
+const TOTAL_MS = 300_000
+
+const bounded = (stream: AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk> => ({
+  async *[Symbol.asyncIterator]() {
+    const startedAt = Date.now()
+    const iterator = stream[Symbol.asyncIterator]()
+    let first = true
+    while (true) {
+      const budget = Math.min(first ? FIRST_CHUNK_MS : IDLE_MS, TOTAL_MS - (Date.now() - startedAt))
+      if (budget <= 0) throw new Error("model stream exceeded its total bound")
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const timeout = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(first ? "no first chunk within bound" : "model stream idle beyond bound")), budget)
+      })
+      try {
+        const next = await Promise.race([iterator.next(), timeout])
+        if (next.done) return
+        first = false
+        // A provider refusal arrives as a RUN_ERROR chunk the processor would silently absorb,
+        // leaving an empty result that reads as "the model said nothing". Throw the real cause.
+        const chunk = next.value as { type?: unknown; message?: unknown; code?: unknown; error?: { message?: unknown } }
+        if (String(chunk.type) === "RUN_ERROR") {
+          throw new Error(
+            `model stream error: ${String(chunk.message ?? chunk.error?.message ?? "unknown")}${chunk.code === undefined ? "" : ` (${String(chunk.code)})`}`
+          )
+        }
+        yield next.value
+      } finally {
+        if (timer !== undefined) clearTimeout(timer)
+      }
+    }
+  }
+})
+
+// The provider adapter: map the domain request's messages and tools onto this provider's wire. The
+// tool name is sanitized to the strictest alphabet (Converse: [a-zA-Z0-9_-]+) here, a wire concern;
+// the log and the domain keep the exact name.
+const toMessage = (m: AgentMessage): ModelMessage =>
+  ({
+    role: m.role,
+    content: m.content,
+    ...(m.toolCalls === undefined
+      ? {}
+      : {
+          toolCalls: m.toolCalls.map(
+            (c): ToolCall => ({ id: c.id, type: "function", function: { name: c.name.replace(/[^a-zA-Z0-9_-]/g, "_"), arguments: c.arguments } })
+          )
+        }),
+    ...(m.toolCallId === undefined ? {} : { toolCallId: m.toolCallId })
+  }) as ModelMessage
+
+const toTool = (t: ToolSpec): Tool => ({
+  name: t.name,
+  description: t.description,
+  inputSchema: t.inputSchema as NonNullable<Tool["inputSchema"]>
+})
+
+// The decode: the processed stream becomes one Action. A tool call acts; plain text completes;
+// nothing at all is a failed attempt (thrown, so the marks count it and the settle retries).
+export const actionOf = (result: ProcessorResult, schema?: unknown): Action => {
+  const calls = result.toolCalls ?? []
+  const text = (result.content ?? "").trim()
+  // An answer call ends the turn with its arguments as the structured output, but only when
+  // those arguments satisfy the schema this turn declared. A tool call is well-formed long
+  // before it is correct: a model can put a stringified array where an array belongs. An answer
+  // that misses goes back as a call, and the tools reactor returns the reasons.
+  const answered = calls.find((c) => c.function.name === "answer")
+  if (answered !== undefined) {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(answered.function.arguments)
+    } catch {
+      parsed = undefined
+    }
+    const errors = answerErrors(schema, parsed)
+    if (errors.length === 0) return { kind: "complete", output: answered.function.arguments }
+    return { kind: "call", callId: answered.id, name: "answer", arguments: parsed, ...(text === "" ? {} : { text }) }
+  }
+  const call = calls.find((c) => c.function.name === "execute") ?? calls[0]
+  if (call !== undefined) {
+    let args: unknown
+    try {
+      args = JSON.parse(call.function.arguments)
+    } catch {
+      args = { code: call.function.arguments }
+    }
+    return {
+      kind: "call",
+      callId: call.id,
+      name: call.function.name,
+      arguments: args,
+      ...(text === "" ? {} : { text })
+    }
+  }
+  // Prose terminates a turn that declared nothing. Under a schema it cannot: the answer has a
+  // declared shape, and text is not it, so the turn goes back for a real answer.
+  if (text !== "") {
+    if (schema === undefined) return { kind: "complete", output: text }
+    return { kind: "call", callId: `${result.toolCalls?.[0]?.id ?? "answer"}/prose`, name: "answer", arguments: undefined, text }
+  }
+  throw new Error("the model produced neither text nor a tool call")
+}
+
+const noopLogger = new Proxy({}, { get: () => () => {} }) as never
+
+export interface ModelConfig {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly model: string
+  readonly packagesInScope: string
+  readonly provider?: string
+  readonly fetch?: FetchImpl // test seam
+  readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
+}
+
+// Throttle-shaped failures die fast under fan-out: many agents firing at once trip the gateway's
+// rate limit, and three back-to-back attempts with no wait between them exhaust
+// `GIVE_UP_AFTER` (`src/agent/infer.ts`) before the throttle even clears. `inferMachine`'s
+// attempt/give-up fold has no notion of time: settleActor (src/core/actor.ts) re-serves owed
+// work on the very next event, and a delayed re-serve would need the lane to rest until an
+// alarm keyed off the attempt count wakes it — a real change to the reactor
+// framework's vocabulary, not a local one. The seam that IS local and honest: retry the
+// throttle-shaped failure inside this one act, before it ever becomes a died mark, so the
+// attempt counter only counts failures that were not a gateway saying "slow down". Retries stay
+// bounded (`THROTTLE_RETRY_DELAYS_MS.length`, at most 3) so a genuinely wedged provider still
+// dies and gives up in time.
+//
+// The openai SDK client `chatStream` runs on (`@tanstack/openai-base`) throws its `APIError`
+// subclasses with a numeric `.status`: 429 is the gateway's rate limit, 5xx is its own upstream
+// trouble. `bounded()` below throws plain `Error`s for the same shape of failure (a stream that
+// never starts or stalls), so the message is checked too.
+const THROTTLE_RETRY_DELAYS_MS = [2_000, 8_000, 30_000]
+
+const isThrottleShaped = (e: unknown): boolean => {
+  const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
+  const status = typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined
+  if (status === 429 || (status !== undefined && status >= 500)) return true
+  const message = String(err.message ?? e)
+  return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|idle beyond bound|exceeded its total bound|no first chunk within bound|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
+    message
+  )
+}
+
+// Full jitter (AWS's term for it): a uniform draw between 0 and the base, so many attempts
+// throttled at the same instant do not retry in lockstep and re-trip the same limit together.
+const jittered = (baseMs: number): number => Math.random() * baseMs
+
+const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
+
+// The Converse leg, v5's shape cut to its core: the SDK authenticates to the GATEWAY (its own
+// authorization header is stripped; `cf-aig-authorization` carries our token, the gateway holds
+// the AWS credential), and the dynamic SDK import is resolved statically because wrangler's
+// esbuild cannot follow the adapter's indirection on workerd.
+const bedrockAdapter = (config: ModelConfig) => {
+  const handler = new (class extends FetchHttpHandler {
+    override async handle(request: Parameters<FetchHttpHandler["handle"]>[0], handlerOptions?: Parameters<FetchHttpHandler["handle"]>[1]) {
+      request.headers = Object.fromEntries(Object.entries(request.headers).filter(([k]) => k.toLowerCase() !== "authorization"))
+      request.headers["cf-aig-authorization"] = `Bearer ${config.apiKey}`
+      return super.handle(request, handlerOptions)
+    }
+  })()
+  const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
+  return new (class extends BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]> {
+    protected override importBedrockRuntime(): Promise<typeof BedrockRuntime> {
+      return Promise.resolve(BedrockRuntime)
+    }
+    protected override buildClientConfig(
+      resolved: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildClientConfig"]>[0],
+      resolvedRegion: string,
+      endpoint: string | undefined
+    ) {
+      // maxAttempts: 1 turns off the AWS SDK's own retry (it counts the first try as attempt
+      // one), so a throttle-shaped failure surfaces to `realInfer`'s own retry loop instead of
+      // being retried twice, once inside the SDK on its own schedule and once outside on ours.
+      return { ...super.buildClientConfig(resolved, resolvedRegion, endpoint), requestHandler: handler, maxAttempts: 1 }
+    }
+    protected override buildInput(options: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildInput"]>[0]) {
+      const input = super.buildInput(options) as BedrockRuntime.ConverseStreamCommandInput
+      // Converse truncates at its own small default otherwise, and a truncated stream ends an
+      // `answer` tool call with EMPTY arguments: a whole generated code body silently gone.
+      input.inferenceConfig = { ...input.inferenceConfig, maxTokens: 32_768 }
+      return input
+    }
+  })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
+}
+
+// FetchImpl is the callable half of fetch, spelled via Parameters so the same file
+// typechecks under workers, bun, and dom globals (their fetch types differ in extras like
+// preconnect, never in the call shape).
+type FetchImpl = (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => Promise<Response>
+
+// The attempt's idempotency key rides as the standard header on the OpenAI-compat wire, so a
+// provider (or gateway) that dedups collapses a crashed attempt's retry into the first call.
+// The Converse wire has no idempotency surface, so the bedrock leg ignores the key and the
+// retry stays plain at-least-once there.
+const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImpl | undefined => {
+  if (key === undefined) return base
+  const inner = base ?? globalThis.fetch
+  return (input, init) => {
+    const headers = new Headers(init?.headers)
+    headers.set("Idempotency-Key", key)
+    return inner(input, { ...init, headers })
+  }
+}
+
+export const realInfer = (config: ModelConfig) => {
+  const sleep = config.sleep ?? realSleep
+  const attemptOnce = async (trajectory: ReadonlyArray<Envelope>, key: string | undefined): Promise<Action> => {
+    const fetcher = withKey(config.fetch, key)
+    const adapter =
+      config.provider === "bedrock"
+        ? bedrockAdapter(config)
+        : openaiCompatibleText(config.model, {
+            name: "flamecast",
+            baseURL: config.baseUrl,
+            apiKey: config.apiKey,
+            // The openai SDK client retries a throttle-shaped failure on its own schedule by
+            // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
+            // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
+            maxRetries: 0,
+            ...(fetcher === undefined ? {} : { fetch: fetcher })
+          })
+    // The domain decides the request; the platform maps it to the wire and streams it.
+    const req = modelRequest(trajectory, config.packagesInScope)
+    const schema = outputSchemaOf(trajectory) // the answer parser needs the turn's declared shape
+    const stream = adapter.chatStream({
+      model: config.model,
+      messages: req.messages.map(toMessage) as never,
+      tools: req.tools.map(toTool) as never,
+      systemPrompts: [req.system],
+      logger: noopLogger
+    } as never)
+    const result = await new StreamProcessor().process(bounded(stream))
+    return actionOf(result, schema)
+  }
+  return Layer.succeed(Infer, {
+    react: (trajectory: ReadonlyArray<Envelope>, key?: string) =>
+      Effect.promise(async () => {
+        for (let attempt = 0; ; attempt++) {
+          try {
+            return await attemptOnce(trajectory, key)
+          } catch (e) {
+            if (attempt >= THROTTLE_RETRY_DELAYS_MS.length || !isThrottleShaped(e)) throw e
+            await sleep(jittered(THROTTLE_RETRY_DELAYS_MS[attempt]!))
+          }
+        }
+      })
+  })
+}
