@@ -45,7 +45,7 @@ const wiring = () =>
     memoryTmp()
   )
 
-// Spans go to any OTLP listener; absent one they cost nothing (docs/how-to/observe.md).
+// Spans go to any OTLP listener (docs/how-to/observe.md).
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
@@ -113,6 +113,7 @@ An actor is a set of reactors over one log, plus the key derivation that decides
 - [Quickstart](docs/quickstart.md): the concepts in one page: events, projections, transitions, reactors, an agent in three reactors.
 - [Tutorial: an RLM agent](docs/tutorials/rlm-agent.md): a Recursive Language Model agent with durable code execution, killed mid-recursion.
 - [How-to: gate tools](docs/how-to/gate-tools.md): hide, reveal, or revoke tools from the log.
+- [How-to: observe](docs/how-to/observe.md): wire a tracer, traces in ClickHouse, the one-trace contract, the outcome vocabulary.
 - [Reference: API](docs/reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting.
 - [Why tardigrade](docs/explanations/why.md): state = f(log), the convergence of durable systems, agents as the new users.
 - [Reactors](docs/explanations/reactors.md): the reactor model, with the React analogy and the math.
