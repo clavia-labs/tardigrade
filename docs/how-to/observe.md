@@ -24,7 +24,7 @@ Absent `telemetry`, every span is inert and costs nothing. Point a backend at th
 
 ## Traces in ClickHouse
 
-Questions across many traces take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Install both as single binaries: `brew install clickhouse`, and `otelcol-contrib` from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases). Take the contrib distribution; the core one lacks the `clickhouse` exporter. Then run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
+Questions across many traces take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Install both as single binaries: `brew install clickhouse`, and `otelcol-contrib` from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases). Then run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
 
 ```yaml
 # collector.yaml
