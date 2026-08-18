@@ -1,5 +1,7 @@
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@flamecast/core"
+import { estimateTextTokens } from "./context"
+import type { Projection } from "./projection"
 
 export interface NativeToolSpec {
   readonly name: string
@@ -42,16 +44,142 @@ export interface AgentMessage {
   readonly continuation?: ProviderContinuation
 }
 
+export interface RequestOptions {
+  readonly serviceTier?: string
+  readonly temperature?: number
+  readonly maxOutputTokens?: number
+  readonly effort?: "low" | "medium" | "high"
+  readonly routes?: ReadonlyArray<string>
+  readonly body?: Readonly<Record<string, unknown>>
+}
+
+export class RequestOptionsProjection extends Context.Service<
+  RequestOptionsProjection,
+  Projection<RequestOptions>
+>()("flamecast/RequestOptionsProjection") {}
+
 export interface ModelRequest {
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
   readonly tools: ReadonlyArray<NativeToolSpec>
+  readonly options?: RequestOptions
 }
 
 export interface Usage {
   readonly promptTokens: number
   readonly completionTokens: number
-  readonly costUsd: number
+  // Present when the figure is known: the provider reported it, including zero, or a price table
+  // filled it from token counts. Absent when nobody could say. That absence is unknown cost.
+  readonly costUsd?: number
+}
+
+export interface Spend extends Usage {
+  readonly settled: Usage
+  readonly unsettled: Usage
+}
+
+export const ZERO_USAGE: Usage = { promptTokens: 0, completionTokens: 0, costUsd: 0 }
+
+export interface ModelPricing {
+  readonly promptUsdPerToken: number
+  readonly completionUsdPerToken: number
+}
+
+export const costOf = (
+  pricing: ModelPricing | undefined,
+  promptTokens: number,
+  completionTokens: number
+): number | undefined =>
+  pricing === undefined
+    ? undefined
+    : promptTokens * pricing.promptUsdPerToken + completionTokens * pricing.completionUsdPerToken
+
+export const priced = (usage: Usage, pricing?: ModelPricing): Usage => {
+  if (usage.costUsd !== undefined) return usage
+  const costUsd = costOf(pricing, usage.promptTokens, usage.completionTokens)
+  return costUsd === undefined ? usage : { ...usage, costUsd }
+}
+
+export const reservedUsage = (request: ModelRequest, pricing?: ModelPricing): Usage =>
+  priced(
+    {
+      promptTokens: estimateTextTokens(
+        JSON.stringify({
+          system: request.system,
+          messages: request.messages,
+          tools: request.tools
+        })
+      ),
+      completionTokens: 0
+    },
+    pricing
+  )
+
+export const settledUsage = (
+  reported: unknown,
+  reserved: Usage,
+  pricing?: ModelPricing
+): Usage => {
+  if (reported === undefined) return ZERO_USAGE
+  const usage = priced(usageOf(reported), pricing)
+  if (usage.costUsd !== undefined || reserved.costUsd === undefined) return usage
+  return { ...usage, costUsd: reserved.costUsd }
+}
+
+export const sumUsage = (parts: ReadonlyArray<Usage>): Usage => {
+  if (parts.length === 0) return ZERO_USAGE
+  let promptTokens = 0
+  let completionTokens = 0
+  let costUsd = 0
+  let known = true
+  for (const part of parts) {
+    promptTokens += part.promptTokens
+    completionTokens += part.completionTokens
+    if (part.costUsd === undefined) known = false
+    else costUsd += part.costUsd
+  }
+  return {
+    promptTokens,
+    completionTokens,
+    ...(known ? { costUsd } : {})
+  }
+}
+
+export const spendOf = (settled: Usage, unsettled: Usage): Spend => ({
+  ...sumUsage([settled, unsettled]),
+  settled,
+  unsettled
+})
+
+const recordOf = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Readonly<Record<string, unknown>>)
+    : undefined
+
+// Per-request options overlay construction-time fields. The request is a projection of the log, so
+// a tier policy is a fold rather than a mutable argument to `react`.
+export const applyRequestOptions = (
+  body: Readonly<Record<string, unknown>>,
+  options: RequestOptions | undefined
+): Readonly<Record<string, unknown>> => {
+  if (options === undefined) return body
+  const existing = recordOf(body.providerOptions) ?? {}
+  return {
+    ...body,
+    ...(options.maxOutputTokens === undefined ? {} : { max_tokens: options.maxOutputTokens }),
+    ...(options.temperature === undefined ? {} : { temperature: options.temperature }),
+    ...(options.serviceTier === undefined ? {} : { service_tier: options.serviceTier }),
+    ...(options.effort === undefined ? {} : { output_config: { effort: options.effort } }),
+    ...(options.routes === undefined
+      ? {}
+      : {
+          providerOptions: {
+            ...existing,
+            gateway: { ...recordOf(existing.gateway), only: options.routes }
+          }
+        }),
+    ...options.body
+  }
 }
 
 export type Action =
@@ -90,6 +218,10 @@ export interface InferenceState {
   // and one that had not, and a machine guard reads this, so the same log would fold two ways and a
   // replay would diverge from the run it replays.
   readonly contextWindow: number
+  // What the model costs, when a catalog or a caller has said. A figure written here would be wrong
+  // for every model it was never measured against, so absence means the projection cannot price a
+  // turn, and a missing provider cost stays unknown rather than becoming zero.
+  readonly pricing?: ModelPricing
 }
 
 export interface InferenceProvider {
@@ -113,6 +245,7 @@ export interface CustomInferenceOptions {
   // What the model behind this function accepts. Required for the same reason the projection is:
   // whoever wrote the function is the only one who can say, and nobody downstream can guess.
   readonly contextWindow: number
+  readonly pricing?: ModelPricing
 }
 
 export const customInference = (
@@ -125,7 +258,8 @@ export const customInference = (
     state: () => ({
       provider: options.id ?? "custom",
       model,
-      contextWindow: options.contextWindow
+      contextWindow: options.contextWindow,
+      ...(options.pricing === undefined ? {} : { pricing: options.pricing })
     }),
     react: (request, key) => Effect.promise(() => react(request, key))
   }
@@ -143,6 +277,6 @@ export const usageOf = (value: unknown): Usage => {
   return {
     promptTokens: typeof carried?.promptTokens === "number" ? carried.promptTokens : 0,
     completionTokens: typeof carried?.completionTokens === "number" ? carried.completionTokens : 0,
-    costUsd: typeof carried?.costUsd === "number" ? carried.costUsd : 0
+    ...(typeof carried?.costUsd === "number" ? { costUsd: carried.costUsd } : {})
   }
 }

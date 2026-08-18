@@ -37,7 +37,7 @@ import { InferenceStateProjection } from "flamecast-core/harness"
 const selected = Context.get(agent.services, InferenceStateProjection)(log)
 ```
 
-Effect construction services expose typed module values, including projections. Machine state can be reconstructed with `foldOf(machine, log)`.
+Effect construction services expose typed module values, including projections. Machine state can be reconstructed with `foldOf(machine, log)`. `RequestOptionsProjection` is the same kind of service: a module contributes a fold, and `agent.request(log).options` is what that fold chose.
 
 ## Replay
 
@@ -77,7 +77,7 @@ const total = treeUsageIn(log, "m-1")
 const toolCalls = toolCallsOf(log)
 ```
 
-`usageIn(log, turn)` sums the prompt tokens, completion tokens, and provider cost for one turn. The values come from its `ModelReturned` events.
+`usageIn(log, turn)` sums the prompt tokens, completion tokens, and provider cost for one turn. `settled` comes from `ModelReturned`. `unsettled` comes from a `ModelCalled` still in flight and from a `ModelSettled` that closed an attempt without a result. `costUsd` is present when every part of that total is known. A provider that reported zero is free. A provider that omitted cost leaves `costUsd` absent unless a price table filled it.
 
 `treeUsageIn(log, turn)` adds the usage every sub-agent result reported, and a child reports its own tree usage, so the sum covers the whole delegation tree from one log.
 

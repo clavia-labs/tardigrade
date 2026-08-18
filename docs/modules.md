@@ -60,7 +60,9 @@ A module says which model answers, and saying that means saying what it accepts,
 
 A gateway that is busy, unwell, or unreachable earns further attempts on a jittered exponential backoff, bounded by `retries`, and one attempt is bounded by `timeout`. Every attempt carries one idempotency key, so a retry after a reply this side never saw is the same call rather than a second one. A refusal earns no retry: a request refused for a bad key is refused the same way every time.
 
-A failure that outlives those in-flight retries is still transient. The model loop appends `ModelDeferred` with the attempt, the due time, and the reason, then rests. The runtime wakes the session at `notBefore` by delivering `AlarmFired`, and the loop retries with the same idempotency key. A `Retry-After` of more than two seconds skips the in-flight retries and defers immediately, so a twenty-minute queue is a due time in the log rather than a sleep inside an Effect. `deferAtMost` bounds how many times one call may wait, defaulting to eight. A crash that leaves a `ModelCalled` with no consequence is journaled the same way, so a restart sleeps instead of immediately issuing another request. A restart whose due time has already passed appends `AlarmFired` from the log and continues.
+A failure that outlives those in-flight retries is still transient. The model loop appends `ModelDeferred` with the attempt, the due time, and the reason, then rests. The runtime wakes the session at `notBefore` by delivering `AlarmFired`, and the loop retries with the same idempotency key. A `Retry-After` of more than two seconds skips the in-flight retries and defers immediately, so a twenty-minute queue is a due time in the log rather than a sleep inside an Effect. `deferAtMost` bounds how many times one call may wait, defaulting to eight. A crash that leaves a `ModelCalled` with no consequence is journaled the same way, so a restart sleeps instead of immediately issuing another request. The next settle also appends `ModelSettled` with the reservation `ModelCalled` carried, so spend that never got a `ModelReturned` stays on the record. A restart whose due time has already passed appends `AlarmFired` from the log and continues.
+
+`ModelCalled` carries `reserved`, an estimate of prompt tokens and, when the provider holds a price table, of cost. A gateway catalog that publishes `pricing.input` and `pricing.output` fills that table at construction, and a caller can pass `pricing` on a provider that has no catalog. `usageIn` reports `settled` from `ModelReturned` and `unsettled` from in-flight `ModelCalled` rows plus `ModelSettled`. A cost the provider reported, including zero, is kept. A cost the provider omitted is filled from the table when one exists, and is left absent when none does: absence is unknown.
 
 An attempt this side stops waiting for is cancelled. Dropping the wait alone leaves the request running: the model finishes it, the gateway bills for it, and the retry asks for the same completion again, so one turn is paid for twice. `timeout` therefore bounds what the gateway is asked to do rather than only what this side waits for.
 
@@ -113,6 +115,18 @@ A response the gateway stopped at its completion-token limit is a failed action 
 The OpenAI-compatible provider requests serial tool calling with `parallel_tool_calls: false`. The harness action type carries one tool call, so a response that still contains several calls becomes a visible failed action with its usage. No call is silently dropped. The failure names `routes`, because that option reaches a provider that honours the serial request, and it is forwarded on this path the same way it is on the Messages path.
 
 A request estimated past a known context window is refused before it is sent. It cannot succeed, so sending it buys a slow refusal in the gateway's words, and this one names both sizes and the model they belong to. The estimate is characters over four, which runs low against JSON and code, so a refusal means the request is past the window rather than near it.
+
+## requestOptions
+
+`requestOptions(of)` contributes `RequestOptionsProjection`. The projection is a fold from the log to per-request provider settings: service tier, temperature, output ceiling, effort, routes, and a body overlay. Inference reads it when it builds the model request, so the settings are a projection the way `InferenceStateProjection` feeds compaction, and invariant 4 still holds: model requests are pure projections of the log.
+
+`flexThenStandard()` is the shipped policy. It asks for flex until the current turn has two `ModelDeferred` events, then standard. A replay of the same log sends the same tier. `agent.request(log)` shows the choice without calling a provider.
+
+```ts
+const agent = createAgent({
+  modules: [inference({ contextWindow: 200_000 }), flexThenStandard(), nativeTools([lookup])]
+})
+```
 
 ## nativeTools
 

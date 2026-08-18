@@ -1,5 +1,5 @@
 import { Config, Duration, Redacted } from "effect"
-import type { InferenceProvider } from "../infer"
+import type { InferenceProvider, ModelPricing } from "../infer"
 import { environment, environmentNumber } from "./environment"
 import { openAiChatInference, transport } from "./openai-chat"
 
@@ -19,6 +19,7 @@ export interface CloudflareGatewayInferenceOptions {
   readonly retries?: number
   readonly timeout?: Duration.Input
   readonly maxOutputTokens?: number
+  readonly pricing?: ModelPricing
 }
 
 export const cloudflareGatewayInference = (

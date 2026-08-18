@@ -73,7 +73,7 @@ describe("an Anthropic model on the Vercel gateway", () => {
     expect(await Effect.runPromise(provider(stub).react(request, "turn/infer/0"))).toEqual({
       kind: "complete",
       output: "Invoice INV-4182.",
-      usage: { promptTokens: 8, completionTokens: 3, costUsd: 0 }
+      usage: { promptTokens: 8, completionTokens: 3 }
     })
     expect(calls[0]?.url).toBe("https://ai-gateway.vercel.sh/v1/messages")
     expect(calls[0]?.headers.get("anthropic-version")).toBe("2023-06-01")
@@ -279,7 +279,7 @@ describe("an Anthropic model on the Vercel gateway", () => {
     expect(action.kind).toBe("fail")
     expect(String(action.kind === "fail" ? action.error : "")).toContain("output-token limit")
     expect(String(action.kind === "fail" ? action.error : "")).toContain("maxOutputTokens")
-    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 8192, costUsd: 0 })
+    expect(action.usage).toEqual({ promptTokens: 900, completionTokens: 8192 })
   })
 
   test("refuses multiple tool calls instead of dropping all but the first", async () => {
@@ -318,7 +318,7 @@ describe("an Anthropic model on the Vercel gateway", () => {
       ).react(request, "k")
     )
 
-    expect(action.usage).toEqual({ promptTokens: 512, completionTokens: 5, costUsd: 0 })
+    expect(action.usage).toEqual({ promptTokens: 512, completionTokens: 5 })
   })
 })
 

@@ -4,11 +4,13 @@ import type {
   Action,
   AgentMessage,
   InferenceProvider,
+  ModelPricing,
   ModelRequest,
   NativeToolSpec,
   ProviderContinuation,
   Usage
 } from "../infer"
+import { applyRequestOptions, priced } from "../infer"
 
 const ANTHROPIC_MESSAGES_PROTOCOL = "anthropic-messages/v1"
 
@@ -44,6 +46,7 @@ export interface AnthropicMessagesOptions {
   // Fields an endpoint understands that the Messages API does not define. A gateway in front of this
   // API takes routing options here, so this file holds no vendor's routing vocabulary.
   readonly body?: Readonly<Record<string, unknown>>
+  readonly pricing?: ModelPricing
 }
 
 interface ContentBlock {
@@ -189,10 +192,7 @@ const usageOf = (usage: MessagesResponse["usage"]): Usage => {
       count(usage?.input_tokens) +
       count(usage?.cache_read_input_tokens) +
       count(usage?.cache_creation_input_tokens),
-    completionTokens: count(usage?.output_tokens),
-    // This API prices a turn nowhere in its reply, so the turn's cost is counted from its tokens
-    // elsewhere rather than invented here.
-    costUsd: 0
+    completionTokens: count(usage?.output_tokens)
   }
 }
 
@@ -262,7 +262,8 @@ export const anthropicMessagesInference = (
   state: () => ({
     provider: options.provider,
     model: options.model,
-    contextWindow: options.contextWindow
+    contextWindow: options.contextWindow,
+    ...(options.pricing === undefined ? {} : { pricing: options.pricing })
   }),
   react: (request: ModelRequest, key: string) =>
     Effect.gen(function* () {
@@ -298,25 +299,30 @@ const reacted = (
         "place would call the tool with none of it."
     } satisfies Action)
   }
-  const body = JSON.stringify({
-    model: options.model,
-    max_tokens: options.maxOutputTokens,
-    ...(request.system === "" ? {} : { system: request.system }),
-    messages: converted.messages,
-    ...(request.tools.length === 0
-      ? {}
-      : {
-          tools: request.tools.map(tool),
-          // One call at a time, because the harness answers one at a time and this API requires a
-          // result for every call before the conversation continues.
-          tool_choice: { type: "auto", disable_parallel_tool_use: true }
-        }),
-    ...(options.effort === undefined ? {} : { output_config: { effort: options.effort } }),
-    ...(options.thinkingBudget === undefined
-      ? {}
-      : { thinking: { type: "enabled", budget_tokens: options.thinkingBudget } }),
-    ...options.body
-  })
+  const body = JSON.stringify(
+    applyRequestOptions(
+      {
+        model: options.model,
+        max_tokens: options.maxOutputTokens,
+        ...(request.system === "" ? {} : { system: request.system }),
+        messages: converted.messages,
+        ...(request.tools.length === 0
+          ? {}
+          : {
+              tools: request.tools.map(tool),
+              // One call at a time, because the harness answers one at a time and this API requires a
+              // result for every call before the conversation continues.
+              tool_choice: { type: "auto", disable_parallel_tool_use: true }
+            }),
+        ...(options.effort === undefined ? {} : { output_config: { effort: options.effort } }),
+        ...(options.thinkingBudget === undefined
+          ? {}
+          : { thinking: { type: "enabled", budget_tokens: options.thinkingBudget } }),
+        ...options.body
+      },
+      request.options
+    )
+  )
   const refusal = overWindow(body, options.provider, options.model, options.contextWindow)
   if (refusal !== undefined) return Effect.succeed(refusal)
   return sent({
@@ -336,6 +342,10 @@ const reacted = (
     provider: options.provider,
     ...(options.retries === undefined ? {} : { retries: options.retries }),
     ...(options.timeout === undefined ? {} : { timeout: options.timeout }),
-    read: (parsed) => actionOf(parsed as MessagesResponse)
+    read: (parsed) => {
+      const action = actionOf(parsed as MessagesResponse)
+      if (action.usage === undefined) return action
+      return { ...action, usage: priced(action.usage, options.pricing) }
+    }
   })
 }

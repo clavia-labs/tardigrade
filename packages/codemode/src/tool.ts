@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect"
-import { usageOf, type NativeTool, type NativeToolContext, type Usage } from "@flamecast/harness/infer"
+import { sumUsage, usageOf, ZERO_USAGE, type NativeTool, type NativeToolContext, type Usage } from "@flamecast/harness/infer"
 import { tool } from "@flamecast/harness/tool"
 import {
   surfaceOf,
@@ -80,7 +80,7 @@ export const codemode = <R = never>(
           return {
             output: [],
             calls: [],
-            usage: NO_SPEND,
+            usage: ZERO_USAGE,
             error: "no source to run"
           } satisfies CodemodeResult
         }
@@ -135,19 +135,13 @@ export const codemode = <R = never>(
           ...(outcome.error === undefined ? {} : { error: outcome.error }),
           calls,
           usage: spend.reduce(
-            (total, one) => ({
-              promptTokens: total.promptTokens + one.promptTokens,
-              completionTokens: total.completionTokens + one.completionTokens,
-              costUsd: total.costUsd + one.costUsd
-            }),
-            NO_SPEND
+            (total, one) => sumUsage([total, one]),
+            ZERO_USAGE
           )
         } satisfies CodemodeResult
       })
   })
 }
-
-const NO_SPEND: Usage = { promptTokens: 0, completionTokens: 0, costUsd: 0 }
 
 // The script's identity inside its turn. It names the provider call that asked, so two scripts in
 // one turn mint different ids and a redispatch of one script mints the id it minted before.
