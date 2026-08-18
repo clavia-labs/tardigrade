@@ -21,6 +21,17 @@ import { agentsPackage } from "./spawn"
 // (actorFor: () => agent), and the hosted front door for a one-call start.
 export { agent } from "./turn"
 
+// The parts the actor is assembled from, for a caller composing their own: the six reactors
+// and the agent's key table. An agent is reactors over one log; adding a capability is adding
+// a reactor to the list.
+export { agentActorKeys } from "./turn"
+export { inferReactor, Infer } from "./infer"
+export { budgetReactor } from "./budget"
+export { toolsReactor } from "./tools"
+export { replyReactor } from "./reply"
+export { compactionReactor } from "./compaction"
+export { agentKeys } from "./events"
+
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
   // The mind: one inference over the trajectory, one action out.
