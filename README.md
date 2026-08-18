@@ -1,6 +1,8 @@
 # Tardigrade
 
-Tardigrade is a library for durable agents: the event log is the only state, reactors derive work from it, and a reconciler fires what the log does not yet record.
+Tardigrade is an agent harness built with the log as its core, inspired by event sourcing and React: state at any point is a pure function of the log, and the harness is a set of transitions derived from it.
+
+Designing a harness is not very different from designing a user interface, except here the user is a language model. React declared the component tree as a function of state, `UI = f(state)`, and the less known half is that the set of valid transitions derives from the same function: `{transitions} = f(state)`. A harness needs the same shape with the log as the state: `{transitions} = f(log)`. One function implies every state and every valid transition between them, and the log is the source of truth for what happened and for what will happen.
 
 ## Events
 
@@ -137,6 +139,10 @@ A store that binds the log port owes six guarantees, stated in `packages/core/sr
 ## Status
 
 The packages are private workspace packages, consumed in-repo. The docs/ tree predates this design and describes the removed harness and codemode surfaces; it is queued for a rewrite. `platform/model` carries the proven driver; journaled backoff, model-reported limits, provider continuations, and spend reservation are the next behaviors to land on it.
+
+## Why tardigrade
+
+Tardigrades are the most indestructible animals we know of. They survive vacuum, radiation, freezing, and decades without water by turning into a kernel that holds everything needed to come back alive. This harness tries to be the same for agents: everything it is, and everything it will be, derives from a durable append-only log, and a log is very hard to kill.
 
 ## Contributing
 
