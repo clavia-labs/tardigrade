@@ -144,6 +144,24 @@ export const renderMessages = (
         pendingContinuation = undefined
         break
       }
+      // The fragment the model paid for, replayed as the assistant turn it was. What to say about it
+      // is a nudge, because the answer depends on what the agent was building: prose to continue, a
+      // tool call to re-issue, or work to split. This renderer states the fact and nothing more.
+      //
+      // A fragment with no text carries nothing to continue from, so it renders as the reasoning
+      // state alone when the provider returned some, and as nothing when it did not.
+      case "AnswerTruncated": {
+        const text = String(event.text ?? "")
+        if (text !== "" || pendingContinuation !== undefined) {
+          messages.push({
+            role: "assistant",
+            content: text === "" ? null : text,
+            ...(pendingContinuation === undefined ? {} : { continuation: pendingContinuation })
+          })
+        }
+        pendingContinuation = undefined
+        break
+      }
       default:
         break
     }

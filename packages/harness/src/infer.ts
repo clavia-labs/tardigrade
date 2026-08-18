@@ -214,6 +214,17 @@ export type Action =
       readonly retryAfterMs?: number | undefined
       readonly usage?: Usage | undefined
     }
+  // An answer the provider stopped at its output ceiling. The fragment is what the model managed to
+  // say, and `call` is the tool call it was partway through naming. The arguments are the raw
+  // partial the provider sent, which is not JSON and is not meant to be parsed: it is recorded so a
+  // module can read which tool was cut and decide what to do, rather than inferring it from prose.
+  | {
+      readonly kind: "truncated"
+      readonly text: string
+      readonly call?: { readonly name: string; readonly arguments: string } | undefined
+      readonly usage?: Usage | undefined
+      readonly continuation?: ProviderContinuation | undefined
+    }
 
 export interface InferenceState {
   readonly provider: string

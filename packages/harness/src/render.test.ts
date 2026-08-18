@@ -231,4 +231,47 @@ describe("modelRequest", () => {
     const log = [head, { type: "SomethingNew", turn: "m-1", at: 9 }, returned]
     expect(modelRequest(programOf(renderOf()), log).messages).toHaveLength(2)
   })
+
+  // The fragment and nothing else. What to ask for next is a nudge, so the renderer contributes no
+  // words of its own here.
+  test("renders a truncated answer as the assistant turn it was", () => {
+    const log: ReadonlyArray<Event> = [
+      head,
+      { type: "ModelReturned", turn: "m-1", callId: "k-0", at: 2 },
+      {
+        type: "AnswerTruncated",
+        turn: "m-1",
+        callId: "k-0",
+        text: "The lease was signed on",
+        tokens: 8192,
+        at: 3
+      }
+    ]
+    expect(modelRequest(programOf(renderOf()), log).messages).toEqual([
+      { role: "user", content: "Find order 4182." },
+      { role: "assistant", content: "The lease was signed on" }
+    ])
+  })
+
+  // A tool call cut before its arguments closed leaves no text to replay, and the call never
+  // happened, so there is no assistant turn to render at all.
+  test("renders nothing for a truncated answer that carried only a cut tool call", () => {
+    const log: ReadonlyArray<Event> = [
+      head,
+      { type: "ModelReturned", turn: "m-1", callId: "k-0", at: 2 },
+      {
+        type: "AnswerTruncated",
+        turn: "m-1",
+        callId: "k-0",
+        text: "",
+        tokens: 8192,
+        tool: "write",
+        arguments: `{"path":"a.md`,
+        at: 3
+      }
+    ]
+    expect(modelRequest(programOf(renderOf()), log).messages).toEqual([
+      { role: "user", content: "Find order 4182." }
+    ])
+  })
 })

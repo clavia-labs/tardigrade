@@ -93,6 +93,8 @@ export {
   budgetGranted,
   budgetRequested,
   compactionCompleted,
+  compactionFired,
+  answerTruncated,
   messageReceived,
   modelCalled,
   modelDeferred,
@@ -157,3 +159,4 @@ export {
   type MorphOptions
 } from "./modules/compaction"
 export { nudge, type NudgeOptions } from "./modules/nudge"
+export { truncationNudge, type TruncationNudgeOptions } from "./modules/truncation"
