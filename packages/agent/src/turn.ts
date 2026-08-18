@@ -6,9 +6,6 @@ import { messageKeys } from "@tardigrade/core/message"
 import { codeKeys } from "@tardigrade/code/events"
 import { agentKeys } from "./events"
 import { codeReactor } from "@tardigrade/code/execute"
-import type { Tmp } from "@tardigrade/code/tmp"
-import type { Packages } from "@tardigrade/code/packages"
-import type { Sandbox } from "@tardigrade/code/sandbox"
 import type { Router } from "@tardigrade/core/router"
 import type { Self } from "@tardigrade/core/actor"
 import { Infer, inferReactor } from "./infer"
@@ -23,7 +20,7 @@ export { Infer } from "./infer"
 // AgentR is the mind: Infer for the model, EventLog for settle, Router and Self for reply.
 // Budget, code, and compaction join at the RLM assembly (rlmAgentFor).
 export type AgentR = Infer | EventLog | Router | Self
-export type RlmR = AgentR | Packages | Sandbox | Tmp
+export type RlmR = AgentR
 
 // agentActorKeys is the mind's key table: its alphabet and the canonical inbound.
 export const agentActorKeys = composeKeys(messageKeys, agentKeys)

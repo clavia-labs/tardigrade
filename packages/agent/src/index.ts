@@ -49,7 +49,7 @@ export interface CreateAgentOptions {
   // settles on the first drive (index.test.ts, "an agent initialises from a log").
   readonly log?: ReadonlyArray<Event>
   // The tool surface, code mode by default. The same surface must reach the model binding, so a
-  // caller passing one here passes it to `realInfer` too (surface.ts).
+  // caller passing one here passes it to `infer` too (surface.ts).
   readonly surface?: ToolSurface<RlmR>
 }
 

@@ -144,11 +144,13 @@ export interface Package {
 
 // Packages is the registry seam. Which packages exist here is capability scoping: a task that
 // must never send messages is bound to a registry that holds no sending package, and the code
-// cannot name what the registry does not hold.
-export class Packages extends Context.Service<
-  Packages,
-  {
-    readonly resolve: (name: string) => Package | undefined
-    readonly list: () => Effect.Effect<ReadonlyArray<{ readonly name: string; readonly description: string }>>
-  }
->()("code/Packages") {}
+// cannot name what the registry does not hold. The default registry holds nothing, so the
+// unwired case is the powerless one.
+export interface PackagesService {
+  readonly resolve: (name: string) => Package | undefined
+  readonly list: () => Effect.Effect<ReadonlyArray<{ readonly name: string; readonly description: string }>>
+}
+
+export const Packages: Context.Reference<PackagesService> = Context.Reference("code/Packages", {
+  defaultValue: (): PackagesService => ({ resolve: () => undefined, list: () => Effect.succeed([]) })
+})

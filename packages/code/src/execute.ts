@@ -36,7 +36,7 @@ const executeRecorded = (
   code: string,
   turn?: string,
   dispatchedAt?: number
-): Effect.Effect<ReadonlyArray<Event>, never, EventLog | Packages | Sandbox | Tmp> =>
+): Effect.Effect<ReadonlyArray<Event>, never, EventLog> =>
   Effect.gen(function* () {
     const stamp = turn === undefined ? {} : { turn }
     const log = yield* EventLog
@@ -46,7 +46,7 @@ const executeRecorded = (
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
     const packages = yield* Packages
     const sandbox = yield* Sandbox
-    const context = yield* Effect.context<Tmp>()
+    const context = yield* Effect.context<never>()
     let n = 0
     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
     // or park; parkGate completes when every open call settled or parked and at least one
@@ -263,7 +263,7 @@ const executeRecorded = (
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the lane
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
-export const codeReactor: Reactor<Packages | Sandbox | Tmp> = (events) => {
+export const codeReactor: Reactor = (events) => {
   const owed = workOwed(events)
   if (owed === undefined) return []
   const dispatch = events.find(
@@ -272,7 +272,7 @@ export const codeReactor: Reactor<Packages | Sandbox | Tmp> = (events) => {
   if (dispatch === undefined) return []
   const d = dispatch as { code?: unknown; at?: unknown }
   return [
-    transition({
+    transition<{ execId: string; code: string; turn: string | undefined; at: number | undefined }, never>({
       key: `cs:${owed.execId}`,
       input: {
         execId: owed.execId,

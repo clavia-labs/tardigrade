@@ -13,21 +13,18 @@ Prerequisites: bun 1.1 or later, and a model endpoint.
 An agent is reactors over one log.
 
 ```ts
-import { Effect, Layer } from "effect"
 import { actor } from "@tardigrade/core/actor"
 import { composeKeys } from "@tardigrade/core/event-log"
 import { messageKeys } from "@tardigrade/core/message"
 import { codeReactor, codeKeys } from "@tardigrade/code"
-import { jsSandbox, memoryTmp } from "@tardigrade/code/defaults"
-import { Packages } from "@tardigrade/code/packages"
 import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@tardigrade/agent"
-import { realInfer } from "@tardigrade/model/model"
+import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
 // The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
 // tools instead, for an agent measured against another harness's surface.
-const surface = codeSurface("none")
+const surface = codeSurface()
 
 // Adding a capability is adding a reactor to the list.
 const agent = actor(
@@ -35,21 +32,14 @@ const agent = actor(
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
-// The wiring: a real model through platform/model, a sandbox for the agent's code, your packages.
-// The binding renders the same surface the actor serves.
-const wiring = () =>
-  Layer.mergeAll(
-    realInfer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock", surface, maxOutputTokens: 64_000 }),
-    Layer.succeed(Packages, { resolve: () => undefined, list: () => Effect.succeed([]) }),
-    jsSandbox,
-    memoryTmp()
-  )
-
-// One NDJSON row per span (docs/how-to/observe.md); `otlpTelemetry` reaches real backends.
+// The model is the one seam with no default: sandbox, tmp, and packages (an empty registry)
+// bind themselves until a layer overrides them. The binding also defaults to the code surface;
+// a changed surface goes to both the actor and `infer`, so the model is offered the tools the
+// reactors serve. Telemetry is one NDJSON row per span (docs/how-to/observe.md).
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
-  layersFor: wiring,
+  layersFor: () => infer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock" }),
   telemetry: fileTelemetry("spans.ndjson")
 })
 await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })
