@@ -54,19 +54,27 @@ export const modelAskOf = (trajectory: ReadonlyArray<Event>): string | undefined
   return name
 }
 
-// The unrecorded stream bounds (v5's stream-idle lesson): time to first chunk, idle between
-// chunks, and the whole stream. Each timeout throws; the attempt dies and the marks count it.
-const FIRST_CHUNK_MS = 90_000
-const IDLE_MS = 90_000
-const TOTAL_MS = 300_000
+// StreamBounds is time to first chunk, idle between chunks, and the whole stream. Each timeout
+// throws; the attempt dies and the marks count it (v5's stream-idle lesson).
+export interface StreamBounds {
+  readonly firstChunkMs: number
+  readonly idleMs: number
+  readonly totalMs: number
+}
 
-const bounded = (stream: AsyncIterable<StreamChunk>): AsyncIterable<StreamChunk> => ({
+export const DEFAULT_STREAM_BOUNDS: StreamBounds = {
+  firstChunkMs: 90_000,
+  idleMs: 90_000,
+  totalMs: 300_000
+}
+
+const bounded = (stream: AsyncIterable<StreamChunk>, bounds: StreamBounds): AsyncIterable<StreamChunk> => ({
   async *[Symbol.asyncIterator]() {
     const startedAt = Date.now()
     const iterator = stream[Symbol.asyncIterator]()
     let first = true
     while (true) {
-      const budget = Math.min(first ? FIRST_CHUNK_MS : IDLE_MS, TOTAL_MS - (Date.now() - startedAt))
+      const budget = Math.min(first ? bounds.firstChunkMs : bounds.idleMs, bounds.totalMs - (Date.now() - startedAt))
       if (budget <= 0) throw new Error("model stream exceeded its total bound")
       let timer: ReturnType<typeof setTimeout> | undefined
       const timeout = new Promise<never>((_, reject) => {
@@ -177,27 +185,32 @@ export interface ModelConfig {
   // configuration. Absent, the ladder falls back to its built-in guesses and the compatible leg
   // sends its rung explicitly rather than trusting a provider default.
   readonly maxOutputTokens?: number
+  // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
+  // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
+  readonly stream?: Partial<StreamBounds>
+  // In-act backoff bases for throttle-shaped failures. Length is the retry count.
+  readonly throttleRetryDelaysMs?: ReadonlyArray<number>
   readonly fetch?: FetchImpl // test seam
   readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
 }
 
 // Throttle-shaped failures die fast under fan-out: many agents firing at once trip the gateway's
 // rate limit, and three back-to-back attempts with no wait between them exhaust
-// `GIVE_UP_AFTER` (`src/agent/infer.ts`) before the throttle even clears. `inferMachine`'s
+// infer's give-up ceiling (`inferReactorFor`) before the throttle even clears. `inferMachine`'s
 // attempt/give-up fold has no notion of time: settleActor (src/core/actor.ts) re-serves owed
 // work on the very next event, and a delayed re-serve would need the lane to rest until an
 // alarm keyed off the attempt count wakes it — a real change to the reactor
 // framework's vocabulary, not a local one. The seam that IS local and honest: retry the
 // throttle-shaped failure inside this one act, before it ever becomes a died mark, so the
 // attempt counter only counts failures that were not a gateway saying "slow down". Retries stay
-// bounded (`THROTTLE_RETRY_DELAYS_MS.length`, at most 3) so a genuinely wedged provider still
+// bounded (the configured delay list's length) so a genuinely wedged provider still
 // dies and gives up in time.
 //
 // The openai SDK client `chatStream` runs on (`@tanstack/openai-base`) throws its `APIError`
 // subclasses with a numeric `.status`: 429 is the gateway's rate limit, 5xx is its own upstream
 // trouble. `bounded()` below throws plain `Error`s for the same shape of failure (a stream that
 // never starts or stalls), so the message is checked too.
-const THROTTLE_RETRY_DELAYS_MS = [2_000, 8_000, 30_000]
+export const DEFAULT_THROTTLE_RETRY_DELAYS_MS: ReadonlyArray<number> = [2_000, 8_000, 30_000]
 
 const isThrottleShaped = (e: unknown): boolean => {
   const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
@@ -244,12 +257,17 @@ export const retryAfterMsOf = (e: unknown, now: number): number | undefined => {
 // re-trip the limit), the jittered ladder otherwise, and undefined for a stated wait past the
 // ceiling: holding a turn open longer than the ladder ever would is worse than dying, and a
 // died attempt's mark lets the platform alarm re-drive after the queue clears.
-export const throttleDelayMs = (e: unknown, attempt: number, now: number): number | undefined => {
-  if (attempt >= THROTTLE_RETRY_DELAYS_MS.length) return undefined
-  const ceiling = THROTTLE_RETRY_DELAYS_MS[THROTTLE_RETRY_DELAYS_MS.length - 1]!
+export const throttleDelayMs = (
+  e: unknown,
+  attempt: number,
+  now: number,
+  delays: ReadonlyArray<number> = DEFAULT_THROTTLE_RETRY_DELAYS_MS
+): number | undefined => {
+  if (attempt >= delays.length) return undefined
+  const ceiling = delays[delays.length - 1]!
   const stated = retryAfterMsOf(e, now)
   if (stated !== undefined) return stated > ceiling ? undefined : stated + Math.random() * 1_000
-  return jittered(THROTTLE_RETRY_DELAYS_MS[attempt]!)
+  return jittered(delays[attempt]!)
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -340,6 +358,12 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
 
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
+  const bounds: StreamBounds = {
+    firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
+    idleMs: config.stream?.idleMs ?? DEFAULT_STREAM_BOUNDS.idleMs,
+    totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
+  }
+  const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
   const attemptOnce = async (trajectory: ReadonlyArray<Event>, key: string | undefined, maxTokens: number, rung: number): Promise<Action> => {
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
@@ -375,7 +399,7 @@ export const realInfer = (config: ModelConfig) => {
       modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
-    const result = await new StreamProcessor().process(bounded(stream))
+    const result = await new StreamProcessor().process(bounded(stream, bounds))
     if (result.finishReason === "length") throw new TruncatedError(maxTokens)
     return actionOf(result, schema)
   }
@@ -398,7 +422,7 @@ export const realInfer = (config: ModelConfig) => {
               return { kind: "fail", error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once` }
             }
             if (!isThrottleShaped(e)) throw e
-            const delay = throttleDelayMs(e, attempt, Date.now())
+            const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
             if (delay === undefined) throw e
             await sleep(delay)
           }

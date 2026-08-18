@@ -16,7 +16,7 @@ export { agentFor, rlmAgent, rlmAgentFor, type AgentR, type RlmR } from "./turn"
 // The parts a caller lists: reactors and key tables. An agent is reactors over one log.
 // Adding a capability is adding a reactor to the list.
 export { agentActorKeys, rlmActorKeys } from "./turn"
-export { inferReactor, Infer } from "./infer"
+export { inferReactor, inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy } from "./infer"
 export { budgetReactor } from "./budget"
 export { toolsReactor, toolsReactorFor } from "./tools"
 export { replyReactor } from "./reply"
