@@ -116,10 +116,10 @@ export const codeMode: Capability = {
   serve: cs.serve
 }
 
-// toolTable is a fixed table of named tools, the shape every provider's tool calling takes and
+// toolList is a fixed table of named tools, the shape every provider's tool calling takes and
 // the shape a replicated harness is measured on: each call runs its tool and records the
 // return, no lane of its own.
-export const toolTable = <R = never>(tools: ReadonlyArray<NativeTool<R>>, system = ""): Capability<R> => {
+export const toolList = <R = never>(tools: ReadonlyArray<NativeTool<R>>, system = ""): Capability<R> => {
   const ns = nativeSurface(tools, system)
   return { name: "tools", tools: () => ns.tools, system: ns.system, serve: ns.serve }
 }

@@ -19,7 +19,7 @@ import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
 // A capability bundles what the model is shown with how that work settles. Mounting one is
-// adding it to the list; `toolTable([...])` mounts a fixed tool table instead of code mode.
+// adding it to the list; `toolList([...])` mounts a fixed tool table instead of code mode.
 const agent = actorOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.

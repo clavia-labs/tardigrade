@@ -39,7 +39,7 @@ export {
 
 // The tool surface: code mode is the default, and an agent measured against a fixed tool table
 // brings its own (surface.ts).
-export { actorOf, renderOf, codeMode, toolTable, reply, budget, compaction, type Capability } from "./capability"
+export { actorOf, renderOf, codeMode, toolList, reply, budget, compaction, type Capability } from "./capability"
 export { codeSurface, nativeSurface, type NativeTool, type ToolSurface } from "./surface"
 
 export interface CreateAgentOptions {

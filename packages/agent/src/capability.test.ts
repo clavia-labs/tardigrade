@@ -4,7 +4,7 @@ import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
-import { actorOf, budget, codeMode, compaction, renderOf, reply, toolTable } from "./capability"
+import { actorOf, budget, codeMode, compaction, renderOf, reply, toolList } from "./capability"
 import { receive } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
@@ -36,7 +36,7 @@ const readLog = Effect.flatMap(EventLog, (log) => log.read)
 const run = <A, R>(effect: Effect.Effect<A, never, R>, layers: Layer.Layer<R>) =>
   Effect.runPromise(effect.pipe(Effect.provide(layers)) as Effect.Effect<A>)
 
-const echoTable = toolTable([
+const echoTable = toolList([
   {
     spec: { name: "echo", description: "echoes", inputSchema: { type: "object" } },
     run: (input) => Effect.succeed({ echoed: input })
@@ -98,7 +98,7 @@ describe("actorOf", () => {
   })
 
   test("two capabilities declaring one tool name collide at construction", () => {
-    expect(() => actorOf([echoTable, toolTable([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
+    expect(() => actorOf([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
       'tool "echo" declared by capabilities tools and tools'
     )
   })
