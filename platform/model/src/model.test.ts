@@ -309,6 +309,13 @@ describe("retry-after", () => {
     expect(fallback).toBeLessThanOrEqual(8_000)
     expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 3, NOW)).toBeUndefined()
   })
+
+  test("a caller-supplied ladder sets the retry count and the Retry-After ceiling", () => {
+    const short = [100]
+    expect(throttleDelayMs({}, 0, NOW, short)).toBeLessThanOrEqual(100)
+    expect(throttleDelayMs({}, 1, NOW, short)).toBeUndefined()
+    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 0, NOW, short)).toBeUndefined()
+  })
 })
 
 
