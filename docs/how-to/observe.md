@@ -1,10 +1,10 @@
 How to observe a running agent: wire its spans to a collector and keep one trace across lanes.
 
-The log is the primary record: every call, park, and terminal is an event you can read back. Spans carry what the log cannot: wall-clock time, retries that landed no event, and the shape of a slow turn. To collect the spans, hand the host a tracer. To read one trace across lanes, hold two contracts the trace data does not state: the platform stamps each persisted event with the sending span, and the reconciler links each fire to the delivery that woke it.
+The log is the primary record: every call, park, and terminal is an event you can read back. Spans carry what the log cannot: wall-clock time, retries that landed no event, and the shape of a slow turn. To collect them, hand the host a tracer.
 
 ## Wire a tracer
 
-`createBunHost` takes any tracer as a Layer through `telemetry`. The ready-made occupant is `otlpTelemetry`, built on the OTLP exporter effect v4 ships in core:
+`createBunHost` takes any tracer as a Layer through `telemetry`. The ready-made layer is `otlpTelemetry`, on the OTLP exporter effect v4 ships in core:
 
 ```ts
 import { createBunHost } from "@tardigrade/bun/host"
@@ -22,9 +22,9 @@ Absent `telemetry`, every span is inert and costs nothing. Point a backend at th
 
 ## The one-trace contract
 
-One business event stays one trace across every lane it touches, and that property rests on a rule every platform binding must uphold: the platform stamps the sending span's context onto each event it persists, as one `traceparent` string in W3C header form, and an event already carrying one keeps it, because the first stamp is the causal one. A binding that does not stamp fragments every cross-lane trace, and nothing will say why: the traces simply arrive orphaned.
+One business event stays one trace across every lane it touches. The rule that holds it: every platform binding stamps the sending span's context onto each event it persists, as one `traceparent` string in W3C header form. An event that already carries one keeps it; the first stamp is the causal one. A binding that skips the stamp fragments every cross-lane trace, and nothing says why: the traces arrive orphaned.
 
-The reconciler's side of the contract is a link: `transition.fire` links to the newest carried context on the log, which reads as "the delivery that woke this work". It is an approximation: a settle serving several fresh deliveries links them to the same trigger, because a derivation reads the whole log and cannot name which events enabled it. Links, never parents: one settle serves many deliveries, and a span has one parent.
+The reconciler's side is a link: `transition.fire` links to the newest carried context on the log, which reads as "the delivery that woke this work". This is an approximation: a settle that serves several fresh deliveries links them all to the same trigger, because a derivation reads the whole log and cannot name which events enabled it. Links, never parents: one settle serves many deliveries, and a span has one parent.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/one-trace-dark.svg">
