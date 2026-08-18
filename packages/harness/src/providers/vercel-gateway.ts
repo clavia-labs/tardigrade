@@ -117,6 +117,11 @@ const isAnthropic = (model: string) => model.startsWith("anthropic/")
 // fails and names `maxOutputTokens`, so a ceiling too low for the work says so.
 const SAFE_OUTPUT_TOKENS = 8192
 
+const routed = (options: VercelGatewayInferenceOptions) =>
+  options.routes === undefined
+    ? {}
+    : { body: { providerOptions: { gateway: { only: options.routes } } } }
+
 const build = (
   options: VercelGatewayInferenceOptions,
   model: string,
@@ -139,9 +144,7 @@ const build = (
       // number that would have been safe for every model at once.
       maxOutputTokens: options.maxOutputTokens ?? publishedOutputTokens ?? SAFE_OUTPUT_TOKENS,
       ...(options.effort === undefined ? {} : { effort: options.effort }),
-      ...(options.routes === undefined
-        ? {}
-        : { body: { providerOptions: { gateway: { only: options.routes } } } })
+      ...routed(options)
     })
   }
   return openAiChatInference({
@@ -151,7 +154,8 @@ const build = (
     contextWindow,
     endpoint: `${baseUrl}/chat/completions`,
     apiKey,
-    ...transport(options)
+    ...transport(options),
+    ...routed(options)
   })
 }
 
