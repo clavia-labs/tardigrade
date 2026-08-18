@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Infer } from "@flamecast/agent/infer"
-import { actionOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
+import { actionOf, ladderOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -353,5 +353,32 @@ describe("truncation", () => {
     )
     expect(action.kind).toBe("fail")
     expect(action.error).toContain("output ceiling")
+  })
+})
+
+
+describe("declared limits", () => {
+  test("the ladder never exceeds the declared ceiling, and the ceiling is the last rung", () => {
+    expect(ladderOf(undefined)).toEqual([32_768, 65_536])
+    expect(ladderOf(64_000)).toEqual([32_768, 64_000])
+    expect(ladderOf(200_000)).toEqual([32_768, 65_536, 200_000])
+    expect(ladderOf(16_384)).toEqual([16_384])
+  })
+
+  test("the compatible leg states its ceiling on the wire", async () => {
+    let body: { max_tokens?: number } | undefined
+    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      const request = input instanceof Request ? input : new Request(String(input), init)
+      body = JSON.parse(await request.text()) as { max_tokens?: number }
+      return new Response('data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { "content-type": "text/event-stream" }
+      })
+    }) as unknown as typeof fetch
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", maxOutputTokens: 16_384, fetch: fetchImpl as never })
+    await Effect.runPromise(
+      Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+    )
+    expect(body?.max_tokens).toBe(16_384)
   })
 })
