@@ -23,7 +23,7 @@ import { Packages } from "@tardigrade/code/packages"
 import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@tardigrade/agent"
 import { realInfer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
-import { otlpTelemetry } from "@tardigrade/bun/otlp"
+import { fileTelemetry } from "@tardigrade/bun/file"
 
 // The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
 // tools instead, for an agent measured against another harness's surface.
@@ -45,39 +45,25 @@ const wiring = () =>
     memoryTmp()
   )
 
-// Spans go to any OTLP listener (docs/how-to/observe.md).
+// One NDJSON row per span (docs/how-to/observe.md); `otlpTelemetry` reaches real backends.
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
   layersFor: wiring,
-  telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "quickstart" })
+  telemetry: fileTelemetry("spans.ndjson")
 })
 await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })
 await host.drive()
 ```
 
-The snippet already emits spans to `localhost:4318`. To land them in ClickHouse, front it with the OTel Collector:
+The run leaves its spans in `spans.ndjson`. The ClickHouse binary (`brew install clickhouse`) queries the file in place, no server:
 
 ```bash
-brew install clickhouse && clickhouse server
-curl -sL https://github.com/open-telemetry/opentelemetry-collector-releases/releases/download/v0.159.0/otelcol-contrib_0.159.0_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz | tar xz otelcol-contrib
-./otelcol-contrib --config=collector.yaml
-```
-
-```yaml
-# collector.yaml
-receivers:
-  otlp: { protocols: { http: { endpoint: 0.0.0.0:4318 } } }
-exporters:
-  clickhouse: { endpoint: tcp://localhost:9000, database: otel, create_schema: true }
-service:
-  pipelines:
-    traces: { receivers: [otlp], exporters: [clickhouse] }
-```
-
-```sql
-SELECT SpanName, SpanAttributes['outcome'] AS outcome, Duration / 1e6 AS ms
-FROM otel.otel_traces ORDER BY Timestamp
+clickhouse local -q "
+  SELECT SpanName, SpanAttributes['outcome'] AS outcome, Duration / 1e6 AS ms
+  FROM file('spans.ndjson', JSONEachRow,
+    'Timestamp String, SpanName String, Duration UInt64, SpanAttributes Map(String, String)')
+  ORDER BY Timestamp"
 ```
 
 ## Concepts

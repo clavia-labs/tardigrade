@@ -4,27 +4,40 @@ The log is the primary record: every call, park, and terminal is an event you ca
 
 ## Wire a tracer
 
-The one prerequisite is a listener that speaks OTLP over HTTP; the exporter ships in effect core, so there is nothing to install.
-
-`createBunHost` takes any tracer as a Layer through `telemetry`. The ready-made layer is `otlpTelemetry`, on the OTLP exporter effect v4 ships in core:
+`createBunHost` takes any tracer as a Layer through `telemetry`. Two ready-made layers cover the usual cases: `fileTelemetry` writes spans to a local file with no infrastructure at all, and `otlpTelemetry` (on the OTLP exporter effect v4 ships in core) exports to any listener that speaks OTLP over HTTP:
 
 ```ts
 import { createBunHost } from "@tardigrade/bun/host"
+import { fileTelemetry } from "@tardigrade/bun/file"
 import { otlpTelemetry } from "@tardigrade/bun/otlp"
 
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor,
   layersFor,
-  telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "my-agent" })
+  telemetry: fileTelemetry("spans.ndjson")
+  // telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "my-agent" })
 })
 ```
 
 Absent `telemetry`, every span is inert and costs nothing. Point a backend at the stream and the span inventory enumerates itself (`transition.fire`, `deliver`, `llm.react`, `package.call`, `code.run`, with GenAI semantic-convention keys on the model span).
 
+## Query the file
+
+`fileTelemetry` appends one flat row per finished span, and the ClickHouse binary (`brew install clickhouse`) queries the file in place with full SQL, no server. Declare the schema to read `SpanAttributes` as a Map (`Duration` is nanoseconds):
+
+```sql
+SELECT SpanName, SpanAttributes['outcome'] AS outcome, Duration / 1e6 AS ms
+FROM file('spans.ndjson', JSONEachRow,
+  'Timestamp String, SpanName String, Duration UInt64, SpanAttributes Map(String, String)')
+ORDER BY Timestamp
+```
+
+The file grows while the agent runs, and the same file feeds DuckDB, grep, or a later bulk insert into a real deployment.
+
 ## Traces in ClickHouse
 
-Questions across many traces take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Install both as single binaries: `brew install clickhouse`, and `otelcol-contrib` from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases). Then run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
+For a running deployment, `otlpTelemetry` feeds the standard pipeline: the OTel Collector fronts a ClickHouse server, and the collector's `clickhouse` exporter writes the tables. Install both as single binaries: `brew install clickhouse`, and `otelcol-contrib` from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases). Then run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
 
 ```yaml
 # collector.yaml
