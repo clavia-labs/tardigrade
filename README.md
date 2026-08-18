@@ -23,6 +23,7 @@ import { Packages } from "@tardigrade/code/packages"
 import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@tardigrade/agent"
 import { realInfer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
+import { otlpTelemetry } from "@tardigrade/bun/otlp"
 
 // The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
 // tools instead, for an agent measured against another harness's surface.
@@ -44,7 +45,13 @@ const wiring = () =>
     memoryTmp()
   )
 
-const host = await createBunHost({ path: "agents.sqlite", actorFor: () => agent, layersFor: wiring })
+// Spans go to any OTLP listener; absent one they cost nothing (docs/how-to/observe.md).
+const host = await createBunHost({
+  path: "agents.sqlite",
+  actorFor: () => agent,
+  layersFor: wiring,
+  telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "quickstart" })
+})
 await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })
 await host.drive()
 ```
