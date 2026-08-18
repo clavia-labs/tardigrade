@@ -13,6 +13,11 @@
       "project": [
         "src/**/*.ts"
       ]
+    },
+    "platform/*": {
+      "project": [
+        "src/**/*.ts"
+      ]
     }
   }
 }

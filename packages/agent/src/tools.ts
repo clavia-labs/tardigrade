@@ -1,28 +1,20 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor, type Transition } from "@flamecast/core/actor"
 import { budgetRequested, toolReturned } from "./events"
-import { codeDispatched } from "@flamecast/code/events"
 import type { Event } from "@flamecast/core/event"
 import { turnView } from "@flamecast/code/turns"
 import { budgetSpent } from "./budget"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
+import { codeSurface, type PendingCall, type ToolSurface } from "./surface"
 
-// The tools reactor: the agent's side of the execute tool. `execute` is the only tool: the model
-// interacts with the real world by writing code, and packages are objects in the code's scope.
-// It translates between the agent's alphabet and the code reactor's: it dispatches the call's
-// code, owes nothing while the code reactor executes, and answers the call with the settle.
-// Neither imports the other.
+// The tools reactor: the agent's side of the tool table. The policy here is the same whatever
+// the tools are: the answer contract, the escalation ask, the budget wall, and the unknown-tool
+// error. The work tools themselves come from a `ToolSurface`, so an agent measured against a
+// fixed tool table swaps the surface and keeps every one of these behaviors (surface.ts).
 //
 // Owed work, derived from the event set: the head pending call (a ToolCalled with no
 // ToolReturned, earliest by its own `at`) owes a routing until its dispatch or ask exists, an
-// answer once its execution settled, and an escalation answer once the parent decided.
-
-interface PendingCall {
-  readonly callId: string
-  readonly name: string
-  readonly arguments: unknown
-  readonly turn?: string
-}
+// answer once its work settled, and an escalation answer once the parent decided.
 
 const str = (v: unknown): string => String(v ?? "")
 
@@ -52,29 +44,6 @@ const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
 const has = (log: ReadonlyArray<Event>, type: string, key: string, value: string): boolean =>
   log.some((e) => e.type === type && str((e as Record<string, unknown>)[key]) === value)
 
-const settleFor = (
-  log: ReadonlyArray<Event>,
-  callId: string
-): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
-  const settle = log.find((e) => e.type === "CodeSettled" && str((e as { execId?: unknown }).execId) === callId) as
-    | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string>; tmp?: unknown; size?: unknown; preview?: unknown; note?: unknown }
-    | undefined
-  if (settle === undefined) return undefined
-  // Captured console output rides along: the model reads what its code printed, beside the
-  // result (the print-to-inspect habit; packages/code/src/sandbox.ts, SandboxResult.logs).
-  const logs = settle.logs !== undefined && settle.logs.length > 0 ? { logs: settle.logs } : {}
-  if (settle.error !== undefined) return { error: String(settle.error), ...logs }
-  // A settle over TMP_BYTES carries a pointer instead of the value (packages/code/src/execute.ts).
-  // The pointer IS the result the model reads: its preview and its note name the ref and the
-  // call that loads it. Reading `result` alone answers a spilled call with `{}`, so the model
-  // learns neither what it computed nor that anything is there to fetch, and it re-runs the work
-  // it already did (tools.test.ts, "a spilled settle").
-  if (settle.tmp !== undefined) {
-    return { result: { tmp: settle.tmp, size: settle.size, preview: settle.preview, note: settle.note }, ...logs }
-  }
-  return { result: settle.result, ...logs }
-}
-
 // decisionFor returns the parent's decision on an escalation ask, scoped to the call's turn.
 const decisionFor = (
   log: ReadonlyArray<Event>,
@@ -89,11 +58,13 @@ const decisionFor = (
   return undefined
 }
 
-// toolsReactor derives one transition per pending call, branch by branch. The records each
-// branch appends carry the keys: an answer tr:<callId>, a dispatch cd:<callId>, an escalation
-// ask br:<callId>. An escalating call with no parental decision derives nothing (the turn is
-// durably paused); the decision's arrival re-derives the answer.
-export const toolsReactor: Reactor<never> = (log) => {
+// toolsReactorFor derives one transition per pending call, branch by branch. The records each
+// branch appends carry the keys: an answer tr:<callId>, an escalation ask br:<callId>, and
+// whatever key the surface's own dispatch mints. An escalating call with no parental decision
+// derives nothing (the turn is durably paused); the decision's arrival re-derives the answer.
+// Every branch here is surface-independent policy; the surface decides only how a work call
+// becomes events.
+export const toolsReactorFor = <R = never>(surface: ToolSurface<R>): Reactor<R> => (log) => {
   const call = pendingCall(log)
   if (call === undefined) return []
   const stamp = call.turn === undefined ? {} : { turn: call.turn }
@@ -119,14 +90,6 @@ export const toolsReactor: Reactor<never> = (log) => {
     ]
   }
 
-  // Executed: answer the call with the settle, once it exists.
-  if (has(log, "CodeDispatched", "execId", call.callId)) {
-    const outcome = settleFor(log, call.callId)
-    if (outcome === undefined) return []
-    return [answering(outcome)]
-  }
-
-  // Route the call.
   // The escalation ask: record the request and rest. No ToolReturned follows, so the turn is
   // durably paused; the parental decision derives the answer above.
   if (call.name === "request_budget") {
@@ -150,27 +113,22 @@ export const toolsReactor: Reactor<never> = (log) => {
     const errors = answerErrors(outputSchemaOf(turnView(log)), call.arguments)
     return [answering({ error: repairText(errors.length > 0 ? errors : ["the answer tool was called with no arguments"]) })]
   }
-  if (call.name !== "execute") {
-    return [answering({ error: `unknown tool: ${call.name}. Write code with execute.` })]
-  }
-  // The budget gate: the wall on the turn refuses the dispatch and keeps the model's work.
+  // The budget gate: the wall on the turn refuses the work and keeps what the model has. It
+  // precedes the surface so a spent turn cannot dispatch, whatever the surface would have done.
   if (budgetSpent(log)) {
     return [
       answering({
-        error: "Tool budget reached. Do not call execute again. Call answer now with your best result from what you have already gathered."
+        error: "Tool budget reached. Do not call this tool again. Answer now with your best result from what you have already gathered."
       })
     ]
   }
-  const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
-  return [
-    transition({
-      key: `cd:${call.callId}`,
-      input: { execId: call.callId, code },
-      act: (input) =>
-        Effect.gen(function* () {
-          const at = yield* Clock.currentTimeMillis
-          return [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
-        })
-    })
-  ]
+  const served = surface.serve(call, log, answering)
+  if (served === undefined) {
+    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${surface.tools.map((t) => t.name).join(", ")}.` })]
+  }
+  return served
 }
+
+// toolsReactor is the default surface's reactor: code mode. An agent on another surface builds
+// its own with `toolsReactorFor`.
+export const toolsReactor: Reactor<never> = toolsReactorFor(codeSurface())

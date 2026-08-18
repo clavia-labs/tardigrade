@@ -101,12 +101,13 @@ describe("the tools gate reacts to BudgetExhausted", () => {
     expect(out[0]!.type).toBe("CodeDispatched")
   })
 
-  test("once BudgetExhausted is on the turn, execute is refused with an answer nudge", async () => {
+  test("once BudgetExhausted is on the turn, the work tool is refused with an answer nudge", async () => {
     const log = turn(3, 2, [{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 99 }])
     const out = await dispatch(log)
     expect(out[0]!.type).toBe("ToolReturned")
-    expect(String((out[0] as { result?: { error?: string } }).result?.error)).toContain("budget reached".replace("budget reached", "Tool budget reached"))
-    expect(String((out[0] as { result?: { error?: string } }).result?.error)).toContain("answer now")
+    const refusal = String((out[0] as { result?: { error?: string } }).result?.error)
+    expect(refusal).toContain("Tool budget reached")
+    expect(refusal).toContain("Answer now")
   })
 })
 
