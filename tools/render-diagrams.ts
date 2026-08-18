@@ -11,7 +11,7 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 const DIAGRAMS: Record<string, string> = {
   "reconciler-loop": `flowchart TB
   log[("event log")] -->|"events"| reactor["reactor"]
-  reactor -->|"transitions = f(log)"| transitions["transitions"]
+  reactor -->|"{transitions} = f(log)"| transitions["transitions"]
   transitions -->|"unrecorded keys fire"| act["act(input)"]
   act -->|"events, keyed record last"| log`
 }
