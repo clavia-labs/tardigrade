@@ -56,8 +56,6 @@ await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What 
 await host.drive()
 ```
 
-`createRlmAgent` from `@tardigrade/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
-
 The snippet already emits spans to `localhost:4318`. To land them in ClickHouse, front it with the OTel Collector (the contrib distribution from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases); the core one lacks the `clickhouse` exporter):
 
 ```bash
