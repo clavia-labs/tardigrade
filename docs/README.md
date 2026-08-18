@@ -7,6 +7,7 @@ Organized on the Diátaxis grid: learning, tasks, information, understanding.
   - [rlm-agent.md](tutorials/rlm-agent.md): a Recursive Language Model agent with durable code execution. Ends by killing it mid-recursion.
 - [how-to/](how-to/): task-shaped recipes.
   - [gate-tools.md](how-to/gate-tools.md): hide, reveal, or revoke tools from the log.
+  - [observe.md](how-to/observe.md): wire a tracer, the one-trace contract, the outcome vocabulary.
 - [reference/](reference/): neutral per-symbol contracts, no analogies.
   - [api.md](reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting.
 - [explanations/](explanations/): the why and the mental model.
