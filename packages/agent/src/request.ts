@@ -157,7 +157,10 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
 // the answer tool and its nudge. A spent budget drops the work tools and adds the budget nudge,
 // so the model can only answer. Both are pure projections of the log, and neither knows what the
 // work tools are.
-export const modelRequest = (trajectory: ReadonlyArray<Event>, surface: ToolSurface<never>): ModelRequest => {
+export const modelRequest = (
+  trajectory: ReadonlyArray<Event>,
+  surface: Pick<ToolSurface, "system" | "tools">
+): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)

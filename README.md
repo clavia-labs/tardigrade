@@ -45,7 +45,7 @@ await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What 
 await host.drive()
 ```
 
-`createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host, packages and spawning included.
+`createRlmAgent` from `@flamecast/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
 
 ## Concepts
 
@@ -113,7 +113,7 @@ Organized on the Diátaxis grid: learning, tasks, information, understanding.
 packages/
   core/      contracts: Event, EventLog, KeyFragment, Transition, Reactor, Router
   code/      durable code execution
-  agent/     the agent as reactors, and createRlmAgent
+  agent/     reactors, the mind (`agentFor`), and the RLM default (`createRlmAgent`)
   host/      the reference in-memory binding
 platform/
   model/     the Infer binding over TanStack AI

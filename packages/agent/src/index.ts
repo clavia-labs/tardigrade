@@ -4,28 +4,18 @@ import { Router } from "@flamecast/core/router"
 import { Packages, type Package } from "@flamecast/code/packages"
 import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
 import { createHost, type Host } from "@flamecast/host/host"
-import { agent, agentFor, type AgentR } from "./turn"
+import { rlmAgent, rlmAgentFor, type RlmR } from "./turn"
 import { Infer } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
 import type { ToolSurface } from "./surface"
 
-// createRlmAgent is the front door: a Recursive Language Model agent, one hosted,
-// spawn-capable agent over an
-// ambient in-process host (tutorials/rlm-agent.md). No actor exists outside a host (the Erlang-node
-// shape); the user brings packages and a mind, the graph is whatever
-// their agent's code decides to spawn, and run answers when the ROOT
-// settles, however many lanes exist by then.
+export { agentFor, rlmAgent, rlmAgentFor, type AgentR, type RlmR } from "./turn"
 
-// The root speaks both registers: the composed actor for a platform binding
-// (actorFor: () => agent), and the hosted front door for a one-call start.
-export { agent } from "./turn"
-
-// The parts the actor is assembled from, for a caller composing their own: the six reactors
-// and the agent's key table. An agent is reactors over one log; adding a capability is adding
-// a reactor to the list.
-export { agentActorKeys, agentFor } from "./turn"
+// The parts a caller lists: reactors and key tables. An agent is reactors over one log.
+// Adding a capability is adding a reactor to the list.
+export { agentActorKeys, rlmActorKeys } from "./turn"
 export { inferReactor, Infer } from "./infer"
 export { budgetReactor } from "./budget"
 export { toolsReactor, toolsReactorFor } from "./tools"
@@ -47,7 +37,7 @@ export interface CreateAgentOptions {
   readonly log?: ReadonlyArray<Event>
   // The tool surface, code mode by default. The same surface must reach the model binding, so a
   // caller passing one here passes it to `realInfer` too (surface.ts).
-  readonly surface?: ToolSurface<AgentR>
+  readonly surface?: ToolSurface<RlmR>
 }
 
 export interface RlmAgent {
@@ -57,6 +47,10 @@ export interface RlmAgent {
 
 const ROOT = "ag.root"
 
+// createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
+// host, with spawn and a sandbox (tutorials/rlm-agent.md). The mind is agentFor; this function
+// adds budget, code, compaction, host, and the agents package. A caller who wants a thinner
+// harness uses actor([...]) and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
@@ -66,7 +60,7 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
 
   // The layers close over the host and are built per serve, so the
   // spawn package always routes and reads through the live host.
-  const layersFor = (lane: string): Layer.Layer<AgentR> => {
+  const layersFor = (lane: string): Layer.Layer<RlmR> => {
     const self = host.self(lane)
     const router = {
       deliver: (address: string, event: Event) => Effect.sync(() => host.deliver(address, event)),
@@ -81,12 +75,12 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
       resolve: (name: string) => all.find((p) => p.name === name),
       list: () => Effect.succeed(all.map((p) => ({ name: p.name, description: p.description })))
     })
-    return Layer.mergeAll(packages, jsSandbox, tmp, infer, Layer.succeed(Router, router)) as unknown as Layer.Layer<AgentR>
+    return Layer.mergeAll(packages, jsSandbox, tmp, infer, Layer.succeed(Router, router)) as unknown as Layer.Layer<RlmR>
   }
 
-  // Every ag. lane runs the full turn loop; anything else is a sink.
-  const assembled = options.surface === undefined ? agent : agentFor(options.surface)
-  const host: Host = createHost<AgentR>({
+  // Every ag. lane runs the RLM default; anything else is a sink.
+  const assembled = options.surface === undefined ? rlmAgent : rlmAgentFor(options.surface)
+  const host: Host = createHost<RlmR>({
     principal: "mem",
     actorFor: (lane) => (lane.startsWith("ag.") ? assembled : undefined),
     layersFor: layersFor as never
