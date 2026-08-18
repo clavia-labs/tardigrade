@@ -179,14 +179,18 @@ const toolsOf = (specs: ReadonlyArray<NativeToolSpec>): ToolSet =>
     ])
   )
 
-const usageOf = (
-  usage: { readonly inputTokens?: number | undefined; readonly outputTokens?: number | undefined } | undefined,
+// What one call spent, as the SDK counted it and the gateway priced it. Named for the question it
+// answers rather than for its shape, because `usageOf` in the alphabet reads a recorded figure and
+// this reads a provider's reply.
+const spentOn = (
+  usage:
+    | { readonly inputTokens?: number | undefined; readonly outputTokens?: number | undefined }
+    | undefined,
   metadata: unknown,
   pricing: ModelPricing | undefined
 ): Usage => {
-  const gateway = recordOf(recordOf(metadata)?.gateway)
-  const reported = gateway?.cost
-  const costUsd = typeof reported === "number" ? reported : Number(reported)
+  const reported = recordOf(recordOf(metadata)?.gateway)?.cost
+  const costUsd = Number(reported)
   return priced(
     {
       promptTokens: usage?.inputTokens ?? 0,
@@ -316,10 +320,7 @@ const reacted = (options: ModelInferenceOptions, request: ModelRequest, key: str
 type Generated = Awaited<ReturnType<typeof generateText>>
 
 const actionOf = (result: Generated, options: ModelInferenceOptions): Action => {
-  const usage = usageOf(result.usage, result.providerMetadata, options.pricing)
-  const assistant = result.responseMessages.find((message) => message.role === "assistant")
-  const continuation =
-    assistant === undefined ? undefined : continuationOf(assistant.content)
+  const usage = spentOn(result.usage, result.providerMetadata, options.pricing)
   // An answer stopped at its ceiling is a fragment wearing the shape of an answer. Reading it as one
   // would finish the turn on half a sentence, or dispatch a tool call whose arguments stop mid-JSON.
   // The tokens were spent either way, so the usage rides the failure and the turn's cost stays true.
@@ -343,6 +344,10 @@ const actionOf = (result: Generated, options: ModelInferenceOptions): Action => 
       usage
     }
   }
+  // Only an outcome the conversation continues from carries state forward, so it is read here rather
+  // than above the two failures that would discard it.
+  const assistant = result.responseMessages.find((message) => message.role === "assistant")
+  const continuation = assistant === undefined ? undefined : continuationOf(assistant.content)
   const called = result.toolCalls[0]
   if (called !== undefined) {
     return {

@@ -1,4 +1,5 @@
 import { Context, Effect, Layer } from "effect"
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider"
 import type { ProviderOptions } from "@ai-sdk/provider-utils"
 import type { Event } from "@flamecast/core"
 import { estimateTextTokens } from "./context"
@@ -51,7 +52,10 @@ export interface AgentMessage {
 // How much a model thinks before it answers. The SDK translates one vocabulary into each provider's
 // own, so this is the rare provider setting that means the same thing everywhere and can be named
 // here rather than in an adapter.
-export type Effort = "provider-default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh"
+//
+// It is derived rather than restated. The levels are the SDK's to define, and a copy of them here
+// would go stale the day it adds one, silently narrowing what a caller may ask for.
+export type Effort = NonNullable<LanguageModelV4CallOptions["reasoning"]>
 
 // What one request may set beyond the conversation. Only settings that mean the same thing on every
 // provider are named here. Everything else is a provider's own vocabulary, and it travels in
@@ -130,14 +134,26 @@ export const reservedUsage = (
 
 // The size of a whole request, as the estimator reads it. The window is a bound on everything the
 // model reads, so the estimate covers everything the request carries.
-export const requestTokens = (request: ModelRequest): number =>
-  estimateTextTokens(
+//
+// Two callers ask this of the same request, one to reserve its spend and one to refuse it before it
+// is sent, and serializing a long conversation twice to answer the same question is work nobody
+// asked for. A request is a projection of the log and never mutated, so the answer is held against
+// the object and released with it.
+const sizes = new WeakMap<ModelRequest, number>()
+
+export const requestTokens = (request: ModelRequest): number => {
+  const held = sizes.get(request)
+  if (held !== undefined) return held
+  const size = estimateTextTokens(
     JSON.stringify({
       system: request.system,
       messages: request.messages,
       tools: request.tools
     })
   )
+  sizes.set(request, size)
+  return size
+}
 
 export const settledUsage = (
   reported: unknown,

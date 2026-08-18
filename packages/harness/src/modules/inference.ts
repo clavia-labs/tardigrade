@@ -67,33 +67,31 @@ export type InferenceOptions =
       readonly contextWindow: number
     })
 
-// A mark with nothing after it: the process died between the request and its outcome. Anything that
-// closes the mark, a result or a settle, ends the search, so an attempt that was already accounted
-// for is not counted again.
-const openCall = (view: ReadonlyArray<Event>): Event | undefined => {
+// The most recent mark, unless one of `closedBy` has already come after it. Both questions this
+// module asks about a mark are that search over a different set, so they are the same fold read two
+// ways rather than two folds.
+const markUnless = (
+  view: ReadonlyArray<Event>,
+  closedBy: ReadonlySet<string>
+): Event | undefined => {
   for (let index = view.length - 1; index >= 0; index--) {
     const event = view[index]
     if (event === undefined) continue
-    if (event.type === "ModelReturned" || event.type === "ModelSettled") return undefined
+    if (closedBy.has(event.type)) return undefined
     if (event.type === "ModelCalled") return event
   }
   return undefined
 }
 
-// The call a retry continues: a mark that no result has answered. A deferral settles its own attempt
-// for accounting, so the mark is no longer open, but the call it names is still unanswered and the
-// next attempt is the same call. Reusing its key is what tells the gateway so.
-//
-// A mark a result did answer ends the search, because the next request is a new call rather than
-// another attempt at that one.
-const unanswered = (view: ReadonlyArray<Event>): Event | undefined => {
-  for (let index = view.length - 1; index >= 0; index--) {
-    const event = view[index]
-    if (event?.type === "ModelReturned") return undefined
-    if (event?.type === "ModelCalled") return event
-  }
-  return undefined
-}
+// A mark with nothing after it: the process died between the request and its outcome. A result or a
+// settle closes it, so an attempt already accounted for is not counted again.
+const openCall = (view: ReadonlyArray<Event>) =>
+  markUnless(view, new Set(["ModelReturned", "ModelSettled"]))
+
+// The call a retry continues: a mark no result has answered. A deferral settles its own attempt for
+// accounting, so the mark is no longer open, but the call it names is still unanswered and the next
+// attempt is the same call. Reusing its key is what tells the gateway so.
+const unanswered = (view: ReadonlyArray<Event>) => markUnless(view, new Set(["ModelReturned"]))
 
 // The ordinal a new call takes. Marks rather than results, so a key minted after several attempts
 // can not collide with the one those attempts shared.
@@ -101,21 +99,20 @@ const marksIn = (view: ReadonlyArray<Event>) =>
   view.filter((event) => event.type === "ModelCalled").length
 
 // Close a reservation whose attempt never produced a result, so spend that was probably billed stays
-// on the record. Only an open mark is closed: a settled attempt has already been accounted for, and
-// settling it twice would report a turn spending what it never asked for.
-const closeOpen = (view: ReadonlyArray<Event>, turn: string, at: number): ReadonlyArray<Event> => {
-  const called = openCall(view)
-  if (called === undefined) return []
-  return [
-    modelSettled({
-      turn,
-      callId: String(called.callId ?? ""),
-      usage: usageOf(called.reserved),
-      reason: "the model attempt died",
-      at
-    })
-  ]
-}
+// on the record. The caller passes the mark it already found, because settling one that a result or
+// an earlier settle had closed would report a turn spending what it never asked for.
+const closed = (open: Event | undefined, turn: string, at: number): ReadonlyArray<Event> =>
+  open === undefined
+    ? []
+    : [
+        modelSettled({
+          turn,
+          callId: String(open.callId ?? ""),
+          usage: usageOf(open.reserved),
+          reason: "the model attempt died",
+          at
+        })
+      ]
 
 const deferralsOf = (view: ReadonlyArray<Event>, callId: string) =>
   view.filter((event) => event.type === "ModelDeferred" && String(event.callId ?? "") === callId)
@@ -199,10 +196,12 @@ const inferMachine = (
               previous !== undefined && sameOptions(previous, request.options)
                 ? String(previous.callId ?? "")
                 : `${turn}/infer/${marksIn(view)}`
+            const open = openCall(view)
             const deferrals = deferralsOf(view, key)
+            const attempt = deferrals + 1
             if (deferrals >= deferAtMost) {
               return [
-                ...closeOpen(view, turn, at),
+                ...closed(open, turn, at),
                 turnFailed({
                   turn,
                   error: `the model was deferred ${deferAtMost} times`,
@@ -213,10 +212,9 @@ const inferMachine = (
             // An open mark is a crash between the request and its outcome. Close the reservation so
             // the spend does not vanish, then journal the wait so a restart sleeps instead of
             // immediately issuing another request against a queue that has not moved.
-            if (openCall(view) !== undefined) {
-              const attempt = deferrals + 1
+            if (open !== undefined) {
               return [
-                ...closeOpen(view, turn, at),
+                ...closed(open, turn, at),
                 modelDeferred({
                   turn,
                   callId: key,
@@ -241,7 +239,6 @@ const inferMachine = (
             const after = yield* Clock.currentTimeMillis
             const usage = settledUsage(action.usage, reserved, state.pricing)
             if (action.kind === "defer") {
-              const attempt = deferrals + 1
               return [
                 modelSettled({
                   turn,
