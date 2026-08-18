@@ -4,7 +4,7 @@ import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
-import { actorOf, budget, codeMode, compaction, renderOf, reply, toolList } from "./capability"
+import { actorOf, budget, codeMode, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
 import { receive } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
@@ -101,6 +101,11 @@ describe("actorOf", () => {
     expect(() => actorOf([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
       'tool "echo" declared by capabilities tools and tools'
     )
+  })
+
+  test("compactionFor's context reaches the render, so the guard and the request hold one policy", () => {
+    const render = renderOf([codeMode, compactionFor({ messageRenderCap: 1234 })], [])
+    expect(render.context).toEqual({ messageRenderCap: 1234 })
   })
 
   test("renderOf composes system fragments and tools in mount order", () => {

@@ -7,10 +7,14 @@ import { Packages, type Package } from "@tardigrade/code/packages"
 import { Sandbox, type Bindings } from "@tardigrade/code/sandbox"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
-import { Infer, agentFor, rlmAgent, receive } from "./turn"
-import { inferReactor } from "./infer"
-import { toolsReactor } from "./tools"
-import { nativeSurface } from "./surface"
+import { Infer, receive } from "./turn"
+import { actorOf, budget, codeMode, compaction, reply, toolList } from "./capability"
+
+// The default assembly and its runtime reactors, reconstructed the way actorOf mounts them:
+// reactors[0] is the infer loop, reactors[1] is the call router.
+const rlmAgent = actorOf([codeMode, reply, budget, compaction])
+const inferReactor = rlmAgent.reactors[0]!
+const toolsReactor = rlmAgent.reactors[1]!
 import { Tmp } from "@tardigrade/code/tmp"
 const memSpill = () => {
   const store = new Map<string, string>()
@@ -452,18 +456,19 @@ describe("a turn that declares an output schema", () => {
 describe("the mind on a native surface", () => {
   test("a turn completes with no budget, code, or compaction reactors", async () => {
     const reads: string[] = []
-    const mind = agentFor(
-      nativeSurface([
+    const mind = actorOf([
+      toolList([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
-          run: (input) => {
+          run: (input: unknown) => {
             const path = String((input as { path?: unknown }).path)
             reads.push(path)
             return Effect.succeed(`contents of ${path}`)
           }
         }
-      ])
-    )
+      ]),
+      reply
+    ])
     expect(mind.reactors).toHaveLength(3)
     const layers = Layer.mergeAll(
       memoryLog(),
