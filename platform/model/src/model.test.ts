@@ -332,7 +332,7 @@ describe("truncation", () => {
   test("a cut answer retries up the ladder and the whole one completes", async () => {
     let calls = 0
     const fetchImpl = (async () => (calls++ === 0 ? cut("half an ans") : whole("the whole answer"))) as unknown as typeof fetch
-    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl })
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
         Effect.provide(layer)
@@ -345,7 +345,7 @@ describe("truncation", () => {
 
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
     const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
-    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl })
+    const layer = realInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", packagesInScope: "", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
         Effect.provide(layer)
