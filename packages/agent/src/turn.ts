@@ -12,26 +12,36 @@ import type { Sandbox } from "@flamecast/code/sandbox"
 import type { Router } from "@flamecast/core/router"
 import type { Self } from "@flamecast/core/actor"
 import { Infer, inferReactor } from "./infer"
-import { toolsReactor } from "./tools"
+import { toolsReactorFor } from "./tools"
 import { budgetReactor } from "./budget"
 import { replyReactor } from "./reply"
 import { compactionReactor } from "./compaction"
+import { codeSurface, type ToolSurface } from "./surface"
 
 export { Infer } from "./infer"
 
 // agent is one actor, six reactors over one log. infer decides, budget fires the wall, tools
-// serves the execute tool, code runs bodies durably, reply reports the terminal home, compaction
-// checkpoints the context. None imports another; they compose through event names. budget
-// precedes tools in the list, so BudgetExhausted is on the log when the dispatch gate reads it.
+// serves the surface's tools, code runs bodies durably, reply reports the terminal home,
+// compaction checkpoints the context. None imports another; they compose through event names.
+// budget precedes tools in the list, so BudgetExhausted is on the log when the dispatch gate
+// reads it.
 export type AgentR = Infer | EventLog | Packages | Sandbox | Tmp | Router | Self
 // agentActorKeys is the agent's own key table: its alphabet, the code lane's, and the canonical
 // inbound. A platform composes wider (its app fragments join in) when it builds its own actor;
 // this default serves the library tier and tests.
 export const agentActorKeys = composeKeys(messageKeys, codeKeys, agentKeys)
-export const agent = actor<AgentR>(
-  [inferReactor, budgetReactor, toolsReactor, codeReactor, replyReactor, compactionReactor],
-  agentActorKeys
-)
+
+// agentFor composes the actor around one tool surface. The code lane stays in the list whatever
+// the surface is: it derives work only from `CodeDispatched`, so a surface that never dispatches
+// code leaves it quiet.
+export const agentFor = (surface: ToolSurface<AgentR>) =>
+  actor<AgentR>(
+    [inferReactor, budgetReactor, toolsReactorFor(surface), codeReactor, replyReactor, compactionReactor],
+    agentActorKeys
+  )
+
+// agent is the default assembly: code mode, the surface this library prefers.
+export const agent = agentFor(codeSurface())
 
 // receive sends the inbound to the actor. The message id is the dedup key, so delivery can be
 // at-least-once.

@@ -2,6 +2,7 @@ import type { Event } from "@flamecast/core/event"
 import { MESSAGE_RENDER_CAP, RESULT_RENDER_CAP, checkpointOf, keepFromIndex } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"
+import type { ToolSurface } from "./surface"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
 // projection. Domain policy lives with the agent; the platform maps these provider-agnostic
@@ -33,20 +34,6 @@ export interface ModelRequest {
   readonly tools: ReadonlyArray<ToolSpec>
 }
 
-// EXECUTE_TOOL is the one work tool: the model acts by writing JavaScript against the packages
-// in scope.
-const EXECUTE_TOOL: ToolSpec = {
-  name: "execute",
-  description:
-    "Run JavaScript against the connected packages. Packages are objects in scope; await their methods and end with `return <value>`. The returned value comes back as this call's result, and console output comes back beside it as `logs` (capped; return the value you need, print to inspect).",
-  inputSchema: {
-    type: "object",
-    properties: { code: { type: "string", description: "The JavaScript body to run." } },
-    required: ["code"],
-    additionalProperties: false
-  }
-}
-
 // answerTool renders the turn's declared output schema as a tool. Calling it ends the turn, and
 // its arguments are the structured answer, parsed JSON by construction.
 const answerTool = (schema: unknown): ToolSpec => ({
@@ -57,7 +44,7 @@ const answerTool = (schema: unknown): ToolSpec => ({
 
 // REQUEST_BUDGET_TOOL is offered only at the wall, and only when the brief made the turn
 // escalatable. The model calls it to ask its parent for more tool calls instead of answering.
-// The call parks the turn until the parent grants or denies; a grant reopens `execute`.
+// The call parks the turn until the parent grants or denies; a grant reopens the work tools.
 const REQUEST_BUDGET_TOOL: ToolSpec = {
   name: "request_budget",
   description:
@@ -73,14 +60,17 @@ const REQUEST_BUDGET_TOOL: ToolSpec = {
   }
 }
 
-const SYSTEM = (packages: string): string =>
-  `You are an agent. You act on the world by calling the execute tool with JavaScript; the packages in scope are:\n${packages}\nWhen the work is done, reply in plain text: that reply is your final answer and ends the turn. Reply plainly without calling execute when no action is needed.`
+// SYSTEM frames the turn around whatever surface is in play: the surface states how the model
+// acts, and the frame states how a turn ends. The two are separate so a surface swap rewrites
+// only its own half.
+const SYSTEM = (surface: string): string =>
+  `You are an agent. ${surface}\nWhen the work is done, reply in plain text: that reply is your final answer and ends the turn. Reply plainly without calling a tool when no action is needed.`
 
 const ANSWER_NUDGE =
   "This turn declares an output schema. Finish by calling the answer tool: its arguments are your final answer and MUST conform to its schema. Never answer in prose."
 
 const BUDGET_NUDGE =
-  "Your tool budget for this turn is spent, so the execute tool is gone. Finish now: answer with your best result from what you have already gathered."
+  "Your tool budget for this turn is spent, so the work tools are gone. Finish now: answer with your best result from what you have already gathered."
 
 const ESCALATE_NUDGE =
   "If the work genuinely needs more and the extra spend is worth it, you may call request_budget with a reason and an amount instead of answering. Ask only when it changes the result; otherwise answer now."
@@ -163,17 +153,19 @@ export const renderMessages = (trajectory: ReadonlyArray<Event>): ReadonlyArray<
   return messages
 }
 
-// modelRequest folds two policies. A declared output schema adds the answer tool and its
-// nudge. A spent budget drops execute and adds the budget nudge, so the model can only answer.
-// Both are pure projections of the log.
-export const modelRequest = (trajectory: ReadonlyArray<Event>, packagesInScope: string): ModelRequest => {
+// modelRequest folds two policies over the surface's tool table. A declared output schema adds
+// the answer tool and its nudge. A spent budget drops the work tools and adds the budget nudge,
+// so the model can only answer. Both are pure projections of the log, and neither knows what the
+// work tools are.
+export const modelRequest = (trajectory: ReadonlyArray<Event>, surface: ToolSurface<never>): ModelRequest => {
   const schema = outputSchemaOf(trajectory)
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)
-  const work = spent ? [] : [EXECUTE_TOOL]
+  const work = spent ? [] : surface.tools
   const withAnswer = schema === undefined ? work : [...work, answerTool(schema)]
   const tools = canRequest ? [...withAnswer, REQUEST_BUDGET_TOOL] : withAnswer
-  const base = schema === undefined ? SYSTEM(packagesInScope) : `${SYSTEM(packagesInScope)}\n${ANSWER_NUDGE}`
+  const framed = SYSTEM(surface.system)
+  const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
   return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory), tools }
 }

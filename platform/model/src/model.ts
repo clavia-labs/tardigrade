@@ -9,6 +9,7 @@ import type { Action } from "@flamecast/agent/events"
 import type { Event } from "@flamecast/core/event"
 import { answerErrors, outputSchemaOf } from "@flamecast/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@flamecast/agent/request"
+import { codeSurface, type ToolSurface } from "@flamecast/agent/surface"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -166,7 +167,10 @@ export interface ModelConfig {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
-  readonly packagesInScope: string
+  // The tool surface this binding renders: code mode by default. The actor must be assembled on
+  // the same surface, or the model is offered tools its reactor will not serve
+  // (@flamecast/agent, surface.ts).
+  readonly surface?: ToolSurface<never>
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
@@ -358,7 +362,7 @@ export const realInfer = (config: ModelConfig) => {
             ...(fetcher === undefined ? {} : { fetch: fetcher })
           })
     // The domain decides the request; the platform maps it to the wire and streams it.
-    const req = modelRequest(trajectory, config.packagesInScope)
+    const req = modelRequest(trajectory, config.surface ?? codeSurface())
     const schema = outputSchemaOf(trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({
       model: config.model,
