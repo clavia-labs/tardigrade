@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 388.8285 389.3" width="388.8285" height="389.3" style="--bg:#0d1117;--fg:#e6edf3;--accent:#f59e0b;--muted:#8b949e;background:var(--bg)">
+<style>
+  
+  text { font-family: 'ui-sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polygon points="0 0, 8 2.5, 0 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
+  </marker>
+</defs>
+<polyline class="edge" data-from="send" data-to="event" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="stamps traceparent, first stamp wins" points="174.31708333333336,52.900000000000006 174.31708333333336,88.9 103.5,88.9 103.5,169.2" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="event" data-to="fire" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="newest carried context" points="103.5,220.10000000000002 103.5,324.40000000000003 174.68758333333335,324.40000000000003 174.68758333333335,336.40000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="fire" data-to="send" data-style="dotted" data-arrow-start="false" data-arrow-end="true" data-label="link: the delivery that woke this work" points="214.3589166666667,336.40000000000003 214.3589166666667,324.40000000000003 285.54650000000004,324.40000000000003 285.54650000000004,256.1 214.72941666666668,256.1 214.72941666666668,52.900000000000006" fill="none" stroke="var(--_line)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="send" data-to="event" data-label="stamps traceparent, first stamp wins">
+  <rect x="12" y="95.9" width="182.78199999999998" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="103.39099999999999" y="111.05000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">stamps traceparent, first stamp wins</text>
+</g>
+<g class="edge-label" data-from="event" data-to="fire" data-label="newest carried context">
+  <rect x="40.99999999999999" y="263.1" width="124.57000000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="103.285" y="278.25" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">newest carried context</text>
+</g>
+<g class="edge-label" data-from="fire" data-to="send" data-label="link: the delivery that woke this work">
+  <rect x="194.04649999999998" y="263.1" width="182.782" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="285.4375" y="278.25" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">link: the delivery that woke this work</text>
+</g>
+<g class="node" data-id="send" data-label="sending span" data-shape="rectangle">
+  <rect x="133.90475" y="16" width="121.237" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="194.52325000000002" y="34.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">sending span</text>
+</g>
+<g class="node" data-id="event" data-label="persisted event" data-shape="cylinder">
+  <rect x="36.95349999999999" y="176.2" width="133.09300000000002" height="36.900000000000006" fill="var(--_node-fill)" stroke="none" />
+  <line x1="36.95349999999999" y1="176.2" x2="36.95349999999999" y2="213.1" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <line x1="170.0465" y1="176.2" x2="170.0465" y2="213.1" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="103.5" cy="213.1" rx="66.54650000000001" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="103.5" cy="176.2" rx="66.54650000000001" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="103.5" y="194.64999999999998" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">persisted event</text>
+</g>
+<g class="node" data-id="fire" data-label="transition.fire" data-shape="rectangle">
+  <rect x="135.01625" y="336.40000000000003" width="119.01400000000001" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="194.52325000000002" y="354.85" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">transition.fire</text>
+</g>
+</svg>

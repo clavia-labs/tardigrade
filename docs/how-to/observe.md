@@ -26,6 +26,11 @@ One business event stays one trace across every lane it touches, and that proper
 
 The reconciler's side of the contract is a link: `transition.fire` links to the newest carried context on the log, which reads as "the delivery that woke this work". It is an approximation: a settle serving several fresh deliveries links them to the same trigger, because a derivation reads the whole log and cannot name which events enabled it. Links, never parents: one settle serves many deliveries, and a span has one parent.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/one-trace-dark.svg">
+  <img alt="The one-trace contract: the sending span stamps a traceparent on the persisted event, and transition.fire links back to it as the delivery that woke this work" src="../assets/one-trace-light.svg">
+</picture>
+
 ## The outcome vocabulary
 
 Every `transition.fire` span carries an `outcome` attribute, and it is the first filter a trace query wants:
