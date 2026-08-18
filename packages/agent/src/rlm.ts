@@ -23,7 +23,7 @@ export interface CreateAgentOptions {
   readonly infer: (trajectory: ReadonlyArray<Event>, key?: string) => Promise<Action>
   // The root lane's history: an agent initialises from a persisted log, because the log is the
   // only state there is. The next run derives from everything here, and work the log still owes
-  // settles on the first drive (main.test.ts, "an agent initialises from a log").
+  // settles on the first drive (rlm.test.ts, "an agent initialises from a log").
   readonly log?: ReadonlyArray<Event>
 }
 

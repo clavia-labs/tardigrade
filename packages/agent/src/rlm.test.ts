@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@flamecast/core/event"
 import type { Action } from "./events"
-import { createRlmAgent } from "./main"
+import { createRlmAgent } from "./rlm"
 
 const ROOT_LANE = "ag.root"
 

@@ -9,7 +9,7 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 ```ts
 // An RLM agent: the model writes code over your packages and can spawn itself.
 import { Effect } from "effect"
-import { createRlmAgent } from "@flamecast/agent/main"
+import { createRlmAgent } from "@flamecast/agent"
 import type { Package } from "@flamecast/code/packages"
 
 // A package is a named object of methods the agent's code can call.
