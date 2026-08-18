@@ -24,7 +24,7 @@ Absent `telemetry`, every span is inert and costs nothing. Point a backend at th
 
 ## Traces in ClickHouse
 
-Jaeger reads one trace; questions across many take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
+Questions across many traces take SQL. ClickHouse does not ingest OTLP itself: the OTel Collector fronts it, and the collector's `clickhouse` exporter writes the tables. Run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
 
 ```yaml
 # collector.yaml
