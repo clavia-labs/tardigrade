@@ -182,14 +182,16 @@ const ofTurn = (event: Event, turn: string): boolean => {
   return callId === turn || callId.startsWith(`${turn}/`)
 }
 
-// usageIn sums what one turn spent on the model. Settled figures come from ModelReturned.
-// A return with no usage is unknown cost, so it poisons the total (usage.test.ts, "unknown is
-// sticky"). An attempt that died after ModelCalled has no return, so it does not invent a cost.
+// usageIn sums what one turn spent on the model. A live attempt's consequence carries the
+// spend as its `usage` field, so the sum reads fields, never event types. An empty usage is an
+// attempt with unreported spend, and it keeps the total unknown (usage.test.ts, "unknown is
+// sticky"). An event with no usage field is no attempt: a died ModelCalled and the give-up
+// TurnFailed invent nothing.
 export const usageIn = (log: ReadonlyArray<Event>, turn: string): Usage =>
   sumUsage(
     log.flatMap((event) => {
-      if (event.type !== "ModelReturned" || !ofTurn(event, turn)) return []
+      if (!ofTurn(event, turn)) return []
       const carried = asRecord(event)?.usage
-      return [carried === undefined ? ZERO_USAGE : usageOf(carried)]
+      return carried === undefined ? [] : [usageOf(carried)]
     })
   )

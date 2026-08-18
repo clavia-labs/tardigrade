@@ -123,7 +123,6 @@ describe("the agent with execute as the only tool", () => {
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
-      "ModelReturned",
       "ToolCalled",
       "CodeDispatched",
       "PackageCalled",
@@ -133,12 +132,11 @@ describe("the agent with execute as the only tool", () => {
       "CodeSettled",
       "ToolReturned",
       "ModelCalled",
-      "ModelReturned",
       "TurnCompleted",
       "ReplyDelivered"
     ])
-    expect(events[5]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
-    expect(events[9]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
+    expect(events[4]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
+    expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
     expect(inferReactor(events)).toHaveLength(0)
@@ -318,7 +316,7 @@ describe("the agent with execute as the only tool", () => {
     expect(count.calls).toBe(1)
   })
 
-  test("ModelReturned records the action's spend and who was called", async () => {
+  test("the consequence records the action's spend and who was called", async () => {
     const spent = {
       promptTokens: 10,
       completionTokens: 4,
@@ -347,13 +345,10 @@ describe("the agent with execute as the only tool", () => {
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
-      "ModelReturned",
       "TurnCompleted",
       "ReplyDelivered"
     ])
-    expect(events.find((e) => e.type === "ModelReturned")).toMatchObject({
-      callId: "m1/infer/0",
-      ordinal: 0,
+    expect(events.find((e) => e.type === "TurnCompleted")).toMatchObject({
       turn: "m1",
       usage: spent
     })
@@ -494,11 +489,9 @@ describe("the mind on a native surface", () => {
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
       "ModelCalled",
-      "ModelReturned",
       "ToolCalled",
       "ToolReturned",
       "ModelCalled",
-      "ModelReturned",
       "TurnCompleted",
       "ReplyDelivered"
     ])

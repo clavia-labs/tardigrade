@@ -66,14 +66,15 @@ describe("sumUsage", () => {
 })
 
 describe("usageIn", () => {
-  test("a turn sums ModelReturned, and a died attempt invents nothing", () => {
+  test("a turn sums the consequences' usage, and a died attempt invents nothing", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
       { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", at: 1 },
       {
-        type: "ModelReturned",
-        callId: "m1/infer/0",
-        ordinal: 0,
+        type: "ToolCalled",
+        callId: "c1",
+        name: "execute",
+        arguments: {},
         turn: "m1",
         usage: {
           promptTokens: 10,
@@ -99,7 +100,7 @@ describe("usageIn", () => {
     expect(usageIn(log, "m2")).toEqual(ZERO_USAGE)
   })
 
-  test("a return with no usage poisons the total, and an unstamped return still belongs by callId", () => {
+  test("an empty usage poisons the total, a usage-less terminal invents nothing, and an unstamped consequence still belongs by callId", () => {
     const billed = {
       promptTokens: 10,
       completionTokens: 4,
@@ -110,13 +111,14 @@ describe("usageIn", () => {
     }
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
-      { type: "ModelReturned", callId: "m1/infer/0", ordinal: 0, turn: "m1", at: 1 },
-      { type: "ModelReturned", callId: "m1/infer/1", ordinal: 1, turn: "m1", usage: billed, at: 2 }
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: {}, usage: {}, turn: "m1", at: 1 },
+      { type: "TurnCompleted", output: "ok", usage: billed, turn: "m1", at: 2 },
+      { type: "TurnFailed", error: "gave up", turn: "m1", at: 3 }
     ]
     expect(usageIn(log, "m1")).toEqual({ promptTokens: 10, completionTokens: 4 })
     expect(
       usageIn(
-        [{ type: "ModelReturned", callId: "m1/infer/0", ordinal: 0, usage: billed, at: 1 }],
+        [{ type: "ToolCalled", callId: "m1/infer/0", name: "execute", arguments: {}, usage: billed, at: 1 }],
         "m1"
       )
     ).toEqual(billed)

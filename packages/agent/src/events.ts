@@ -10,9 +10,9 @@ import type { Usage } from "./usage"
 // answer lives on `TurnCompleted` alone.
 //
 // The union projects onto OpenEnv RFC 005's HarnessEvent stream: `ModelCalled` -> LLM_REQUEST,
-// `ModelReturned` -> no RFC 005 event, `TextReturned` -> LLM_RESPONSE, `ToolCalled` -> TOOL_CALL,
-// `ToolReturned` -> TOOL_RESULT, `TurnCompleted` -> TURN_COMPLETE with TEXT_OUTPUT as payload,
-// `TurnFailed` -> ERROR. `MessageReceived` is the step() input on their side of the wire.
+// `TextReturned` -> LLM_RESPONSE, `ToolCalled` -> TOOL_CALL, `ToolReturned` -> TOOL_RESULT,
+// `TurnCompleted` -> TURN_COMPLETE with TEXT_OUTPUT as payload, `TurnFailed` -> ERROR.
+// `MessageReceived` is the step() input on their side of the wire.
 
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
@@ -24,6 +24,9 @@ export const ToolCalled = Schema.Struct({
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
+  // The spend of the attempt this call answered (packages/agent/src/usage.ts). An empty object
+  // is an attempt with unreported spend; an absent field is an event no attempt produced.
+  usage: Schema.optional(Schema.Unknown),
   at: Schema.Number
 })
 
@@ -37,27 +40,15 @@ export const ToolReturned = Schema.Struct({
 })
 
 // ModelCalled is the ask to the model and the attempt mark in one, appended before the inference
-// runs. ModelReturned is the spend of that attempt. A committed acting consequence after it is
-// the answer. Consecutive `ModelCalled` with nothing between them are attempts that died, and
-// the give-up guard reads that count.
+// runs. A committed acting consequence after it is the answer, and that consequence's `usage`
+// field is the attempt's spend. Consecutive `ModelCalled` with nothing between them are
+// attempts that died, and the give-up guard reads that count.
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
   callId: Schema.String,
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
   ordinal: Schema.optional(Schema.Number),
-  turn: Schema.optional(Schema.String),
-  at: Schema.Number
-})
-
-// ModelReturned is the spend of one attempt: tokens, a cost when known, and who was called.
-// costSource on usage says whether the dollar came from the provider or a price table
-// (packages/agent/src/usage.ts). A died attempt leaves no return, so usageIn invents nothing.
-export const ModelReturned = Schema.Struct({
-  type: Schema.Literal("ModelReturned"),
-  callId: Schema.String,
-  ordinal: Schema.optional(Schema.Number),
-  usage: Schema.optional(Schema.Unknown),
   turn: Schema.optional(Schema.String),
   at: Schema.Number
 })
@@ -74,6 +65,7 @@ export const TextReturned = Schema.Struct({
 export const TurnCompleted = Schema.Struct({
   type: Schema.Literal("TurnCompleted"),
   output: Schema.String,
+  usage: Schema.optional(Schema.Unknown),
   at: Schema.Number
 })
 
@@ -81,6 +73,8 @@ export const TurnCompleted = Schema.Struct({
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
   error: Schema.String,
+  // Present only on the fail a live attempt answered; the give-up terminal carries none.
+  usage: Schema.optional(Schema.Unknown),
   at: Schema.Number
 })
 
@@ -138,7 +132,6 @@ export const BudgetDenied = Schema.Struct({
 export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
-  ModelReturned,
   TextReturned,
   ToolCalled,
   ToolReturned,
@@ -164,7 +157,7 @@ export type Action =
 // src/budget.ts, so a redelivered decision landing twice would double it). A decision that
 // carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "mc:", "mr:", "bw:", "br:", "cc:"],
+  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "mc:", "bw:", "br:", "cc:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -186,8 +179,6 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
-      case "ModelReturned":
-        return v.ordinal === undefined ? undefined : `mr:${String(v.turn)}/${String(v.ordinal)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -218,10 +209,6 @@ export const toolReturned = (fields: { readonly callId: string; readonly result:
 export const modelCalled = (
   fields: { readonly callId: string; readonly ordinal?: number } & Stamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
-
-export const modelReturned = (
-  fields: { readonly callId: string; readonly ordinal?: number; readonly usage?: Usage } & Stamp
-): Event => ({ type: "ModelReturned", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event
