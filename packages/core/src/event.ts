@@ -1,8 +1,10 @@
-// The open event: the only event shape the core knows. One field is declared, and every other
-// field rides along untyped.
-//
-// The shape is open on purpose. A reader written today reads a log written by a newer harness that
-// emits event types it never met. An unknown event survives the read, and the folds that do not
-// know it ignore it. This property is a tolerant read, and it is what lets an event alphabet grow
-// without breaking an old log. A consumer that needs one event type narrows on `type`.
-export type Event = { readonly type: string } & { readonly [key: string]: unknown }
+import { Schema } from "effect"
+
+// Event is the open event shape, the only one core knows. Every stored event decodes
+// through it, so unknown types survive a read (tolerant reads, upcast-on-read). Consumers
+// narrow on type.
+export const Event = Schema.Struct(
+  { type: Schema.String },
+  { key: Schema.String, value: Schema.Unknown }
+)
+export type Event = typeof Event.Type

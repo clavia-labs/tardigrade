@@ -1,0 +1,22 @@
+{
+  "name": "@flamecast/bun",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@flamecast/core": "workspace:*",
+    "@flamecast/host": "workspace:*",
+    "@effect/experimental": "^0.61.1",
+    "@effect/platform": "^0.97.1",
+    "@effect/sql": "^0.52.1",
+    "@effect/sql-sqlite-bun": "^0.53.0",
+    "effect": "^3.22.1"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

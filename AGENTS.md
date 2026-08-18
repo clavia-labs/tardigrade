@@ -10,17 +10,22 @@ State each fact in one place. If `docs/` contains a fact, link to it from this f
 
 Keep the docs conceptual. Use diagrams, invariants, and links to explain concepts. Write what a thing is and why it has its shape. Do not include file maps or descriptions of documents.
 
-## TypeScript
+## Pull requests
 
-- Use static imports.
-- Do not write `any`. The linter rejects it, and a wildcard that is genuinely unwriteable otherwise carries a comment saying why.
-- Check a mistake at the tier that can catch it. A type catches what a human writes; a construction-time throw catches what generated code writes, and the framework compiles generated modules and machines.
-- Use inferred return types by default. This keeps the code less verbose.
-- Import symbols from their canonical files. Use re-exports only in a package's published `index.ts`.
+- Title a pull request in the commit format, the same as any commit: `type(scope?): message`, 3 to 5 words. The title becomes the squash commit subject, so it lands in the log as written.
+- The pull request body follows the rules in the global writing style. It is read cold, so it states the change and the reason in full.
+
+## Commits
+
+- Use Conventional Commits: `type(scope?): message`.
+- Keep the message to 3-5 words.
+- Write no body and no trailers.
 
 ## Comments
 
-Comments explain intent. Say why the code took this shape. Delete a comment that restates the line below it.
+- Go stdlib register: start with the identifier's name; one declarative sentence is the contract; further sentences only for constraints.
+- State what the code cannot: the contract, the constraint, the why. Never narrate mechanics or edit history.
+- Cite the spec or test that proves any property claimed (e.g. "tla/Reconcile.tla, NoVoid"). A citation can dangle visibly; a freehand assertion rots invisibly.
 
 ## Style
 

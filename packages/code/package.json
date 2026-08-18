@@ -1,0 +1,20 @@
+{
+  "name": "@flamecast/code",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@flamecast/core": "workspace:*",
+    "effect": "^3.22.1"
+  },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}
