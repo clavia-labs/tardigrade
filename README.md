@@ -6,27 +6,53 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
 ## Quickstart
 
+An agent is reactors over one log. Assemble one from the parts, give it a durable log, and send it a message.
+
 ```ts
-// An RLM agent: the model writes code over your packages and can spawn itself.
-import { Effect } from "effect"
-import { createRlmAgent } from "@flamecast/agent"
-import type { Package } from "@flamecast/code/packages"
+import { Effect, Layer } from "effect"
+import { actor } from "@flamecast/core/actor"
+import { composeKeys } from "@flamecast/core/event-log"
+import { messageKeys } from "@flamecast/core/message"
+import { codeReactor } from "@flamecast/code/execute"
+import { codeKeys } from "@flamecast/code/events"
+import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
+import { Packages, type Package } from "@flamecast/code/packages"
+import {
+  agentKeys, budgetReactor, compactionReactor, Infer,
+  inferReactor, replyReactor, toolsReactor
+} from "@flamecast/agent"
+import { createBunHost } from "@flamecast/bun/host"
+
+// The agent: decide, guard the budget, serve tools, run code durably, report home, compact.
+// Adding a capability is adding a reactor to the list.
+const agent = actor(
+  [inferReactor, budgetReactor, toolsReactor, codeReactor, replyReactor, compactionReactor],
+  composeKeys(messageKeys, codeKeys, agentKeys)
+)
 
 // A package is a named object of methods the agent's code can call.
 const invoices: Package = {
   name: "invoices",
   description: "find and manage invoices",
   methods: { lookup: (args) => Effect.promise(() => findInvoice(args)) }
-  // add more methods
 }
 
-const agent = createRlmAgent({
-  packages: [invoices],
-  infer: async (trajectory) => nextAction(trajectory) // one inference, one action; platform/model binds a real provider
+// The durable log: kill the process mid-turn and recover() picks up exactly here.
+const host = await createBunHost({
+  path: "agents.sqlite",
+  actorFor: () => agent,
+  layersFor: () => Layer.mergeAll(
+    Layer.succeed(Packages, { resolve: (n) => (n === "invoices" ? invoices : undefined), list: () => Effect.succeed([invoices]) }),
+    jsSandbox, memoryTmp(),
+    Layer.succeed(Infer, { react: (trajectory) => Effect.promise(() => nextAction(trajectory)) }) // the mind; platform/model binds a real provider
+  )
 })
 
-const reply = await agent.run("Find the invoice for order 4182.")
+await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "Find the invoice for order 4182.", at: Date.now() })
+await host.drive()
 ```
+
+`createRlmAgent` from `@flamecast/agent` is this assembly prebuilt over an in-process host: bring packages and a mind, `run` a brief, get the settled answer.
 
 ## Concepts
 
