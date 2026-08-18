@@ -1,11 +1,11 @@
 import { Clock, Context, Effect } from "effect"
-import { Router } from "@flamecast/core/router"
-import type { Package } from "@flamecast/code/packages"
-import type { Event } from "@flamecast/core/event"
+import { Router } from "@tardigrade/core/router"
+import type { Package } from "@tardigrade/code/packages"
+import type { Event } from "@tardigrade/core/event"
 import { DEFAULT_TOOL_BUDGET } from "./budget"
-import { Park } from "@flamecast/code/errors"
-import { readAddress } from "@flamecast/core/router"
-import { replyId } from "@flamecast/core/reply"
+import { Park } from "@tardigrade/code/errors"
+import { readAddress } from "@tardigrade/core/router"
+import { replyId } from "@tardigrade/core/reply"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;

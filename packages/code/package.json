@@ -1,5 +1,5 @@
 {
-  "name": "@flamecast/code",
+  "name": "@tardigrade/code",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@flamecast/core": "workspace:*",
+    "@tardigrade/core": "workspace:*",
     "effect": "4.0.0-rc.110"
   },
   "devDependencies": {

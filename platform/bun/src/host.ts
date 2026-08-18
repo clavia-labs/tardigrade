@@ -1,11 +1,11 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import type { Event } from "@flamecast/core/event"
-import { EventLog } from "@flamecast/core/event-log"
-import { Router, type CallResult } from "@flamecast/core/router"
-import { Self, restingActor, settleActor, type Actor } from "@flamecast/core/actor"
-import { deadlocks, victimOf, type EdgesOf } from "@flamecast/host/deadlock"
+import type { Event } from "@tardigrade/core/event"
+import { EventLog } from "@tardigrade/core/event-log"
+import { Router, type CallResult } from "@tardigrade/core/router"
+import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/actor"
+import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed

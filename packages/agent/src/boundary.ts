@@ -1,4 +1,4 @@
-import type { Event } from "@flamecast/core/event"
+import type { Event } from "@tardigrade/core/event"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
 // platform's call and resume read it to answer the spawning code. Pure over the log, so a

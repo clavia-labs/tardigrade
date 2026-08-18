@@ -10,15 +10,15 @@ An agent is reactors over one log. Assemble one, give it a durable log, send it 
 
 ```ts
 import { Effect, Layer } from "effect"
-import { actor } from "@flamecast/core/actor"
-import { composeKeys } from "@flamecast/core/event-log"
-import { messageKeys } from "@flamecast/core/message"
-import { codeReactor, codeKeys } from "@flamecast/code"
-import { jsSandbox, memoryTmp } from "@flamecast/code/defaults"
-import { Packages } from "@flamecast/code/packages"
-import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@flamecast/agent"
-import { realInfer } from "@flamecast/model/model"
-import { createBunHost } from "@flamecast/bun/host"
+import { actor } from "@tardigrade/core/actor"
+import { composeKeys } from "@tardigrade/core/event-log"
+import { messageKeys } from "@tardigrade/core/message"
+import { codeReactor, codeKeys } from "@tardigrade/code"
+import { jsSandbox, memoryTmp } from "@tardigrade/code/defaults"
+import { Packages } from "@tardigrade/code/packages"
+import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@tardigrade/agent"
+import { realInfer } from "@tardigrade/model/model"
+import { createBunHost } from "@tardigrade/bun/host"
 
 // The tool surface: code mode is the default. `nativeSurface` presents a fixed table of named
 // tools instead, for an agent measured against another harness's surface.
@@ -45,7 +45,7 @@ await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What 
 await host.drive()
 ```
 
-`createRlmAgent` from `@flamecast/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
+`createRlmAgent` from `@tardigrade/agent` is this Recursive Language Model default: the same six reactors, an in-process host, packages, and spawn. The mind is `agentFor` plus a work surface that the three reactors can serve (`nativeSurface` is the usual thinner case). Code mode is `rlmAgentFor`, because `execute` needs the code reactor.
 
 ## Concepts
 

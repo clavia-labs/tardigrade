@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
-import type { Event } from "@flamecast/core/event"
-import { EventLog, withWatermark } from "@flamecast/core/event-log"
+import type { Event } from "@tardigrade/core/event"
+import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { budgetReactor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
 import { toolsReactor } from "./tools"
 

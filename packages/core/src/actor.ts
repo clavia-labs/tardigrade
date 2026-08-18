@@ -10,7 +10,7 @@ import type { Event } from "./event"
 
 // Self is the current actor's own address, bound by the platform per
 // lane.
-export class Self extends Context.Service<Self, string>()("flamecast/Self") {}
+export class Self extends Context.Service<Self, string>()("tardigrade/Self") {}
 
 // Transition is one keyed unit of work: state in, events out. The
 // runtime fires a transition only when no record derives its key; a

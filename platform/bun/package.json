@@ -1,5 +1,5 @@
 {
-  "name": "@flamecast/bun",
+  "name": "@tardigrade/bun",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -7,8 +7,8 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@flamecast/core": "workspace:*",
-    "@flamecast/host": "workspace:*",
+    "@tardigrade/core": "workspace:*",
+    "@tardigrade/host": "workspace:*",
     "@effect/sql-sqlite-bun": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
   },
