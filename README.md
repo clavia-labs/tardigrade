@@ -60,7 +60,10 @@ type Reactor = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition>
 
 An actor is a set of reactors over one log, plus the key derivation that decides commitment.
 
-<img alt="The reconciler loop: the log feeds reactors, reactors derive transitions, unrecorded keys fire, events land keyed record last" src="docs/assets/reconciler-loop.svg">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/reconciler-loop-dark.svg">
+  <img alt="The reconciler loop: the log feeds reactors, reactors derive transitions, unrecorded keys fire, events land keyed record last" src="docs/assets/reconciler-loop-light.svg">
+</picture>
 
 ## Layout
 
