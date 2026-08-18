@@ -121,7 +121,9 @@ const agent = createAgent({
 })
 ```
 
-`defaultPack(options)` returns inference, native-tool, budget, contract, and compaction modules. Each module owns its own options. `nativeTools` is the provider-native calling default; code mode, MCP, textual commands, and generic RPC can be implemented as alternative modules.
+`defaultPack(options)` returns inference, native-tool, budget, contract, compaction, and [truncation](modules.md#truncation) modules. Each module owns its own options. `nativeTools` is the provider-native calling default; code mode, MCP, textual commands, and generic RPC can be implemented as alternative modules.
+
+Because the pack ships compaction, it turns on `compactMidTurn`, so a turn whose next request would not fit checkpoints instead of failing. An agent that composes `inference` by hand leaves that off unless it also composes a module that writes checkpoints.
 
 ## Add a Nudge
 

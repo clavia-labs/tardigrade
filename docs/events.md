@@ -17,6 +17,8 @@ Common fields include:
 - `attempt`, `notBefore`, and `reason` on a model deferral for the journaled wait
 - `reserved` on a model call for the estimated spend of an in-flight attempt
 - `reason` on a model settle for why an attempt closed without a provider result
+- `text` and `tokens` on a truncated answer for what the model said and how far it got
+- `tool` and `arguments` on a truncated answer when a tool call was the thing cut
 
 Unknown fields and event types survive reads and folds.
 
@@ -49,7 +51,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 
 | Module | Event types |
 | --- | --- |
-| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelSettled`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
+| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelSettled`, `ModelReturned`, `TextReturned`, `AnswerTruncated`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
 | native-tools | `ToolCalled`, `ToolReturned` |
 | budget | `BudgetExhausted`, `BudgetRequested`, `BudgetGranted`, `BudgetDenied` |
 | contract | `AnswerRejected` |

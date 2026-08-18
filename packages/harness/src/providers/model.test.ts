@@ -165,7 +165,9 @@ describe("what a result becomes", () => {
     expect(String((result as { error: string }).error)).toContain("routes option")
   })
 
-  test("an answer stopped at its ceiling is a failure that still reports its tokens", async () => {
+  // The fragment is kept rather than discarded, so the turn continues from it instead of asking the
+  // model to write the whole artifact again. The tokens were spent either way.
+  test("an answer stopped at its ceiling is recorded, with the tokens it spent", async () => {
     const model = provider(async () =>
       answered([{ type: "text", text: "half a sen" }], {
         finishReason: { unified: "length", raw: "length" }
@@ -174,8 +176,49 @@ describe("what a result becomes", () => {
 
     const result = await settled(model.react(request, "k"))
 
-    expect(result.kind).toBe("fail")
+    expect(result.kind).toBe("truncated")
+    expect(result).toMatchObject({ text: "half a sen" })
     expect(result.usage).toMatchObject({ promptTokens: 10, completionTokens: 4 })
+  })
+
+  // A cut call is reported as itself. Folding it into the text would mean inventing a notation for
+  // a partial call, and the model that reads the conversation back was trained on no such notation.
+  test("a tool call cut before its arguments closed is recorded as the call it was", async () => {
+    const model = provider(async () =>
+      answered(
+        [
+          { type: "tool-call", toolCallId: "c-1", toolName: "write", input: '{"path":"a.md"}' }
+        ],
+        { finishReason: { unified: "length", raw: "length" } }
+      )
+    )
+
+    const result = await settled(model.react(request, "k"))
+
+    expect(result).toMatchObject({
+      kind: "truncated",
+      call: { name: "write" }
+    })
+  })
+
+  // The window bounds what the model reads and what it writes together, so a request that fits only
+  // by ignoring its own answer is refused before it is sent.
+  test("refuses a request whose answer would not fit beside it", async () => {
+    let called = false
+    const model = provider(
+      async () => {
+        called = true
+        return answered([{ type: "text", text: "ok" }])
+      },
+      // The prompt alone fits the 1000-token window. Its answer is what does not.
+      { maxOutputTokens: 990 }
+    )
+
+    const result = await settled(model.react(request, "k"))
+
+    expect(called).toBe(false)
+    expect(result.kind).toBe("fail")
+    expect(String((result as { error: string }).error)).toContain("reserved for the answer")
   })
 
   test("a reported cost is kept, and an unreported one is priced or left unknown", async () => {

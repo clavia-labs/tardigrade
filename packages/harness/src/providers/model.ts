@@ -65,21 +65,35 @@ export interface ModelInferenceOptions extends TransportOptions {
 // A request past the window can not succeed, so sending it buys a slow refusal in the gateway's
 // words. Refusing here spends nothing and answers in the harness's own words, naming both sizes and
 // the model they belong to.
+//
+// The window bounds what the model reads and what it writes together, so the ceiling on the answer
+// is reserved against it. A check on the prompt alone passes a request the provider then refuses,
+// naming a total this side never mentioned.
+export const windowError = (
+  estimate: number,
+  provider: string,
+  model: string,
+  window: number,
+  reservedOutput = 0
+) =>
+  `this request is at least ${estimate} tokens` +
+  (reservedOutput > 0 ? ` plus ${reservedOutput} reserved for the answer` : "") +
+  ` and ${provider} reports a context window of ${window} tokens for ${model}, so the model can ` +
+  "not read it. Pass contextWindow to override what the model accepts, bound what reaches the " +
+  "model with messageTruncateAt and resultTruncateAt, or send less."
+
 export const overWindow = (
   request: ModelRequest,
   provider: string,
   model: string,
-  window: number
+  window: number,
+  reservedOutput = 0
 ): Action | undefined => {
   const estimate = requestTokens(request)
-  if (estimate <= window) return undefined
+  if (estimate + reservedOutput <= window) return undefined
   return {
     kind: "fail",
-    error:
-      `this request is at least ${estimate} tokens and ${provider} reports a context window of ` +
-      `${window} tokens for ${model}, so the model can not read it. Pass contextWindow to override ` +
-      "what the model accepts, bound what reaches the model with messageTruncateAt and " +
-      "resultTruncateAt, or send less."
+    error: windowError(estimate, provider, model, window, reservedOutput)
   }
 }
 
@@ -240,7 +254,13 @@ export const modelInference = (options: ModelInferenceOptions): InferenceProvide
       if (options.configurationError !== undefined) {
         return { kind: "fail", error: options.configurationError } satisfies Action
       }
-      const refusal = overWindow(request, options.provider, options.model, options.contextWindow)
+      const refusal = overWindow(
+        request,
+        options.provider,
+        options.model,
+        options.contextWindow,
+        request.options?.maxOutputTokens ?? options.maxOutputTokens ?? 0
+      )
       if (refusal !== undefined) return refusal
       return yield* reacted(options, request, key)
     })
@@ -323,13 +343,23 @@ const actionOf = (result: Generated, options: ModelInferenceOptions): Action => 
   const usage = spentOn(result.usage, result.providerMetadata, options.pricing)
   // An answer stopped at its ceiling is a fragment wearing the shape of an answer. Reading it as one
   // would finish the turn on half a sentence, or dispatch a tool call whose arguments stop mid-JSON.
-  // The tokens were spent either way, so the usage rides the failure and the turn's cost stays true.
+  // The tokens were spent either way, so the usage rides the action, and the fragment is recorded so
+  // the turn continues from it rather than generating the whole artifact again.
+  //
+  // A tool call cut before its arguments closed is reported as itself. Folding it into the text
+  // would mean inventing a notation for a partial call, and the model that reads the conversation
+  // back was trained on no such notation. Naming the tool leaves that decision to a module.
   if (result.finishReason === "length") {
+    const assistant = result.responseMessages.find((message) => message.role === "assistant")
+    const carried = assistant === undefined ? undefined : continuationOf(assistant.content)
+    const cut = result.toolCalls[0]
     return {
-      kind: "fail",
-      error:
-        "the model stopped at its completion-token limit, so its answer is incomplete. Raise " +
-        "maxOutputTokens on the provider, or ask for a shorter answer.",
+      kind: "truncated",
+      text: result.text,
+      ...(cut === undefined
+        ? {}
+        : { call: { name: cut.toolName, arguments: JSON.stringify(cut.input ?? {}) } }),
+      ...(carried === undefined ? {} : { continuation: carried }),
       usage
     }
   }
