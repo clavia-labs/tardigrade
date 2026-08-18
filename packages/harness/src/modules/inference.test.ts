@@ -4,12 +4,12 @@ import { TestClock } from "effect/testing"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
 import { alarmFired } from "../alphabet"
-import { inferWith, RequestOptionsProjection, type Action, type ModelRequest } from "../infer"
+import { inferWith, RequestOptionsProjection, ZERO_USAGE, type Action, type ModelRequest } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { serve } from "../serve"
 import { inference } from "./inference"
-import { flexThenStandard } from "./request-options"
+import { requestOptions } from "./request-options"
 
 const usage = { promptTokens: 10, completionTokens: 2, costUsd: 0.0001 }
 
@@ -71,11 +71,7 @@ describe("a deferred model call", () => {
       Effect.provide(
         Effect.gen(function* () {
           const result = yield* agent.replay([
-            alarmFired({
-              turn: "m-1",
-              callId: "m-1/infer/0",
-              at: yield* Clock.currentTimeMillis
-            })
+            alarmFired({ turn: "m-1", callId: "m-1/infer/0", attempt: 1, at: yield* Clock.currentTimeMillis })
           ])
           return { result, log: yield* agent.log }
         }),
@@ -104,15 +100,16 @@ describe("a deferred model call", () => {
       { kind: "defer", error: "still queued", retryAfterMs: 60_000, usage }
     ])
     const layer = Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
-    const wake = (at: number) => alarmFired({ turn: "m-1", callId: "m-1/infer/0", at })
+    const wake = (at: number, attempt: number) =>
+      alarmFired({ turn: "m-1", callId: "m-1/infer/0", attempt, at })
 
     const first = await Effect.runPromise(Effect.provide(agent.turn({ id: "m-1", text: "hello" }), layer))
     expect(first.kind).toBe("deferred")
 
-    const second = await Effect.runPromise(Effect.provide(agent.replay([wake(2)]), layer))
+    const second = await Effect.runPromise(Effect.provide(agent.replay([wake(2, 1)]), layer))
     expect(second).toMatchObject({ kind: "deferred", attempt: 2 })
 
-    const third = await Effect.runPromise(Effect.provide(agent.replay([wake(3)]), layer))
+    const third = await Effect.runPromise(Effect.provide(agent.replay([wake(3, 2)]), layer))
     expect(third).toMatchObject({ kind: "failed", error: "the model was deferred 2 times" })
     expect(model.keys).toHaveLength(2)
   })
@@ -142,7 +139,7 @@ describe("a deferred model call", () => {
 
     const resumed = await Effect.runPromise(
       Effect.provide(
-        agent.replay([alarmFired({ turn: "m-1", callId: "m-1/infer/0", at: 3 })]),
+        agent.replay([alarmFired({ turn: "m-1", callId: "m-1/infer/0", attempt: 1, at: 3 })]),
         layer
       )
     )
@@ -150,11 +147,44 @@ describe("a deferred model call", () => {
     expect(model.keys).toEqual(["m-1/infer/0"])
   })
 
+  // The defect this pins: giving up settled the last mark again, even though its deferral had
+  // already settled it. A turn whose every attempt was refused before it ran reported the whole
+  // reservation as spend, which is the figure the reservation exists to keep honest.
+  test("settles each attempt once, so a turn that never ran reports no spend", async () => {
+    const model = scripted([
+      { kind: "defer", error: "queued", retryAfterMs: 60_000 },
+      { kind: "defer", error: "still queued", retryAfterMs: 60_000 }
+    ])
+    const layer = Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+    const wake = (at: number, attempt: number) =>
+      alarmFired({ turn: "m-1", callId: "m-1/infer/0", attempt, at })
+
+    await Effect.runPromise(Effect.provide(agent.turn({ id: "m-1", text: "hello" }), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(2, 1)]), layer))
+    const spent = await Effect.runPromise(Effect.provide(agent.replay([wake(3, 2)]), layer))
+    const log = await Effect.runPromise(Effect.provide(agent.log, layer))
+
+    expect(spent.kind).toBe("failed")
+    // Two attempts, two settles. A third would be the same attempt counted twice.
+    expect(log.filter((event) => event.type === "ModelSettled")).toHaveLength(2)
+    expect(spent.usage.unsettled).toEqual({ promptTokens: 0, completionTokens: 0, costUsd: 0 })
+  })
+
   test("a restart whose due time has passed wakes from the log", async () => {
     const model = scripted([{ kind: "complete", output: "late", usage }])
+    // What a wait actually looks like on the log: the attempt is settled, then the wait is
+    // journaled with the time it comes due.
     const seeded: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
-      { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", at: 2 },
+      { type: "ModelCalled", turn: "m-1", callId: "m-1/infer/0", reserved: ZERO_USAGE, at: 2 },
+      {
+        type: "ModelSettled",
+        turn: "m-1",
+        callId: "m-1/infer/0",
+        usage: ZERO_USAGE,
+        reason: "queued",
+        at: 3
+      },
       {
         type: "ModelDeferred",
         turn: "m-1",
@@ -162,7 +192,7 @@ describe("a deferred model call", () => {
         attempt: 1,
         notBefore: 0,
         reason: "queued",
-        at: 3
+        at: 4
       }
     ]
     const result = await Effect.runPromise(
@@ -265,9 +295,20 @@ describe("reserve then settle", () => {
 })
 
 describe("per-request options as a projection", () => {
-  test("flex by default, then standard after two deferrals in the turn", async () => {
+  // The policy is a fold, so what it chose is a function of the log and a replay chooses the same.
+  // The framework ships none: which setting is worth its cost, and what a provider calls it, belong
+  // to the deployment. This one escalates thinking after the queue has made the turn wait.
+  const harder = requestOptions({
+    id: "harder-after-a-wait",
+    of: (log) => ({
+      reasoning:
+        log.filter((event) => event.type === "ModelDeferred").length >= 2 ? "high" : "low"
+    })
+  })
+
+  test("reads what has already happened, and a retry sends the new choice", async () => {
     const agent = createAgent({
-      modules: [inference({ contextWindow: 200_000, deferAtMost: 4 }), flexThenStandard()]
+      modules: [inference({ contextWindow: 200_000, deferAtMost: 4 }), harder]
     })
     const model = scripted([
       { kind: "defer", error: "queued", retryAfterMs: 1_000, usage },
@@ -275,49 +316,51 @@ describe("per-request options as a projection", () => {
       { kind: "complete", output: "done", usage }
     ])
     const layer = Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
-    const wake = (at: number) => alarmFired({ turn: "m-1", callId: "m-1/infer/0", at })
+    const wake = (at: number, attempt: number) =>
+      alarmFired({ turn: "m-1", callId: model.keys[model.keys.length - 1] ?? "", attempt, at })
 
     await Effect.runPromise(Effect.provide(agent.turn({ id: "m-1", text: "hello" }), layer))
-    await Effect.runPromise(Effect.provide(agent.replay([wake(2)]), layer))
-    await Effect.runPromise(Effect.provide(agent.replay([wake(3)]), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(2, 1)]), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(3, 2)]), layer))
 
-    expect(model.seen.map((request) => request.options?.serviceTier)).toEqual([
-      "flex",
-      "flex",
-      "standard"
+    expect(model.seen.map((request) => request.options?.reasoning)).toEqual([
+      "low",
+      "low",
+      "high"
     ])
+  })
+
+  // A changed setting is a changed request, so it can not reuse the key that told the gateway the
+  // last one was the same call. The first two attempts share a key; the third, sent with different
+  // settings, mints its own.
+  test("mints a new call when the settings change, and reuses the key when they do not", async () => {
+    const agent = createAgent({
+      modules: [inference({ contextWindow: 200_000, deferAtMost: 4 }), harder]
+    })
+    const model = scripted([
+      { kind: "defer", error: "queued", retryAfterMs: 1_000, usage },
+      { kind: "defer", error: "queued", retryAfterMs: 1_000, usage },
+      { kind: "complete", output: "done", usage }
+    ])
+    const layer = Layer.merge(InMemoryRuntime({ keyOf, session: "user-42" }), model.layer)
+    const wake = (at: number, attempt: number) =>
+      alarmFired({ turn: "m-1", callId: model.keys[model.keys.length - 1] ?? "", attempt, at })
+
+    await Effect.runPromise(Effect.provide(agent.turn({ id: "m-1", text: "hello" }), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(2, 1)]), layer))
+    await Effect.runPromise(Effect.provide(agent.replay([wake(3, 2)]), layer))
+
+    expect(model.keys[0]).toBe("m-1/infer/0")
+    expect(model.keys[1]).toBe("m-1/infer/0")
+    expect(model.keys[2]).not.toBe("m-1/infer/0")
   })
 
   test("agent.request exposes the projected options", () => {
     const agent = createAgent({
-      modules: [inference({ contextWindow: 200_000 }), flexThenStandard()]
+      modules: [inference({ contextWindow: 200_000 }), harder]
     })
-    expect(agent.request([]).options).toEqual({ serviceTier: "flex" })
-    expect(Context.get(agent.services, RequestOptionsProjection)([])).toEqual({
-      serviceTier: "flex"
-    })
-    expect(
-      agent.request([
-        { type: "MessageReceived", id: "m-1", text: "hello", at: 1 },
-        {
-          type: "ModelDeferred",
-          turn: "m-1",
-          callId: "k",
-          attempt: 1,
-          notBefore: 2,
-          reason: "q",
-          at: 2
-        },
-        {
-          type: "ModelDeferred",
-          turn: "m-1",
-          callId: "k",
-          attempt: 2,
-          notBefore: 3,
-          reason: "q",
-          at: 3
-        }
-      ]).options
-    ).toEqual({ serviceTier: "standard" })
+
+    expect(agent.request([]).options).toEqual({ reasoning: "low" })
+    expect(Context.get(agent.services, RequestOptionsProjection)([])).toEqual({ reasoning: "low" })
   })
 })

@@ -1,5 +1,5 @@
 import type { Event } from "@flamecast/core"
-import { spendOf, sumUsage, usageOf, type Spend, type Usage } from "./infer"
+import { spendOf, sumUsage, usageOf, ZERO_USAGE, type Spend, type Usage } from "./infer"
 
 // Turn attribution. A turn is headed by one `MessageReceived`, and every event emitted while
 // serving it carries `turn: <head id>`. Attribution is a fact in the log, never a derivation from
@@ -147,11 +147,19 @@ export const usageIn = (log: ReadonlyArray<Event>, turn: string): Spend => {
 // tool that reached a model by another route, such as a script that delegated inside a sandbox.
 // Reporting usage is the whole contract: a tool that reports it is counted, and one that does not
 // spend has nothing to report.
-const reportedUsage = (event: Event): Usage | undefined => {
+//
+// A child that reports a `Spend` reports which half of it settled. Folding that whole figure into a
+// parent's settled total would present a child's unsettled reservation as a figure a provider
+// confirmed, so each half joins the half it belongs to.
+const reportedUsage = (event: Event): Spend | undefined => {
   if (event.type !== "ToolReturned") return undefined
   const result = event.result as { readonly usage?: unknown } | undefined
   if (result === null || typeof result !== "object" || result.usage === undefined) return undefined
-  return usageOf(result.usage)
+  const reported = result.usage as { readonly settled?: unknown; readonly unsettled?: unknown }
+  if (reported.settled === undefined && reported.unsettled === undefined) {
+    return spendOf(usageOf(result.usage), ZERO_USAGE)
+  }
+  return spendOf(usageOf(reported.settled), usageOf(reported.unsettled))
 }
 
 // What one turn spent including everything it reached. The sum is inclusive over the whole
@@ -161,8 +169,11 @@ export const treeUsageIn = (log: ReadonlyArray<Event>, turn: string): Spend => {
   const nested = log
     .filter((event) => stampOf(event) === turn)
     .map(reportedUsage)
-    .filter((usage): usage is Usage => usage !== undefined)
-  return spendOf(sumUsage([local.settled, ...nested]), local.unsettled)
+    .filter((usage): usage is Spend => usage !== undefined)
+  return spendOf(
+    sumUsage([local.settled, ...nested.map((one) => one.settled)]),
+    sumUsage([local.unsettled, ...nested.map((one) => one.unsettled)])
+  )
 }
 
 const quoted = (value: unknown): string => `"${String(value ?? "")}"`

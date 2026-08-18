@@ -34,6 +34,13 @@ export const keyOf: DedupKey = (event: Event) => {
       return field("id") === undefined ? undefined : `msg:${field("id")}`
     case "ToolReturned":
       return inTurn("tr", field("callId"))
+    // A wake is delivered by a runtime, so it can arrive twice. One wait is owed one wake, and the
+    // attempt is what names which wait, so a redelivery lands once and a retry against a queue that
+    // has not moved does not happen twice.
+    case "AlarmFired":
+      return field("callId") === undefined
+        ? undefined
+        : inTurn("wake", `${field("callId")}/${field("attempt") ?? ""}`)
     // A grant and a denial answer the same request. Sharing one key makes the first committed
     // decision final and absorbs its redelivery.
     case "BudgetGranted":

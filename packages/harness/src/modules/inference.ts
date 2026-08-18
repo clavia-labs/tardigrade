@@ -8,7 +8,8 @@ import {
   usageOf,
   type Action,
   type InferenceSelection,
-  type InferenceState
+  type InferenceState,
+  type RequestOptions
 } from "../infer"
 import {
   messageReceived,
@@ -26,7 +27,7 @@ import { defineModule } from "../module"
 import type { Projection } from "../projection"
 import type { RenderPlan } from "../definition"
 import { modelRequest } from "../render"
-import { replyView, treeUsageIn, turnView } from "../turns"
+import { pendingDeferral, replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
 
 const BASE_SYSTEM =
@@ -41,7 +42,8 @@ export class InferenceStateProjection extends Context.Service<
 
 export interface InferenceSettings {
   readonly system?: string
-  readonly giveUpAfter?: number
+  // How many times one model call may wait before the turn gives up. It bounds a queue that never
+  // drains and a process that dies mid-call alike, because both journal the same wait.
   readonly deferAtMost?: number
   readonly repairAtMost?: number
   readonly messageTruncateAt?: number
@@ -65,52 +67,63 @@ export type InferenceOptions =
       readonly contextWindow: number
     })
 
-const diedAttempts = (view: ReadonlyArray<Event>): number => {
-  let died = 0
-  for (let index = view.length - 1; index >= 0; index--) {
-    if (view[index]?.type !== "ModelCalled") break
-    died += 1
-  }
-  return died
-}
-
-const openCallId = (view: ReadonlyArray<Event>): string | undefined => {
+// The most recent mark, unless one of `closedBy` has already come after it. Both questions this
+// module asks about a mark are that search over a different set, so they are the same fold read two
+// ways rather than two folds.
+const markUnless = (
+  view: ReadonlyArray<Event>,
+  closedBy: ReadonlySet<string>
+): Event | undefined => {
   for (let index = view.length - 1; index >= 0; index--) {
     const event = view[index]
-    if (event?.type === "ModelReturned") return undefined
-    if (event?.type === "ModelCalled") return String(event.callId ?? "")
+    if (event === undefined) continue
+    if (closedBy.has(event.type)) return undefined
+    if (event.type === "ModelCalled") return event
   }
   return undefined
 }
 
-const lastCalled = (view: ReadonlyArray<Event>): Event | undefined => {
-  for (let index = view.length - 1; index >= 0; index--) {
-    const event = view[index]
-    if (event?.type === "ModelCalled") return event
-  }
-  return undefined
-}
+// A mark with nothing after it: the process died between the request and its outcome. A result or a
+// settle closes it, so an attempt already accounted for is not counted again.
+const openCall = (view: ReadonlyArray<Event>) =>
+  markUnless(view, new Set(["ModelReturned", "ModelSettled"]))
 
-const closeOrphan = (view: ReadonlyArray<Event>, turn: string, at: number): ReadonlyArray<Event> => {
-  const called = lastCalled(view)
-  if (called === undefined) return []
-  return [
-    modelSettled({
-      turn,
-      callId: String(called.callId ?? ""),
-      usage: usageOf(called.reserved),
-      reason: "the model attempt died",
-      at
-    })
-  ]
-}
+// The call a retry continues: a mark no result has answered. A deferral settles its own attempt for
+// accounting, so the mark is no longer open, but the call it names is still unanswered and the next
+// attempt is the same call. Reusing its key is what tells the gateway so.
+const unanswered = (view: ReadonlyArray<Event>) => markUnless(view, new Set(["ModelReturned"]))
 
-const completedCalls = (view: ReadonlyArray<Event>) =>
-  view.filter((event) => event.type === "ModelReturned").length
+// The ordinal a new call takes. Marks rather than results, so a key minted after several attempts
+// can not collide with the one those attempts shared.
+const marksIn = (view: ReadonlyArray<Event>) =>
+  view.filter((event) => event.type === "ModelCalled").length
+
+// Close a reservation whose attempt never produced a result, so spend that was probably billed stays
+// on the record. The caller passes the mark it already found, because settling one that a result or
+// an earlier settle had closed would report a turn spending what it never asked for.
+const closed = (open: Event | undefined, turn: string, at: number): ReadonlyArray<Event> =>
+  open === undefined
+    ? []
+    : [
+        modelSettled({
+          turn,
+          callId: String(open.callId ?? ""),
+          usage: usageOf(open.reserved),
+          reason: "the model attempt died",
+          at
+        })
+      ]
 
 const deferralsOf = (view: ReadonlyArray<Event>, callId: string) =>
   view.filter((event) => event.type === "ModelDeferred" && String(event.callId ?? "") === callId)
     .length
+
+// Whether the settings a retry would send still match the ones the open call was made with. They can
+// differ, because the options are a projection and a policy may read the deferrals it caused. A
+// request the gateway would treat as the same call has to be the same request, so a changed setting
+// mints a new call rather than reusing a key that now describes something else.
+const sameOptions = (called: Event | undefined, options: RequestOptions | undefined) =>
+  JSON.stringify(called?.options ?? null) === JSON.stringify(options ?? null)
 
 // A single wait is capped at twenty minutes, which is long enough for a queued tier to drain and
 // short enough that a missing Retry-After still bounds the park. Exponential backoff without a
@@ -140,7 +153,6 @@ const consequenceOf = (action: Action, turn: string, at: number): Event =>
 const inferMachine = (
   render: RenderPlan,
   selection: InferenceSelection,
-  giveUpAfter: number,
   deferAtMost: number,
   repairAtMost: number
 ) =>
@@ -164,18 +176,6 @@ const inferMachine = (
             const turn = context.turn
             const view = turnView(log)
             const at = yield* Clock.currentTimeMillis
-            const died = diedAttempts(view)
-            const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
-            if (died >= giveUpAfter) {
-              return [
-                ...closeOrphan(view, turn, at),
-                turnFailed({
-                  turn,
-                  error: `the model attempt died ${giveUpAfter} times in a row`,
-                  at
-                })
-              ]
-            }
             const rejections = view.filter((event) => event.type === "AnswerRejected").length
             if (rejections > repairAtMost) {
               return [
@@ -186,10 +186,22 @@ const inferMachine = (
                 })
               ]
             }
+            const store = yield* EventLog
+            const override = yield* Effect.serviceOption(Infer)
+            const provider = Option.getOrElse(override, () => selectedInference(selection, log))
+            const state = provider.state(log)
+            const request = modelRequest({ render }, log)
+            const previous = unanswered(view)
+            const key =
+              previous !== undefined && sameOptions(previous, request.options)
+                ? String(previous.callId ?? "")
+                : `${turn}/infer/${marksIn(view)}`
+            const open = openCall(view)
             const deferrals = deferralsOf(view, key)
+            const attempt = deferrals + 1
             if (deferrals >= deferAtMost) {
               return [
-                ...closeOrphan(view, turn, at),
+                ...closed(open, turn, at),
                 turnFailed({
                   turn,
                   error: `the model was deferred ${deferAtMost} times`,
@@ -197,27 +209,23 @@ const inferMachine = (
                 })
               ]
             }
-            // An orphaned mark is a crash mid-call. Close the reservation so cost does not vanish,
-            // then journal the wait so a restart sleeps instead of immediately issuing another
-            // request against a queue that has not moved.
-            if (died > 0) {
+            // An open mark is a crash between the request and its outcome. Close the reservation so
+            // the spend does not vanish, then journal the wait so a restart sleeps instead of
+            // immediately issuing another request against a queue that has not moved.
+            if (open !== undefined) {
               return [
-                ...closeOrphan(view, turn, at),
+                ...closed(open, turn, at),
                 modelDeferred({
                   turn,
                   callId: key,
-                  attempt: died,
-                  notBefore: at + deferDelayMs(died),
+                  attempt,
+                  notBefore: at + deferDelayMs(attempt),
                   reason: "the model attempt died",
                   at
                 })
               ]
             }
-            const store = yield* EventLog
-            const override = yield* Effect.serviceOption(Infer)
-            const provider = Option.getOrElse(override, () => selectedInference(selection, log))
-            const request = modelRequest({ render }, log)
-            const reserved = reservedUsage(request, provider.state(log).pricing)
+            const reserved = reservedUsage(request, state.pricing, state.maxOutputTokens)
             yield* store.append([
               modelCalled({
                 turn,
@@ -229,9 +237,8 @@ const inferMachine = (
             ])
             const action = yield* provider.react(request, key)
             const after = yield* Clock.currentTimeMillis
-            const usage = settledUsage(action.usage, reserved, provider.state(log).pricing)
+            const usage = settledUsage(action.usage, reserved, state.pricing)
             if (action.kind === "defer") {
-              const attempt = deferrals + 1
               return [
                 modelSettled({
                   turn,
@@ -272,7 +279,27 @@ const inferMachine = (
           TurnFailed: "idle"
         }
       },
-      deferred: { on: { AlarmFired: "thinking" } },
+      // Only the wake this wait is owed reopens it. A wake is delivered by a runtime and redelivery
+      // is the contract an act is written against, so a stale or repeated one would otherwise retry
+      // against a queue before its due time, which is the failure the wait exists to prevent.
+      deferred: {
+        on: {
+          AlarmFired: {
+            target: "thinking",
+            // The guard reads the log up to and including the wake, so the wake is its last event
+            // and the wait it claims to answer is whatever the log held before it.
+            when: (log) => {
+              const wake = log[log.length - 1]
+              const pending = pendingDeferral(log.slice(0, -1))
+              return (
+                pending !== undefined &&
+                pending.callId === String(wake?.callId ?? "") &&
+                pending.attempt === Number(wake?.attempt ?? -1)
+              )
+            }
+          }
+        }
+      },
       waiting: { on: { ToolReturned: "thinking" } }
     }
   })
@@ -340,7 +367,6 @@ const selectionOf = (options: InferenceOptions): InferenceSelection => {
 export const inference = (options: InferenceOptions) => {
   const selection = selectionOf(options)
   const system = options.system ?? BASE_SYSTEM
-  const giveUpAfter = options.giveUpAfter ?? 3
   const deferAtMost = options.deferAtMost ?? 8
   const repairAtMost = options.repairAtMost ?? 2
   // Truncation is what the caller asked for and nothing more. A default bound here would cut a long
@@ -361,12 +387,11 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "5",
+    version: "6",
     identity: {
       provider: initial.id,
       state: initial.state([]),
       system,
-      giveUpAfter,
       deferAtMost,
       repairAtMost,
       ...truncation
@@ -395,7 +420,7 @@ export const inference = (options: InferenceOptions) => {
       // reply machine reaches the router and this session's name, so the module says so and the
       // agent's own requirement carries it to the runtime.
       machines: (render): ReadonlyArray<Machine<EventLog | Router | Self, never>> => [
-        erase(inferMachine(render, selection, giveUpAfter, deferAtMost, repairAtMost)),
+        erase(inferMachine(render, selection, deferAtMost, repairAtMost)),
         erase(replyMachine)
       ]
     })

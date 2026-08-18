@@ -95,14 +95,18 @@ export const modelSettled = (
   at: fields.at
 })
 
+// The wake one wait is owed. It names the attempt it answers, so a wake that arrives twice, or one
+// left over from a wait that has already been served, is refused rather than retried early.
 export const alarmFired = (
   fields: Stamped & {
     readonly callId: string
+    readonly attempt: number
   }
 ): Event => ({
   type: "AlarmFired",
   turn: fields.turn,
   callId: fields.callId,
+  attempt: fields.attempt,
   at: fields.at
 })
 
