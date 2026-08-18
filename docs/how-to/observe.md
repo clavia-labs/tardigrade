@@ -1,6 +1,6 @@
-# Observe a running agent
+How to observe a running agent: wire its spans to a collector and keep one trace across lanes.
 
-The log is the primary record: every call, park, and terminal is an event you can read back. Spans carry what the log cannot: wall-clock time, retries that landed no event, and the shape of a slow turn. This page wires the spans to a collector and states the two contracts a reader cannot discover from the trace data alone.
+The log is the primary record: every call, park, and terminal is an event you can read back. Spans carry what the log cannot: wall-clock time, retries that landed no event, and the shape of a slow turn. To collect the spans, hand the host a tracer. To read one trace across lanes, hold two contracts the trace data does not state: the platform stamps each persisted event with the sending span, and the reconciler links each fire to the delivery that woke it.
 
 ## Wire a tracer
 
@@ -18,7 +18,7 @@ const host = await createBunHost({
 })
 ```
 
-Absent `telemetry`, every span is inert and costs nothing. The span inventory needs no page: point a backend at the stream and the names and attributes enumerate themselves (`transition.fire`, `deliver`, `llm.react`, `package.call`, `code.run`, with GenAI semantic-convention keys on the model span).
+Absent `telemetry`, every span is inert and costs nothing. Point a backend at the stream and the span inventory enumerates itself (`transition.fire`, `deliver`, `llm.react`, `package.call`, `code.run`, with GenAI semantic-convention keys on the model span).
 
 ## The one-trace contract
 
