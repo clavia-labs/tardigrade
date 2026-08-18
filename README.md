@@ -2,7 +2,7 @@
 
 ### Log is all you need
 
-Tardigrade is a durable agent harness built with the log as its core, inspired by event sourcing and React. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
+Tardigrade is a durable agent harness built with the log as its core. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
 
 $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 
