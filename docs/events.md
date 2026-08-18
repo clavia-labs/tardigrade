@@ -14,6 +14,7 @@ Common fields include:
 - `origin` for the session, turn, and call that sent a cross-session message
 - `usage` on a cross-session reply for the sender's inclusive spend
 - `continuation` on a model result for opaque provider state
+- `attempt`, `notBefore`, and `reason` on a model deferral for the journaled wait
 
 Unknown fields and event types survive reads and folds.
 
@@ -37,6 +38,7 @@ Examples:
 - a model result dedups by turn and call id
 - a tool result dedups by turn and call id
 - a budget grant or denial dedups by turn and request call id
+- a model deferral has no key, so every wait stays in the log as evidence
 
 This lets providers reuse `call_1` in later turns without the store confusing separate calls. A grant and denial for one budget request share a key, so the first committed decision wins.
 
@@ -44,7 +46,7 @@ This lets providers reuse `call_1` in later turns without the store confusing se
 
 | Module | Event types |
 | --- | --- |
-| inference | `MessageReceived`, `ModelCalled`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
+| inference | `MessageReceived`, `ModelCalled`, `ModelDeferred`, `AlarmFired`, `ModelReturned`, `TextReturned`, `TurnCompleted`, `TurnFailed`, `ReplyDelivered` |
 | native-tools | `ToolCalled`, `ToolReturned` |
 | budget | `BudgetExhausted`, `BudgetRequested`, `BudgetGranted`, `BudgetDenied` |
 | contract | `AnswerRejected` |

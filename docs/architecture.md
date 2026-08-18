@@ -39,7 +39,7 @@ sequenceDiagram
   Agent-->>Caller: TurnResult
 ```
 
-The runtime holds the session writer lock around a turn or replay. Every machine folds the same log and tolerates events owned by other modules. Quiescence is a full pass that appends nothing.
+The runtime holds the session writer lock around a turn or replay. Every machine folds the same log and tolerates events owned by other modules. Quiescence is a full pass that appends nothing. A transient model failure appends `ModelDeferred` and rests; the runtime's alarm wakes the session at `notBefore` and the loop retries with the same key.
 
 ## Static Prefix and Dynamic Tail
 

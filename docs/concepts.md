@@ -100,4 +100,4 @@ Services connect modules during construction. A projection can be exposed as a s
 
 ## Port
 
-A port is an effectful capability required by a machine, such as event storage, exclusive writing, routing, or session inspection. A runtime binds ports for a platform without changing the agent.
+A port is an effectful capability required by a machine, such as event storage, exclusive writing, routing, session inspection, or a due-time wake. A runtime binds ports for a platform without changing the agent.

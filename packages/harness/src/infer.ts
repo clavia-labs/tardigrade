@@ -71,6 +71,12 @@ export type Action =
       readonly continuation?: ProviderContinuation | undefined
     }
   | { readonly kind: "fail"; readonly error: string; readonly usage?: Usage | undefined }
+  | {
+      readonly kind: "defer"
+      readonly error: string
+      readonly retryAfterMs?: number | undefined
+      readonly usage?: Usage | undefined
+    }
 
 export interface InferenceState {
   readonly provider: string

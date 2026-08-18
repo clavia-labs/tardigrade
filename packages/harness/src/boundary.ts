@@ -1,7 +1,8 @@
 import type { Event } from "@flamecast/core"
 
-// A turn's boundary: where a settle left it. A turn ends in a terminal, or it parks on a budget
-// ask. Pure over the log, so a re-driven settle reads the same boundary.
+// A turn's boundary: where a settle left it. A turn ends in a terminal, it parks on a budget
+// ask, or it defers a model call until a due time. Pure over the log, so a re-driven settle reads
+// the same boundary.
 //
 // A parent reads this result from the event returned by `Router.call`. Core carries events and knows
 // no domain, so the harness interprets the event with the alphabet that wrote it.
@@ -14,6 +15,13 @@ export type CallResult =
       readonly callId: string
       readonly reason: string
       readonly amount: number
+    }
+  | {
+      readonly kind: "deferred"
+      readonly callId: string
+      readonly attempt: number
+      readonly notBefore: number
+      readonly reason: string
     }
 
 const stampOf = (event: Event): string | undefined =>
@@ -46,11 +54,35 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): CallResult 
       pending = undefined
     }
   }
-  if (pending === undefined) return undefined
-  return {
-    kind: "parked",
-    callId: String(pending.callId ?? ""),
-    reason: String(pending.reason ?? ""),
-    amount: Number(pending.amount ?? 0)
+  if (pending !== undefined) {
+    return {
+      kind: "parked",
+      callId: String(pending.callId ?? ""),
+      reason: String(pending.reason ?? ""),
+      amount: Number(pending.amount ?? 0)
+    }
   }
+  // A deferral is the last model wait that no wake and no later attempt has answered.
+  for (let index = log.length - 1; index >= 0; index--) {
+    const event = log[index]
+    if (event === undefined || stampOf(event) !== turn) continue
+    if (event.type === "ModelDeferred") {
+      return {
+        kind: "deferred",
+        callId: String(event.callId ?? ""),
+        attempt: Number(event.attempt ?? 0),
+        notBefore: Number(event.notBefore ?? 0),
+        reason: String(event.reason ?? "")
+      }
+    }
+    if (
+      event.type === "AlarmFired" ||
+      event.type === "ModelReturned" ||
+      event.type === "ModelCalled" ||
+      event.type === "ToolCalled"
+    ) {
+      break
+    }
+  }
+  return undefined
 }

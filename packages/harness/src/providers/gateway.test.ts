@@ -419,8 +419,8 @@ describe("Vercel AI Gateway", () => {
 
     const action = await Effect.runPromise(provider.react(request, "k"))
 
-    expect(action.kind).toBe("fail")
-    expect(String(action.kind === "fail" ? action.error : "")).toContain("timeout")
+    expect(action.kind).toBe("defer")
+    expect(String(action.kind === "defer" ? action.error : "")).toContain("timeout")
     // One attempt, because the caller asked for no retries.
     expect(seen).toHaveLength(1)
     expect(seen[0]?.get("x-trace")).toBe("abc")

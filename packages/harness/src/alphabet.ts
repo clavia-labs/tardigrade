@@ -55,6 +55,34 @@ export const modelCalled = (fields: Stamped & { readonly callId: string }): Even
   at: fields.at
 })
 
+export const modelDeferred = (
+  fields: Stamped & {
+    readonly callId: string
+    readonly attempt: number
+    readonly notBefore: number
+    readonly reason: string
+  }
+): Event => ({
+  type: "ModelDeferred",
+  turn: fields.turn,
+  callId: fields.callId,
+  attempt: fields.attempt,
+  notBefore: fields.notBefore,
+  reason: fields.reason,
+  at: fields.at
+})
+
+export const alarmFired = (
+  fields: Stamped & {
+    readonly callId: string
+  }
+): Event => ({
+  type: "AlarmFired",
+  turn: fields.turn,
+  callId: fields.callId,
+  at: fields.at
+})
+
 export const modelReturned = (
   fields: Stamped & {
     readonly callId: string

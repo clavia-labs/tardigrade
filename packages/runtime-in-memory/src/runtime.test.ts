@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber } from "effect"
+import { Clock, Effect, Fiber, Layer } from "effect"
+import { TestClock } from "effect/testing"
 import {
+  Alarm,
   EventLog,
   Router,
   Self,
@@ -16,8 +18,8 @@ import {
 } from "@flamecast/core"
 import { InMemoryRuntime, type InMemoryOptions, type SessionPorts } from "./runtime"
 
-// The runtime owes eight ports and six log guarantees. These tests read each guarantee back through
-// the port, because a runtime is trusted for what the core can observe through the seam.
+// The runtime owes the published ports and six log guarantees. These tests read each guarantee back
+// through the port, because a runtime is trusted for what the core can observe through the seam.
 
 const ev = (type: string): Event => ({ type })
 
@@ -360,5 +362,67 @@ describe("machines over the runtime", () => {
       'the store appended a redelivered event twice for the key "flamecast/conformance/dedup-probe"',
       "the store returned 2 copies of one redelivered event from its watermark"
     ])
+  })
+})
+
+describe("the alarm", () => {
+  test("delivers the wake event to a served session after the due time", async () => {
+    const seen: Array<string> = []
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* (yield* Alarm).set("ag/child", (yield* Clock.currentTimeMillis) + 60_000, ev("Woke"))
+        yield* TestClock.adjust("1 minute")
+        yield* Effect.yieldNow
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            InMemoryRuntime({
+              keyOf: dedupKey,
+              sessions: {
+                "ag/*": () => (event: Event) => {
+                  seen.push(event.type)
+                  return Effect.succeed({ type: "TurnCompleted" })
+                }
+              }
+            }),
+            TestClock.layer()
+          )
+        )
+      )
+    )
+    expect(seen).toEqual(["Woke"])
+  })
+
+  test("a later set replaces the earlier arm", async () => {
+    const seen: Array<string> = []
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const alarm = yield* Alarm
+        const now = yield* Clock.currentTimeMillis
+        yield* alarm.set("ag/child", now + 60_000, ev("First"))
+        yield* alarm.set("ag/child", now + 120_000, ev("Second"))
+        yield* TestClock.adjust("1 minute")
+        yield* Effect.yieldNow
+        expect(seen).toEqual([])
+        yield* TestClock.adjust("1 minute")
+        yield* Effect.yieldNow
+      }).pipe(
+        Effect.provide(
+          Layer.merge(
+            InMemoryRuntime({
+              keyOf: dedupKey,
+              sessions: {
+                "ag/*": () => (event: Event) => {
+                  seen.push(event.type)
+                  return Effect.succeed({ type: "TurnCompleted" })
+                }
+              }
+            }),
+            TestClock.layer()
+          )
+        )
+      )
+    )
+    expect(seen).toEqual(["Second"])
   })
 })

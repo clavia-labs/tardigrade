@@ -73,7 +73,7 @@ describe("a transient failure", () => {
     const gateway = responder([500, 500, 500, 500])
     const result = await settled(provider(gateway.stub).react(request, "turn/infer/0"))
 
-    expect(result).toMatchObject({ kind: "fail" })
+    expect(result).toMatchObject({ kind: "defer" })
     expect(String((result as { error: string }).error)).toContain("HTTP 500")
     // The default is two further attempts, so a failing call is made three times and no more.
     expect(gateway.seen).toHaveLength(3)
@@ -84,6 +84,18 @@ describe("a transient failure", () => {
     await settled(provider(gateway.stub).react(request, "turn/infer/2"))
 
     expect(new Set(gateway.seen)).toEqual(new Set(["turn/infer/2"]))
+  })
+
+  test("a Retry-After of minutes defers immediately, so the wait lives in the log", async () => {
+    const seen: Array<string> = []
+    const stub = (async () => {
+      seen.push("hit")
+      return new Response("queued", { status: 429, headers: { "retry-after": "1200" } })
+    }) as unknown as typeof fetch
+    const result = await settled(provider(stub, { retries: 2 }).react(request, "turn/infer/0"))
+
+    expect(result).toMatchObject({ kind: "defer", retryAfterMs: 1_200_000 })
+    expect(seen).toHaveLength(1)
   })
 
   test("a network failure is retried like a busy gateway", async () => {
@@ -137,7 +149,7 @@ describe("a silent gateway", () => {
       provider(gateway.stub, { retries: 0, timeout: "2 minutes" }).react(request, "turn/infer/0")
     )
 
-    expect(result).toMatchObject({ kind: "fail" })
+    expect(result).toMatchObject({ kind: "defer" })
     expect(String((result as { error: string }).error)).toContain("timeout")
     expect(gateway.attempts()).toBe(1)
   })
@@ -163,6 +175,6 @@ describe("a silent gateway", () => {
       provider(gateway.stub, { retries: 0, timeout: "30 seconds" }).react(request, "turn/infer/0")
     )
 
-    expect(result).toMatchObject({ kind: "fail" })
+    expect(result).toMatchObject({ kind: "defer" })
   })
 })

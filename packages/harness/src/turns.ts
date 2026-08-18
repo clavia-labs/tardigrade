@@ -43,6 +43,45 @@ export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   return head === undefined ? [] : [head, ...stamped(log, idOf(head))]
 }
 
+export interface PendingDeferral {
+  readonly turn: string
+  readonly callId: string
+  readonly attempt: number
+  readonly notBefore: number
+  readonly reason: string
+}
+
+// The open model wait on the current turn: a `ModelDeferred` that no wake and no later attempt has
+// answered. The agent loop arms an alarm for it, or appends the wake when the due time has already
+// passed, so a restart continues from the log rather than from a timer that died with the process.
+export const pendingDeferral = (log: ReadonlyArray<Event>): PendingDeferral | undefined => {
+  const view = turnView(log)
+  for (let index = view.length - 1; index >= 0; index--) {
+    const event = view[index]
+    if (event === undefined) continue
+    if (event.type === "ModelDeferred") {
+      return {
+        turn: String(event.turn ?? ""),
+        callId: String(event.callId ?? ""),
+        attempt: Number(event.attempt ?? 0),
+        notBefore: Number(event.notBefore ?? 0),
+        reason: String(event.reason ?? "")
+      }
+    }
+    if (
+      event.type === "AlarmFired" ||
+      event.type === "ModelReturned" ||
+      event.type === "ModelCalled" ||
+      event.type === "ToolCalled" ||
+      event.type === "TurnCompleted" ||
+      event.type === "TurnFailed"
+    ) {
+      return undefined
+    }
+  }
+  return undefined
+}
+
 // The turn owed a reply: terminal stamped, reply not. It lags one stage behind `turnView` on
 // purpose, so a queued next turn never steals a finished turn's reply.
 export const replyView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
@@ -147,6 +186,12 @@ const detailOf = (event: Event, callWidth: number): string => {
     case "MessageReceived":
       return `${quoted(event.text)}   agent=${String(event.agent ?? "")}`
     case "ModelCalled":
+      return call("")
+    case "ModelDeferred":
+      return call(
+        `attempt=${String(event.attempt ?? "")} notBefore=${String(event.notBefore ?? "")} ${quoted(event.reason)}`
+      )
+    case "AlarmFired":
       return call("")
     case "ModelReturned":
       return call(usageLine(event.usage))
