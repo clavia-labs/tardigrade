@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Envelope } from "@flamecast/core/envelope"
-import { EventLog } from "@flamecast/core/event-log"
 import { Router } from "@flamecast/core/router"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { createHost } from "./host"

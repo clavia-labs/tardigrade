@@ -2,61 +2,25 @@
   "name": "flamecast-core",
   "version": "0.0.0",
   "type": "module",
-  "files": [
-    "dist",
-    "README.md"
-  ],
-  "exports": {
-    ".": {
-      "types": "./dist/core.d.ts",
-      "import": "./dist/core.js"
-    },
-    "./core": {
-      "types": "./dist/core.d.ts",
-      "import": "./dist/core.js"
-    },
-    "./harness": {
-      "types": "./dist/harness.d.ts",
-      "import": "./dist/harness.js"
-    },
-    "./codemode": {
-      "types": "./dist/codemode.d.ts",
-      "import": "./dist/codemode.js"
-    },
-    "./runtime-in-memory": {
-      "types": "./dist/runtime-in-memory.d.ts",
-      "import": "./dist/runtime-in-memory.js"
-    }
-  },
   "workspaces": [
     "packages/*"
   ],
   "scripts": {
-    "build": "bun run tools/build.ts",
     "gate": "bun run tools/gate.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
     "test": "bun run --filter './packages/*' test",
     "knip": "knip",
-    "smoke:live": "bun run tools/live-smoke.ts",
-    "prepare": "bun run build",
     "setup": "git config core.hooksPath .githooks"
   },
   "dependencies": {
-    "@ai-sdk/gateway": "^4",
-    "@ai-sdk/openai-compatible": "^3",
-    "@ai-sdk/provider": "^4",
-    "@ai-sdk/provider-utils": "^5",
-    "@types/json-schema": "^7",
     "@types/node": "^24",
-    "ai": "^7",
-    "effect": "4.0.0-rc.108",
-    "tsdown": "0.22.14",
     "typescript": "6.0.3"
   },
   "devDependencies": {
     "@types/bun": "^1.3.4",
     "knip": "^6.15.0",
     "oxlint": "^1.69.0"
-  }
+  },
+  "private": true
 }

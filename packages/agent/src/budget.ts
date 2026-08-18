@@ -1,5 +1,4 @@
 import { Clock, Effect } from "effect"
-import { EventLog } from "@flamecast/core/event-log"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { budgetExhausted } from "./events"
 import type { Envelope } from "@flamecast/core/envelope"

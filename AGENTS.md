@@ -20,7 +20,9 @@ Keep the docs conceptual. Use diagrams, invariants, and links to explain concept
 
 ## Comments
 
-Comments explain intent. Say why the code took this shape. Delete a comment that restates the line below it.
+- Go stdlib register: start with the identifier's name; one declarative sentence is the contract; further sentences only for constraints.
+- State what the code cannot: the contract, the constraint, the why. Never narrate mechanics or edit history.
+- Cite the spec or test that proves any property claimed (e.g. "tla/Reconcile.tla, NoVoid"). A citation can dangle visibly; a freehand assertion rots invisibly.
 
 ## Style
 

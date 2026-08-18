@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Envelope } from "@flamecast/core/envelope"
-import { EventLog } from "@flamecast/core/event-log"
 import { Router } from "@flamecast/core/router"
 import { transition, type Reactor } from "@flamecast/core/actor"
 import { createHost } from "./host"
@@ -69,7 +68,7 @@ const edgesOf = (lane: string, events: ReadonlyArray<Envelope>): ReadonlyArray<A
   if (has(events, "Settled")) return []
   return events
     .filter((e) => e.type === "Awaiting")
-    .filter((e) => !has(events, "MessageReceived", `${lane}.await.reply`))
+    .filter(() => !has(events, "MessageReceived", `${lane}.await.reply`))
     .map((e) => ({
       from: lane,
       to: str((e as { target?: unknown }).target),

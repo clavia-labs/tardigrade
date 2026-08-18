@@ -12,5 +12,9 @@
     "@cfworker/json-schema": "^4.1.1",
     "effect": "^3.22.1",
     "@flamecast/host": "workspace:*"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Envelope } from "@flamecast/core/envelope"
-import { canProgress, factsOf, restingLane, workOwed } from "./projections"
+import { factsOf, restingLane, workOwed } from "./projections"
 
 // The isomorphism harness: tla/Reconcile.tla's theorems, run against the
 // real kernel.

@@ -8,10 +8,8 @@ type Task = {
 }
 
 const root = fileURLToPath(new URL("../", import.meta.url))
-const codemode = `${root}packages/codemode`
-const core = `${root}packages/core`
-const harness = `${root}packages/harness`
-const runtimeInMemory = `${root}packages/runtime-in-memory`
+const pkg = (name: string) => `${root}packages/${name}`
+const packages = ["core", "code", "agent", "host"]
 
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
@@ -19,15 +17,8 @@ const tasks: ReadonlyArray<Task> = [
   { id: "lint:docs", cmd: ["bun", "run", "tools/docs-lint.ts"] },
   // Root tsconfig covers tools/*.ts; each package typechecks itself against the shared base.
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
-  { id: "typecheck:codemode", cwd: codemode, cmd: ["bun", "run", "typecheck"] },
-  { id: "typecheck:core", cwd: core, cmd: ["bun", "run", "typecheck"] },
-  { id: "typecheck:harness", cwd: harness, cmd: ["bun", "run", "typecheck"] },
-  { id: "typecheck:runtime-in-memory", cwd: runtimeInMemory, cmd: ["bun", "run", "typecheck"] },
-  { id: "test:codemode", cwd: codemode, cmd: ["bun", "test"] },
-  { id: "test:core", cwd: core, cmd: ["bun", "test"] },
-  { id: "test:harness", cwd: harness, cmd: ["bun", "test"] },
-  { id: "test:runtime-in-memory", cwd: runtimeInMemory, cmd: ["bun", "test"] },
-  { id: "test:package", cmd: ["bun", "run", "tools/package-smoke.ts"] },
+  ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   { id: "knip", cmd: ["bun", "--bun", "node_modules/.bin/knip"] }
 ]
 

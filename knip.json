@@ -1,11 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreDependencies": [
-    "tsdown",
-    "@ai-sdk/gateway",
-    "@ai-sdk/openai-compatible",
-    "@ai-sdk/provider",
-    "@types/json-schema",
     "@types/node"
   ],
   "workspaces": {

@@ -1,5 +1,4 @@
 import { Clock, Effect } from "effect"
-import { EventLog } from "@flamecast/core/event-log"
 import { Router } from "@flamecast/core/router"
 import { Self, transition, type Reactor } from "@flamecast/core/actor"
 import { replyDelivered } from "./events"
