@@ -31,8 +31,8 @@ const agent = actor(
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
-// infer is the one seam with no default; sandbox, tmp, and packages bind themselves.
-// A changed surface goes to both the actor and `infer`.
+// createBunHost runs each lane's actor over a durable SQLite log; layersFor wires the lane's
+// environment, here the model binding.
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
