@@ -1,27 +1,28 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
+import type { LanguageModelV4CallOptions } from "@ai-sdk/provider"
 import type { Event } from "@flamecast/core"
 import { InMemoryRuntime } from "@flamecast/runtime-in-memory"
+import { MockLanguageModelV4 } from "ai/test"
 import type { NativeTool } from "../infer"
 import { keyOf } from "../keys"
 import { createAgent } from "../module"
 import { inference } from "../modules/inference"
 import { nativeTools } from "../modules/native-tools"
-import { cloudflareGatewayInference } from "./cloudflare-gateway"
-import { vercelGatewayInference } from "./vercel-gateway"
+import { modelInference } from "./model"
+
+// The failure this pins is the quiet one. A model works something out, calls a tool, and the next
+// request has to carry the state that proves it did. A gateway answers a request that lost that
+// state with the same 200 as one that kept it, so nothing downstream says anything was lost.
+//
+// The whole Flamework path is under test rather than the adapter alone, because the state has to
+// survive being written to the log as an event, read back by the renderer, and sent again. A
+// provider-only test would miss the step that dropped it.
 
 const asRecord = (value: unknown): Readonly<Record<string, unknown>> | undefined =>
   typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Readonly<Record<string, unknown>>)
     : undefined
-
-const asRecords = (value: unknown): ReadonlyArray<Readonly<Record<string, unknown>>> =>
-  Array.isArray(value)
-    ? value.flatMap((item) => {
-        const record = asRecord(item)
-        return record === undefined ? [] : [record]
-      })
-    : []
 
 const tool: NativeTool = {
   spec: {
@@ -32,94 +33,67 @@ const tool: NativeTool = {
   run: () => Effect.succeed({ invoice: "INV-4182" })
 }
 
-describe("provider continuation", () => {
-  // Gemini requires the thought signature from a function call on the next request. The gateway
-  // puts it in an OpenAI extension field. This test follows the complete Flamework path, because a
-  // provider-only test would miss the event that dropped the field before the second model call.
-  test("round-trips opaque provider fields through tools and later turns", async () => {
-    const signature = "encrypted-thought-signature"
-    const finalReasoning = [{ type: "reasoning.encrypted", data: "final-state" }]
-    const bodies: Array<Readonly<Record<string, unknown>>> = []
-    const stub = (async (_url: string, init: RequestInit) => {
-      const body = asRecord(JSON.parse(String(init.body))) ?? {}
-      bodies.push(body)
-      if (bodies.length === 1) {
-        return new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  role: "assistant",
-                  content: "I will look it up.",
-                  reasoning_details: [{ type: "reasoning.encrypted", data: "tool-state" }],
-                  provider_metadata: { gateway: { provider: "google" } },
-                  tool_calls: [
-                    {
-                      id: "call-1",
-                      type: "function",
-                      function: { name: "lookup_invoice", arguments: "{}" },
-                      extra_content: { google: { thought_signature: signature } }
-                    }
-                  ]
-                }
-              }
-            ]
-          }),
-          { status: 200 }
-        )
-      }
-      if (bodies.length === 2) {
-        const assistant = asRecords(body.messages).find(
-          (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
-        )
-        const call = asRecords(assistant?.tool_calls)[0]
-        const extra = asRecord(call?.extra_content)
-        const google = asRecord(extra?.google)
-        if (google?.thought_signature !== signature) {
-          return new Response(
-            JSON.stringify({ error: { message: "the function call is missing a thought signature" } }),
-            { status: 400 }
-          )
-        }
-        return new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  role: "assistant",
-                  content: "Invoice INV-4182.",
-                  reasoning_details: finalReasoning,
-                  provider_metadata: { gateway: { provider: "google" } }
-                }
-              }
-            ]
-          }),
-          { status: 200 }
-        )
-      }
-      const completed = asRecords(body.messages).find(
-        (message) => message.role === "assistant" && message.content === "Invoice INV-4182."
-      )
-      if (JSON.stringify(completed?.reasoning_details) !== JSON.stringify(finalReasoning)) {
-        return new Response(
-          JSON.stringify({ error: { message: "the completed answer lost its reasoning state" } }),
-          { status: 400 }
-        )
-      }
-      return new Response(
-        JSON.stringify({ choices: [{ message: { role: "assistant", content: "Still INV-4182." } }] }),
-        { status: 200 }
-      )
-    }) as unknown as typeof fetch
+const usage = {
+  inputTokens: { total: 10, noCache: 10, cacheRead: 0, cacheWrite: 0 },
+  outputTokens: { total: 4, reasoning: 0, prediction: undefined }
+} as never
 
-    const provider = vercelGatewayInference({
-      apiKey: "vercel-key",
-      model: "google/gemini-3.1-pro-preview",
+const answered = (content: Array<Record<string, unknown>>) =>
+  ({
+    content,
+    finishReason: { unified: "stop", raw: "stop" },
+    usage,
+    warnings: []
+  }) as never
+
+// Every reasoning part the model sent, wherever it sits in the prompt the SDK built.
+const reasoningIn = (options: LanguageModelV4CallOptions | undefined) =>
+  (options?.prompt ?? []).flatMap((message) =>
+    Array.isArray(message.content)
+      ? message.content.filter((part) => asRecord(part)?.type === "reasoning")
+      : []
+  )
+
+describe("provider continuation", () => {
+  test("round-trips opaque provider state through a tool call and a later turn", async () => {
+    const signature = "encrypted-thought-signature"
+    const seen: Array<LanguageModelV4CallOptions> = []
+    const languageModel = new MockLanguageModelV4({
+      doGenerate: async (options) => {
+        seen.push(options)
+        if (seen.length === 1) {
+          return answered([
+            {
+              type: "reasoning",
+              text: "I should look this up.",
+              providerMetadata: { google: { thought_signature: signature } }
+            },
+            { type: "tool-call", toolCallId: "call-1", toolName: "lookup_invoice", input: {} }
+          ])
+        }
+        if (seen.length === 2) {
+          return answered([
+            {
+              type: "reasoning",
+              text: "The tool answered.",
+              providerMetadata: { google: { thought_signature: "final-state" } }
+            },
+            { type: "text", text: "Invoice INV-4182." }
+          ])
+        }
+        return answered([{ type: "text", text: "Still INV-4182." }])
+      }
+    })
+    const provider = modelInference({
+      id: "test",
+      provider: "test-gateway",
+      model: "google/test-model",
       contextWindow: 1_000_000,
       retries: 0,
-      fetch: stub
+      languageModel
     })
     const agent = createAgent({ modules: [inference({ provider }), nativeTools([tool])] })
+
     const result = await Effect.runPromise(
       Effect.provide(
         Effect.gen(function* () {
@@ -133,89 +107,63 @@ describe("provider continuation", () => {
 
     expect(result.first).toMatchObject({ kind: "completed", output: "Invoice INV-4182." })
     expect(result.second).toMatchObject({ kind: "completed", output: "Still INV-4182." })
-    expect(bodies).toHaveLength(3)
-    const continued = asRecords(bodies[1]?.messages).find(
-      (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
-    )
-    expect(continued?.reasoning_details).toEqual([
-      { type: "reasoning.encrypted", data: "tool-state" }
-    ])
-    expect(continued).not.toHaveProperty("provider_metadata")
+    expect(seen).toHaveLength(3)
+
+    // The request that follows the tool result carries the thinking that produced the call, with the
+    // state that proves it. Without this the model answers again from nothing and says so nowhere.
+    const afterTool = reasoningIn(seen[1])
+    expect(afterTool).toHaveLength(1)
+    expect(asRecord(asRecord(afterTool[0])?.providerOptions)).toEqual({
+      google: { thought_signature: signature }
+    })
+
+    // And the next turn still carries what the completed answer worked out.
     expect(
-      result.log.filter(
-        (event) => event.type === "ModelReturned" && event.continuation !== undefined
-      )
-    ).toHaveLength(2)
-    const durable = JSON.parse(JSON.stringify(result.log)) as ReadonlyArray<Event>
-    const restored = asRecord(
-      agent.request(durable).messages.find((message) => message.toolCalls !== undefined)?.continuation
-    )
-    const restoredValue = asRecord(restored?.value)
-    const restoredCall = asRecord(restoredValue?.toolCall)
-    const restoredExtra = asRecord(restoredCall?.extra_content)
-    const restoredGoogle = asRecord(restoredExtra?.google)
-    expect(durable).toEqual(result.log)
-    expect(restoredGoogle?.thought_signature).toBe(signature)
+      reasoningIn(seen[2]).map((part) => asRecord(asRecord(part)?.providerOptions)?.google)
+    ).toContainEqual({ thought_signature: "final-state" })
   })
 
-  // Every gateway in this package is built from the one OpenAI-compatible provider, so the round
-  // trip belongs to all of them. This pins that for the second gateway, because a fix that lived in
-  // a gateway rather than in the provider would leave this one carrying nothing.
-  test("travels the Cloudflare gateway too, because the provider is the same", async () => {
-    const bodies: Array<Readonly<Record<string, unknown>>> = []
-    const stub = (async (_url: string, init: RequestInit) => {
-      bodies.push(asRecord(JSON.parse(String(init.body))) ?? {})
-      if (bodies.length === 1) {
-        return new Response(
-          JSON.stringify({
-            choices: [
-              {
-                message: {
-                  role: "assistant",
-                  content: null,
-                  reasoning_details: [{ type: "reasoning.encrypted", data: "cloudflare-state" }],
-                  tool_calls: [
-                    {
-                      id: "call-1",
-                      type: "function",
-                      function: { name: "lookup_invoice", arguments: "{}" }
-                    }
-                  ]
-                }
-              }
-            ]
-          }),
-          { status: 200 }
-        )
-      }
-      return new Response(
-        JSON.stringify({ choices: [{ message: { role: "assistant", content: "Invoice INV-4182." } }] }),
-        { status: 200 }
-      )
-    }) as unknown as typeof fetch
-
-    const provider = cloudflareGatewayInference({
-      accountId: "account-1",
-      apiToken: "cloudflare-token",
-      model: "google/gemini-3.1-pro-preview",
+  test("survives the log being written and read back as JSON", async () => {
+    const signature = "durable-signature"
+    const languageModel = new MockLanguageModelV4({
+      doGenerate: async () =>
+        answered([
+          {
+            type: "reasoning",
+            text: "thinking",
+            providerMetadata: { google: { thought_signature: signature } }
+          },
+          { type: "text", text: "done" }
+        ])
+    })
+    const provider = modelInference({
+      id: "test",
+      provider: "test-gateway",
+      model: "google/test-model",
       contextWindow: 1_000_000,
       retries: 0,
-      fetch: stub
+      languageModel
     })
-    const agent = createAgent({ modules: [inference({ provider }), nativeTools([tool])] })
-    const outcome = await Effect.runPromise(
+    const agent = createAgent({ modules: [inference({ provider })] })
+
+    const log = await Effect.runPromise(
       Effect.provide(
-        agent.turn({ id: "m-1", text: "Find invoice 4182." }),
+        Effect.gen(function* () {
+          yield* agent.turn({ id: "m-1", text: "hello" })
+          return yield* agent.log
+        }),
         InMemoryRuntime({ keyOf })
       )
     )
 
-    expect(outcome).toMatchObject({ kind: "completed", output: "Invoice INV-4182." })
-    const continued = asRecords(bodies[1]?.messages).find(
-      (message) => message.role === "assistant" && Array.isArray(message.tool_calls)
-    )
-    expect(continued?.reasoning_details).toEqual([
-      { type: "reasoning.encrypted", data: "cloudflare-state" }
-    ])
+    // A durable runtime stores the log as JSON, so what a restart reads is this, not the objects the
+    // run happened to hold.
+    const durable = JSON.parse(JSON.stringify(log)) as ReadonlyArray<Event>
+    expect(durable).toEqual(log)
+    const restored = agent
+      .request(durable)
+      .messages.find((message) => message.role === "assistant")?.continuation
+    expect(restored?.protocol).toBe("ai-sdk/v1")
+    expect(JSON.stringify(restored?.value)).toContain(signature)
   })
 })

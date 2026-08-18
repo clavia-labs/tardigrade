@@ -14,7 +14,6 @@ export {
   costOf,
   reservedUsage,
   settledUsage,
-  applyRequestOptions,
   ZERO_USAGE,
   RequestOptionsProjection,
   type Action,
@@ -30,6 +29,7 @@ export {
   type NativeToolContext,
   type NativeToolSpec,
   type ProviderContinuation,
+  type Effort,
   type RequestOptions,
   type Spend,
   type Usage
@@ -111,26 +111,19 @@ export {
 export { tool, type ToolOptions } from "./tool"
 export { jsonSchemaOf, repairText, schemaErrors } from "./schema"
 export { ANSWER, EXITS, REQUEST_BUDGET } from "./exits"
-// The Anthropic Messages provider. It is published for the same reason as the OpenAI-compatible
-// one: a caller who talks to that API directly, rather than through a gateway that fronts it,
-// writes options rather than a second copy of the request serialization.
-export {
-  anthropicMessagesInference,
-  type AnthropicMessagesOptions,
-  type ThinkingEffort
-} from "./providers/anthropic-messages"
 export {
   cloudflareGatewayInference,
   type CloudflareGatewayInferenceOptions
 } from "./providers/cloudflare-gateway"
-// The OpenAI-compatible provider the shipped gateways are built from. It is published so a caller
-// who needs a different endpoint, or a header the gateways do not model, writes options rather than
-// a second copy of the request serialization.
+// The adapter the shipped gateways are built from. It turns any AI SDK language model into a
+// provider this framework can drive, so a caller reaching an endpoint the gateways do not model
+// writes options rather than a second copy of the request handling.
 export {
-  openAiChatInference,
-  type OpenAiChatOptions,
+  modelInference,
+  overWindow,
+  type ModelInferenceOptions,
   type TransportOptions
-} from "./providers/openai-chat"
+} from "./providers/model"
 export {
   vercelGatewayInference,
   type VercelGatewayInferenceOptions
@@ -141,7 +134,7 @@ export {
   type InferenceOptions,
   type InferenceSettings
 } from "./modules/inference"
-export { flexThenStandard, requestOptions, type RequestOptionsModule } from "./modules/request-options"
+export { requestOptions, type RequestOptionsModule } from "./modules/request-options"
 export { nativeTools } from "./modules/native-tools"
 export {
   budgetOf,

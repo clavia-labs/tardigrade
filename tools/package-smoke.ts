@@ -163,12 +163,17 @@ try {
         moduleResolution: "bundler",
         target: "es2023",
         lib: ["es2023", "dom", "esnext.disposable"],
+        types: ["node"],
         noEmit: true
       }
     })
   )
 
   await withGitServer(served, async (url) => {
+    // The model transport is the AI SDK, and its published types name Node globals. Every consumer
+    // of a server-side agent framework already has these, so the check installs what one has rather
+    // than typechecking against a project shape nobody ships.
+    await run(["bun", "add", "--dev", "@types/node"], consumer)
     await run(["bun", "add", "--trust", `${url}#package-smoke`], consumer)
     await run(["bun", "--bun", join(root, "node_modules/.bin/tsc"), "--noEmit"], consumer)
     if (outputOf(["bun", "run", "index.ts"], consumer) !== "true") {

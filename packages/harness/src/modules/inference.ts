@@ -8,7 +8,8 @@ import {
   usageOf,
   type Action,
   type InferenceSelection,
-  type InferenceState
+  type InferenceState,
+  type RequestOptions
 } from "../infer"
 import {
   answerTruncated,
@@ -28,9 +29,9 @@ import { defineModule } from "../module"
 import type { Projection } from "../projection"
 import type { RenderPlan } from "../definition"
 import { modelRequest } from "../render"
-import { replyView, treeUsageIn, turnView } from "../turns"
+import { pendingDeferral, replyView, treeUsageIn, turnView } from "../turns"
 import { vercelGatewayInference } from "../providers/vercel-gateway"
-import { windowError } from "../providers/http"
+import { windowError } from "../providers/model"
 
 const BASE_SYSTEM =
   "You are an agent. Read the conversation, use the tools you are offered when they help, and " +
@@ -44,9 +45,13 @@ export class InferenceStateProjection extends Context.Service<
 
 export interface InferenceSettings {
   readonly system?: string
-  readonly giveUpAfter?: number
+  // How many times one model call may wait before the turn gives up. It bounds a queue that never
+  // drains and a process that dies mid-call alike, because both journal the same wait.
   readonly deferAtMost?: number
   readonly repairAtMost?: number
+  // How many times one answer may be cut at the model's output ceiling before the turn gives up. It
+  // counts the answer being written now rather than the turn, so a turn that writes several long
+  // documents gets the bound for each of them.
   readonly continueAtMost?: number
   // Whether the loop may compact in the middle of a turn, when the next request plus its answer
   // would not fit the window. It is off by default because it names a dependency this module cannot
@@ -75,52 +80,63 @@ export type InferenceOptions =
       readonly contextWindow: number
     })
 
-const diedAttempts = (view: ReadonlyArray<Event>): number => {
-  let died = 0
-  for (let index = view.length - 1; index >= 0; index--) {
-    if (view[index]?.type !== "ModelCalled") break
-    died += 1
-  }
-  return died
-}
-
-const openCallId = (view: ReadonlyArray<Event>): string | undefined => {
+// The most recent mark, unless one of `closedBy` has already come after it. Both questions this
+// module asks about a mark are that search over a different set, so they are the same fold read two
+// ways rather than two folds.
+const markUnless = (
+  view: ReadonlyArray<Event>,
+  closedBy: ReadonlySet<string>
+): Event | undefined => {
   for (let index = view.length - 1; index >= 0; index--) {
     const event = view[index]
-    if (event?.type === "ModelReturned") return undefined
-    if (event?.type === "ModelCalled") return String(event.callId ?? "")
+    if (event === undefined) continue
+    if (closedBy.has(event.type)) return undefined
+    if (event.type === "ModelCalled") return event
   }
   return undefined
 }
 
-const lastCalled = (view: ReadonlyArray<Event>): Event | undefined => {
-  for (let index = view.length - 1; index >= 0; index--) {
-    const event = view[index]
-    if (event?.type === "ModelCalled") return event
-  }
-  return undefined
-}
+// A mark with nothing after it: the process died between the request and its outcome. A result or a
+// settle closes it, so an attempt already accounted for is not counted again.
+const openCall = (view: ReadonlyArray<Event>) =>
+  markUnless(view, new Set(["ModelReturned", "ModelSettled"]))
 
-const closeOrphan = (view: ReadonlyArray<Event>, turn: string, at: number): ReadonlyArray<Event> => {
-  const called = lastCalled(view)
-  if (called === undefined) return []
-  return [
-    modelSettled({
-      turn,
-      callId: String(called.callId ?? ""),
-      usage: usageOf(called.reserved),
-      reason: "the model attempt died",
-      at
-    })
-  ]
-}
+// The call a retry continues: a mark no result has answered. A deferral settles its own attempt for
+// accounting, so the mark is no longer open, but the call it names is still unanswered and the next
+// attempt is the same call. Reusing its key is what tells the gateway so.
+const unanswered = (view: ReadonlyArray<Event>) => markUnless(view, new Set(["ModelReturned"]))
 
-const completedCalls = (view: ReadonlyArray<Event>) =>
-  view.filter((event) => event.type === "ModelReturned").length
+// The ordinal a new call takes. Marks rather than results, so a key minted after several attempts
+// can not collide with the one those attempts shared.
+const marksIn = (view: ReadonlyArray<Event>) =>
+  view.filter((event) => event.type === "ModelCalled").length
+
+// Close a reservation whose attempt never produced a result, so spend that was probably billed stays
+// on the record. The caller passes the mark it already found, because settling one that a result or
+// an earlier settle had closed would report a turn spending what it never asked for.
+const closed = (open: Event | undefined, turn: string, at: number): ReadonlyArray<Event> =>
+  open === undefined
+    ? []
+    : [
+        modelSettled({
+          turn,
+          callId: String(open.callId ?? ""),
+          usage: usageOf(open.reserved),
+          reason: "the model attempt died",
+          at
+        })
+      ]
 
 const deferralsOf = (view: ReadonlyArray<Event>, callId: string) =>
   view.filter((event) => event.type === "ModelDeferred" && String(event.callId ?? "") === callId)
     .length
+
+// Whether the settings a retry would send still match the ones the open call was made with. They can
+// differ, because the options are a projection and a policy may read the deferrals it caused. A
+// request the gateway would treat as the same call has to be the same request, so a changed setting
+// mints a new call rather than reusing a key that now describes something else.
+const sameOptions = (called: Event | undefined, options: RequestOptions | undefined) =>
+  JSON.stringify(called?.options ?? null) === JSON.stringify(options ?? null)
 
 // A single wait is capped at twenty minutes, which is long enough for a queued tier to drain and
 // short enough that a missing Retry-After still bounds the park. Exponential backoff without a
@@ -202,191 +218,187 @@ const inferOn = (truncated: "thinking" | "continuing") => ({
 const inferMachine = (
   render: RenderPlan,
   selection: InferenceSelection,
-  giveUpAfter: number,
   deferAtMost: number,
   repairAtMost: number,
   continueAtMost: number,
   compactMidTurn: boolean
 ) => {
   const think = (log: ReadonlyArray<Event>, context: { readonly turn: string }) =>
-    Effect.gen(function* () {
-      const turn = context.turn
-      const view = turnView(log)
-      const at = yield* Clock.currentTimeMillis
-      const died = diedAttempts(view)
-      const key = openCallId(view) ?? `${turn}/infer/${completedCalls(view)}`
-      if (died >= giveUpAfter) {
-        return [
-          ...closeOrphan(view, turn, at),
-          turnFailed({
-            turn,
-            error: `the model attempt died ${giveUpAfter} times in a row`,
-            at
+          Effect.gen(function* () {
+            const turn = context.turn
+            const view = turnView(log)
+            const at = yield* Clock.currentTimeMillis
+            const rejections = view.filter((event) => event.type === "AnswerRejected").length
+            if (rejections > repairAtMost) {
+              return [
+                turnFailed({
+                  turn,
+                  error: `the answer did not satisfy the declared schema after ${repairAtMost} corrections`,
+                  at
+                })
+              ]
+            }
+            const truncations = fragmentsOf(view).length
+            if (truncations > continueAtMost) {
+              return [
+                turnFailed({
+                  turn,
+                  error: `the answer was truncated ${continueAtMost} times and still did not finish`,
+                  at
+                })
+              ]
+            }
+            const store = yield* EventLog
+            const override = yield* Effect.serviceOption(Infer)
+            const provider = Option.getOrElse(override, () => selectedInference(selection, log))
+            const state = provider.state(log)
+            const request = modelRequest({ render }, log)
+            const previous = unanswered(view)
+            const key =
+              previous !== undefined && sameOptions(previous, request.options)
+                ? String(previous.callId ?? "")
+                : `${turn}/infer/${marksIn(view)}`
+            const open = openCall(view)
+            const deferrals = deferralsOf(view, key)
+            const attempt = deferrals + 1
+            if (deferrals >= deferAtMost) {
+              return [
+                ...closed(open, turn, at),
+                turnFailed({
+                  turn,
+                  error: `the model was deferred ${deferAtMost} times`,
+                  at
+                })
+              ]
+            }
+            // An open mark is a crash between the request and its outcome. Close the reservation so
+            // the spend does not vanish, then journal the wait so a restart sleeps instead of
+            // immediately issuing another request against a queue that has not moved.
+            if (open !== undefined) {
+              return [
+                ...closed(open, turn, at),
+                modelDeferred({
+                  turn,
+                  callId: key,
+                  attempt,
+                  notBefore: at + deferDelayMs(attempt),
+                  reason: "the model attempt died",
+                  at
+                })
+              ]
+            }
+            const reserved = reservedUsage(request, state.pricing, state.maxOutputTokens)
+            // The model has to read the conversation and still have room to answer it, and the
+            // reservation is already that sum: the prompt exactly, the answer at its ceiling. This
+            // is the same total the provider refuses on, checked one step earlier, where a
+            // checkpoint can still make it fit. It is the hard limit rather than a ratio, because
+            // how full a log may get before compacting is worth doing is the compaction module's
+            // policy, and a second copy of that ratio here could disagree with the author's.
+            //
+            // Without a compaction module there is nothing this could wait for, so the request goes
+            // and the provider refuses it by name.
+            if (
+              compactMidTurn &&
+              reserved.promptTokens + reserved.completionTokens > state.contextWindow
+            ) {
+              if (firedSinceCall(view) > 0) {
+                return [
+                  turnFailed({
+                    turn,
+                    error: windowError(
+                      reserved.promptTokens,
+                      state.provider,
+                      state.model,
+                      state.contextWindow,
+                      reserved.completionTokens
+                    ),
+                    at
+                  })
+                ]
+              }
+              return [compactionFired({ turn, at })]
+            }
+            yield* store.append([
+              modelCalled({
+                turn,
+                callId: key,
+                reserved,
+                ...(request.options === undefined ? {} : { options: request.options }),
+                at
+              })
+            ])
+            const action = yield* provider.react(request, key)
+            const after = yield* Clock.currentTimeMillis
+            const usage = settledUsage(action.usage, reserved, state.pricing)
+            if (action.kind === "defer") {
+              return [
+                modelSettled({
+                  turn,
+                  callId: key,
+                  usage,
+                  reason: action.error,
+                  at: after
+                }),
+                modelDeferred({
+                  turn,
+                  callId: key,
+                  attempt,
+                  notBefore: after + deferDelayMs(attempt, action.retryAfterMs),
+                  reason: action.error,
+                  at: after
+                })
+              ]
+            }
+            // The ceiling stopped the answer, not the window: the request was measured with its
+            // output reserved before it was sent, so there was room for an answer this size. The
+            // fragment and its cost are recorded, and the next pass renders it as what the model
+            // has said so far.
+            if (action.kind === "truncated") {
+              const returned = modelReturned({
+                turn,
+                callId: key,
+                usage,
+                ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
+                at: after
+              })
+              const recorded = answerTruncated({
+                turn,
+                callId: key,
+                text: action.text,
+                tokens: usage.completionTokens,
+                ...(action.call === undefined
+                  ? {}
+                  : { tool: action.call.name, arguments: action.call.arguments }),
+                at: after
+              })
+              if (truncations + 1 > continueAtMost) {
+                return [
+                  returned,
+                  recorded,
+                  turnFailed({
+                    turn,
+                    error: `the answer was truncated ${continueAtMost} times and still did not finish`,
+                    at: after
+                  })
+                ]
+              }
+              return [returned, recorded]
+            }
+            const continuation = action.kind === "fail" ? undefined : action.continuation
+            return [
+              modelReturned({
+                turn,
+                callId: key,
+                usage,
+                ...(continuation === undefined ? {} : { continuation }),
+                at: after
+              }),
+              ...(action.kind === "call" && action.text !== undefined && action.text !== ""
+                ? [textReturned({ turn, text: action.text, at: after })]
+                : []),
+              consequenceOf(action, view, turn, after)
+            ]
           })
-        ]
-      }
-      const rejections = view.filter((event) => event.type === "AnswerRejected").length
-      if (rejections > repairAtMost) {
-        return [
-          turnFailed({
-            turn,
-            error: `the answer did not satisfy the declared schema after ${repairAtMost} corrections`,
-            at
-          })
-        ]
-      }
-      const truncations = fragmentsOf(view).length
-      if (truncations > continueAtMost) {
-        return [
-          turnFailed({
-            turn,
-            error: `the answer was truncated ${continueAtMost} times and still did not finish`,
-            at
-          })
-        ]
-      }
-      const deferrals = deferralsOf(view, key)
-      if (deferrals >= deferAtMost) {
-        return [
-          ...closeOrphan(view, turn, at),
-          turnFailed({
-            turn,
-            error: `the model was deferred ${deferAtMost} times`,
-            at
-          })
-        ]
-      }
-      // An orphaned mark is a crash mid-call. Close the reservation so cost does not vanish,
-      // then journal the wait so a restart sleeps instead of immediately issuing another
-      // request against a queue that has not moved.
-      if (died > 0) {
-        return [
-          ...closeOrphan(view, turn, at),
-          modelDeferred({
-            turn,
-            callId: key,
-            attempt: died,
-            notBefore: at + deferDelayMs(died),
-            reason: "the model attempt died",
-            at
-          })
-        ]
-      }
-      const store = yield* EventLog
-      const override = yield* Effect.serviceOption(Infer)
-      const provider = Option.getOrElse(override, () => selectedInference(selection, log))
-      const request = modelRequest({ render }, log)
-      const state = provider.state(log)
-      const reserved = reservedUsage(request, state.pricing)
-      const output = request.options?.maxOutputTokens ?? state.maxOutputTokens ?? 0
-      // The model has to read the conversation and still have room to answer it, so the request is
-      // measured against the window with its output ceiling reserved. This is the same sum the
-      // provider refuses on, checked one step earlier, where a checkpoint can still make it fit. It
-      // is the hard limit rather than a ratio: how full a log may get before it is worth compacting
-      // is the compaction module's policy, and a second copy of that ratio here would be a policy
-      // this loop invented that could disagree with the one the author set.
-      //
-      // Without a compaction module there is nothing this could wait for, so the request goes and
-      // the provider refuses it by name.
-      if (compactMidTurn && reserved.promptTokens + output > state.contextWindow) {
-        if (firedSinceCall(view) > 0) {
-          return [
-            turnFailed({
-              turn,
-              error: windowError(
-                reserved.promptTokens,
-                state.provider,
-                state.model,
-                state.contextWindow,
-                output
-              ),
-              at
-            })
-          ]
-        }
-        return [compactionFired({ turn, at })]
-      }
-      yield* store.append([
-        modelCalled({
-          turn,
-          callId: key,
-          reserved,
-          ...(request.options === undefined ? {} : { options: request.options }),
-          at
-        })
-      ])
-      const action = yield* provider.react(request, key)
-      const after = yield* Clock.currentTimeMillis
-      const usage = settledUsage(action.usage, reserved, state.pricing)
-      if (action.kind === "defer") {
-        const attempt = deferrals + 1
-        return [
-          modelSettled({
-            turn,
-            callId: key,
-            usage,
-            reason: action.error,
-            at: after
-          }),
-          modelDeferred({
-            turn,
-            callId: key,
-            attempt,
-            notBefore: after + deferDelayMs(attempt, action.retryAfterMs),
-            reason: action.error,
-            at: after
-          })
-        ]
-      }
-      // The ceiling stopped the answer, not the window: the request was measured with its output
-      // reserved before it was sent, so there was room for an answer this size. The fragment and
-      // its cost are recorded, and the next pass renders it as what the model has said so far.
-      if (action.kind === "truncated") {
-        const returned = modelReturned({
-          turn,
-          callId: key,
-          usage,
-          ...(action.continuation === undefined ? {} : { continuation: action.continuation }),
-          at: after
-        })
-        const recorded = answerTruncated({
-          turn,
-          callId: key,
-          text: action.text,
-          tokens: usage.completionTokens,
-          ...(action.call === undefined
-            ? {}
-            : { tool: action.call.name, arguments: action.call.arguments }),
-          at: after
-        })
-        if (truncations + 1 > continueAtMost) {
-          return [
-            returned,
-            recorded,
-            turnFailed({
-              turn,
-              error: `the answer was truncated ${continueAtMost} times and still did not finish`,
-              at: after
-            })
-          ]
-        }
-        return [returned, recorded]
-      }
-      const continuation = action.kind === "fail" ? undefined : action.continuation
-      return [
-        modelReturned({
-          turn,
-          callId: key,
-          usage,
-          ...(continuation === undefined ? {} : { continuation }),
-          at: after
-        }),
-        ...(action.kind === "call" && action.text !== undefined && action.text !== ""
-          ? [textReturned({ turn, text: action.text, at: after })]
-          : []),
-        consequenceOf(action, view, turn, after)
-      ]
-    })
   const idle = {
     on: {
       MessageReceived: {
@@ -395,7 +407,27 @@ const inferMachine = (
       }
     }
   } as const
-  const deferred = { on: { AlarmFired: "thinking" } } as const
+  // Only the wake this wait is owed reopens it. A wake is delivered by a runtime and redelivery
+  // is the contract an act is written against, so a stale or repeated one would otherwise retry
+  // against a queue before its due time, which is the failure the wait exists to prevent.
+  const deferred = {
+    on: {
+      AlarmFired: {
+        target: "thinking",
+        // The guard reads the log up to and including the wake, so the wake is its last event
+        // and the wait it claims to answer is whatever the log held before it.
+        when: (log: ReadonlyArray<Event>) => {
+          const wake = log[log.length - 1]
+          const pending = pendingDeferral(log.slice(0, -1))
+          return (
+            pending !== undefined &&
+            pending.callId === String(wake?.callId ?? "") &&
+            pending.attempt === Number(wake?.attempt ?? -1)
+          )
+        }
+      }
+    }
+  } as const
   const waiting = { on: { ToolReturned: "thinking" } } as const
   const common = { id: "inference", initial: "idle", context: { turn: "" }, view: turnView } as const
   // Two shapes rather than one with an optional state. A machine's states are the alphabet its
@@ -495,7 +527,6 @@ const selectionOf = (options: InferenceOptions): InferenceSelection => {
 export const inference = (options: InferenceOptions) => {
   const selection = selectionOf(options)
   const system = options.system ?? BASE_SYSTEM
-  const giveUpAfter = options.giveUpAfter ?? 3
   const deferAtMost = options.deferAtMost ?? 8
   const repairAtMost = options.repairAtMost ?? 2
   const continueAtMost = options.continueAtMost ?? 8
@@ -518,12 +549,11 @@ export const inference = (options: InferenceOptions) => {
   }
   return defineModule({
     id: "inference",
-    version: "6",
+    version: "7",
     identity: {
       provider: initial.id,
       state: initial.state([]),
       system,
-      giveUpAfter,
       deferAtMost,
       repairAtMost,
       continueAtMost,
@@ -563,7 +593,6 @@ export const inference = (options: InferenceOptions) => {
           inferMachine(
             render,
             selection,
-            giveUpAfter,
             deferAtMost,
             repairAtMost,
             continueAtMost,

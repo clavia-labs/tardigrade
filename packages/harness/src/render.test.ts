@@ -204,7 +204,12 @@ describe("modelRequest", () => {
         content: "Looking it up.",
         toolCalls: [{ id: "c-1", name: "lookup_invoice", arguments: '{"orderId":"4182"}' }]
       },
-      { role: "tool", toolCallId: "c-1", content: '{"invoice":"INV-4182"}' },
+      {
+        role: "tool",
+        toolCallId: "c-1",
+        toolName: "lookup_invoice",
+        content: '{"invoice":"INV-4182"}'
+      },
       { role: "assistant", content: "INV-4182." }
     ])
   })
