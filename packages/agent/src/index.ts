@@ -17,6 +17,10 @@ import { agentsPackage } from "./spawn"
 // their agent's code decides to spawn, and run answers when the ROOT
 // settles, however many lanes exist by then.
 
+// The root speaks both registers: the composed actor for a platform binding
+// (actorFor: () => agent), and the hosted front door for a one-call start.
+export { agent } from "./turn"
+
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
   // The mind: one inference over the trajectory, one action out.
