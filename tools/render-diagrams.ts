@@ -13,13 +13,7 @@ const DIAGRAMS: Record<string, string> = {
   log[("event log")] -->|"events"| reactor["reactor"]
   reactor -->|"transitions = f(log)"| transitions["transitions"]
   transitions -->|"unrecorded keys fire"| act["act(input)"]
-  act -->|"events, keyed record last"| log`,
-  "agent-loop": `flowchart TB
-  log[("event log")]
-  log --> infer & tools & compaction
-  infer -->|"ToolCalled or TurnCompleted"| log
-  tools -->|"ToolReturned"| log
-  compaction -->|"CompactionCompleted"| log`
+  act -->|"events, keyed record last"| log`
 }
 
 const LIGHT = { bg: "#ffffff", fg: "#1f2328", accent: "#d97706", muted: "#656d76" }
