@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import { codeSurface } from "@tardigrade/agent/surface"
 import { Infer } from "@tardigrade/agent/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, realInfer, retryAfterMsOf, throttleDelayMs } from "./model"
+import type { Action } from "@tardigrade/agent/events"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -153,6 +154,85 @@ describe("realInfer end to end", () => {
       Effect.flatMap(Infer, (model) => model.react(trajectory)).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(seen).toEqual(["m1/infer/0", null])
+  })
+})
+
+const usageChunk = (usage: Record<string, unknown>) => ({ id: "u", choices: [], usage })
+
+describe("realInfer: cost provenance", () => {
+  const okText = [
+    { id: "r", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
+    { id: "r", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+  ]
+  const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
+
+  test("a billed cost is provider, an omitted cost is table or unknown", async () => {
+    const billed = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(
+          realInfer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "test-model",
+            provider: "openai",
+            surface: codeSurface(),
+            pricing: table,
+            fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4, cost: 0 })])) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(billed).toMatchObject({
+      kind: "complete",
+      output: "ok",
+      usage: {
+        promptTokens: 10,
+        completionTokens: 4,
+        costUsd: 0,
+        costSource: "provider",
+        provider: "openai",
+        model: "test-model"
+      }
+    })
+
+    const filled = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(
+          realInfer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "test-model",
+            provider: "openai",
+            surface: codeSurface(),
+            pricing: table,
+            fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4 })])) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(filled.usage).toEqual({
+      promptTokens: 10,
+      completionTokens: 4,
+      costUsd: 10 * 0.001 + 4 * 0.002,
+      costSource: "table",
+      provider: "openai",
+      model: "test-model"
+    })
+
+    const unknown = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }])).pipe(
+        Effect.provide(
+          realInfer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "test-model",
+            surface: codeSurface(),
+            fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(unknown).toEqual({ kind: "complete", output: "ok" })
   })
 })
 

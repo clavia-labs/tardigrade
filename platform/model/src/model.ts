@@ -10,6 +10,7 @@ import type { Event } from "@tardigrade/core/event"
 import { answerErrors, outputSchemaOf } from "@tardigrade/agent/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@tardigrade/agent/request"
 import { codeSurface, type ToolSurface } from "@tardigrade/agent/surface"
+import { usageFrom, type ModelPricing, type Usage } from "@tardigrade/agent/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -188,6 +189,10 @@ export interface ModelConfig {
   // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
   // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
   readonly stream?: Partial<StreamBounds>
+  // What the model costs, when a catalog or a caller has said. A billed figure from the
+  // provider is preferred; this table fills only a cost the provider omitted
+  // (packages/agent/src/usage.ts, priced).
+  readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
   readonly fetch?: FetchImpl // test seam
@@ -292,8 +297,10 @@ export const ladderOf = (declared?: number): ReadonlyArray<number> => {
 
 class TruncatedError extends Error {
   readonly truncated = true
-  constructor(ceiling: number) {
+  readonly usage: Usage | undefined
+  constructor(ceiling: number, usage: Usage | undefined) {
     super(`the model's answer was cut at the ${ceiling}-token output ceiling`)
+    this.usage = usage
   }
 }
 
@@ -356,6 +363,67 @@ const withKey = (base: FetchImpl | undefined, key: string | undefined): FetchImp
   }
 }
 
+// captureRawUsage reads the last `usage` object off an SSE (or JSON) body. The OpenAI-compat
+// adapter normalizes tokens and drops extra keys; a gateway's billed dollar lives on those keys
+// (packages/agent/src/usage.ts, costNumber).
+const captureRawUsage = async (stream: ReadableStream<Uint8Array>): Promise<unknown> => {
+  const text = await new Response(stream).text()
+  let last: unknown
+  for (const line of text.split(/\r?\n/)) {
+    const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
+    if (payload === "" || payload === "[DONE]") continue
+    try {
+      const parsed = JSON.parse(payload) as { usage?: unknown }
+      if (parsed.usage !== undefined) last = parsed.usage
+    } catch {
+      // a keep-alive or a malformed line is not usage
+    }
+  }
+  if (last !== undefined) return last
+  try {
+    const parsed = JSON.parse(text) as { usage?: unknown }
+    return parsed.usage
+  } catch {
+    return undefined
+  }
+}
+
+const withCapture = (
+  base: FetchImpl | undefined,
+  key: string | undefined,
+  sink: { promise: Promise<unknown> }
+): FetchImpl => {
+  const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
+  return async (input, init) => {
+    const res = await inner(input, init)
+    if (res.body === null) return res
+    const [live, copy] = res.body.tee()
+    sink.promise = captureRawUsage(copy)
+    return new Response(live, { status: res.status, statusText: res.statusText, headers: res.headers })
+  }
+}
+
+const tapTokens = (
+  stream: AsyncIterable<StreamChunk>,
+  into: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } }
+): AsyncIterable<StreamChunk> => ({
+  async *[Symbol.asyncIterator]() {
+    for await (const chunk of stream) {
+      const tokens = (chunk as { usage?: { promptTokens: number; completionTokens: number; cost?: number } }).usage
+      if (tokens !== undefined) into.tokens = tokens
+      yield chunk
+    }
+  }
+})
+
+const withSpend = (action: Action, usage: Usage | undefined): Action =>
+  usage === undefined ? action : { ...action, usage }
+
+const stampOf = (config: ModelConfig) => ({
+  ...(config.provider === undefined ? {} : { provider: config.provider }),
+  model: config.model
+})
+
 export const realInfer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
@@ -371,7 +439,9 @@ export const realInfer = (config: ModelConfig) => {
      // Rung zero keeps the bare key, so crash-retries of the same request still
     // collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
-    const fetcher = withKey(config.fetch, keyForRung)
+    const sink: { promise: Promise<unknown> } = { promise: Promise.resolve(undefined) }
+    const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
+    const fetcher = withCapture(config.fetch, keyForRung, sink)
     const adapter =
       config.provider === "bedrock"
         ? bedrockAdapter(config, maxTokens)
@@ -383,7 +453,7 @@ export const realInfer = (config: ModelConfig) => {
             // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
             // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
             maxRetries: 0,
-            ...(fetcher === undefined ? {} : { fetch: fetcher })
+            fetch: fetcher
           })
     // The domain decides the request; the platform maps it to the wire and streams it.
     const req = modelRequest(trajectory, config.surface ?? codeSurface())
@@ -399,10 +469,12 @@ export const realInfer = (config: ModelConfig) => {
       modelOptions: { max_tokens: maxTokens } as never,
       logger: noopLogger
     } as never)
-    const result = await new StreamProcessor().process(bounded(stream, bounds))
+    const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
+    const raw = await sink.promise
+    const usage = usageFrom([held.tokens, raw], config.pricing, stampOf(config))
     stats.finish = result.finishReason ?? "stop"
-    if (result.finishReason === "length") throw new TruncatedError(maxTokens)
-    return actionOf(result, schema)
+    if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
+    return withSpend(actionOf(result, schema), usage)
   }
   return Layer.succeed(Infer, {
     react: (trajectory: ReadonlyArray<Event>, key?: string) =>
@@ -423,7 +495,13 @@ export const realInfer = (config: ModelConfig) => {
               }
               // The top rung still truncates: the turn fails loudly instead of shipping half an
               // answer, and the error names the remedy.
-              return { kind: "fail", error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once` }
+              return withSpend(
+                {
+                  kind: "fail",
+                  error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`
+                },
+                e.usage
+              )
             }
             if (!isThrottleShaped(e)) throw e
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
@@ -438,6 +516,16 @@ export const realInfer = (config: ModelConfig) => {
         yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
         yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
         yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+        if (action.usage !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+          if (action.usage.costUsd !== undefined) {
+            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
+            if (action.usage.costSource !== undefined) {
+              yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
+            }
+          }
+        }
         return action
       }).pipe(
         Effect.withSpan("llm.react", {

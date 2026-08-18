@@ -22,6 +22,18 @@ export { toolsReactor, toolsReactorFor } from "./tools"
 export { replyReactor } from "./reply"
 export { compactionReactor } from "./compaction"
 export { agentKeys } from "./events"
+export {
+  usageIn,
+  usageOf,
+  usageFrom,
+  priced,
+  costOf,
+  sumUsage,
+  ZERO_USAGE,
+  type Usage,
+  type CostSource,
+  type ModelPricing
+} from "./usage"
 
 // The tool surface: code mode is the default, and an agent measured against a fixed tool table
 // brings its own (surface.ts).

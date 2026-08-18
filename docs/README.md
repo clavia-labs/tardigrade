@@ -8,7 +8,7 @@ Organized on the Diátaxis grid: learning, tasks, information, understanding.
 - [how-to/](how-to/): task-shaped recipes.
   - [gate-tools.md](how-to/gate-tools.md): hide, reveal, or revoke tools from the log.
 - [reference/](reference/): neutral per-symbol contracts, no analogies.
-  - [api.md](reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting.
+  - [api.md](reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting, Usage.
 - [explanations/](explanations/): the why and the mental model.
   - [why.md](explanations/why.md): state = memo { f(log) }, the convergence of durable systems, agents as the new users, the last inversion.
   - [reactors.md](explanations/reactors.md): the reactor model, with the React analogy and the math.
