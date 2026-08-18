@@ -9,12 +9,12 @@ $$\{\mathrm{transitions}\} = f(\mathrm{log})$$
 ```ts
 import { createAgent } from "@flamecast/agent/main"
 
-const mind = createAgent({
+const agent = createAgent({
   packages: [invoices], // e.g. invoices.lookup({orderId})
   infer: async (trajectory) => nextAction(trajectory) // one inference, one action; platform/model binds a real provider
 })
 
-const reply = await mind.ask("Find the invoice for order 4182.")
+const reply = await agent.ask("Find the invoice for order 4182.")
 ```
 
 ## Concepts
