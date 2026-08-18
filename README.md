@@ -56,7 +56,7 @@ await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What 
 await host.drive()
 ```
 
-The snippet already emits spans to `localhost:4318`. To land them in ClickHouse, front it with the OTel Collector (the contrib distribution from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases); the core one lacks the `clickhouse` exporter):
+The snippet already emits spans to `localhost:4318`. To land them in ClickHouse, front it with the [OTel Collector](https://github.com/open-telemetry/opentelemetry-collector-releases/releases):
 
 ```bash
 brew install clickhouse && clickhouse server
