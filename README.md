@@ -14,7 +14,7 @@ const agent = createAgent({
   infer: async (trajectory) => nextAction(trajectory) // one inference, one action; platform/model binds a real provider
 })
 
-const reply = await agent.ask("Find the invoice for order 4182.")
+const reply = await agent.run("Find the invoice for order 4182.")
 ```
 
 ## Concepts

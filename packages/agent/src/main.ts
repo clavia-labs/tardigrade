@@ -13,7 +13,7 @@ import { agentsPackage } from "./spawn"
 // createAgent is the front door: one hosted, spawn-capable agent over an
 // ambient in-process host. No actor exists outside a host (the Erlang-node
 // shape); the user brings packages and a mind, the graph is whatever
-// their agent's code decides to spawn, and ask answers when the ROOT
+// their agent's code decides to spawn, and run answers when the ROOT
 // settles, however many lanes exist by then.
 
 export interface CreateAgentOptions {
@@ -21,13 +21,13 @@ export interface CreateAgentOptions {
   // The mind: one inference over the trajectory, one action out.
   readonly infer: (trajectory: ReadonlyArray<Event>, key?: string) => Promise<Action>
   // The root lane's history: an agent initialises from a persisted log, because the log is the
-  // only state there is. The next ask derives from everything here, and work the log still owes
+  // only state there is. The next run derives from everything here, and work the log still owes
   // settles on the first drive (main.test.ts, "an agent initialises from a log").
   readonly log?: ReadonlyArray<Event>
 }
 
 export interface HostedAgent {
-  readonly ask: (brief: string) => Promise<{ readonly output?: string; readonly error?: string }>
+  readonly run: (brief: string) => Promise<{ readonly output?: string; readonly error?: string }>
   readonly host: Host
 }
 
@@ -69,11 +69,11 @@ export const createAgent = (options: CreateAgentOptions): HostedAgent => {
 
   if (options.log !== undefined && options.log.length > 0) host.seed(ROOT, options.log)
 
-  // Ask ids continue past the seeded history, so a resumed agent's new ask never wears an id
+  // Run ids continue past the seeded history, so a resumed agent's new run never wears an id
   // the log already dedups.
   let n = options.log?.length ?? 0
-  const ask = async (brief: string): Promise<{ readonly output?: string; readonly error?: string }> => {
-    const id = `ask-${n++}`
+  const run = async (brief: string): Promise<{ readonly output?: string; readonly error?: string }> => {
+    const id = `run-${n++}`
     host.deliver(host.self(ROOT), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     const boundary = boundaryOf(host.read(ROOT), id)
@@ -83,5 +83,5 @@ export const createAgent = (options: CreateAgentOptions): HostedAgent => {
     return { error: "the root parked on a budget ask with nobody to answer" }
   }
 
-  return { ask, host }
+  return { run, host }
 }

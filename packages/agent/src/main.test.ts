@@ -48,9 +48,9 @@ const scripted = async (trajectory: ReadonlyArray<Event>): Promise<Action> => {
 }
 
 describe("createAgent", () => {
-  test("one ask fans out to two children and settles with their answers", async () => {
+  test("one run fans out to two children and settles with their answers", async () => {
     const mind = createAgent({ infer: scripted })
-    const reply = await mind.ask("fan out and add")
+    const reply = await mind.run("fan out and add")
     expect(reply.error).toBeUndefined()
     expect(reply.output).toBe('"4,6"')
     // The graph existed: two child lanes, each with a served turn.
@@ -63,26 +63,26 @@ describe("createAgent", () => {
     expect(mind.host.resting()).toBe(true)
   })
 
-  test("an agent initialises from a log: history carries, new asks continue past it", async () => {
+  test("an agent initialises from a log: history carries, new runs continue past it", async () => {
     // Run one agent to a settled state, carry its log into a fresh one: the resumed agent
-    // reads the same history, and a new ask serves without colliding with a recorded id.
+    // reads the same history, and a new run serves without colliding with a recorded id.
     const first = createAgent({ infer: scripted })
-    await first.ask("sum 1+2")
+    await first.run("sum 1+2")
     const carried = first.host.read(ROOT_LANE)
 
     const resumed = createAgent({ infer: scripted, log: carried })
     expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
-    const again = await resumed.ask("sum 3+4")
+    const again = await resumed.run("sum 3+4")
     expect(again.output).toBe("7")
     // Both turns live on one log: the carried terminal and the new one.
     expect(resumed.host.read(ROOT_LANE).filter((e) => e.type === "TurnCompleted")).toHaveLength(2)
     expect(resumed.host.resting()).toBe(true)
   })
 
-  test("a second ask reuses the root lane as a genuinely fresh turn", async () => {
+  test("a second run reuses the root lane as a genuinely fresh turn", async () => {
     const mind = createAgent({ infer: scripted })
-    await mind.ask("fan out and add")
-    const again = await mind.ask("fan out and add")
+    await mind.run("fan out and add")
+    const again = await mind.run("fan out and add")
     expect(again.output).toBe('"4,6"')
     // The second turn ran its own execution and spawned its own children.
     expect(mind.host.read(ROOT_LANE).filter((e) => e.type === "CodeSettled")).toHaveLength(2)
