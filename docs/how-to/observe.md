@@ -4,21 +4,63 @@ The log is the primary record: every call, park, and terminal is an event you ca
 
 ## Wire a tracer
 
-`createBunHost` takes any tracer as a Layer through `telemetry`. The ready-made layer is `otlpTelemetry`, on the OTLP exporter effect v4 ships in core:
+`createBunHost` takes any tracer as a Layer through `telemetry`. Two ready-made layers cover the usual cases: `fileTelemetry` writes spans to a local file with no infrastructure at all, and `otlpTelemetry` (on the OTLP exporter effect v4 ships in core) exports to any listener that speaks OTLP over HTTP:
 
 ```ts
 import { createBunHost } from "@tardigrade/bun/host"
+import { fileTelemetry } from "@tardigrade/bun/file"
 import { otlpTelemetry } from "@tardigrade/bun/otlp"
 
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor,
   layersFor,
-  telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "my-agent" })
+  telemetry: fileTelemetry("spans.ndjson")
+  // telemetry: otlpTelemetry({ baseUrl: "http://localhost:4318", serviceName: "my-agent" })
 })
 ```
 
 Absent `telemetry`, every span is inert and costs nothing. Point a backend at the stream and the span inventory enumerates itself (`transition.fire`, `deliver`, `llm.react`, `package.call`, `code.run`, with GenAI semantic-convention keys on the model span).
+
+## Query the file
+
+`fileTelemetry` appends one flat row per finished span, and the ClickHouse binary (`brew install clickhouse`) queries the file in place with full SQL, no server. Declare the schema to read `SpanAttributes` as a Map (`Duration` is nanoseconds):
+
+```sql
+SELECT SpanName, SpanAttributes['outcome'] AS outcome, Duration / 1e6 AS ms
+FROM file('spans.ndjson', JSONEachRow,
+  'Timestamp String, SpanName String, Duration UInt64, SpanAttributes Map(String, String)')
+ORDER BY Timestamp
+```
+
+The file grows while the agent runs, and the same file feeds DuckDB, grep, or a later bulk insert into a real deployment.
+
+## Traces in ClickHouse
+
+For a running deployment, `otlpTelemetry` feeds the standard pipeline: the OTel Collector fronts a ClickHouse server, and the collector's `clickhouse` exporter writes the tables. Install both as single binaries: `brew install clickhouse`, and `otelcol-contrib` from the [collector releases](https://github.com/open-telemetry/opentelemetry-collector-releases/releases). Then run `clickhouse server` and `otelcol-contrib --config=collector.yaml`, and point `otlpTelemetry` at the same 4318:
+
+```yaml
+# collector.yaml
+receivers:
+  otlp: { protocols: { http: { endpoint: 0.0.0.0:4318 } } }
+exporters:
+  clickhouse:
+    endpoint: tcp://localhost:9000
+    database: otel
+    create_schema: true
+service:
+  pipelines:
+    traces: { receivers: [otlp], exporters: [clickhouse] }
+```
+
+Every attribute is then one query away (`Duration` is nanoseconds; `SpanAttributes` is a Map):
+
+```sql
+SELECT SpanAttributes['key'] AS key, count() AS fires
+FROM otel.otel_traces
+WHERE SpanName = 'transition.fire' AND SpanAttributes['outcome'] = 'wedged'
+GROUP BY key
+```
 
 ## The one-trace contract
 
