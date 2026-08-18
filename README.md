@@ -31,8 +31,7 @@ const agent = actor(
   composeKeys(messageKeys, codeKeys, agentKeys)
 )
 
-// createBunHost runs each lane's actor over a durable SQLite log; layersFor wires the lane's
-// environment, here the model binding.
+// createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.
 const host = await createBunHost({
   path: "agents.sqlite",
   actorFor: () => agent,
