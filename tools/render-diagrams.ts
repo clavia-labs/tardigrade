@@ -22,18 +22,27 @@ const DIAGRAMS: Record<string, string> = {
   compaction -->|"CompactionCompleted"| log`
 }
 
-const THEMES = {
-  light: { bg: "#ffffff", fg: "#1f2328", accent: "#d97706", muted: "#656d76" },
-  dark: { bg: "#0d1117", fg: "#e6edf3", accent: "#f59e0b", muted: "#8b949e" }
+const LIGHT = { bg: "#ffffff", fg: "#1f2328", accent: "#d97706", muted: "#656d76" }
+const DARK = { bg: "#0d1117", fg: "#e6edf3", accent: "#f59e0b", muted: "#8b949e" }
+
+// One SVG per diagram, theme-aware on its own: the light palette lives on :root, the dark one
+// under prefers-color-scheme. beautiful-mermaid routes every color through the custom
+// properties, so swapping the tokens swaps the whole diagram, with no second file and no
+// <picture> wrapper at the embed site.
+const themed = (svg: string): string => {
+  const stripped = svg.replace(/style="[^"]*"/, 'style="background:var(--bg)"')
+  const tokens = (t: typeof LIGHT) => `--bg:${t.bg};--fg:${t.fg};--accent:${t.accent};--muted:${t.muted};`
+  return stripped.replace(
+    "<style>",
+    `<style>\n  :root { ${tokens(LIGHT)} }\n  @media (prefers-color-scheme: dark) { :root { ${tokens(DARK)} } }\n`
+  )
 }
 
 for (const [name, source] of Object.entries(DIAGRAMS)) {
-  for (const [mode, colors] of Object.entries(THEMES)) {
-    const svg = renderMermaidSVG(source, { ...colors, font: "ui-sans-serif", padding: 16 }).replace(
-      /@import url\('https:\/\/fonts\.googleapis\.com[^']*'\);?/g,
-      ""
-    )
-    writeFileSync(`${root}docs/assets/${name}-${mode}.svg`, svg)
-    console.log(`docs/assets/${name}-${mode}.svg`)
-  }
+  const svg = renderMermaidSVG(source, { ...LIGHT, font: "ui-sans-serif", padding: 16 }).replace(
+    /@import url\('https:\/\/fonts\.googleapis\.com[^']*'\);?/g,
+    ""
+  )
+  writeFileSync(`${root}docs/assets/${name}.svg`, themed(svg))
+  console.log(`docs/assets/${name}.svg`)
 }
