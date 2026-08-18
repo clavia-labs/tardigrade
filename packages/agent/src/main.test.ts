@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@flamecast/core/event"
 import type { Action } from "./events"
-import { createAgent } from "./main"
+import { createRlmAgent } from "./main"
 
 const ROOT_LANE = "ag.root"
 
@@ -47,9 +47,9 @@ const scripted = async (trajectory: ReadonlyArray<Event>): Promise<Action> => {
   }
 }
 
-describe("createAgent", () => {
+describe("createRlmAgent", () => {
   test("one run fans out to two children and settles with their answers", async () => {
-    const mind = createAgent({ infer: scripted })
+    const mind = createRlmAgent({ infer: scripted })
     const reply = await mind.run("fan out and add")
     expect(reply.error).toBeUndefined()
     expect(reply.output).toBe('"4,6"')
@@ -66,11 +66,11 @@ describe("createAgent", () => {
   test("an agent initialises from a log: history carries, new runs continue past it", async () => {
     // Run one agent to a settled state, carry its log into a fresh one: the resumed agent
     // reads the same history, and a new run serves without colliding with a recorded id.
-    const first = createAgent({ infer: scripted })
+    const first = createRlmAgent({ infer: scripted })
     await first.run("sum 1+2")
     const carried = first.host.read(ROOT_LANE)
 
-    const resumed = createAgent({ infer: scripted, log: carried })
+    const resumed = createRlmAgent({ infer: scripted, log: carried })
     expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
     const again = await resumed.run("sum 3+4")
     expect(again.output).toBe("7")
@@ -80,7 +80,7 @@ describe("createAgent", () => {
   })
 
   test("a second run reuses the root lane as a genuinely fresh turn", async () => {
-    const mind = createAgent({ infer: scripted })
+    const mind = createRlmAgent({ infer: scripted })
     await mind.run("fan out and add")
     const again = await mind.run("fan out and add")
     expect(again.output).toBe('"4,6"')
