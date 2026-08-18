@@ -88,26 +88,6 @@ Every reactor on this page has the same anatomy: a projection derives the input,
 
 `packages/agent` ships this agent grown up: inference with died-attempt marks and a give-up guard, tool dispatch through durable code execution, budgets, replies, and compaction, each one a reactor.
 
-## The front door
-
-`createAgent` hosts that agent over an in-process runtime: bring packages and a mind, ask a brief, get the settled answer.
-
-```ts
-import { createAgent } from "@flamecast/agent/main"
-
-const mind = createAgent({
-  packages: [invoices], // e.g. invoices.lookup({orderId})
-  infer: async (trajectory) => nextAction(trajectory), // one inference, one action; platform/model binds a real provider
-  log: persisted // resume from a persisted log
-})
-
-const reply = await mind.ask("Find the invoice for order 4182.")
-```
-
-## Durability
-
-`packages/host` is the reference in-memory binding. `platform/bun` is the same semantics with physics: the log lives in SQLite through @effect/sql, and `recover()` re-derives owed work from a surviving log after a process death. Kill the process mid-turn and start again: a transition that committed absorbs, and one that never recorded its key fires again.
-
 ## Layout
 
 ```
