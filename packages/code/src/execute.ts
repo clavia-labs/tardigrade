@@ -1,4 +1,4 @@
-import { Clock, Deferred, Effect, Fiber, Runtime } from "effect"
+import { Clock, Deferred, Effect, Fiber } from "effect"
 import { EventLog } from "@flamecast/core/event-log"
 import type { Event } from "@flamecast/core/event"
 import { transition, type Reactor } from "@flamecast/core/actor"
@@ -46,7 +46,7 @@ const executeRecorded = (
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
     const packages = yield* Packages
     const sandbox = yield* Sandbox
-    const runtime = yield* Effect.runtime<Tmp>()
+    const context = yield* Effect.context<Tmp>()
     let n = 0
     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
     // or park; parkGate completes when every open call settled or parked and at least one
@@ -68,7 +68,7 @@ const executeRecorded = (
         methods[method] = (args: unknown) => {
           const callId = callIdOf(execId, n++)
           inFlight++
-          return Runtime.runPromise(runtime)(
+          return Effect.runPromiseWith(context)(
             Effect.gen(function* () {
               const events = yield* log.read
               // The replay guard: a recorded call at this position must be THIS call. Positional
@@ -175,8 +175,8 @@ const executeRecorded = (
               const attempt = yield* fn(args, { callId }).pipe(
                 Effect.map((result): CallOutcome => ({ parked: false, result })),
                 Effect.catchTag("Park", (p) => parkOut(p.awaiting)),
-                Effect.catchAll(() => parkOut()),
-                Effect.catchAllDefect(() => parkOut())
+                Effect.catch(() => parkOut()),
+                Effect.catchDefect(() => parkOut())
               )
               if (attempt.parked) return attempt
               // A large result goes to tmp: the event keeps the pointer, the body still
@@ -203,7 +203,7 @@ const executeRecorded = (
     const head = turnHead(events) as { text?: unknown; input?: unknown } | undefined
     // The body runs as its own fiber: a park interrupts it mid-flight instead of waiting for a
     // promise that, by construction, never settles.
-    const fiber = yield* Effect.fork(
+    const fiber = yield* Effect.forkChild(
       sandbox
         .run(
           code,

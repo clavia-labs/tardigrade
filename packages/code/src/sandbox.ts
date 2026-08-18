@@ -33,9 +33,9 @@ export interface Ambient {
 // call. The clock and the random source are ambient-shimmed rather than banned (a model's
 // priors reach for both): Date.now, the no-argument Date constructor, and Math.random answer
 // from `ambient`, identically on every attempt.
-export class Sandbox extends Context.Tag("code/Sandbox")<
+export class Sandbox extends Context.Service<
   Sandbox,
   {
     readonly run: (code: string, bindings: Bindings, ambient?: Ambient) => Effect.Effect<SandboxResult>
   }
->() {}
+>()("code/Sandbox") {}

@@ -32,10 +32,10 @@ const REPAIR_AT_MOST = 2
 // Contract on the action: a call's callId must be fresh per call, never reused across turns
 // (providers mint tool-use ids; a stub must too). A reused id collides with the earlier call's
 // recorded pair and the dispatch dedup absorbs the new work.
-export class Infer extends Context.Tag("agent/Infer")<
+export class Infer extends Context.Service<
   Infer,
   { readonly react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.Effect<Action> }
->() {}
+>()("agent/Infer") {}
 
 // consequenceOf returns the action's recorded answer: the model responds by acting. Every
 // consequence carries the turn it serves.

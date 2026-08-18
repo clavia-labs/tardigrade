@@ -121,7 +121,7 @@ export const BudgetDenied = Schema.Struct({
   at: Schema.Number
 })
 
-export const AgentEvent = Schema.Union(
+export const AgentEvent = Schema.Union([
   MessageReceived,
   ModelCalled,
   TextReturned,
@@ -134,7 +134,7 @@ export const AgentEvent = Schema.Union(
   BudgetRequested,
   BudgetGranted,
   BudgetDenied
-)
+])
 export type AgentEvent = typeof AgentEvent.Type
 
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
