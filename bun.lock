@@ -15,6 +15,18 @@
         "oxlint": "^1.69.0",
       },
     },
+    "examples": {
+      "name": "@flamecast/examples",
+      "version": "0.0.0",
+      "dependencies": {
+        "@flamecast/agent": "workspace:*",
+        "@flamecast/bun": "workspace:*",
+        "@flamecast/code": "workspace:*",
+        "@flamecast/core": "workspace:*",
+        "@flamecast/model": "workspace:*",
+        "effect": "^3.22.1",
+      },
+    },
     "packages/agent": {
       "name": "@flamecast/agent",
       "version": "0.0.0",
@@ -155,6 +167,8 @@
     "@flamecast/code": ["@flamecast/code@workspace:packages/code"],
 
     "@flamecast/core": ["@flamecast/core@workspace:packages/core"],
+
+    "@flamecast/examples": ["@flamecast/examples@workspace:examples"],
 
     "@flamecast/host": ["@flamecast/host@workspace:packages/host"],
 

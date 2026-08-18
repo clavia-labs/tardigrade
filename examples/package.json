@@ -1,0 +1,14 @@
+{
+  "name": "@flamecast/examples",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@flamecast/core": "workspace:*",
+    "@flamecast/code": "workspace:*",
+    "@flamecast/agent": "workspace:*",
+    "@flamecast/model": "workspace:*",
+    "@flamecast/bun": "workspace:*",
+    "effect": "^3.22.1"
+  }
+}
