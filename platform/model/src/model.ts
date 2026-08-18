@@ -330,7 +330,7 @@ const bedrockAdapter = (config: ModelConfig, maxTokens: number) => {
       endpoint: string | undefined
     ) {
       // maxAttempts: 1 turns off the AWS SDK's own retry (it counts the first try as attempt
-      // one), so a throttle-shaped failure surfaces to `realInfer`'s own retry loop instead of
+      // one), so a throttle-shaped failure surfaces to `infer`'s own retry loop instead of
       // being retried twice, once inside the SDK on its own schedule and once outside on ours.
       return { ...super.buildClientConfig(resolved, resolvedRegion, endpoint), requestHandler: handler, maxAttempts: 1 }
     }
@@ -467,7 +467,7 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
   }
 }
 
-export const realInfer = (config: ModelConfig) => {
+export const infer = (config: ModelConfig) => {
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
     firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
