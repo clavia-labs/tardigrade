@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 284.485 542.5" width="284.485" height="542.5" style="background:var(--bg)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980.6790000000001 122.6" width="980.6790000000001" height="122.6" style="background:var(--bg)">
 <style>
   :root { --bg:#ffffff;--fg:#1f2328;--accent:#d97706;--muted:#656d76; }
   @media (prefers-color-scheme: dark) { :root { --bg:#0d1117;--fg:#e6edf3;--accent:#f59e0b;--muted:#8b949e; } }
@@ -29,44 +29,44 @@
     <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
   </marker>
 </defs>
-<polyline class="edge" data-from="log" data-to="reactor" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="events" points="184.622,373.3 184.622,477.6000000000001 137.71266666666668,477.6000000000001 137.71266666666668,489.6000000000001" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="reactor" data-to="transitions" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="transitions = f(log)" points="108.90933333333334,489.6000000000001 108.90933333333334,477.6000000000001 62,477.6000000000001 62,409.3 105.94533333333334,409.3 105.94533333333334,52.900000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="transitions" data-to="act" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="keys the log does not record" points="140.67666666666668,52.900000000000006 140.67666666666668,88.9 184.622,88.9 184.622,169.2" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="act" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="events, keyed record last" points="184.622,206.10000000000002 184.622,322.40000000000003" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="log" data-to="reactor" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="events" points="740.5430000000001,63.45 866.2690000000001,63.45 866.2690000000001,51.375 878.2690000000001,51.375" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="reactor" data-to="transitions" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="transitions = f(log)" points="878.2690000000001,39.074999999999996 866.2690000000001,39.074999999999996 866.2690000000001,26.999999999999996 494.36,26.999999999999996 494.36,39.074999999999996 120.19400000000002,39.074999999999996" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="transitions" data-to="act" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="unrecorded keys fire" points="120.19400000000002,51.375 156.19400000000002,51.375 156.19400000000002,63.45 325.6360000000001,63.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="act" data-to="log" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="events, keyed record last" points="420.9380000000001,63.45 645.9820000000001,63.45" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <g class="edge-label" data-from="log" data-to="reactor" data-label="events">
-  <rect x="159.622" y="416.30000000000007" width="49.726000000000006" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="184.485" y="431.45000000000005" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">events</text>
+  <rect x="784.5430000000001" y="47.45" width="49.726000000000006" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="809.4060000000002" y="62.6" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">events</text>
 </g>
 <g class="edge-label" data-from="reactor" data-to="transitions" data-label="transitions = f(log)">
-  <rect x="12" y="416.30000000000007" width="99.62200000000003" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="61.811000000000014" y="431.45000000000005" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">transitions = f(log)</text>
+  <rect x="502.36" y="10.999999999999998" width="99.62200000000003" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="552.171" y="26.15" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">transitions = f(log)</text>
 </g>
-<g class="edge-label" data-from="transitions" data-to="act" data-label="keys the log does not record">
-  <rect x="109.12200000000001" y="95.9" width="150.11200000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="184.17800000000003" y="111.05000000000001" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">keys the log does not record</text>
+<g class="edge-label" data-from="transitions" data-to="act" data-label="unrecorded keys fire">
+  <rect x="164.19400000000002" y="47.45" width="117.44200000000004" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="222.91500000000002" y="62.6" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">unrecorded keys fire</text>
 </g>
 <g class="edge-label" data-from="act" data-to="log" data-label="events, keyed record last">
-  <rect x="115.62200000000001" y="249.1" width="137.04400000000004" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="184.14400000000003" y="264.25" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">events, keyed record last</text>
+  <rect x="464.938" y="47.45" width="137.04400000000004" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="533.46" y="62.6" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">events, keyed record last</text>
 </g>
 <g class="node" data-id="log" data-label="event log" data-shape="cylinder">
-  <rect x="137.34150000000002" y="329.40000000000003" width="94.561" height="36.900000000000006" fill="var(--_node-fill)" stroke="none" />
-  <line x1="137.34150000000002" y1="329.40000000000003" x2="137.34150000000002" y2="366.30000000000007" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <line x1="231.90250000000003" y1="329.40000000000003" x2="231.90250000000003" y2="366.30000000000007" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <ellipse cx="184.622" cy="366.30000000000007" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <ellipse cx="184.622" cy="329.40000000000003" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="184.622" y="347.85" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">event log</text>
+  <rect x="645.9820000000001" y="45" width="94.561" height="36.900000000000006" fill="var(--_node-fill)" stroke="none" />
+  <line x1="645.9820000000001" y1="45" x2="645.9820000000001" y2="81.9" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <line x1="740.5430000000001" y1="45" x2="740.5430000000001" y2="81.9" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="693.2625" cy="81.9" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <ellipse cx="693.2625" cy="45" rx="47.2805" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="693.2625" y="63.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">event log</text>
 </g>
 <g class="node" data-id="reactor" data-label="reactor" data-shape="rectangle">
-  <rect x="80.10600000000002" y="489.6000000000001" width="86.41" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="123.31100000000002" y="508.05000000000007" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">reactor</text>
+  <rect x="878.2690000000001" y="26.77499999999999" width="86.41" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="921.4740000000002" y="45.224999999999994" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">reactor</text>
 </g>
 <g class="node" data-id="transitions" data-label="transitions" data-shape="rectangle">
-  <rect x="71.214" y="16" width="104.19400000000002" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="123.311" y="34.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">transitions</text>
+  <rect x="16" y="26.77499999999999" width="104.19400000000002" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="68.09700000000001" y="45.224999999999994" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">transitions</text>
 </g>
 <g class="node" data-id="act" data-label="act(input)" data-shape="rectangle">
-  <rect x="136.97100000000003" y="169.2" width="95.30199999999999" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="184.622" y="187.64999999999998" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">act(input)</text>
+  <rect x="325.6360000000001" y="45" width="95.30199999999999" height="36.900000000000006" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="373.2870000000001" y="63.45" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)" dy="4.55">act(input)</text>
 </g>
 </svg>
