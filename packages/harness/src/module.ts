@@ -277,6 +277,13 @@ const build = <R, Services>(
       const writer = yield* Writer
       return yield* writer.hold(yield* Self, work)
     })
+  // Settle, then answer whatever wait the settle left behind. A wait whose due time has passed is
+  // woken from the log, so a restart continues without depending on a timer that died with the
+  // process. A wait still in the future is armed with the runtime.
+  //
+  // The wait that is armed is whichever one the log holds, not only the one this turn opened: a turn
+  // that deferred while another was being served would otherwise never be woken by anything, since
+  // every later call reads the same guard and returns.
   const settleDue = (turn: string) =>
     Effect.gen(function* () {
       const store = yield* EventLog
@@ -284,22 +291,24 @@ const build = <R, Services>(
         yield* settleAll(machines.machines)
         const log = yield* store.read
         const pending = pendingDeferral(log)
-        if (pending === undefined || pending.turn !== turn) return resultOf(log, turn)
+        if (pending === undefined) return resultOf(log, turn)
+        // The wake names the due time it answers rather than the moment it was armed, so the record
+        // reads in the order it happened and a replay of the same log makes the same request.
+        const wake = alarmFired({
+          turn: pending.turn,
+          callId: pending.callId,
+          attempt: pending.attempt,
+          at: pending.notBefore
+        })
         const now = yield* Clock.currentTimeMillis
         if (now < pending.notBefore) {
           const alarm = yield* Effect.serviceOption(Alarm)
           if (Option.isSome(alarm)) {
-            yield* alarm.value.set(
-              yield* Self,
-              pending.notBefore,
-              alarmFired({ turn: pending.turn, callId: pending.callId, at: now })
-            )
+            yield* alarm.value.set(yield* Self, pending.notBefore, wake)
           }
           return resultOf(log, turn)
         }
-        yield* store.append([
-          alarmFired({ turn: pending.turn, callId: pending.callId, at: now })
-        ])
+        yield* store.append([wake])
       }
     })
   const branch = (recorded: ReadonlyArray<Event>, options: BranchOptions = {}) => {

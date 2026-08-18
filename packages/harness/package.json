@@ -12,7 +12,12 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "^4",
+    "@ai-sdk/openai-compatible": "^3",
+    "@ai-sdk/provider": "^4",
+    "@ai-sdk/provider-utils": "^5",
     "@flamecast/core": "workspace:*",
+    "ai": "^7",
     "effect": "4.0.0-rc.108"
   },
   "devDependencies": {
