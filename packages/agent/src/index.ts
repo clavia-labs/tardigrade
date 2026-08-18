@@ -7,7 +7,7 @@ import { jsSandboxFor, memoryTmp } from "@tardigrade/code/defaults"
 import type { SandboxPolicy } from "@tardigrade/code/sandbox"
 import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
 import { rlmAgentFor, type AgentPolicy, type RlmR } from "./turn"
-import { Infer } from "./infer"
+import { Infer, type InferRequest } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
@@ -18,7 +18,7 @@ export { agentFor, rlmAgent, rlmAgentFor, type AgentPolicy, type AgentR, type Rl
 // The parts a caller lists: reactors and key tables. An agent is reactors over one log.
 // Adding a capability is adding a reactor to the list.
 export { agentActorKeys, rlmActorKeys } from "./turn"
-export { inferReactor, inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy } from "./infer"
+export { inferReactor, inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type InferRequest, type Render } from "./infer"
 export { budgetReactor, budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./budget"
 export { toolsReactor, toolsReactorFor } from "./tools"
 export { replyReactor } from "./reply"
@@ -39,12 +39,14 @@ export {
 
 // The tool surface: code mode is the default, and an agent measured against a fixed tool table
 // brings its own (surface.ts).
+export { actorOf, renderOf, codeMode, toolList, reply, budget, compaction, type Capability } from "./capability"
 export { codeSurface, nativeSurface, type NativeTool, type ToolSurface } from "./surface"
 
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
-  // The mind: one inference over the trajectory, one action out.
-  readonly infer: (trajectory: ReadonlyArray<Event>, key?: string) => Promise<Action>
+  // The mind: one inference over the request, one action out. The request carries the render
+  // (system, tools) the assembly derived for the attempt.
+  readonly infer: (request: InferRequest, key?: string) => Promise<Action>
   // The root lane's history: an agent initialises from a persisted log, because the log is the
   // only state there is. The next run derives from everything here, and work the log still owes
   // settles on the first drive (index.test.ts, "an agent initialises from a log").
@@ -77,7 +79,7 @@ const ROOT = "ag.root"
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.promise(() => options.infer(trajectory, key))
+    react: (request: InferRequest, key?: string) => Effect.promise(() => options.infer(request, key))
   })
   const tmp = memoryTmp()
   const sandbox = jsSandboxFor(options.sandbox ?? {})

@@ -13,23 +13,14 @@ Prerequisites: bun 1.1 or later, and a model endpoint.
 An agent is reactors over one log.
 
 ```ts
-import { actor } from "@tardigrade/core/actor"
-import { composeKeys } from "@tardigrade/core/event-log"
-import { messageKeys } from "@tardigrade/core/message"
-import { codeReactor, codeKeys } from "@tardigrade/code"
-import { agentKeys, budgetReactor, codeSurface, compactionReactor, inferReactor, replyReactor, toolsReactorFor } from "@tardigrade/agent"
+import { actorOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
 import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
-// surface is the work the model is offered: code mode here, `nativeSurface` for a fixed table.
-const surface = codeSurface()
-
-// Adding a capability is adding a reactor to the list.
-const agent = actor(
-  [inferReactor, budgetReactor, toolsReactorFor(surface), codeReactor, replyReactor, compactionReactor],
-  composeKeys(messageKeys, codeKeys, agentKeys)
-)
+// A capability bundles what the model is shown with how that work settles. Mounting one is
+// adding it to the list; `toolList([...])` mounts a fixed tool table instead of code mode.
+const agent = actorOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.
 const host = await createBunHost({

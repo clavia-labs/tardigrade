@@ -255,8 +255,13 @@ export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): React
             input.summary === "" ? "" : `Summary so far: ${input.summary}`,
             lines.join("\n")
           ].join("\n\n")
+          // A summarize attempt offers no tools: the only sane action is a completion.
           const action = yield* (yield* Infer).react(
-            [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
+            {
+              trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
+              system: "",
+              tools: []
+            },
             `compact-${input.keepFrom}`
           )
           const summary = action.kind === "complete" ? action.output : input.summary

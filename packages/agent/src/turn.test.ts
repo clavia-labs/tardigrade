@@ -95,7 +95,7 @@ return { jd_record_id: record.id, hits: found.hits }`
 // The model: write the code once, then complete after reading the return.
 const codeThenComplete = (count: { calls: number }) =>
   Layer.succeed(Infer, {
-    react: (trajectory: ReadonlyArray<Event>) => {
+    react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
       count.calls += 1
       const returned = trajectory.some((e) => e.type === "ToolReturned")
       return Effect.succeed(
@@ -207,7 +207,7 @@ describe("the agent with execute as the only tool", () => {
     memSpill(),
     memoryLog(),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Event>) => {
+        react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           count.calls += 1
           const returned = trajectory.find((e) => e.type === "ToolReturned")
           return Effect.succeed(
@@ -242,7 +242,7 @@ describe("the agent with execute as the only tool", () => {
       { type: "MessageReceived", id: "m2", text: "second ask", at: 2 }
     ]
     const echoHead = Layer.succeed(Infer, {
-      react: (trajectory: ReadonlyArray<Event>) => {
+      react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
         let text = ""
         for (const e of trajectory) if (e.type === "MessageReceived") text = String((e as { text?: unknown }).text)
         return Effect.succeed({ kind: "complete" as const, output: `answer to: ${text}` })
@@ -380,7 +380,7 @@ describe("a turn that declares an output schema", () => {
       memoryLog(),
       memSpill(),
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Event>) => {
+        react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           // The repair is a real tool return, so the model reads why it was refused.
           const refusal = trajectory.find(
             (e) => e.type === "ToolReturned" && String(((e as { result?: { error?: unknown } }).result ?? {}).error ?? "").includes("output schema")
@@ -469,7 +469,7 @@ describe("the mind on a native surface", () => {
       memoryLog(),
       noRouter,
       Layer.succeed(Infer, {
-        react: (trajectory: ReadonlyArray<Event>) => {
+        react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
           return Effect.succeed(
             returned !== undefined

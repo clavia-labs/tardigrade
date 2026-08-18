@@ -5,6 +5,7 @@ import { modelCalled, textReturned, turnFailed } from "./events"
 import type { Event } from "@tardigrade/core/event"
 import type { Action } from "./events"
 import { trajectoryOf, turnView } from "@tardigrade/code/turns"
+import { codeSurface } from "./surface"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -21,18 +22,27 @@ export interface InferPolicy {
 
 export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, repairAtMost: 2 }
 
-// Infer is the model seam: one inference over the trajectory, one action out. The platform binds this to
-// a provider. Tests bind it to a stub. `key` is the attempt's identity, the same string the
-// `ModelCalled` mark carries: a binding forwards it as the provider's idempotency key where the
-// provider takes one, so a retried attempt after a crash collapses server side. A binding with
-// no such support ignores it, and the retry stays plain at-least-once.
+// InferRequest is one attempt's whole context: the trajectory, and the render the assembly
+// derived for it (the system text and the tools the model is offered). The render rides the
+// call so the binding holds no opinion about tools; the actor is the render's one owner.
+export interface InferRequest {
+  readonly trajectory: ReadonlyArray<Event>
+  readonly system: string
+  readonly tools: ReadonlyArray<import("./request").ToolSpec>
+}
+
+// Infer is the model seam: one inference over the request, one action out. The platform binds
+// this to a provider. Tests bind it to a stub. `key` is the attempt's identity, the same string
+// the `ModelCalled` mark carries: a binding forwards it as the provider's idempotency key where
+// the provider takes one, so a retried attempt after a crash collapses server side. A binding
+// with no such support ignores it, and the retry stays plain at-least-once.
 //
 // Contract on the action: a call's callId must be fresh per call, never reused across turns
 // (providers mint tool-use ids; a stub must too). A reused id collides with the earlier call's
 // recorded pair and the dispatch dedup absorbs the new work.
 export class Infer extends Context.Service<
   Infer,
-  { readonly react: (trajectory: ReadonlyArray<Event>, key?: string) => Effect.Effect<Action> }
+  { readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action> }
 >()("agent/Infer") {}
 
 // consequenceOf returns the action's recorded answer: the model responds by acting. Every
@@ -71,7 +81,11 @@ const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
 
-export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infer | EventLog> => (log) => {
+// Render derives what the model is shown over this log: the assembly owns it (capability.ts,
+// renderOf), and a surface assembly passes its constant half (turn.ts).
+export type Render = (log: ReadonlyArray<Event>) => { readonly system: string; readonly tools: ReadonlyArray<import("./request").ToolSpec> }
+
+export const inferReactorFor = (policy: Partial<InferPolicy> = {}, render: Render = codeRender): Reactor<Infer | EventLog> => (log) => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const repairAtMost = policy.repairAtMost ?? DEFAULT_INFER_POLICY.repairAtMost
   const slice = turnView(log)
@@ -116,7 +130,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infe
   return [
     transition({
       key: `mc:${turn}/${marks}`,
-      input: { turn, attempt, ordinal: marks, trajectory: trajectoryOf(log) },
+      input: { turn, attempt, ordinal: marks, trajectory: trajectoryOf(log), render: render(log) },
       act: (input) =>
         Effect.gen(function* () {
           const events = yield* EventLog
@@ -126,7 +140,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infe
           // callId is the provider idempotency key (shared across retries of one logical
           // attempt); ordinal is the occurrence the dedup key reads.
           yield* events.append([modelCalled({ callId: input.attempt, ordinal: input.ordinal, turn: input.turn, at })])
-          const action = yield* (yield* Infer).react(input.trajectory, input.attempt)
+          const action = yield* (yield* Infer).react({ trajectory: input.trajectory, ...input.render }, input.attempt)
           const after = yield* Clock.currentTimeMillis
           return [
             ...(action.kind === "call" && action.text !== undefined && action.text !== ""
@@ -138,5 +152,9 @@ export const inferReactorFor = (policy: Partial<InferPolicy> = {}): Reactor<Infe
     })
   ]
 }
+
+// codeRender is the default render: the code surface's constant half.
+const cs = codeSurface()
+export const codeRender: Render = () => ({ system: cs.system, tools: cs.tools })
 
 export const inferReactor: Reactor<Infer | EventLog> = inferReactorFor()
