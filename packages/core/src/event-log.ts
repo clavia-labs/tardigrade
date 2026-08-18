@@ -1,45 +1,72 @@
 import { Context, Effect } from "effect"
 import type { Event } from "./event"
 
-// The event log: the one durable thing in the system. State is a fold over it, and nothing holds
-// session state outside it. The core states the port; a runtime binds it to real storage.
+// EventLog is the one durable thing; append is the only mutation in the system (tla/Log.tla).
+// State is a projection of it: replay is re-derivation, recovery is re-settling.
 //
 // A store that binds this port owes six guarantees.
 //
-// 1. Append only. A committed event binds forever. Compaction appends a checkpoint and deletes
-//    nothing.
-// 2. Total order per session. `seq` rises and never repeats.
-// 3. One writer per session. A second writer waits or fails, so two turns never interleave their
-//    events. `settle` reads the log once and then tracks the tail it appends, which is exact
-//    under this guarantee alone.
-// 4. Atomic append of a batch. A decide or an act returns an array, and the array commits as one
-//    unit, so a crash leaves all of it or none of it.
-// 5. Dedup by key. Each event derives a key, and a unique index absorbs a redelivered event. An
-//    event with no key always lands, which is why a repeated mark stays in the log as evidence.
-// 6. Read in order from a watermark. `readFrom(seq)` returns the tail after `seq`.
+// 1. Append only. A committed event binds forever; compaction appends, never deletes.
+// 2. Total order per log. The watermark rises and never repeats.
+// 3. One writer per log. The platform serializes appends per actor.
+// 4. Atomic append of a batch. A crash leaves all of it or none of it.
+// 5. Dedup by key. A keyed redelivery is absorbed; an absorbed append leaves `head` unchanged.
+// 6. Ordered tail from a watermark. `readFrom(mark)` returns exactly the events after `mark`.
 //
-// Guarantee 6 is why `readFrom` and `head` sit beside `read`. A settle reads the log on every loop
-// pass. A local SQLite file makes a full `read` cheap, and a network store makes it quadratic in
-// the length of a turn. The incremental door keeps a remote log affordable.
-export interface EventLogStore {
+// `head` is the store's own testimony of progress: the settle loop compares it instead of
+// materializing the log (packages/core/src/actor.ts, settleActor).
+export class EventLog extends Context.Tag("flamecast/EventLog")<
+  EventLog,
+  {
+    readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
+    readonly read: Effect.Effect<ReadonlyArray<Event>>
+    readonly head: Effect.Effect<number>
+    readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
+  }
+>() {}
+
+// withWatermark derives `head` and `readFrom` for a store that only has `append` and `read`:
+// the watermark is the event count. Correct for any append-only array binding; a real store
+// answers from its own sequence column instead.
+export const withWatermark = (store: {
   readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<void>
   readonly read: Effect.Effect<ReadonlyArray<Event>>
-  readonly readFrom: (seq: number) => Effect.Effect<ReadonlyArray<Event>>
-  readonly head: Effect.Effect<number>
+}): Context.Tag.Service<EventLog> => ({
+  ...store,
+  head: Effect.map(store.read, (events) => events.length),
+  readFrom: (mark) => Effect.map(store.read, (events) => events.slice(mark))
+})
+
+// KeyFragment is one package's key derivation for its own alphabet, its prefixes declared as
+// data so composition can prove disjointness. The package owns the derivation (only it knows
+// which field names an occurrence and what scope the id is unique in); the platform owns the
+// minting (callId, execId, runId come from the recorded machinery) and the composition. The
+// caller never supplies a key: our runtime sees intent, so identity derives instead of being
+// requested (the Stripe header exists because HTTP is blind; this runtime is not).
+export interface KeyFragment {
+  readonly prefixes: ReadonlyArray<string>
+  readonly keyOf: (e: Event) => string | undefined
 }
 
-export class EventLog extends Context.Service<EventLog, EventLogStore>()("flamecast/EventLog") {}
-
-// The dedup key of an event, where one exists. The key is what guarantee 5 absorbs on, and an
-// event with no key always lands.
-//
-// The derivation is a policy of the harness that owns the event alphabet, so it arrives as a
-// function rather than a table in the core. A core that held the table would have to know
-// `ToolReturned` and `BudgetGranted`, and the core knows no domain.
-export type DedupKey = (event: Event) => string | undefined
-
-// The key policy the core ships: an event states its own identity in a `key` field. It is the
-// door an outside sender uses when it can redeliver, and it is enough for a runtime to satisfy
-// guarantee 5 with no domain knowledge at all. A harness that derives keys from its own alphabet
-// passes its own function to the runtime and to the conformance kit.
-export const dedupKey: DedupKey = (event) => (typeof event.key === "string" ? event.key : undefined)
+// composeKeys folds fragments into one derivation, first answer wins. Two fragments claiming a
+// prefix is a construction-time error: the collision would silently cross-absorb two packages'
+// events, which is the exact class of quiet failure keys exist to prevent.
+export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Event) => string | undefined) => {
+  const claimed = new Map<string, number>()
+  fragments.forEach((fragment, i) => {
+    for (const prefix of fragment.prefixes) {
+      const prior = claimed.get(prefix)
+      if (prior !== undefined) {
+        throw new Error(`key prefix "${prefix}" claimed by fragments ${prior} and ${i}`)
+      }
+      claimed.set(prefix, i)
+    }
+  })
+  return (e) => {
+    for (const fragment of fragments) {
+      const key = fragment.keyOf(e)
+      if (key !== undefined) return key
+    }
+    return undefined
+  }
+}
