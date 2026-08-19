@@ -133,7 +133,8 @@ if (process.env.GITHUB_ACTIONS === "true" && !dryRun) {
   }
 }
 
-if (!dryRun && (await published(publicSource.pkg.name, version))) {
+const alreadyPublished = await published(publicSource.pkg.name, version)
+if (!dryRun && alreadyPublished) {
   console.log(`skip ${publicSource.pkg.name}@${version} (already on the registry)`)
   process.exit(0)
 }
@@ -200,7 +201,11 @@ try {
   const tarball = isAbsolute(filename) ? filename : join(destination, filename)
   const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
   console.log(`${dryRun ? "dry-run" : "publish"} ${publicSource.pkg.name}@${version} with npm tag ${distTag}`)
-  await run(publish, root)
+  if (dryRun && alreadyPublished) {
+    console.log(`skip npm dry-run validation (version already on the registry)`)
+  } else {
+    await run(publish, root)
+  }
   if (requestedOutput !== undefined) console.log(`tarball ${tarball}`)
 } finally {
   if (temporary) await rm(destination, { recursive: true, force: true })

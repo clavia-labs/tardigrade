@@ -31,4 +31,4 @@ After a stable release, merge `main` into `next`. This merge gives the integrati
 
 Conventional commit titles on merged PRs (`feat`, `fix`, `perf`, and a `BREAKING CHANGE` footer) determine the next version. Release Please updates `@clavia/tardigrade`, its changelog, and `.release-please-manifest.json`. `docs`, `chore`, `ci`, and `test` titles do not bump a version.
 
-The `publish.yml` workflow runs on pushes to `next` and `main`. Merging a release PR tags `v<version>` and publishes through GitHub OIDC. A dry run is `bun run pack` or a manual workflow run with `dry-run`. A repeated run skips versions that exist on the registry.
+The `publish.yml` workflow runs on pushes to `next` and `main`. Merging a release PR tags `v<version>` and publishes through GitHub OIDC. A dry run is `bun run pack` or a manual workflow run with `dry-run`. A dry run always builds the tarball. It skips npm validation when the version already exists because npm rejects a dry-run publication over an existing version. A repeated live run skips versions that exist on the registry.
