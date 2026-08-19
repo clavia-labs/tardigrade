@@ -8,19 +8,15 @@
 
 # Tardigrade
 
+A modular and durable agent harness built for self-improvement.
+
 ### A harness made for self-improvement
 
-Building and running an agent in production is tough. Whenever an agent misbehaves, we often handcraft a new eval case and hope it doesn't happen again.
+As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. To enable this, we need a harness that can be inspected, forked, and varied.
 
-As models get increasingly smart, they will be capable of doing these improvements themselves. To fully use this and create a cycle of self-improvement, we need a harness that can be inspected, forked, and varied. Observability and the ergonomics around it should be native to the harness.
+How can a harness be fully customizable, yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React declared the component tree as a function of state: `UI = f(state)` and the set of valid state transitions as `{transitions} = f(state)`.
 
-Imagine an agent taking any production run that went wrong, forking it, customizing any part of the harness, and replaying thousands of variations before your users hit the next one. We made this possible with tardigrade.
-
-### Log is all you need
-
-How can a harness be fully customizable, yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model.
-
-React solved this for the DOM by declaring the component tree as a function of state: `UI = f(state)` and the set of valid state transitions as `{transitions} = f(state)`. The simplicity of React enabled expressiveness in authoring applications without sacrificing reliability. A harness needs the same shape, but with the log as state.
+This simplicity enabled expressiveness in authoring applications without sacrificing reliability. A harness needs the same shape, but with the log as state.
 
 $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
