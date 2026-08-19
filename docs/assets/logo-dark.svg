@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1300 1300" width="1300" height="1300">
+<mask id="cuts-dark">
+  <circle cx="1060" cy="694" r="190" fill="#fff"/>
+  <circle cx="1060" cy="694" r="190" fill="none" stroke="#000" stroke-width="48"/>
+  <circle cx="830" cy="639" r="255" fill="#fff"/>
+  <circle cx="830" cy="639" r="255" fill="none" stroke="#000" stroke-width="48"/>
+  <circle cx="565" cy="604" r="300" fill="#fff"/>
+  <circle cx="565" cy="604" r="300" fill="none" stroke="#000" stroke-width="48"/>
+  <circle cx="255" cy="674" r="205" fill="#fff"/>
+  <circle cx="255" cy="674" r="205" fill="none" stroke="#000" stroke-width="48"/>
+  <circle cx="555" cy="954" r="42" fill="#fff"/>
+  <circle cx="850" cy="954" r="42" fill="#fff"/>
+  <circle cx="1125" cy="954" r="42" fill="#fff"/>
+</mask>
+<g>
+<rect width="1300" height="1300" fill="#ffffff" mask="url(#cuts-dark)"/>
+<circle cx="180" cy="704" r="54" fill="none" stroke="#111318" stroke-width="40"/>
+</g>
+</svg>
