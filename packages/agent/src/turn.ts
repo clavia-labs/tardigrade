@@ -18,7 +18,7 @@ export type RlmR = AgentR
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
-// packages/code/src/execute.ts). `infer` is the runtime's policy (actorOf takes it); the rest
+// packages/code/src/execute.ts). `infer` is the runtime's policy (agentOf takes it); the rest
 // ride their capabilities (budgetFor, compactionFor, codeModeFor).
 export interface AgentPolicy {
   readonly infer: Partial<InferPolicy>
