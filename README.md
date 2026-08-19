@@ -8,9 +8,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Prerequisites: bun 1.1 or later, and a model endpoint.
-
-An agent is reactors over one log.
+Build an RLM agent by combining capabilities.
 
 ```ts
 import { agentOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
