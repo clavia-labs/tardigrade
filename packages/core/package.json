@@ -1,6 +1,7 @@
 {
   "name": "@clavia/tardigrade-core",
   "version": "0.0.1",
+  "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "Event, log, actor, and reactor contracts for tardigrade.",

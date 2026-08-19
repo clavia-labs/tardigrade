@@ -23,16 +23,16 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Prerequisites: Bun 1.3 or later and a model endpoint.
 
 ```bash
-bun add @clavia/tardigrade @clavia/tardigrade-model @clavia/tardigrade-bun
+bun add @clavia/tardigrade
 ```
 
 Build a durable codemode agent by combining capabilities.
 
 ```ts
 import { agentOf, budget, codeMode, compaction, reply } from "@clavia/tardigrade"
-import { infer } from "@clavia/tardigrade-model/model"
-import { createBunHost } from "@clavia/tardigrade-bun/host"
-import { fileTelemetry } from "@clavia/tardigrade-bun/file"
+import { infer } from "@clavia/tardigrade/model"
+import { createBunHost } from "@clavia/tardigrade/bun/host"
+import { fileTelemetry } from "@clavia/tardigrade/bun/file"
 
 const agent = agentOf([codeMode, reply, budget, compaction])
 

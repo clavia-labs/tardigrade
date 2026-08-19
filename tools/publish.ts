@@ -1,11 +1,13 @@
-import { copyFile, mkdtemp, rm, unlink } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { isAbsolute, join } from "node:path"
+import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
 
 type PkgJson = {
   readonly name: string
   readonly version: string
+  readonly dependencies?: Readonly<Record<string, string>>
+  readonly [key: string]: unknown
 }
 
 const root = fileURLToPath(new URL("../", import.meta.url))
@@ -21,15 +23,13 @@ const option = (name: string) => {
   return value
 }
 
-// Dependency order: a tarball's workspace:* deps rewrite to this version, and
-// the registry must already hold those names before a consumer can install.
-const dirs = [
-  "packages/core",
-  "packages/code",
-  "packages/host",
-  "packages/agent",
-  "platform/bun",
-  "platform/model"
+const sources = [
+  { dir: "packages/agent", namespace: "agent" },
+  { dir: "packages/core", namespace: "core" },
+  { dir: "packages/code", namespace: "code" },
+  { dir: "packages/host", namespace: "host" },
+  { dir: "platform/bun", namespace: "bun" },
+  { dir: "platform/model", namespace: "model" }
 ] as const
 
 const npmMin = { maj: 11, min: 5, patch: 1 } as const
@@ -41,7 +41,7 @@ const readPkg = async (dir: string): Promise<PkgJson> => {
   if (typeof raw.name !== "string" || typeof raw.version !== "string") {
     throw new Error(`${dir}/package.json is missing name or version`)
   }
-  return { name: raw.name, version: raw.version }
+  return raw as PkgJson
 }
 
 const output = async (cmd: string[], cwd: string) => {
@@ -52,47 +52,69 @@ const output = async (cmd: string[], cwd: string) => {
 }
 
 const run = async (cmd: string[], cwd: string) => {
-  const proc = Bun.spawn(cmd, { cwd, stdout: "inherit", stderr: "inherit" })
+  const proc = Bun.spawn(cmd, { cwd, stdin: "inherit", stdout: "inherit", stderr: "inherit" })
   const code = await proc.exited
   if (code !== 0) throw new Error(`${cmd.join(" ")} exited ${code}`)
 }
 
-const parseNpm = (v: string) => {
-  const [maj, min, patch] = v.trim().split(".").map((n) => Number(n))
-  if (maj === undefined || min === undefined || patch === undefined || [maj, min, patch].some((n) => !Number.isFinite(n))) {
-    throw new Error(`unreadable npm version: ${v}`)
+const parseNpm = (version: string) => {
+  const [maj, min, patch] = version.trim().split(".").map((part) => Number(part))
+  if (maj === undefined || min === undefined || patch === undefined || [maj, min, patch].some((part) => !Number.isFinite(part))) {
+    throw new Error(`unreadable npm version: ${version}`)
   }
   return { maj, min, patch }
 }
 
-const npmAtLeast = (v: string, min: typeof npmMin) => {
-  const n = parseNpm(v)
-  if (n.maj !== min.maj) return n.maj > min.maj
-  if (n.min !== min.min) return n.min > min.min
-  return n.patch >= min.patch
+const npmAtLeast = (version: string, min: typeof npmMin) => {
+  const found = parseNpm(version)
+  if (found.maj !== min.maj) return found.maj > min.maj
+  if (found.min !== min.min) return found.min > min.min
+  return found.patch >= min.patch
 }
 
 const published = async (name: string, version: string) => {
   const url = `https://registry.npmjs.org/${encodeURIComponent(name)}/${version}`
-  const res = await fetch(url, { headers: { accept: "application/json" } })
-  if (res.status === 404) return false
-  if (!res.ok) throw new Error(`registry ${url} -> ${res.status}`)
+  const response = await fetch(url, { headers: { accept: "application/json" } })
+  if (response.status === 404) return false
+  if (!response.ok) throw new Error(`registry ${url} -> ${response.status}`)
   return true
 }
 
-const withCopied = async (from: string, to: string, body: () => Promise<void>) => {
-  await copyFile(from, to)
-  try {
-    await body()
-  } finally {
-    await unlink(to)
+const dependencyUnion = (packages: ReadonlyArray<PkgJson>) => {
+  const workspaceNames = new Set(packages.map((pkg) => pkg.name))
+  const dependencies = new Map<string, string>()
+  for (const pkg of packages) {
+    for (const [name, version] of Object.entries(pkg.dependencies ?? {})) {
+      if (workspaceNames.has(name)) continue
+      const previous = dependencies.get(name)
+      if (previous !== undefined && previous !== version) {
+        throw new Error(`dependency ${name} has versions ${previous} and ${version}`)
+      }
+      dependencies.set(name, version)
+    }
+  }
+  return Object.fromEntries([...dependencies].sort(([left], [right]) => left.localeCompare(right)))
+}
+
+const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>): Promise<void> => {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await rewriteSources(path, rewrites)
+      continue
+    }
+    if (!entry.isFile() || !entry.name.endsWith(".ts")) continue
+    let source = await readFile(path, "utf8")
+    for (const [from, to] of rewrites) {
+      source = source.replaceAll(`${from}/`, `${to}/`).replaceAll(`"${from}"`, `"${to}"`).replaceAll(`'${from}'`, `'${to}'`)
+    }
+    await writeFile(path, source)
   }
 }
 
-const pkgs = await Promise.all(dirs.map(async (dir) => ({ dir, ...(await readPkg(dir)) })))
-const versions = new Set(pkgs.map((p) => p.version))
-if (versions.size !== 1) throw new Error(`publish versions must match: ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}`)
-const version = pkgs[0]!.version
+const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
+const publicSource = packages.find((source) => source.namespace === "agent")!
+const version = publicSource.pkg.version
 const prerelease = version.includes("-")
 const distTag = option("--tag") ?? (prerelease ? DEFAULT_PRERELEASE_NPM_TAG : DEFAULT_STABLE_NPM_TAG)
 if (prerelease && distTag === DEFAULT_STABLE_NPM_TAG) {
@@ -111,32 +133,75 @@ if (process.env.GITHUB_ACTIONS === "true" && !dryRun) {
   }
 }
 
-const dest = await mkdtemp(join(tmpdir(), "tardigrade-pack-"))
-const license = join(root, "LICENSE")
-const readme = join(root, "README.md")
+if (!dryRun && (await published(publicSource.pkg.name, version))) {
+  console.log(`skip ${publicSource.pkg.name}@${version} (already on the registry)`)
+  process.exit(0)
+}
+
+const requestedOutput = option("--output")
+const destination = requestedOutput === undefined ? await mkdtemp(join(tmpdir(), "tardigrade-pack-")) : resolve(root, requestedOutput)
+const temporary = requestedOutput === undefined
+const stage = join(destination, "package")
 
 try {
-  for (const pkg of pkgs) {
-    const dir = join(root, pkg.dir)
-    if (await published(pkg.name, pkg.version)) {
-      console.log(`skip ${pkg.name}@${pkg.version} (already on the registry)`)
-      continue
-    }
-    const pack = async () => {
-      const filename = await output(["bun", "pm", "pack", "--destination", dest, "--quiet", "--ignore-scripts"], dir)
-      const tarball = isAbsolute(filename) ? filename : join(dest, filename)
-      const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
-      console.log(`${dryRun ? "dry-run" : "publish"} ${pkg.name}@${pkg.version} with npm tag ${distTag}`)
-      await run(publish, root)
-    }
-    await withCopied(license, join(dir, "LICENSE"), async () => {
-      if (pkg.name === "@clavia/tardigrade") {
-        await withCopied(readme, join(dir, "README.md"), pack)
-        return
-      }
-      await pack()
+  await mkdir(stage, { recursive: true })
+  await Promise.all([
+    cp(join(root, "LICENSE"), join(stage, "LICENSE")),
+    cp(join(root, "README.md"), join(stage, "README.md")),
+    ...packages.map(async (source) => {
+      await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
+        recursive: true,
+        filter: (path) => !path.endsWith(".test.ts")
+      })
     })
+  ])
+
+  const rewrites = new Map(
+    packages
+      .filter((source) => source.namespace !== "agent")
+      .map((source) => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const)
+  )
+  await rewriteSources(join(stage, "src"), rewrites)
+
+  const repository = publicSource.pkg.repository
+  const publishManifest = {
+    name: publicSource.pkg.name,
+    version,
+    license: publicSource.pkg.license,
+    author: publicSource.pkg.author,
+    description: publicSource.pkg.description,
+    homepage: publicSource.pkg.homepage,
+    repository:
+      typeof repository === "object" && repository !== null && "type" in repository && "url" in repository
+        ? { type: repository.type, url: repository.url }
+        : repository,
+    bugs: publicSource.pkg.bugs,
+    publishConfig: publicSource.pkg.publishConfig,
+    files: ["src"],
+    engines: publicSource.pkg.engines,
+    type: "module",
+    exports: {
+      ".": "./src/agent/index.ts",
+      "./package.json": "./package.json",
+      "./core/*": "./src/core/*.ts",
+      "./code": "./src/code/index.ts",
+      "./code/*": "./src/code/*.ts",
+      "./host/*": "./src/host/*.ts",
+      "./bun/*": "./src/bun/*.ts",
+      "./model": "./src/model/model.ts",
+      "./model/*": "./src/model/*.ts",
+      "./*": "./src/agent/*.ts"
+    },
+    dependencies: dependencyUnion(packages.map((source) => source.pkg))
   }
+  await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
+
+  const filename = await output(["bun", "pm", "pack", "--destination", destination, "--quiet", "--ignore-scripts"], stage)
+  const tarball = isAbsolute(filename) ? filename : join(destination, filename)
+  const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
+  console.log(`${dryRun ? "dry-run" : "publish"} ${publicSource.pkg.name}@${version} with npm tag ${distTag}`)
+  await run(publish, root)
+  if (requestedOutput !== undefined) console.log(`tarball ${tarball}`)
 } finally {
-  await rm(dest, { recursive: true, force: true })
+  if (temporary) await rm(destination, { recursive: true, force: true })
 }

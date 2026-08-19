@@ -4,7 +4,7 @@ How to publish RC and stable releases to npm.
 
 ## Packages
 
-The published names are `@clavia/tardigrade` (the agent), `@clavia/tardigrade-core`, `@clavia/tardigrade-code`, `@clavia/tardigrade-host`, `@clavia/tardigrade-bun`, and `@clavia/tardigrade-model`. They ship TypeScript source and run on Bun 1.3 or later. All six share one version. The initial version is `0.0.1`.
+The published package is `@clavia/tardigrade`. It ships the agent and the `core`, `code`, `host`, `bun`, and `model` subpaths as TypeScript source. It runs on Bun 1.3 or later. The initial version is `0.0.1`.
 
 ## First version of a package
 
@@ -15,9 +15,9 @@ npm login
 bun run tools/publish.ts
 ```
 
-The command packs with Bun. Bun rewrites each `workspace:*` dependency to the tarball version. npm publishes the packages under the `latest` tag. Use `--tag <tag>` to select another npm tag.
+The command assembles the private workspaces into one tarball. It rewrites internal imports to package subpaths and combines external dependencies. npm publishes the package under the `latest` tag. Use `--tag <tag>` to select another npm tag. Use `--output <dir>` with `--dry-run` to keep a tarball for inspection.
 
-On each new package at npmjs.com: Settings, Trusted publishing, GitHub Actions. Organization `clavia-labs`, repository `tardigrade`, workflow filename `publish.yml`, environment `npm`, allowed action `npm publish`. Create a GitHub environment named `npm` on `clavia-labs/tardigrade` (Settings, Environments). Required reviewers are optional.
+On the package at npmjs.com: Settings, Trusted publishing, GitHub Actions. Organization `clavia-labs`, repository `tardigrade`, workflow filename `publish.yml`, environment `npm`, allowed action `npm publish`. Create a GitHub environment named `npm` on `clavia-labs/tardigrade` (Settings, Environments). Required reviewers are optional.
 
 In the repository: Settings, Actions, General, allow GitHub Actions to create and approve pull requests.
 
@@ -29,6 +29,6 @@ In the repository: Settings, Actions, General, allow GitHub Actions to create an
 
 After a stable release, merge `main` into `next`. This merge gives the integration branch the stable manifest and changelog.
 
-Conventional commit titles on merged PRs (`feat`, `fix`, `perf`, and a `BREAKING CHANGE` footer) determine the next version. Release Please bumps all packages together. It writes each package `CHANGELOG.md` and updates `.release-please-manifest.json`. `docs`, `chore`, `ci`, and `test` titles do not bump a version.
+Conventional commit titles on merged PRs (`feat`, `fix`, `perf`, and a `BREAKING CHANGE` footer) determine the next version. Release Please updates `@clavia/tardigrade`, its changelog, and `.release-please-manifest.json`. `docs`, `chore`, `ci`, and `test` titles do not bump a version.
 
 The `publish.yml` workflow runs on pushes to `next` and `main`. Merging a release PR tags `v<version>` and publishes through GitHub OIDC. A dry run is `bun run pack` or a manual workflow run with `dry-run`. A repeated run skips versions that exist on the registry.
