@@ -35,7 +35,7 @@ let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
 const options = (path: string): BunHostOptions<never> => ({
-  path,
+  log: path,
   actorFor: (lane) => (lane === "echo" ? echo : undefined),
   keyOf
 })

@@ -24,7 +24,7 @@ const agent = agentOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.
 const host = await createBunHost({
-  path: "agents.sqlite",
+  log: "agents.sqlite",
   actorFor: () => agent,
   layersFor: () => infer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock" }),
   telemetry: fileTelemetry("spans.ndjson")
