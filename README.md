@@ -20,13 +20,19 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
+Prerequisites: Bun 1.3 or later and a model endpoint.
+
+```bash
+bun add @clavia/tardigrade @clavia/tardigrade-model @clavia/tardigrade-bun
+```
+
 Build a durable codemode agent by combining capabilities.
 
 ```ts
-import { agentOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
-import { infer } from "@tardigrade/model/model"
-import { createBunHost } from "@tardigrade/bun/host"
-import { fileTelemetry } from "@tardigrade/bun/file"
+import { agentOf, budget, codeMode, compaction, reply } from "@clavia/tardigrade"
+import { infer } from "@clavia/tardigrade-model/model"
+import { createBunHost } from "@clavia/tardigrade-bun/host"
+import { fileTelemetry } from "@clavia/tardigrade-bun/file"
 
 const agent = agentOf([codeMode, reply, budget, compaction])
 
@@ -54,6 +60,7 @@ clickhouse local -q "
 *work in progress*
 
 - [Quickstart](docs/quickstart.md): all the core concepts you need to get started.
+- [Publish](docs/how-to/publish.md): publish RC and stable releases to npm.
 - [Why tardigrade](docs/explanations/why.md): {transitions} = f(log), and what the log-as-state shape enables.
 
 ## Layout

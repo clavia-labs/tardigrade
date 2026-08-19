@@ -12,7 +12,8 @@
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
     "test": "bun run --filter './packages/*' test",
     "knip": "knip",
-    "setup": "git config core.hooksPath .githooks"
+    "setup": "git config core.hooksPath .githooks",
+    "pack": "bun run tools/publish.ts --dry-run"
   },
   "dependencies": {
     "@types/node": "^24",

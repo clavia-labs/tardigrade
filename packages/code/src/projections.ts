@@ -1,4 +1,4 @@
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 // The code lane's projections: pure functions over the event SET, the TypeScript half of
 // tla/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,

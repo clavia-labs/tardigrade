@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { costNumber, priced, sumUsage, usageFrom, usageIn, usageOf, ZERO_USAGE } from "./usage"
 
 const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }

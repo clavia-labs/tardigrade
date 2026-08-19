@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Event } from "@tardigrade/core/event"
-import { EventLog, withWatermark } from "@tardigrade/core/event-log"
-import { send, actor } from "@tardigrade/core/actor"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
+import { send, actor } from "@clavia/tardigrade-core/actor"
 import { Infer } from "./infer"
-import { composeKeys } from "@tardigrade/core/event-log"
-import { messageKeys } from "@tardigrade/core/message"
+import { composeKeys } from "@clavia/tardigrade-core/event-log"
+import { messageKeys } from "@clavia/tardigrade-core/message"
 import { agentKeys } from "./events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)

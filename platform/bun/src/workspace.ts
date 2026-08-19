@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
-import { WorkspaceSql, type SqlRunner } from "@tardigrade/code/workspace"
+import { WorkspaceSql, type SqlRunner } from "@clavia/tardigrade-code/workspace"
 
 // The durable workspace on bun: Effect's SQL-backed KeyValueStore over the same SqlClient the log
 // uses, so a spilled value outlives the process that wrote it and replay hydrates a ref from disk

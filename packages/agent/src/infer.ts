@@ -1,10 +1,10 @@
 import { Clock, Context, Effect } from "effect"
-import { EventLog } from "@tardigrade/core/event-log"
-import { transition, type Reactor } from "@tardigrade/core/actor"
+import { EventLog } from "@clavia/tardigrade-core/event-log"
+import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { modelCalled, textReturned, turnFailed } from "./events"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "./events"
-import { trajectoryOf, turnView } from "@tardigrade/code/turns"
+import { trajectoryOf, turnView } from "@clavia/tardigrade-code/turns"
 import type { ContextPolicy } from "./compaction"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn

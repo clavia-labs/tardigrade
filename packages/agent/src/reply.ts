@@ -1,10 +1,10 @@
 import { Clock, Effect } from "effect"
-import { Router } from "@tardigrade/core/router"
-import { Self, transition, type Reactor } from "@tardigrade/core/actor"
+import { Router } from "@clavia/tardigrade-core/router"
+import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { replyDelivered } from "./events"
-import type { Event } from "@tardigrade/core/event"
-import { replyEvent } from "@tardigrade/core/reply"
-import { replyView } from "@tardigrade/code/turns"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { replyEvent } from "@clavia/tardigrade-core/reply"
+import { replyView } from "@clavia/tardigrade-code/turns"
 
 // The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
 // terminal goes back to that actor as a plain `MessageReceived`, and the caller folds it as a

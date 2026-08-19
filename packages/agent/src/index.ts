@@ -1,13 +1,13 @@
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import type { Event } from "@tardigrade/core/event"
-import { Router } from "@tardigrade/core/router"
-import { Self } from "@tardigrade/core/actor"
-import { Packages, type Package } from "@tardigrade/code/packages"
-import { jsSandboxFor } from "@tardigrade/code/defaults"
-import { workspaceFor } from "@tardigrade/code/workspace"
-import type { SandboxPolicy } from "@tardigrade/code/sandbox"
-import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { Router } from "@clavia/tardigrade-core/router"
+import { Self } from "@clavia/tardigrade-core/actor"
+import { Packages, type Package } from "@clavia/tardigrade-code/packages"
+import { jsSandboxFor } from "@clavia/tardigrade-code/defaults"
+import { workspaceFor } from "@clavia/tardigrade-code/workspace"
+import type { SandboxPolicy } from "@clavia/tardigrade-code/sandbox"
+import { createHost, type Host, type LaneEnv } from "@clavia/tardigrade-host/host"
 import { type AgentPolicy, type RlmR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 import type { Action } from "./events"
@@ -40,7 +40,7 @@ export {
 
 // The workspace the model reads its spilled values back through, and the optional SQL binding a
 // platform lights its third verb up with.
-export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@tardigrade/code/workspace"
+export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@clavia/tardigrade-code/workspace"
 
 // The capability assembly: code mode is the default, and an agent measured against a fixed
 // tool list mounts its own (capability.ts).

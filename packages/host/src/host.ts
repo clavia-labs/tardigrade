@@ -1,8 +1,8 @@
 import { Effect, Layer } from "effect"
-import type { Event } from "@tardigrade/core/event"
-import { EventLog, withWatermark } from "@tardigrade/core/event-log"
-import { Router, type CallResult } from "@tardigrade/core/router"
-import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/actor"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
+import { Router, type CallResult } from "@clavia/tardigrade-core/router"
+import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 
 // A host runs the emergent graph: many lanes, one router, one driver.
