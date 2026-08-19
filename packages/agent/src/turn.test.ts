@@ -8,11 +8,11 @@ import { Sandbox, type Bindings } from "@tardigrade/code/sandbox"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
 import { Infer, receive } from "./turn"
-import { actorOf, budget, codeMode, compaction, reply, toolList } from "./capability"
+import { agentOf, budget, codeMode, compaction, reply, toolList } from "./capability"
 
-// The default assembly and its runtime reactors, reconstructed the way actorOf mounts them:
+// The default assembly and its runtime reactors, reconstructed the way agentOf mounts them:
 // reactors[0] is the infer loop, reactors[1] is the call router.
-const rlmAgent = actorOf([codeMode, reply, budget, compaction])
+const rlmAgent = agentOf([codeMode, reply, budget, compaction])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!
 import { Tmp } from "@tardigrade/code/tmp"
@@ -456,7 +456,7 @@ describe("a turn that declares an output schema", () => {
 describe("the mind on a native surface", () => {
   test("a turn completes with no budget, code, or compaction reactors", async () => {
     const reads: string[] = []
-    const mind = actorOf([
+    const mind = agentOf([
       toolList([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },

@@ -10,14 +10,14 @@ A type names the values and what each one bounds. A `DEFAULT_` constant states t
 
 ```ts
 // The capability that applies the policy takes it; the bare capability is the same call with none.
-const agent = actorOf([codeMode, reply, budgetFor({ defaultToolBudget: 120 }), compactionFor({ fireTokens: 60_000, keepTokens: 12_000 })])
+const agent = agentOf([codeMode, reply, budgetFor({ defaultToolBudget: 120 }), compactionFor({ fireTokens: 60_000, keepTokens: 12_000 })])
 ```
 
 The third part is visibility. When a policy changes what the model sees, the output says so. A truncated message names the cap it was cut at and the length it was cut from, and cut console output ends with a line saying it was cut. A model that reads a silent cut treats a fragment as the whole value, and the summary or the answer it writes then states a partial fact as complete.
 
 ### Where the values live
 
-The agent applies four policies. Three ride their capabilities: `budget` (the tool-call ceiling a brief that states none takes, `budgetFor`), `context` (the render's truncation caps and compaction's fire and keep lines, `compactionFor`), and `code` (the size at which a result spills to tmp and leaves a pointer, `codeModeFor`). `infer` is the runtime's own give-up and repair ceilings, and `actorOf` takes it beside the list. `createRlmAgent` gathers all four as `AgentPolicy` so one option sets them.
+The agent applies four policies. Three ride their capabilities: `budget` (the tool-call ceiling a brief that states none takes, `budgetFor`), `context` (the render's truncation caps and compaction's fire and keep lines, `compactionFor`), and `code` (the size at which a result spills to tmp and leaves a pointer, `codeModeFor`). `infer` is the runtime's own give-up and repair ceilings, and `agentOf` takes it beside the list. `createRlmAgent` gathers all four as `AgentPolicy` so one option sets them.
 
 The sandbox and the model binding hold the rest. The sandbox bounds captured console output. The model binding bounds the stream (time to first chunk, idle, total), the throttle backoff ladder, and the output-token ladder a truncated answer climbs.
 
@@ -26,5 +26,5 @@ The sandbox and the model binding hold the rest. The sandbox bounds captured con
 `context` is the one policy two places apply: compaction's guard must measure the request the model actually sees, so it counts characters exactly where the render truncates. The reactor runs in the agent; the render runs in the model binding. `compactionFor` states the policy once and contributes it to the render, which rides the infer request to the binding, so the guard and the render hold the same numbers by construction and nothing is stated twice.
 
 ```ts
-const agent = actorOf([codeMode, reply, budget, compactionFor({ messageRenderCap: 40_000, resultRenderCap: 20_000 })])
+const agent = agentOf([codeMode, reply, budget, compactionFor({ messageRenderCap: 40_000, resultRenderCap: 20_000 })])
 ```

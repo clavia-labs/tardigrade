@@ -18,7 +18,7 @@ import type { AgentR } from "./turn"
 // A Capability is one component of an agent: it provides the model its context and services
 // the calls that come back, as one value. `tools`, `system`, and `context` are the capability's
 // render into the model's request, re-derived from the log each attempt; `reactors` and `serve`
-// are its handlers. Mounting a capability is adding it to the actorOf list; there is no second
+// are its handlers. Mounting a capability is adding it to the agentOf list; there is no second
 // place to update.
 //
 // Every field but `name` is optional, because capabilities come in shapes: a policy capability
@@ -27,7 +27,7 @@ import type { AgentR } from "./turn"
 export interface Capability<R = never> {
   // The capability's name, for the collision error and span attributes.
   readonly name: string
-  // The capability's alphabet fragment. actorOf composes fragments the way composeKeys does,
+  // The capability's alphabet fragment. agentOf composes fragments the way composeKeys does,
   // and a prefix collision is the same construction-time error.
   readonly keys?: KeyFragment
   // The reactors that settle this capability's work.
@@ -37,14 +37,14 @@ export interface Capability<R = never> {
   // (docs/how-to/gate-tools.md). The composed tools are what the infer reactor hands the model
   // binding per attempt; nothing about tools lives in ModelConfig.
   readonly tools?: (log: ReadonlyArray<Event>) => ReadonlyArray<ToolSpec>
-  // The system fragment explaining the tools. Fragments join in actorOf order.
+  // The system fragment explaining the tools. Fragments join in agentOf order.
   readonly system?: string
   // What the render truncates and where. The capability that applies a context policy to its
   // reactor states the same one here, so the binding renders against the policy the guard
   // holds and the two cannot drift (compactionFor).
   readonly context?: Partial<ContextPolicy>
   // serve returns the transitions one call owes: an empty array while the world still works,
-  // undefined when the call names no tool of this capability (actorOf asks the next capability,
+  // undefined when the call names no tool of this capability (agentOf asks the next capability,
   // and the reactor answers unknown-tool when every capability declines). The reactor owns the
   // key and the turn stamp through `answer`.
   readonly serve?: Serve<R>
@@ -69,14 +69,14 @@ export const renderOf = <R>(
 // members need rather than failing on the first element's R.
 type RequirementsOf<C> = C extends Capability<infer R> ? R : never
 
-// actorOf mounts capabilities into an actor. The infer and call-routing reactors are the
-// runtime of the component model: actorOf injects them, and they are never listed as
+// agentOf mounts capabilities into an actor. The infer and call-routing reactors are the
+// runtime of the component model: agentOf injects them, and they are never listed as
 // capabilities, the way a component tree does not list the renderer. The canonical inbound and
 // the agent alphabet are the runtime's own key table; capability fragments compose beside them,
 // and a prefix collision is composeKeys' construction-time error. Two capabilities deriving the
 // same tool name collide at construction too, checked over the empty log (a log-gated duplicate
 // still routes to the first capability that recognizes it).
-export const actorOf = <const Caps extends ReadonlyArray<Capability<never> | Capability<AgentR>>>(
+export const agentOf = <const Caps extends ReadonlyArray<Capability<never> | Capability<AgentR>>>(
   caps: Caps,
   policy: Partial<InferPolicy> = {}
 ): Actor<AgentR | RequirementsOf<Caps[number]>> => {

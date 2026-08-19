@@ -44,7 +44,7 @@ import { replyId } from "@tardigrade/core/reply"
 // budget takes the same ceiling the child's own reactor would, and a consumer that moved that
 // ceiling moves both (budget.ts, BudgetPolicy).
 export interface SpawnOptions {
-  readonly actorOf?: () => string | undefined
+  readonly agentOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
   // The parent's explicit world label, when its own fire named a shared world instead of taking
@@ -61,7 +61,7 @@ export const agentsPackage = (
   reader: AgentReader,
   options: SpawnOptions = {}
 ): Package => {
-  const actorOf = options.actorOf ?? (() => undefined)
+  const agentOf = options.agentOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
   const worldOf = options.worldOf ?? (() => undefined)
@@ -142,7 +142,7 @@ export const agentsPackage = (
           if (budget <= 0) return { error: "the run's budget is exhausted; no budget to spawn this agent" }
           // The child works as the same member the parent does: the actor rides every brief in the
           // family, so a run's whole tree resolves connections identically.
-          const actor = actorOf()
+          const actor = agentOf()
           // The parent's own shadow reading, never the tool args: an agent cannot set or unset it, so
           // a whole run family is shadow by construction from the fire alone. `world` rides along
           // the same way, when the fire named an explicit shared one.
