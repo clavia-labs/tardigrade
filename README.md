@@ -33,8 +33,9 @@ import { fileTelemetry } from "@tardigrade/bun/file"
 const agent = agentOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log, and gives it a workspace in the same
-// file, so a large result the agent spills is still there after a restart; layersFor wires the
-// model binding.
+// file, so a large result the agent spills is still there after a restart; the workspace's sql
+// verb runs on `agents.workspace.sqlite`, out of the log's reach; layersFor wires the model
+// binding.
 const host = await createBunHost({
   log: "agents.sqlite",
   actorFor: () => agent,

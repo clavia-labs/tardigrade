@@ -9,7 +9,7 @@ import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/ac
 import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
 import type { HostPorts } from "@tardigrade/host/host"
 import { traceparentOf } from "@tardigrade/core/trace"
-import { bunWorkspace } from "./workspace"
+import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -19,8 +19,9 @@ import { bunWorkspace } from "./workspace"
 // transaction, dedup by key inside that transaction under a unique index, and the ordered tail
 // read from a watermark. Conformance is behavioral: host.test.ts mirrors the reference host's
 // tests, plus the two only physics can show (a reopen keeps the log; a reopen recovers owed
-// work). The same database holds the workspace a bounded value spills to (workspace.ts), so one
-// file is the whole of a run's durable state.
+// work). The same database holds the workspace a bounded value spills to; the tables the model
+// creates through workspace.sql live in a second file beside it, out of the log's reach
+// (workspace.ts).
 
 // BunPorts are the services this binding leaves an actor no work to bind: packages/host's three,
 // plus the workspace store, which on bun is durable and therefore the platform's to give
@@ -43,6 +44,12 @@ export type BunHostOptions<R> = {
   // database; an app that wants another table, a prefixed view, or a volatile run passes its own
   // layer over the same client (workspace.ts).
   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
+  // The SQL surface the workspace's sql verb runs on. The default is `bunWorkspaceSql()` over a
+  // database beside the log, so the model's own tables are durable and the log is out of its reach
+  // (workspace.ts). `false` withholds the surface and the workspace package drops the method, which
+  // is the honest answer for an agent that should never run SQL; any other layer replaces it, and
+  // one built over the host's own client hands the model the log's database too.
+  readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly call?: Parameters<typeof Router.of>[0]["call"]
@@ -78,8 +85,21 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   // The workspace is built with the runtime and over the same client, so its table is created once
   // and every lane spills through the connection the log already holds.
   const client = SqliteClient.layer({ filename: options.log })
+  // The SQL surface holds its own client on its own file, so a statement the model wrote reaches
+  // its tables and nothing else (workspace.ts). Both clients are built with the runtime and closed
+  // with it.
+  const workspaceSql =
+    options.workspaceSql === false
+      ? Layer.empty
+      : options.workspaceSql === undefined
+        ? bunWorkspaceSql().pipe(Layer.provide(SqliteClient.layer({ filename: workspaceSqlFile(options.log) })))
+        : options.workspaceSql.pipe(Layer.provide(client))
   const runtime = ManagedRuntime.make(
-    Layer.mergeAll((options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client)), options.telemetry ?? Layer.empty)
+    Layer.mergeAll(
+      (options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client)),
+      workspaceSql,
+      options.telemetry ?? Layer.empty
+    )
   )
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
   // is one database and the per-lane writer stays this process.
