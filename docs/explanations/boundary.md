@@ -20,7 +20,7 @@ Information enters through one of three doors.
 
 A reactor or a render that reads live external state, with nothing recorded and nothing pinned, is never sanctioned. It typechecks and it works in production, and it makes every fork after it a guess.
 
-What the doors buy is determinism of the render: `renderOf(capabilities, log)` returns the same system prompt and the same tools for the same log, with no registry read, no clock, and no environment (packages/agent/src/capability.test.ts, "renderOf is deterministic in the log").
+What the doors buy is determinism of the render: `renderOf(capabilities, log)` returns the same system prompt and the same tools for the same log, with no registry read, no clock, and no environment (packages/agent/src/capability.test.ts, "renderOf over one log is deterministic").
 
 ### Worked example: the package catalog
 
