@@ -5,6 +5,7 @@ import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
 import { Packages, type Package } from "@tardigrade/code/packages"
 import { jsSandboxFor } from "@tardigrade/code/defaults"
+import { workspaceFor } from "@tardigrade/code/workspace"
 import type { SandboxPolicy } from "@tardigrade/code/sandbox"
 import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
 import { type AgentPolicy, type RlmR } from "./turn"
@@ -37,6 +38,10 @@ export {
   type ModelPricing
 } from "./usage"
 
+// The workspace the model reads its spilled values back through, and the optional SQL binding a
+// platform lights its third verb up with.
+export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@tardigrade/code/workspace"
+
 // The capability assembly: code mode is the default, and an agent measured against a fixed
 // tool list mounts its own (capability.ts).
 export { agentOf, renderOf, codeMode, codeModeFor, CODE_SYSTEM, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
@@ -54,7 +59,8 @@ export interface CreateAgentOptions {
   // passes [toolList([...])]; reply, budget, and compaction are always mounted.
   readonly capabilities?: ReadonlyArray<Capability<RlmR>>
   // Every policy value the assembled agent applies: the give-up and repair ceilings, the default
-  // tool budget, the context caps, and the spill bound. Absent fields take the exported
+  // tool budget, the context caps, the spill bound, and the workspace's read and grep bounds.
+  // Absent fields take the exported
   // defaults. The context policy reaches the render through the compaction capability, so the
   // binding truncates against the numbers the guard fires on (capability.ts, compactionFor).
   readonly policy?: Partial<AgentPolicy>
@@ -81,8 +87,8 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
     react: (request: InferRequest, key?: string) => Effect.promise(() => options.infer(request, key))
   })
   // The in-process default spill store: bounded results survive for the life of the process, so
-  // replay within a run hydrates them (packages/code/src/spill.ts). A durable agent provides its
-  // own KeyValueStore layer instead.
+  // replay within a run hydrates them (packages/code/src/store.ts). A durable agent provides its
+  // own KeyValueStore layer instead, and binds WorkspaceSql if it has a SQL surface.
   const spillStore = KeyValueStore.layerMemory
   const sandbox = jsSandboxFor(options.sandbox ?? {})
 
@@ -102,14 +108,19 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
           // A child with no stated budget takes the same ceiling this agent's own wall reads.
           { budget: options.policy?.budget ?? {} }
         )
-        const all = [...user, spawn]
+        // The workspace reads the same store the spill path writes, and its sql verb appears only
+        // where the platform bound one (packages/code/src/workspace.ts, W5).
+        const workspace = yield* workspaceFor(options.policy?.workspace ?? {})
+        const all = [...user, spawn, workspace]
         return Packages.of({
           resolve: (name) => all.find((p) => p.name === name),
           list: () => Effect.succeed(all.map((p) => ({ name: p.name, description: p.description })))
         })
       })
     )
-    return Layer.mergeAll(packages, sandbox, spillStore, infer)
+    // The workspace package is built from the store, so the store feeds the packages layer and is
+    // exported from the same build: the package and the code reactor's spill path hold one store.
+    return Layer.mergeAll(Layer.provideMerge(packages, spillStore), sandbox, infer)
   }
 
   // Every ag. lane runs the RLM default; anything else is a sink.

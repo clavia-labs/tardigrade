@@ -142,4 +142,35 @@ describe("createRlmAgent", () => {
     expect(answer.output).toContain("unknown tool: execute")
     expect(answer.output).toContain("read")
   })
+
+  test("the workspace reads back what a spilled result put in the store", async () => {
+    // The mounted workspace and the code reactor's spill path hold one store: a result too large
+    // for the event spills, and the next body finds it by grep and slices it by ref.
+    const mind = createRlmAgent({
+      infer: async ({ trajectory }) => {
+        const start = trajectory.reduce((n, e, i) => (e.type === "MessageReceived" ? i : n), 0)
+        const returns = trajectory.slice(start).filter((e) => e.type === "ToolReturned") as ReadonlyArray<{ result?: { result?: unknown } }>
+        if (returns.length === 0) {
+          return { kind: "call", callId: "w1", name: "execute", arguments: { code: `return "a".repeat(20000) + "NEEDLE";` } }
+        }
+        if (returns.length === 1) {
+          return {
+            kind: "call",
+            callId: "w2",
+            name: "execute",
+            arguments: {
+              code: `const found = await workspace.grep({ pattern: "NEEDLE" });
+                const hit = found.matches[0];
+                const back = await workspace.read({ ref: hit.ref, offset: hit.offset, length: 6 });
+                return hit.ref + ":" + hit.offset + ":" + back.slice + ":" + back.size;`
+            }
+          }
+        }
+        return { kind: "complete", output: String(returns[1]!.result?.result ?? "") }
+      }
+    })
+    // The store holds the result's JSON, so the offset counts the opening quote too.
+    const answer = await mind.run("spill then search")
+    expect(answer.output).toBe("w1.result:20001:NEEDLE:20008")
+  })
 })
