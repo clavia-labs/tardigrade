@@ -23,8 +23,6 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Build an RLM agent by combining capabilities.
 
 ```ts
-import { Layer } from "effect"
-import { KeyValueStore } from "effect/unstable/persistence"
 import { agentOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
 import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
@@ -34,15 +32,13 @@ import { fileTelemetry } from "@tardigrade/bun/file"
 // Mounting one is adding it to the list; `toolList([...])` mounts a fixed tool list instead.
 const agent = agentOf([codeMode, reply, budget, compaction])
 
-// createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding and
-// the store a large result spills to, which layerMemory holds for the life of the process.
+// createBunHost runs the actor over a durable SQLite log, and gives it a workspace in the same
+// file, so a large result the agent spills is still there after a restart; layersFor wires the
+// model binding.
 const host = await createBunHost({
   log: "agents.sqlite",
   actorFor: () => agent,
-  layersFor: () => Layer.mergeAll(
-    infer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock" }),
-    KeyValueStore.layerMemory
-  ),
+  layersFor: () => infer({ baseUrl: process.env.MODEL_BASE_URL!, apiKey: process.env.MODEL_API_KEY!, model: process.env.MODEL_ID!, provider: "bedrock" }),
   telemetry: fileTelemetry("spans.ndjson")
 })
 await host.deliver("bun:main", { type: "MessageReceived", id: "m1", text: "What changed in the deploy?", at: Date.now() })

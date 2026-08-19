@@ -1,4 +1,5 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@tardigrade/core/event"
@@ -6,8 +7,9 @@ import { EventLog } from "@tardigrade/core/event-log"
 import { Router, type CallResult } from "@tardigrade/core/router"
 import { Self, restingActor, settleActor, type Actor } from "@tardigrade/core/actor"
 import { deadlocks, victimOf, type EdgesOf } from "@tardigrade/host/deadlock"
-import type { HostPorts, LaneEnv } from "@tardigrade/host/host"
+import type { HostPorts } from "@tardigrade/host/host"
 import { traceparentOf } from "@tardigrade/core/trace"
+import { bunWorkspace } from "./workspace"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -17,11 +19,19 @@ import { traceparentOf } from "@tardigrade/core/trace"
 // transaction, dedup by key inside that transaction under a unique index, and the ordered tail
 // read from a watermark. Conformance is behavioral: host.test.ts mirrors the reference host's
 // tests, plus the two only physics can show (a reopen keeps the log; a reopen recovers owed
-// work).
+// work). The same database holds the workspace a bounded value spills to (workspace.ts), so one
+// file is the whole of a run's durable state.
 
-type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
-  ? { readonly layersFor?: (lane: string) => LaneEnv<R> }
-  : { readonly layersFor: (lane: string) => LaneEnv<R> }
+// BunPorts are the services this binding leaves an actor no work to bind: packages/host's three,
+// plus the workspace store, which on bun is durable and therefore the platform's to give
+// (packages/code/src/store.ts). BunLaneEnv is the rest of an actor's R, the same shape the
+// reference host asks for.
+type BunPorts = HostPorts | KeyValueStore.KeyValueStore
+type BunLaneEnv<R> = Layer.Layer<Exclude<R, BunPorts>, never, BunPorts>
+
+type LayersFor<R> = [Exclude<R, BunPorts>] extends [never]
+  ? { readonly layersFor?: (lane: string) => BunLaneEnv<R> }
+  : { readonly layersFor: (lane: string) => BunLaneEnv<R> }
 
 export type BunHostOptions<R> = {
   readonly log: string // where the log lives: a SQLite file, or ":memory:" for a volatile run
@@ -29,6 +39,10 @@ export type BunHostOptions<R> = {
   // test capture). Absent, every span is inert: instrumentation lives in the packages, export
   // is the platform's, and this seam is the whole of it.
   readonly telemetry?: Layer.Layer<never>
+  // The store spilled values land in. The default is `bunWorkspace()`, durable in the log's own
+  // database; an app that wants another table, a prefixed view, or a volatile run passes its own
+  // layer over the same client (workspace.ts).
+  readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly call?: Parameters<typeof Router.of>[0]["call"]
@@ -61,10 +75,17 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   const principal = options.principal ?? "bun"
-  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.log }), options.telemetry ?? Layer.empty))
+  // The workspace is built with the runtime and over the same client, so its table is created once
+  // and every lane spills through the connection the log already holds.
+  const client = SqliteClient.layer({ filename: options.log })
+  const runtime = ManagedRuntime.make(
+    Layer.mergeAll((options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client)), options.telemetry ?? Layer.empty)
+  )
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
   // is one database and the per-lane writer stays this process.
   const sql = await runtime.runPromise(SqlClient.SqlClient)
+  // The store, acquired the same way: one instance, one table build, handed to every lane below.
+  const store = await runtime.runPromise(KeyValueStore.KeyValueStore)
   await runtime.runPromise(
     sql`CREATE TABLE IF NOT EXISTS events (
       lane  TEXT    NOT NULL,
@@ -169,11 +190,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         readFrom: (mark: number) => readFromEffect(lane, mark)
       }),
       router,
+      Layer.succeed(KeyValueStore.KeyValueStore, store),
       Layer.succeed(Self, self(lane))
     )
 
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
-    const extra = (options.layersFor ?? (() => Layer.empty as unknown as LaneEnv<R>))(lane)
+    const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunLaneEnv<R>))(lane)
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
   }
 
