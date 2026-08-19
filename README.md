@@ -28,11 +28,8 @@ import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
-// A capability provides the model its context and services the calls that come back.
 const agent = agentOf([codeMode, reply, budget, compaction])
 
-// A durable SQLite log, with a spill store in the same file: a large result
-// survives a restart. layersFor wires the model binding.
 const host = await createBunHost({
   log: "agents.sqlite",
   actorFor: () => agent,
