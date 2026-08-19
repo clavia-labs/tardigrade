@@ -1,6 +1,7 @@
 {
   "name": "@clavia/tardigrade-code",
   "version": "0.0.1",
+  "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "Durable code execution over the tardigrade log.",

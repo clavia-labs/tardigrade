@@ -8,41 +8,8 @@
   "bump-minor-pre-major": true,
   "group-pull-request-title-pattern": "chore: release ${version}",
   "packages": {
-    "packages/core": {
-      "component": "tardigrade-core"
-    },
-    "packages/code": {
-      "component": "tardigrade-code"
-    },
-    "packages/host": {
-      "component": "tardigrade-host"
-    },
     "packages/agent": {
       "component": "tardigrade"
-    },
-    "platform/bun": {
-      "component": "tardigrade-bun"
-    },
-    "platform/model": {
-      "component": "tardigrade-model"
     }
-  },
-  "plugins": [
-    {
-      "type": "node-workspace",
-      "merge": false
-    },
-    {
-      "type": "linked-versions",
-      "groupName": "tardigrade",
-      "components": [
-        "tardigrade-core",
-        "tardigrade-code",
-        "tardigrade-host",
-        "tardigrade",
-        "tardigrade-bun",
-        "tardigrade-model"
-      ]
-    }
-  ]
+  }
 }
