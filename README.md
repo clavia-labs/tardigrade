@@ -14,7 +14,7 @@ A durable and modular agent harness built for self-improvement.
 
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. To enable this, we need a harness that can be inspected, forked, and varied.
 
-How can a harness be fully customizable, yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React declared the component tree as a function of state: `UI = f(state)` and the set of valid state transitions as `{transitions} = f(state)`. This simplicity enabled expressiveness in authoring applications without sacrificing reliability. A harness needs the same shape, but with the log as state.
+How can a harness be fully customizable, easy to author and yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React declared the component tree as a function of state: `UI = f(state)` and the set of valid state transitions as `{transitions} = f(state)`. This simplicity enabled expressiveness in authoring applications without sacrificing reliability. A harness needs the same shape, but with the log as state.
 
 $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
