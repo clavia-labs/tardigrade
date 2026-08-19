@@ -8,6 +8,7 @@ import type { Infer, InferPolicy } from "./infer"
 import type { BudgetPolicy } from "./budget"
 import type { ContextPolicy } from "./compaction"
 import type { CodePolicy } from "@tardigrade/code/execute"
+import type { WorkspacePolicy } from "@tardigrade/code/workspace"
 
 export { Infer } from "./infer"
 
@@ -21,13 +22,15 @@ export type RlmR = AgentR
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
-// packages/code/src/execute.ts). `infer` is the runtime's policy (agentOf takes it); the rest
-// ride their capabilities (budgetFor, compactionFor, codeModeFor).
+// packages/code/src/execute.ts). `infer` is the runtime's policy (agentOf takes it); `workspace`
+// bounds the workspace package's own read and grep answers (packages/code/src/workspace.ts); the
+// rest ride their capabilities (budgetFor, compactionFor, codeModeFor).
 export interface AgentPolicy {
   readonly infer: Partial<InferPolicy>
   readonly budget: Partial<BudgetPolicy>
   readonly context: Partial<ContextPolicy>
   readonly code: Partial<CodePolicy>
+  readonly workspace: Partial<WorkspacePolicy>
 }
 
 // receive sends the inbound to the given actor. The message id is the dedup key, so delivery can
