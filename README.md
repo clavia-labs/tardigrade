@@ -20,11 +20,19 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Prerequisites: Bun 1.3 or later and a model endpoint.
+Prerequisites: Bun 1.3 or later and a model endpoint. Install with Bun:
 
 ```bash
 bun add @clavia/tardigrade
 ```
+
+Or install with npm:
+
+```bash
+npm install @clavia/tardigrade
+```
+
+To test a release candidate, install `@clavia/tardigrade@next` with either command.
 
 Build a durable codemode agent by combining capabilities.
 
