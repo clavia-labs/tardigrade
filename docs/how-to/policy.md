@@ -17,7 +17,7 @@ The third part is visibility. When a policy changes what the model sees, the out
 
 ### Where the values live
 
-The agent applies four policies. Three ride their capabilities: `budget` (the tool-call ceiling a brief that states none takes, `budgetFor`), `context` (the render's truncation caps and compaction's fire and keep lines, `compactionFor`), and `code` (the size at which a result spills to the store and leaves a pointer, `codeModeFor`). `infer` is the runtime's own give-up and repair ceilings, and `agentOf` takes it beside the list. `createRlmAgent` gathers all four as `AgentPolicy` so one option sets them.
+The agent applies five policies. Three ride their capabilities: `budget` (the tool-call ceiling a brief that states none takes, `budgetFor`), `context` (the render's truncation caps and compaction's fire and keep lines, `compactionFor`), and `code` (the size at which a result spills to the store and leaves a pointer, `codeModeFor`). `infer` is the runtime's own give-up and repair ceilings, and `agentOf` takes it beside the list. `workspace` bounds what one read or grep of the store can put back into a turn ([workspace.md](workspace.md)). `createRlmAgent` gathers all five as `AgentPolicy` so one option sets them.
 
 The sandbox and the model binding hold the rest. The sandbox bounds captured console output. The model binding bounds the stream (time to first chunk, idle, total), the throttle backoff ladder, and the output-token ladder a truncated answer climbs.
 

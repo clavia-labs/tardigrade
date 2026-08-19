@@ -9,6 +9,7 @@ Organized on the Diátaxis grid: learning, tasks, information, understanding.
   - [gate-tools.md](how-to/gate-tools.md): hide, reveal, or revoke tools from the log, and derive the system fragment that names them.
   - [observe.md](how-to/observe.md): wire a tracer, the one-trace contract, the outcome vocabulary.
   - [policy.md](how-to/policy.md): read and set the caps, ceilings, and bounds the framework applies.
+  - [workspace.md](how-to/workspace.md): read a spilled value back by ref, grep across every value, and query where a platform bound SQL.
 - [reference/](reference/): neutral per-symbol contracts, no analogies.
   - [api.md](reference/api.md): Event, Projection, Transition, Reactor, Actor, send, settle, resting.
 - [explanations/](explanations/): the why and the mental model.
