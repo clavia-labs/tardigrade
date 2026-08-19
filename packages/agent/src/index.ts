@@ -78,7 +78,7 @@ export interface RlmAgent {
 const ROOT = "ag.root"
 
 // createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
-// host, with spawn and a sandbox (tutorials/rlm-agent.md). It mounts the work capabilities plus
+// host, with spawn and a sandbox. It mounts the work capabilities plus
 // reply, budget, and compaction, and adds the host and the agents package. A caller who wants a
 // thinner assembly uses agentOf and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {

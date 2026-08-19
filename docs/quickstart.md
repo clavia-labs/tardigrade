@@ -1,6 +1,6 @@
-Welcome to the tardigrade documentation! This page will give you an introduction to the core concepts of tardigrade and teach you how to build your own durable agent harness.
+Welcome to the tardigrade documentation. This page will give you an introduction to the core concepts of tardigrade and teach you how to build your custom agent harness.
 ### Events
-Events are things that you care about.
+Events are the smallest primitive of tardigrade. It's an immutable fact, keyed and recorded once in the event log. You can define events based on what you find meaningful in your domain. For a simple agent, the events could be `MessageReceived`, `ToolCalled` etc. However, you could easily extend this to include other events specific to your workflows like `InvoiceReceived`.
 
 ```ts
 // An Event is an open record
@@ -13,9 +13,8 @@ type ToolReturned = { type: "ToolReturned"; callId: string; result: unknown }
 type TurnCompleted = { type: "TurnCompleted"; output: string }
 ```
 
-An event is a fact, recorded once and never edited. Everything else in tardigrade is derived from the set of them.
 ### Projections
-A projection is that derivation, named: a pure function from the event set to a value.
+A projection is a pure function from the event set to a value. Everything else in tardigrade is derived from the log, and a projection is that derivation, named.
 
 ```ts
 // A Projection derives a value from the event set. It is pure and ignores
@@ -29,11 +28,9 @@ const done: Projection<boolean> = (events) =>
   events.some((e) => e.type === "TurnCompleted")
 ```
 
-Notice there is no cache and no invalidation: the log is the source, so a projection can never be stale. This is `state = f(log)`, the way React's derived values are `f(state)`. If a piece of logic appends nothing, it is a projection, never a reactor; reactors exist only for work that must land in the log.
-
-If you're familiar with React, you know the concept of `UI = f(state)`. Similarly in tardigrade, transitions are a function of state: `{transitions} = f(state)`; or more specifically: `{transitions} = f(logs)`
-
-A transition is one keyed unit of work. It takes state in and returns events out. A reactor is a function that takes in an event log and returns a set of transitions.
+Notice there is no cache and no invalidation: the log is the source, so a projection can never be stale. If a piece of logic appends nothing, it is a projection, never a reactor; reactors exist only for work that must land in the log.
+### Transition
+A transition defines a valid state change. On a high level, it takes in state and outputs new events. For example, a simple transition for an agent would be one that takes in a conversation history and outputs a new LLM response.
 
 ```ts
 // key and input are projections of the event set, so a retried fire is the
@@ -44,26 +41,38 @@ type Transition<T, E extends Event = Event> = {
   input: T
   act: (input: T) => Promise<E[]>
 }
-
+```
+### Reactor
+A reactor derives the transitions the log enables. It takes the event log and returns the transitions whose work is due; the runtime fires each transition whose key the log does not record and appends the results, keyed record last.
+```ts
 // A Reactor derives the transitions the log enables. It must ignore event
 // order (tla/Projection.tla, ViewFaithful). The runtime fires each key the
 // log does not record and appends the results, keyed record last.
 type Reactor = (events: Event[]) => Transition[]
 ```
 ### Actor
-An actor is a set of reactors.
+An actor is one event log and the reactors over it. The log is mailbox and state at once: a send lands as an event, reactors derive what it enables, fires append the results, and the new events enable the next round. Settling ends when no reactor enables a transition.
+```ts
+// An Actor is the single writer of one log and the reactors over it. The
+// platform serializes sends per actor, so appends never race
+// (tla/Projection.tla).
+type Actor = { reactors: Reactor[] }
+
+// send appends one event and settles the actor.
+const send = async (actor: Actor, event: Event): Promise<void>
+```
 ### Architecture
 
 ```mermaid
 flowchart TB
   log[("event log")] -->|"events"| reactor["reactor"]
-  reactor -->|"{transitions} = f(log)"| transitions["transitions"]
+  reactor -->|"transitions = f(log)"| transitions["transitions"]
   transitions -->|"keys the log does not record"| act["act(input)"]
   act -->|"events, keyed record last"| log
 ```
 
-### Example: an agent
-An agent is three reactors over one log.
+### Example: a simple agent with tools
+An agent is three reactors over one log. The complete runnable version of this example lives at [examples/quickstart.ts](../examples/quickstart.ts); run it with `bun run examples/quickstart.ts`.
 #### Tools
 **Running tools.** Start with a projection: which calls have no result yet?
 
@@ -112,44 +121,39 @@ Notice the key: the count of answered calls. A crashed inference never records `
 **Compaction.** The loop appends forever, and the trajectory grows with it. Keeping it small is a capability, so it is a reactor. Assume a token estimate `sizeOf(events)` and a `BUDGET` it compares against.
 
 ```ts
-// CompactionCompleted is the checkpoint: the summary so far, and the event it keeps from.
-// A render reads the summary plus the events from keepFrom on; nothing is deleted.
-// The checkpoint names an event, never an index: a reactor folds the log while a render
-// folds a projection of it, and the same index is a different event in each.
-type CompactionCompleted = { type: "CompactionCompleted"; summary: string; keepFrom: string }
+// CompactionCompleted is the checkpoint: the summary so far, and the index it covers.
+// A render reads the summary plus the events after upTo; nothing is deleted.
+type CompactionCompleted = { type: "CompactionCompleted"; summary: string; upTo: number }
 
 // lastCheckpoint: the latest checkpoint, or the empty one.
-const lastCheckpoint: Projection<{ summary: string; keepFrom: string }> = (events) =>
-  events.findLast((e) => e.type === "CompactionCompleted") ?? { summary: "", keepFrom: "" }
+const lastCheckpoint: Projection<{ summary: string; upTo: number }> = (events) =>
+  events.findLast((e) => e.type === "CompactionCompleted") ?? { summary: "", upTo: 0 }
 ```
 
 ```ts
-// A Span is the stretch owed a summary: the events before the cut, and the
-// event the next checkpoint keeps from.
-type Span = { summary: string; events: Event[]; keepFrom: string }
+// A Span is the stretch owed a summary: from the checkpoint it starts at,
+// up to the index the next checkpoint will cover.
+type Span = { summary: string; events: Event[]; from: number; upTo: number }
 
 // spanOf: the span owed a summary, or null while the log is under budget.
-// cutOf picks a boundary a render can open on, so a kept tail never starts
-// with a tool result whose call was summarized away.
 const spanOf: Projection<Span | null> = (events) => {
   const checkpoint = lastCheckpoint(events)
-  const since = events.slice(indexOf(events, checkpoint.keepFrom))
+  const since = events.slice(checkpoint.upTo)
   if (sizeOf(since) <= BUDGET) return null
-  const cut = cutOf(since)
-  return { summary: checkpoint.summary, events: since.slice(0, cut.at), keepFrom: cut.id }
+  return { summary: checkpoint.summary, events: since, from: checkpoint.upTo, upTo: events.length }
 }
 
 // compact folds a span into the next checkpoint.
 const compact = async (span: Span): Promise<CompactionCompleted[]> => {
   const summary = await summarize(span.summary, span.events)
-  return [{ type: "CompactionCompleted", summary, keepFrom: span.keepFrom }]
+  return [{ type: "CompactionCompleted", summary, upTo: span.upTo }]
 }
 
 // compaction: enabled when the events since the checkpoint outgrow the budget.
 const compaction: Reactor = (events) => {
   const span = spanOf(events)
   if (!span) return []
-  return [{ key: `compact/${span.keepFrom}`, input: span, act: compact }]
+  return [{ key: `compact/${span.from}`, input: span, act: compact }]
 }
 ```
 
@@ -164,7 +168,6 @@ await send(agent, { type: "MessageReceived", text: "What changed in the deploy?"
 ```
 
 Adding a capability is adding a reactor to the list.
-
 #### Architecture
 The agent, as the loop: one log, three reactors deriving from it, fires landing back in it.
 

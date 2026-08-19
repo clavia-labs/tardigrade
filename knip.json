@@ -3,10 +3,12 @@
   "workspaces": {
     ".": {
       "entry": [
-        "tools/*.ts"
+        "tools/*.ts",
+        "examples/*.ts"
       ],
       "project": [
-        "tools/**/*.ts"
+        "tools/**/*.ts",
+        "examples/**/*.ts"
       ]
     },
     "packages/*": {
