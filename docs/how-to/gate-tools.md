@@ -41,6 +41,17 @@ const deny = async (call: ToolCalled): Promise<ToolReturned[]> =>
   [{ type: "ToolReturned", callId: call.callId, result: { error: `${call.name} is unavailable` } }]
 ```
 
+### The words that come with the offer
+
+The prompt that names the tools is a projection too. A capability's `system` is a string or a function of the log, so the text that describes a tool is derived where the tool list is derived, and the render is one function of one log.
+
+```ts
+// packagesSystem: the block naming what the model can reach, folded from the same log.
+const catalog = { name: "catalog", system: (events) => `<packages>\n${namesIn(events).join("\n")}\n</packages>` }
+```
+
+A capability that ships a default fragment takes a replacement at the surface that applies it, the way a policy value does (policy.md). `codeModeFor({}, { system })` swaps code mode's `CODE_SYSTEM` for a host's own, and the exported default says what the swap replaced.
+
 ### Why this cannot drift
 
 Offer and enforcement are the same pure function of the same log, read twice. There is no tool registry to fall out of sync with the prompt. The policy is testable by handing `availableTools` event arrays, and auditable after the fact: for any recorded settle, re-derive exactly which tools the model was shown.

@@ -37,8 +37,10 @@ export interface Capability<R = never> {
   // (docs/how-to/gate-tools.md). The composed tools are what the infer reactor hands the model
   // binding per attempt; nothing about tools lives in ModelConfig.
   readonly tools?: (log: ReadonlyArray<Event>) => ReadonlyArray<ToolSpec>
-  // The system fragment explaining the tools. Fragments join in agentOf order.
-  readonly system?: string
+  // The system fragment explaining the tools, a projection of the log like `tools`: a constant
+  // string is the constant projection, and a function derives the fragment from what has
+  // happened (docs/how-to/gate-tools.md). Fragments join in agentOf order.
+  readonly system?: string | ((log: ReadonlyArray<Event>) => string)
   // What the render truncates and where. The capability that applies a context policy to its
   // reactor states the same one here, so the binding renders against the policy the guard
   // holds and the two cannot drift (compactionFor).
@@ -58,7 +60,7 @@ export const renderOf = <R>(
   log: ReadonlyArray<Event>
 ): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } => ({
   system: capabilities
-    .map((c) => c.system)
+    .map((c) => (typeof c.system === "function" ? c.system(log) : c.system))
     .filter((s): s is string => s !== undefined && s !== "")
     .join("\n"),
   tools: capabilities.flatMap((c) => c.tools?.(log) ?? []),
@@ -120,7 +122,11 @@ const EXECUTE_TOOL: ToolSpec = {
   }
 }
 
-const CODE_SYSTEM = `You act on the world by calling the execute tool with JavaScript; the packages in scope are:\nnone`
+// CODE_SYSTEM is code mode's default system fragment: it names the tool the model acts with and
+// the packages in scope. A host whose packages come from the log renders its own fragment and
+// passes it to codeModeFor, so the default is a value you can read and a value you can replace
+// (docs/how-to/gate-tools.md).
+export const CODE_SYSTEM = `You act on the world by calling the execute tool with JavaScript; the packages in scope are:\nnone`
 
 // settleFor reads one execution's outcome, once the code reactor has recorded it.
 const settleFor = (
@@ -168,13 +174,18 @@ const codeServe: Serve = (call, log, answer) => {
 
 // codeModeFor is the code-execution capability: one `execute` tool, served by dispatching to
 // the code reactor and answered from its settle. The policy is the code lane's own
-// (packages/code/src/execute.ts, CodePolicy).
-export const codeModeFor = (policy: Partial<CodePolicy>): Capability => ({
+// (packages/code/src/execute.ts, CodePolicy). `render.system` replaces CODE_SYSTEM, as a string
+// or as a projection of the log, for a host that names the packages in scope from its own
+// events (capability.test.ts, "codeModeFor takes a system fragment").
+export const codeModeFor = (
+  policy: Partial<CodePolicy>,
+  render: { readonly system?: Capability["system"] } = {}
+): Capability => ({
   name: "code",
   keys: codeKeys,
   reactors: [codeReactorFor(policy)],
   tools: () => [EXECUTE_TOOL],
-  system: CODE_SYSTEM,
+  system: render.system ?? CODE_SYSTEM,
   serve: codeServe
 })
 
@@ -192,7 +203,7 @@ export interface NativeTool<R = never> {
 // toolList is a fixed list of named tools, the shape every provider's tool calling takes and
 // the shape a replicated harness is measured on: each call runs its tool and records the
 // return, no lane of its own.
-export const toolList = <R = never>(tools: ReadonlyArray<NativeTool<R>>, system = ""): Capability<R> => {
+export const toolList = <R = never>(tools: ReadonlyArray<NativeTool<R>>, system: Capability["system"] = ""): Capability<R> => {
   const table = new Map(tools.map((t) => [t.spec.name, t]))
   return {
     name: "tools",
