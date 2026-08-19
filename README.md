@@ -56,6 +56,7 @@ clickhouse local -q "
 ```
 
 ## Docs
+*work in progress*
 
 - [Quickstart](docs/quickstart.md): all the core concepts you need to get started.
 - [Why tardigrade](docs/explanations/why.md): {transitions} = f(log), and what the log-as-state shape enables.
