@@ -15,5 +15,6 @@ Organized on the Diátaxis grid: learning, tasks, information, understanding.
   - [why.md](explanations/why.md): state = memo { f(log) }, the convergence of durable systems, agents as the new users, the last inversion.
   - [reactors.md](explanations/reactors.md): the reactor model, with the React analogy and the math.
   - [actors.md](explanations/actors.md): one log, its reactors, and the settle loop.
+  - [boundary.md](explanations/boundary.md): mechanism from the environment, information through the log, and the three doors it enters by.
 
 Owed, in priority order: a guarantees-and-limits page (exactly-once vs at-least-once, determinism rules, log growth, when tardigrade is the wrong tool), a "thinking in tardigrade" decomposition guide (feature to events to projections to reactors), and how-tos for testing reactors, sub-agents, and event schema evolution.
