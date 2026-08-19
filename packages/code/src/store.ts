@@ -1,7 +1,8 @@
 import { Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 
-// The spill seam is Effect's KeyValueStore: content bounded out of an agent's turn context lands in
+// The workspace store is Effect's KeyValueStore. Its manifest contract lives here, with spill and
+// hydrate as its writers: content bounded out of an agent's turn context lands in
 // the store keyed by ref, and every truncation carries a pointer with a CTA. The event keeps a
 // preview and the ref; replay hydrates the ref from the same store, so recorded pairs stay whole.
 // The platform picks the backend (a memory store, a file system, any SqlClient) and picks what one

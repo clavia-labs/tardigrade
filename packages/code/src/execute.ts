@@ -8,7 +8,7 @@ import { annotationsOf, Packages } from "./packages"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
-import { hydrate, spill as spillTo, spillPointer, spillPolicyOf, type SpillPolicy } from "./spill"
+import { hydrate, spill as spillTo, spillPointer, spillPolicyOf, type SpillPolicy } from "./store"
 import { callId as callIdOf } from "./ids"
 import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
