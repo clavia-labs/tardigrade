@@ -55,70 +55,9 @@ clickhouse local -q "
   ORDER BY Timestamp"
 ```
 
-## Concepts
-
-### Events
-
-An event is the smallest primitive. It's an immutable fact, recorded once in the event log. You define events based on what's meaningful in your domain. For example, when building an agent, your events could be `MessageReceived`, `ToolCalled` etc.
-
-```ts
-// An Event is an open record. Concrete events narrow it.
-type Event = { type: string } & Record<string, unknown>
-
-type MessageReceived = { type: "MessageReceived"; id: string; text: string; at: number }
-type ToolCalled = { type: "ToolCalled"; callId: string; name: string; arguments: unknown }
-type ToolReturned = { type: "ToolReturned"; callId: string; result: unknown }
-type TurnCompleted = { type: "TurnCompleted"; output: string }
-```
-
-### Projections
-
-A projection is a pure function that takes an event log and returns a value. Projections help to slice an event log into different views based on the consumer.
-
-```ts
-type Projection<T> = (events: ReadonlyArray<Event>) => T
-
-// done: the turn has reached its terminal.
-const done: Projection<boolean> = (events) => events.some((e) => e.type === "TurnCompleted")
-```
-
-### Transitions and reactors
-
-A transition is a keyed unit of state change. It takes in state, and returns new events. Reactors compute the transitions enabled by a given event log.
-
-```ts
-// state in, events out. A retried fire is the same work, absorbed by its key.
-interface Transition<T> {
-  readonly key: string
-  readonly input: T
-  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
-}
-
-// Derives the transitions the log enables. The runtime fires each key the log does not record.
-type Reactor = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition>
-```
-
-An actor is a set of reactors over one log, plus the key derivation that decides commitment.
-
-### Capabilities
-
-A capability is one component of an agent: it provides the model its context and services the calls that come back, as one value. What the model is shown is a projection of the log, like everything else; the handlers are reactors. `agentOf` mounts a list of capabilities into an actor and injects the model loop, so adding a capability is one edit.
-
-```ts
-// One value: the render into the model's request, and the handlers for what comes back.
-interface Capability {
-  readonly name: string
-  readonly keys?: KeyFragment                          // its alphabet fragment
-  readonly reactors?: ReadonlyArray<Reactor>           // how its work settles
-  readonly tools?: (events: Event[]) => ToolSpec[]     // what the model is offered, derived from the log
-  readonly system?: string                             // the fragment explaining them
-  readonly serve?: Serve                               // how one call becomes events
-}
-```
-
 ## Docs
 
-- [Quickstart](docs/quickstart.md): the concepts in one page: events, projections, transitions, reactors, an agent in three reactors.
+- [Quickstart](docs/quickstart.md): all the core concepts you need to get started.
 - [Why tardigrade](docs/explanations/why.md): {transitions} = f(log), and what the log-as-state shape enables.
 
 ## Layout
