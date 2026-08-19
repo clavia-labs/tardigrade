@@ -20,7 +20,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Build a durable code-mode agent by combining capabilities.
+Build a durable codemode agent by combining capabilities.
 
 ```ts
 import { agentOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
