@@ -9,8 +9,9 @@
   "bump-minor-pre-major": true,
   "group-pull-request-title-pattern": "chore: release ${version}",
   "packages": {
-    "packages/agent": {
-      "component": "tardigrade"
+    ".": {
+      "component": "tardigrade",
+      "changelog-path": "packages/agent/CHANGELOG.md"
     }
   }
 }

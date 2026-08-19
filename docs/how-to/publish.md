@@ -4,7 +4,7 @@ How to publish RC and stable releases to npm.
 
 ## Packages
 
-The published package is `@clavia/tardigrade`. It ships the agent and the `core`, `code`, `host`, `bun`, and `model` subpaths as TypeScript source. It runs on Bun 1.3 or later. The initial version is `0.0.1`.
+The published package is `@clavia/tardigrade`. It ships the agent and the `core`, `code`, `host`, `bun`, and `model` subpaths as TypeScript source. It runs on Bun 1.3 or later. Every workspace is private. The private root manifest holds the release version, and the staging command writes that version into the published manifest. The initial version is `0.0.1`.
 
 ## First version of a package
 
@@ -29,6 +29,6 @@ In the repository: Settings, Actions, General, allow GitHub Actions to create an
 
 After a stable release, merge `main` into `next`. This merge gives the integration branch the stable manifest and changelog.
 
-Conventional commit titles on merged PRs (`feat`, `fix`, `perf`, and a `BREAKING CHANGE` footer) determine the next version. Release Please updates `@clavia/tardigrade`, its changelog, and `.release-please-manifest.json`. `docs`, `chore`, `ci`, and `test` titles do not bump a version.
+Conventional commit titles on merged PRs (`feat`, `fix`, `perf`, and a `BREAKING CHANGE` footer) determine the next version. Release Please treats the repository as one release component because every workspace ships in the tarball. It updates the root version, the package changelog, and `.release-please-manifest.json`. `docs`, `chore`, `ci`, and `test` titles do not bump a version.
 
 The `publish.yml` workflow runs on pushes to `next` and `main`. Merging a release PR tags `v<version>` and publishes through GitHub OIDC. A dry run is `bun run pack` or a manual workflow run with `dry-run`. A dry run always builds the tarball. It skips npm validation when the version already exists because npm rejects a dry-run publication over an existing version. A repeated live run skips versions that exist on the registry.
