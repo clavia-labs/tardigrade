@@ -10,6 +10,16 @@ type PkgJson = {
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const dryRun = process.argv.includes("--dry-run")
+export const DEFAULT_STABLE_NPM_TAG = "latest"
+export const DEFAULT_PRERELEASE_NPM_TAG = "next"
+
+const option = (name: string) => {
+  const index = process.argv.indexOf(name)
+  if (index === -1) return undefined
+  const value = process.argv[index + 1]
+  if (value === undefined || value.startsWith("--")) throw new Error(`${name} needs a value`)
+  return value
+}
 
 // Dependency order: a tarball's workspace:* deps rewrite to this version, and
 // the registry must already hold those names before a consumer can install.
@@ -83,10 +93,15 @@ const pkgs = await Promise.all(dirs.map(async (dir) => ({ dir, ...(await readPkg
 const versions = new Set(pkgs.map((p) => p.version))
 if (versions.size !== 1) throw new Error(`publish versions must match: ${pkgs.map((p) => `${p.name}@${p.version}`).join(", ")}`)
 const version = pkgs[0]!.version
+const prerelease = version.includes("-")
+const distTag = option("--tag") ?? (prerelease ? DEFAULT_PRERELEASE_NPM_TAG : DEFAULT_STABLE_NPM_TAG)
+if (prerelease && distTag === DEFAULT_STABLE_NPM_TAG) {
+  throw new Error(`prerelease ${version} cannot use npm tag ${DEFAULT_STABLE_NPM_TAG}`)
+}
 
-const tag = process.env.GITHUB_REF?.startsWith("refs/tags/v") ? process.env.GITHUB_REF.slice("refs/tags/v".length) : undefined
-if (tag !== undefined && tag !== version) {
-  throw new Error(`tag v${tag} does not match package version ${version}`)
+const releaseTag = process.env.GITHUB_REF?.startsWith("refs/tags/v") ? process.env.GITHUB_REF.slice("refs/tags/v".length) : undefined
+if (releaseTag !== undefined && releaseTag !== version) {
+  throw new Error(`tag v${releaseTag} does not match package version ${version}`)
 }
 
 if (process.env.GITHUB_ACTIONS === "true" && !dryRun) {
@@ -110,8 +125,8 @@ try {
     const pack = async () => {
       const filename = await output(["bun", "pm", "pack", "--destination", dest, "--quiet", "--ignore-scripts"], dir)
       const tarball = isAbsolute(filename) ? filename : join(dest, filename)
-      const publish = ["npm", "publish", tarball, "--access", "public", ...(dryRun ? ["--dry-run"] : [])]
-      console.log(`${dryRun ? "dry-run" : "publish"} ${pkg.name}@${pkg.version}`)
+      const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
+      console.log(`${dryRun ? "dry-run" : "publish"} ${pkg.name}@${pkg.version} with npm tag ${distTag}`)
       await run(publish, root)
     }
     await withCopied(license, join(dir, "LICENSE"), async () => {
