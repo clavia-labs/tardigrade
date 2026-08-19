@@ -8,7 +8,7 @@
 
 # Tardigrade
 
-A modular and durable agent harness built for self-improvement.
+A durable and modular agent harness built for self-improvement.
 
 ### A harness made for self-improvement
 
