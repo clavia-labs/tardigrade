@@ -18,8 +18,8 @@ import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
-// A capability bundles what the model is shown with how that work settles. Mounting one is
-// adding it to the list; `toolList([...])` mounts a fixed tool table instead of code mode.
+// A capability provides the model its context and services the calls that come back.
+// Mounting one is adding it to the list; `toolList([...])` mounts a fixed tool list instead.
 const agent = agentOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.
@@ -92,6 +92,22 @@ An actor is a set of reactors over one log, plus the key derivation that decides
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/reconciler-loop-dark.svg">
   <img alt="The reconciler loop: the log feeds reactors, reactors derive transitions, unrecorded keys fire, events land keyed record last" src="docs/assets/reconciler-loop-light.svg">
 </picture>
+
+### Capabilities
+
+A capability is one component of an agent: it provides the model its context and services the calls that come back, as one value. What the model is shown is a projection of the log, like everything else; the handlers are reactors. `agentOf` mounts a list of capabilities into an actor and injects the model loop, so adding a capability is one edit.
+
+```ts
+// One value: the render into the model's request, and the handlers for what comes back.
+interface Capability {
+  readonly name: string
+  readonly keys?: KeyFragment                          // its alphabet fragment
+  readonly reactors?: ReadonlyArray<Reactor>           // how its work settles
+  readonly tools?: (events: Event[]) => ToolSpec[]     // what the model is offered, derived from the log
+  readonly system?: string                             // the fragment explaining them
+  readonly serve?: Serve                               // how one call becomes events
+}
+```
 
 ## Docs
 
