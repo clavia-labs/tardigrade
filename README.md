@@ -12,9 +12,9 @@
 
 Building and running an agent in production is tough. Whenever an agent misbehaves, we often handcraft a new eval case and hope it doesn't happen again.
 
-As models get increasingly smart, they will be capable of doing these improvements themselves. To fully use this and create a cycle of self-improvement, we need a harness that can be inspected, forked, and varied. Observability and the ergonomics around it should be native to the harness.
+As models get increasingly smart, they will be capable of doing these improvements themselves. To fully utilise this and create a cycle of self-improvement, we need a harness that can be inspected, forked, and varied. Observability and the ergonomics around it should be native to the harness.
 
-Imagine an agent taking any production run that went wrong, forking it, customizing any part of the harness, and replaying thousands of variations before your users hit the next one. We made this possible with tardigrade.
+Tardigrade is that harness. An agent can take any production run that went wrong, fork it, customize any part of the harness, and replay thousands of variations before your users hit the next one.
 
 ### Log is all you need
 
