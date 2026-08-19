@@ -24,7 +24,7 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
   : { readonly layersFor: (lane: string) => LaneEnv<R> }
 
 export type BunHostOptions<R> = {
-  readonly path: string // SQLite file, or ":memory:" for a volatile run
+  readonly log: string // where the log lives: a SQLite file, or ":memory:" for a volatile run
   // The tracer the spans flow to, when the app brings one (an @effect/opentelemetry layer, a
   // test capture). Absent, every span is inert: instrumentation lives in the packages, export
   // is the platform's, and this seam is the whole of it.
@@ -61,7 +61,7 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   const principal = options.principal ?? "bun"
-  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.path }), options.telemetry ?? Layer.empty))
+  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.log }), options.telemetry ?? Layer.empty))
   // One client, acquired once: every read and every append shares the connection, so ":memory:"
   // is one database and the per-lane writer stays this process.
   const sql = await runtime.runPromise(SqlClient.SqlClient)
