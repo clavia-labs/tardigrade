@@ -11,7 +11,7 @@ import { Infer, type InferRequest } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
 import { agentsPackage } from "./spawn"
-import { actorOf, budgetFor, codeModeFor, compactionFor, reply, type Capability } from "./capability"
+import { agentOf, budgetFor, codeModeFor, compactionFor, reply, type Capability } from "./capability"
 
 export { type AgentPolicy, type AgentR, type RlmR, receive } from "./turn"
 
@@ -38,7 +38,7 @@ export {
 
 // The capability assembly: code mode is the default, and an agent measured against a fixed
 // tool list mounts its own (capability.ts).
-export { actorOf, renderOf, codeMode, codeModeFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
+export { agentOf, renderOf, codeMode, codeModeFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
 
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>
@@ -73,7 +73,7 @@ const ROOT = "ag.root"
 // createRlmAgent is the library default: a hosted Recursive Language Model over an in-process
 // host, with spawn and a sandbox (tutorials/rlm-agent.md). It mounts the work capabilities plus
 // reply, budget, and compaction, and adds the host and the agents package. A caller who wants a
-// thinner assembly uses actorOf and their own host.
+// thinner assembly uses agentOf and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
@@ -110,7 +110,7 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
 
   // Every ag. lane runs the RLM default; anything else is a sink.
   const policy = options.policy ?? {}
-  const assembled = actorOf(
+  const assembled = agentOf(
     [...(options.capabilities ?? [codeModeFor(policy.code ?? {})]), reply, budgetFor(policy.budget ?? {}), compactionFor(policy.context ?? {})],
     policy.infer ?? {}
   )

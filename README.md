@@ -13,14 +13,14 @@ Prerequisites: bun 1.1 or later, and a model endpoint.
 An agent is reactors over one log.
 
 ```ts
-import { actorOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
+import { agentOf, budget, codeMode, compaction, reply } from "@tardigrade/agent"
 import { infer } from "@tardigrade/model/model"
 import { createBunHost } from "@tardigrade/bun/host"
 import { fileTelemetry } from "@tardigrade/bun/file"
 
 // A capability bundles what the model is shown with how that work settles. Mounting one is
 // adding it to the list; `toolList([...])` mounts a fixed tool table instead of code mode.
-const agent = actorOf([codeMode, reply, budget, compaction])
+const agent = agentOf([codeMode, reply, budget, compaction])
 
 // createBunHost runs the actor over a durable SQLite log; layersFor wires the model binding.
 const host = await createBunHost({
@@ -110,7 +110,7 @@ An actor is a set of reactors over one log, plus the key derivation that decides
 packages/
   core/      contracts: Event, EventLog, KeyFragment, Transition, Reactor, Router
   code/      durable code execution
-  agent/     capabilities, the runtime (`actorOf`), and the RLM default (`createRlmAgent`)
+  agent/     capabilities, the runtime (`agentOf`), and the RLM default (`createRlmAgent`)
   host/      the reference in-memory binding
 platform/
   model/     the Infer binding over TanStack AI

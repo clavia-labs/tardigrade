@@ -3,9 +3,9 @@ import { Effect, Layer } from "effect"
 import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { actorOf, budget, codeMode, compaction, reply } from "./capability"
+import { agentOf, budget, codeMode, compaction, reply } from "./capability"
 
-const toolsReactor = actorOf([codeMode, reply, budget, compaction]).reactors[1]!
+const toolsReactor = agentOf([codeMode, reply, budget, compaction]).reactors[1]!
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
 // except the last), then any extra events appended after.

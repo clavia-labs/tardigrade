@@ -4,7 +4,7 @@ import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
-import { actorOf, budget, codeMode, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
+import { agentOf, budget, codeMode, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
 import { receive } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
@@ -43,7 +43,7 @@ const echoTable = toolList([
   }
 ])
 
-describe("actorOf", () => {
+describe("agentOf", () => {
   test("the render is the composed derivation, and the request carries it to the model", async () => {
     const seen: InferRequest[] = []
     const mind = Layer.succeed(Infer, {
@@ -57,7 +57,7 @@ describe("actorOf", () => {
         )
       }
     })
-    const agent = actorOf([echoTable, reply, budget, compaction])
+    const agent = agentOf([echoTable, reply, budget, compaction])
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -84,7 +84,7 @@ describe("actorOf", () => {
         )
       }
     })
-    const agent = actorOf([echoTable, reply])
+    const agent = agentOf([echoTable, reply])
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -98,7 +98,7 @@ describe("actorOf", () => {
   })
 
   test("two capabilities declaring one tool name collide at construction", () => {
-    expect(() => actorOf([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
+    expect(() => agentOf([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
       'tool "echo" declared by capabilities tools and tools'
     )
   })
