@@ -8,9 +8,11 @@ import type { Event } from "@tardigrade/core/event"
 import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 import { hydrate, refs, spill } from "@tardigrade/code/store"
 
-import { createBunHost, type BunHostOptions } from "./host"
+import { workspaceFor } from "@tardigrade/code/workspace"
+
+import { createBunHost, type BunHost, type BunHostOptions } from "./host"
 import { fileTelemetry } from "./file"
-import { bunWorkspace } from "./workspace"
+import { bunWorkspace, bunWorkspaceSql } from "./workspace"
 
 // The bun binding against the reference host's contract, plus the two behaviors only physics
 // can show: a reopened database keeps the log, and recover() settles work a death interrupted.
@@ -260,5 +262,161 @@ describe("telemetry seam", () => {
     expect(fired?.StatusCode).toBe("Ok")
     expect(fired?.Duration).toBeGreaterThan(0)
     expect(fired?.Links[0]?.TraceId).toBe(delivered?.TraceId)
+  })
+})
+
+// The SQL surface behind workspace.sql: the model's own database, bound by the host and reached
+// through the workspace package exactly as an agent's lane reaches it.
+
+const askKeyOf = (e: Event): string | undefined =>
+  e.type === "Answered" ? `Answered:${String((e as { id?: unknown }).id)}` : undefined
+
+type Answer = { rows?: ReadonlyArray<Record<string, unknown>>; truncated?: boolean; error?: string }
+
+// One reactor runs the given statements through the lane's workspace package and records what came
+// back, so a test reads the answers a model would read.
+const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStore> => ({
+  keyOf: askKeyOf,
+  reactors: [
+    (events) =>
+      events
+        .filter((e) => e.type === "MessageReceived")
+        .map((e) => {
+          const id = String((e as { id?: unknown }).id)
+          return transition({
+            key: `Answered:${id}`,
+            input: id,
+            act: (input: string) =>
+              Effect.gen(function* () {
+                const pkg = yield* workspaceFor()
+                const answers: Array<unknown> = []
+                for (const query of queries) {
+                  const method = pkg.methods["sql"]
+                  if (method === undefined) break
+                  answers.push(yield* method({ query, params: [] }, { callId: input }))
+                }
+                return [
+                  {
+                    type: "Answered",
+                    id: input,
+                    methods: Object.keys(pkg.methods).sort(),
+                    doc: pkg.docs?.["sql"] !== undefined,
+                    answers,
+                    at: 1
+                  } as Event
+                ]
+              }).pipe(Effect.orDie)
+          })
+        })
+  ]
+})
+
+const asked = async (
+  host: BunHost,
+  id: string
+): Promise<{ methods: ReadonlyArray<string>; doc: boolean; answers: ReadonlyArray<Answer> }> => {
+  await host.seed("ws", [{ type: "MessageReceived", id, text: "ask", at: 1 } as Event])
+  await host.wake("ws")
+  const found = (await host.read("ws")).find((e) => e.type === "Answered" && String((e as { id?: unknown }).id) === id)
+  return found as unknown as { methods: ReadonlyArray<string>; doc: boolean; answers: ReadonlyArray<Answer> }
+}
+
+describe("the workspace sql surface", () => {
+  test("the sql verb is bound, and the tables it creates outlive the process", async () => {
+    const path = freshPath()
+    const first = await createBunHost({
+      log: path,
+      keyOf: askKeyOf,
+      actorFor: (lane) =>
+        lane === "ws" ? asker(["CREATE TABLE notes (n TEXT)", "INSERT INTO notes VALUES ('kept')"]) : undefined
+    })
+    const wrote = await asked(first, "m1")
+    expect(wrote.methods).toEqual(["grep", "read", "sql"])
+    expect(wrote.doc).toBe(true)
+    await first.close()
+
+    const second = await createBunHost({
+      log: path,
+      keyOf: askKeyOf,
+      actorFor: (lane) => (lane === "ws" ? asker(["SELECT n FROM notes"]) : undefined)
+    })
+    expect((await asked(second, "m2")).answers[0]?.rows).toEqual([{ n: "kept" }])
+    await second.close()
+  })
+
+  test("the default surface does not reach the log", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      actorFor: (lane) => (lane === "ws" ? asker(["SELECT COUNT(*) AS n FROM events"]) : undefined)
+    })
+    expect((await asked(h, "m1")).answers[0]?.error).toContain("events")
+    await h.close()
+  })
+
+  test("a broken query answers an error the model can read", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      actorFor: (lane) => (lane === "ws" ? asker(["SELECT * FROM nowhere"]) : undefined)
+    })
+    const answer = (await asked(h, "m1")).answers[0]
+    expect(answer?.error).toContain("nowhere")
+    expect(answer?.rows).toBeUndefined()
+    await h.close()
+  })
+
+  test("an answer stops at the row cap and says truncated", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      workspaceSql: bunWorkspaceSql({ rows: 2 }),
+      actorFor: (lane) =>
+        lane === "ws"
+          ? asker([
+              "CREATE TABLE wide (n INTEGER)",
+              "INSERT INTO wide VALUES (1), (2), (3), (4), (5)",
+              "SELECT n FROM wide ORDER BY n"
+            ])
+          : undefined
+    })
+    const answer = (await asked(h, "m1")).answers[2]
+    expect(answer?.rows).toEqual([{ n: 1 }, { n: 2 }])
+    expect(answer?.truncated).toBe(true)
+    await h.close()
+  })
+
+  test("the byte bound cuts a row set the row bound would pass", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      workspaceSql: bunWorkspaceSql({ bytes: 40 }),
+      actorFor: (lane) =>
+        lane === "ws"
+          ? asker([
+              "CREATE TABLE wide (n TEXT)",
+              `INSERT INTO wide VALUES ('${"x".repeat(60)}'), ('short')`,
+              "SELECT n FROM wide"
+            ])
+          : undefined
+    })
+    const answer = (await asked(h, "m1")).answers[2]
+    expect(answer?.rows).toEqual([])
+    expect(answer?.truncated).toBe(true)
+    await h.close()
+  })
+
+  test("sql withheld: the package offers two verbs and no third", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      workspaceSql: false,
+      actorFor: (lane) => (lane === "ws" ? asker(["SELECT 1"]) : undefined)
+    })
+    const answered = await asked(h, "m1")
+    expect(answered.methods).toEqual(["grep", "read"])
+    expect(answered.doc).toBe(false)
+    expect(answered.answers).toEqual([])
+    await h.close()
   })
 })
