@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { spill } from "./store"
-import { DEFAULT_WORKSPACE_POLICY, workspacePackage, type SqlRunner } from "./workspace"
+import { DEFAULT_WORKSPACE_POLICY, WORKSPACE_SQL_DESCRIPTION, workspacePackage, type SqlRunner } from "./workspace"
 
 // The model's view of the store: a bounded slice of one value, a search across all of them, and a
 // sql verb only where a platform bound one.
@@ -114,6 +114,17 @@ describe("the sql verb", () => {
     expect(pkg.docs?.sql).toBeDefined()
     const answer = await call(pkg, "sql", { query: "select 1", params: [7] })
     expect(answer.rows).toEqual([{ query: "select 1", params: 1 }])
+  })
+
+  test("a runner with no doc describes sql in the generic text alone", async () => {
+    const pkg = workspacePackage(await seeded({}), { sql: runner })
+    expect(pkg.docs?.sql?.description).toBe(WORKSPACE_SQL_DESCRIPTION)
+  })
+
+  test("a runner's doc is spliced onto the generic text, so the model reads the bound schema", async () => {
+    const doc = "notes(id, body) is already here."
+    const pkg = workspacePackage(await seeded({}), { sql: { ...runner, doc } })
+    expect(pkg.docs?.sql?.description).toBe(`${WORKSPACE_SQL_DESCRIPTION} ${doc}`)
   })
 })
 

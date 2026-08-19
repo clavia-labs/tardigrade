@@ -48,7 +48,8 @@ export type BunHostOptions<R> = {
   // database beside the log, so the model's own tables are durable and the log is out of its reach
   // (workspace.ts). `false` withholds the surface and the workspace package drops the method, which
   // is the honest answer for an agent that should never run SQL; any other layer replaces it, and
-  // one built over the host's own client hands the model the log's database too.
+  // one built over the host's own client hands the model the log's database too, which is what
+  // `bunWorkspaceSql({ doc: bunWorkspaceLogSqlDoc() })` tells the model it is holding.
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
