@@ -2,7 +2,7 @@ name: ci
 
 # The gate runs on every PR and every push to main. `bun run gate` is the same command run locally
 # (lint, typecheck, tests, knip), so CI green and local green mean the same thing. Releases are
-# `.github/workflows/publish.yml` on a version tag; this workflow does not publish.
+# `.github/workflows/publish.yml` via release-please on main; this workflow does not publish.
 on:
   pull_request:
   push:

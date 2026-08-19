@@ -1,13 +1,13 @@
 name: publish
 
-# Trusted publishing (OIDC). The workflow filename is part of the trust
-# pin on npmjs.com; renaming this file breaks publishes until the package
-# settings match. bun publish does not speak OIDC, so tools/publish.ts packs
-# with bun and uploads with npm.
+# release-please opens a version PR from conventional commits on main. Merging
+# that PR tags the commit and this same run publishes through OIDC. The workflow
+# filename is part of the npm trust pin; renaming this file breaks publishes
+# until the package settings match. bun publish does not speak OIDC, so
+# tools/publish.ts packs with bun and uploads with npm.
 on:
   push:
-    tags:
-      - "v*"
+    branches: [main]
   workflow_dispatch:
     inputs:
       dry-run:
@@ -20,14 +20,30 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
+  pull-requests: write
+  issues: write
   id-token: write
 
 jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+    steps:
+      - uses: googleapis/release-please-action@v5
+        id: release
+
   publish:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
+    permissions:
+      contents: read
+      id-token: write
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
