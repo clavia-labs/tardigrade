@@ -12,7 +12,7 @@ import { fileTelemetry } from "@tardigrade/bun/file"
 import { otlpTelemetry } from "@tardigrade/bun/otlp"
 
 const host = await createBunHost({
-  path: "agents.sqlite",
+  log: "agents.sqlite",
   actorFor,
   layersFor,
   telemetry: fileTelemetry("spans.ndjson")
