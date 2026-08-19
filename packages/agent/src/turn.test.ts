@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { settleActor } from "@tardigrade/core/actor"
@@ -15,15 +16,6 @@ import { agentOf, budget, codeMode, compaction, reply, toolList } from "./capabi
 const rlmAgent = agentOf([codeMode, reply, budget, compaction])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!
-import { Tmp } from "@tardigrade/code/tmp"
-const memSpill = () => {
-  const store = new Map<string, string>()
-  return Layer.succeed(Tmp, {
-    store: (ref: string, json: string) => Effect.sync(() => void store.set(ref, json)),
-    load: (ref: string) => Effect.sync(() => store.get(ref))
-  })
-}
-
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
 // and the turn completes. The sandbox test binding runs real JS with the package objects in
 // scope; no isolation is needed to test the machinery.
@@ -115,7 +107,7 @@ describe("the agent with execute as the only tool", () => {
     const count = { calls: 0 }
     const spies = { insert: 0, search: 0 }
     const layers = Layer.mergeAll(
-    memSpill(),
+    KeyValueStore.layerMemory,
     memoryLog(), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
@@ -192,7 +184,7 @@ describe("the agent with execute as the only tool", () => {
     ]
     const count = { calls: 0 }
     const spies = { insert: 0, search: 0 }
-    const layers = Layer.mergeAll(memSpill(), memoryLog(crashed), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
+    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
         yield* settleActor(rlmAgent)
@@ -208,7 +200,7 @@ describe("the agent with execute as the only tool", () => {
   test("a thrown body settles as an error the model reads", async () => {
     const count = { calls: 0 }
     const layers = Layer.mergeAll(
-    memSpill(),
+    KeyValueStore.layerMemory,
     memoryLog(),
       Layer.succeed(Infer, {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
@@ -253,7 +245,7 @@ describe("the agent with execute as the only tool", () => {
       }
     })
     const layers = Layer.mergeAll(
-    memSpill(),
+    KeyValueStore.layerMemory,
     memoryLog(queued), echoHead, registry([]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
@@ -281,7 +273,7 @@ describe("the agent with execute as the only tool", () => {
       { type: "ModelCalled", callId: "m1/infer/2", turn: "m1", at: 4 }
     ]
     const count = { calls: 0 }
-    const layers = Layer.mergeAll(memSpill(), memoryLog(crashed), codeThenComplete(count), registry([]), jsSandbox, noRouter)
+    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), registry([]), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
         yield* settleActor(rlmAgent)
@@ -296,7 +288,7 @@ describe("the agent with execute as the only tool", () => {
   test("a redelivered message appends nothing", async () => {
     const count = { calls: 0 }
     const layers = Layer.mergeAll(
-    memSpill(),
+    KeyValueStore.layerMemory,
     memoryLog(),
       Layer.succeed(Infer, {
         react: () => {
@@ -330,7 +322,7 @@ describe("the agent with execute as the only tool", () => {
       model: "anthropic/claude-sonnet-4.6"
     }
     const layers = Layer.mergeAll(
-      memSpill(),
+      KeyValueStore.layerMemory,
       memoryLog(),
       Layer.succeed(Infer, {
         react: () => Effect.succeed({ kind: "complete" as const, output: "ok", usage: spent })
@@ -382,7 +374,7 @@ describe("a turn that declares an output schema", () => {
     const seen: Array<string> = []
     const layers = Layer.mergeAll(
       memoryLog(),
-      memSpill(),
+      KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           // The repair is a real tool return, so the model reads why it was refused.
@@ -423,7 +415,7 @@ describe("a turn that declares an output schema", () => {
     let asked = 0
     const layers = Layer.mergeAll(
       memoryLog(),
-      memSpill(),
+      KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
         react: () => {
           asked += 1
@@ -473,6 +465,7 @@ describe("the mind on a native surface", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,
+      KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
           const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined

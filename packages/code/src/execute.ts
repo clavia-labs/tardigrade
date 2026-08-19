@@ -1,4 +1,5 @@
 import { Clock, Deferred, Effect, Fiber } from "effect"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@tardigrade/core/event-log"
 import type { Event } from "@tardigrade/core/event"
 import { transition, type Reactor } from "@tardigrade/core/actor"
@@ -7,7 +8,7 @@ import { annotationsOf, Packages } from "./packages"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
-import { Tmp, spillPolicyOf, tmpPointer, type SpillPolicy } from "./tmp"
+import { hydrate, spill as spillTo, spillPointer, spillPolicyOf, type SpillPolicy } from "./spill"
 import { callId as callIdOf } from "./ids"
 import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
@@ -37,7 +38,7 @@ const executeRecorded = (
   spill: SpillPolicy,
   turn?: string,
   dispatchedAt?: number
-): Effect.Effect<ReadonlyArray<Event>, never, EventLog> =>
+): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore> =>
   Effect.gen(function* () {
     const stamp = turn === undefined ? {} : { turn }
     const log = yield* EventLog
@@ -47,7 +48,10 @@ const executeRecorded = (
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
     const packages = yield* Packages
     const sandbox = yield* Sandbox
-    const context = yield* Effect.context<never>()
+    // The proxy runs each call as its own promise, so it carries the attempt's context. The spill
+    // store is in it: a call's own hydrate and spill run under the same store the attempt was
+    // provided.
+    const context = yield* Effect.context<KeyValueStore.KeyValueStore>()
     let n = 0
     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
     // or park; parkGate completes when every open call settled or parked and at least one
@@ -104,7 +108,10 @@ const executeRecorded = (
                 const r = recorded as { result?: unknown; tmp?: unknown }
                 inFlight--
                 if (r.tmp !== undefined) {
-                  const hydrated = yield* (yield* Tmp).load(String(r.tmp))
+                  // A store that cannot answer is a defect, never a different answer: replaying a
+                  // spilled pair with the preview in place of the value would hand the body an
+                  // input the log does not hold.
+                  const hydrated = yield* Effect.orDie(hydrate(String(r.tmp)))
                   return { parked: false, result: hydrated === undefined ? r.result : JSON.parse(hydrated) }
                 }
                 return { parked: false, result: r.result }
@@ -180,16 +187,16 @@ const executeRecorded = (
                 Effect.catchDefect(() => parkOut())
               )
               if (attempt.parked) return attempt
-              // A large result goes to tmp: the event keeps the pointer, the body still
+              // A large result goes to the spill store: the event keeps the pointer, the body still
               // receives the whole value, and replay hydrates the ref.
               const answeredAt = yield* Clock.currentTimeMillis
               const json = JSON.stringify(attempt.result ?? null)
               if (json.length > spill.spillBytes) {
-                yield* (yield* Tmp).store(callId, json)
+                yield* Effect.orDie(spillTo(callId, json))
                 yield* log.append([
                   packageReturned({
                     callId,
-                    ...tmpPointer(callId, json.length, json.slice(0, spill.previewChars)),
+                    ...spillPointer(callId, json.length, json.slice(0, spill.previewChars)),
                     ...stamp,
                     at: answeredAt
                   })
@@ -251,14 +258,14 @@ const executeRecorded = (
     // result, and the trajectory keeps it as evidence. Absent when the body printed nothing.
     const logs = outcome.logs !== undefined && outcome.logs.length > 0 ? { logs: outcome.logs } : {}
     if (outcome.error === undefined) {
-      // The settle is what the model will read: a large one goes to tmp and the settle carries
-      // the pointer, so no result can nuke the turn context.
+      // The settle is what the model will read: a large one goes to the spill store and the settle
+      // carries the pointer, so no result can nuke the turn context.
       const json = JSON.stringify(outcome.result ?? null)
       if (json.length > spill.spillBytes) {
         const ref = `${execId}.result`
-        yield* (yield* Tmp).store(ref, json)
+        yield* Effect.orDie(spillTo(ref, json))
         return [
-          codeSettled({ execId, ...tmpPointer(ref, json.length, json.slice(0, spill.previewChars)), ...logs, ...stamp, at })
+          codeSettled({ execId, ...spillPointer(ref, json.length, json.slice(0, spill.previewChars)), ...logs, ...stamp, at })
         ]
       }
       return [codeSettled({ execId, result: outcome.result, ...logs, ...stamp, at })]
@@ -267,7 +274,7 @@ const executeRecorded = (
   })
 
 // CodePolicy is the lane's policy: where a result stops fitting in an agent's context and
-// spills to tmp instead (tmp.ts, SpillPolicy).
+// spills to the store instead (spill.ts, SpillPolicy).
 export interface CodePolicy {
   readonly spill: Partial<SpillPolicy>
 }
@@ -277,7 +284,7 @@ export interface CodePolicy {
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the lane
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
-export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor => (events) => {
+export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor<KeyValueStore.KeyValueStore> => (events) => {
   const spill = spillPolicyOf(policy.spill)
   const owed = workOwed(events)
   if (owed === undefined) return []
@@ -287,7 +294,10 @@ export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor => (ev
   if (dispatch === undefined) return []
   const d = dispatch as { code?: unknown; at?: unknown }
   return [
-    transition<{ execId: string; code: string; turn: string | undefined; at: number | undefined }, never>({
+    transition<
+      { execId: string; code: string; turn: string | undefined; at: number | undefined },
+      KeyValueStore.KeyValueStore
+    >({
       key: `cs:${owed.execId}`,
       input: {
         execId: owed.execId,
@@ -301,4 +311,4 @@ export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor => (ev
 }
 
 // codeReactor is that reactor on the default spill bound.
-export const codeReactor: Reactor = codeReactorFor()
+export const codeReactor: Reactor<KeyValueStore.KeyValueStore> = codeReactorFor()

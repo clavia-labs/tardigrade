@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { composeKeys, EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { settleActor } from "@tardigrade/core/actor"
@@ -7,7 +8,6 @@ import { messageKeys } from "@tardigrade/core/message"
 import { checkInput, renderSignature } from "./contract"
 import { Packages, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
-import { Tmp } from "./tmp"
 import { codeReactor } from "./execute"
 import { codeKeys } from "./events"
 
@@ -114,14 +114,6 @@ describe("checkInput", () => {
 // The funnel: a wrong call settles with the teaching error as its recorded result, and the
 // method never runs. A conforming call runs untouched.
 
-const memSpill = () => {
-  const store = new Map<string, string>()
-  return Layer.succeed(Tmp, {
-    store: (ref: string, json: string) => Effect.sync(() => void store.set(ref, json)),
-    load: (ref: string) => Effect.sync(() => store.get(ref))
-  })
-}
-
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...args: ReadonlyArray<string>
 ) => (...bindings: ReadonlyArray<unknown>) => Promise<unknown>
@@ -180,7 +172,7 @@ const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
       Effect.provide(
         Layer.mergeAll(
           memoryLog(log),
-          memSpill(),
+          KeyValueStore.layerMemory,
           jsSandbox,
           Layer.succeed(Packages, {
             resolve: (name: string) => (name === "notes" ? notesLike : undefined),

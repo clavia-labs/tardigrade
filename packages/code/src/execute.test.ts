@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { composeKeys, EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { settleActor } from "@tardigrade/core/actor"
 import { messageKeys } from "@tardigrade/core/message"
 import { Packages, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
-import { Tmp } from "./tmp"
 import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
 
@@ -14,14 +14,6 @@ import { codeKeys } from "./events"
 // shadow brief refuses an open-world write and an unannotated method (the same dangerous default
 // `annotationsOf` takes), and lets a read or a closed-world write through untouched. A non-shadow
 // brief takes none of these branches, ever.
-
-const memSpill = () => {
-  const store = new Map<string, string>()
-  return Layer.succeed(Tmp, {
-    store: (ref: string, json: string) => Effect.sync(() => void store.set(ref, json)),
-    load: (ref: string) => Effect.sync(() => store.get(ref))
-  })
-}
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...args: ReadonlyArray<string>
@@ -89,7 +81,7 @@ const settled = async (head: Event): Promise<ReadonlyArray<Event>> => {
     Effect.gen(function* () {
       yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
-    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
+    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
   )
 }
 
@@ -130,7 +122,7 @@ describe("transience never reaches the body", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), flakyLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), flakyLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { result?: { a: unknown } } | undefined
     expect(settle).toBeDefined()
@@ -164,7 +156,7 @@ describe("the replay guard", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")
@@ -187,7 +179,7 @@ describe("the replay guard", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")
@@ -233,7 +225,7 @@ describe("the spill bound", () => {
         Effect.gen(function* () {
           yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
           return yield* Effect.flatMap(EventLog, (l) => l.read)
-        }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memSpill()))) as Effect.Effect<
+        }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
           ReadonlyArray<Event>
         >
       )

@@ -22,6 +22,12 @@ A reactor or a render that reads live external state, with nothing recorded and 
 
 What the doors buy is determinism of the render: `renderOf(capabilities, log)` returns the same system prompt and the same tools for the same log, with no registry read, no clock, and no environment (packages/agent/src/capability.test.ts, "renderOf over one log is deterministic").
 
+### Spilled values
+
+A value too large for an agent's context spills. The event keeps a pointer with the ref, a preview, and the whole size; the value itself goes to a key/value store under that ref. The value is still information, and the pointer is what keeps it reachable: replay hydrates the ref and the body sees what it saw the first time. A ref names one value forever, so reading the store during replay is a read of the log's own past, not of the present.
+
+The store is Effect's `KeyValueStore`, which the platform provides, so the backend and what one workspace spans are the platform's choices. The spill path also indexes every ref it writes under one reserved key (`WORKSPACE_REFS`), because the store interface has no enumeration and a lister needs one.
+
 ### Worked example: the package catalog
 
 An agent's system prompt lists the packages its code can call. The catalog is information: change it and the model sees a different prompt.
