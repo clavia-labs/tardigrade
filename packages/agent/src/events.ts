@@ -1,7 +1,7 @@
 import { Schema } from "effect"
-import { MessageReceived } from "@tardigrade/core/message"
-import type { Event } from "@tardigrade/core/event"
-import type { KeyFragment } from "@tardigrade/core/event-log"
+import { MessageReceived } from "@clavia/tardigrade-core/message"
+import type { Event } from "@clavia/tardigrade-core/event"
+import type { KeyFragment } from "@clavia/tardigrade-core/event-log"
 import type { Usage } from "./usage"
 
 // The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
@@ -16,7 +16,7 @@ import type { Usage } from "./usage"
 
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
-export { MessageReceived } from "@tardigrade/core/message"
+export { MessageReceived } from "@clavia/tardigrade-core/message"
 
 // ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
 export const ToolCalled = Schema.Struct({

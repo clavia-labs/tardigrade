@@ -1,8 +1,8 @@
 import { Clock, Effect } from "effect"
-import { transition, type Reactor } from "@tardigrade/core/actor"
+import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { budgetExhausted } from "./events"
-import type { Event } from "@tardigrade/core/event"
-import { turnHead, turnView } from "@tardigrade/code/turns"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { turnHead, turnView } from "@clavia/tardigrade-code/turns"
 
 // The budget reactor observes the turn's tool spend and fires BudgetExhausted once when it
 // passes the brief's budget. Detection lives here; enforcement lives with the tools reactor,

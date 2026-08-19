@@ -1,4 +1,4 @@
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./compaction"
 import { outputSchemaOf } from "./contract"
 import { budgetSpent, canRequestBudget } from "./budget"

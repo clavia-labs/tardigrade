@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Event } from "@tardigrade/core/event"
-import { Router } from "@tardigrade/core/router"
-import { transition, type Reactor } from "@tardigrade/core/actor"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { Router } from "@clavia/tardigrade-core/router"
+import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "./host"
 
 // The host against toy reactors, package-pure: no app vocabulary.

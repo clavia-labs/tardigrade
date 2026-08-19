@@ -1,5 +1,5 @@
-import type { Event } from "@tardigrade/core/event"
-import { turnOf } from "@tardigrade/code/turns"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { turnOf } from "@clavia/tardigrade-code/turns"
 
 // Usage is what one model attempt spent. costUsd is present when the figure is known.
 // costSource is how that figure was obtained: the provider billed it, or a price table

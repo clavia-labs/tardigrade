@@ -1,4 +1,4 @@
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { REPLY_SUFFIX } from "./ids"
 
 // Turn attribution. A turn is headed by one MessageReceived; every event serving it carries

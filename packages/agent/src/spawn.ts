@@ -1,11 +1,11 @@
 import { Clock, Context, Effect } from "effect"
-import { Router } from "@tardigrade/core/router"
-import type { Package } from "@tardigrade/code/packages"
-import type { Event } from "@tardigrade/core/event"
+import { Router } from "@clavia/tardigrade-core/router"
+import type { Package } from "@clavia/tardigrade-code/packages"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { budgetPolicyOf, type BudgetPolicy } from "./budget"
-import { Park } from "@tardigrade/code/errors"
-import { readAddress } from "@tardigrade/core/router"
-import { replyId } from "@tardigrade/core/reply"
+import { Park } from "@clavia/tardigrade-code/errors"
+import { readAddress } from "@clavia/tardigrade-core/router"
+import { replyId } from "@clavia/tardigrade-core/reply"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;

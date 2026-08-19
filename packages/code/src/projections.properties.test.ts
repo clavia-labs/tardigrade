@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { factsOf, restingLane, workOwed } from "./projections"
 
 // The isomorphism harness: tla/Reconcile.tla's theorems, run against the

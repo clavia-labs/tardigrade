@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
-import type { Event } from "@tardigrade/core/event"
-import { Router } from "@tardigrade/core/router"
-import { transition, type Reactor } from "@tardigrade/core/actor"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { Router } from "@clavia/tardigrade-core/router"
+import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost, type HostOptions } from "./host"
 
 // The driver's confluence property: the order the driver services dirty

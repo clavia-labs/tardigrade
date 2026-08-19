@@ -1,15 +1,36 @@
 {
-  "name": "@tardigrade/bun",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@clavia/tardigrade-bun",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Durable SQLite host binding for tardigrade on Bun.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "platform/bun"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
   "type": "module",
   "exports": {
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@tardigrade/code": "workspace:*",
-    "@tardigrade/core": "workspace:*",
-    "@tardigrade/host": "workspace:*",
+    "@clavia/tardigrade-code": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-host": "workspace:*",
     "@effect/sql-sqlite-bun": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
   },
