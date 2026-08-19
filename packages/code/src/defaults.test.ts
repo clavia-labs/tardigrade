@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { composeKeys, EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { settleActor } from "@tardigrade/core/actor"
 import { messageKeys } from "@tardigrade/core/message"
 import { DEFAULT_SANDBOX_POLICY, Sandbox } from "./sandbox"
-import { jsSandbox, jsSandboxFor, memoryTmp } from "./defaults"
+import { jsSandbox, jsSandboxFor } from "./defaults"
 import { codeReactor } from "./execute"
 import { codeKeys } from "./events"
 import { Packages } from "./packages"
@@ -137,7 +138,7 @@ describe("logs ride the settle", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, memoryTmp()))) as Effect.Effect<
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
         ReadonlyArray<Event>
       >
     )

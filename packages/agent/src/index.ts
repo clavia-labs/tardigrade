@@ -1,9 +1,10 @@
 import { Effect, Layer } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
 import { Packages, type Package } from "@tardigrade/code/packages"
-import { jsSandboxFor, memoryTmp } from "@tardigrade/code/defaults"
+import { jsSandboxFor } from "@tardigrade/code/defaults"
 import type { SandboxPolicy } from "@tardigrade/code/sandbox"
 import { createHost, type Host, type LaneEnv } from "@tardigrade/host/host"
 import { type AgentPolicy, type RlmR } from "./turn"
@@ -79,7 +80,10 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   const infer = Layer.succeed(Infer, {
     react: (request: InferRequest, key?: string) => Effect.promise(() => options.infer(request, key))
   })
-  const tmp = memoryTmp()
+  // The in-process default spill store: bounded results survive for the life of the process, so
+  // replay within a run hydrates them (packages/code/src/spill.ts). A durable agent provides its
+  // own KeyValueStore layer instead.
+  const spillStore = KeyValueStore.layerMemory
   const sandbox = jsSandboxFor(options.sandbox ?? {})
 
   // Packages is built from the host's Router and Self. place and the
@@ -105,7 +109,7 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
         })
       })
     )
-    return Layer.mergeAll(packages, sandbox, tmp, infer)
+    return Layer.mergeAll(packages, sandbox, spillStore, infer)
   }
 
   // Every ag. lane runs the RLM default; anything else is a sink.

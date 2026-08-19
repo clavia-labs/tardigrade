@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
 import { agentOf, budget, CODE_SYSTEM, codeMode, codeModeFor, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
-import { receive } from "./turn"
+import { receive, type AgentR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
 // The capability assembly end to end: the render the model sees is the composed derivation of
@@ -63,7 +64,7 @@ describe("agentOf", () => {
         yield* receive(agent, { id: "m1", text: "go" })
         return yield* readLog
       }),
-      Layer.mergeAll(memoryLog(), mind, noRouter)
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
     )
     // The model was shown exactly what the capabilities derived.
     expect(seen[0]!.tools.map((t) => t.name)).toEqual(["echo"])
@@ -90,7 +91,7 @@ describe("agentOf", () => {
         yield* receive(agent, { id: "m1", text: "go" })
         return yield* readLog
       }),
-      Layer.mergeAll(memoryLog(), mind, noRouter)
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
     )
     expect(events.find((e) => e.type === "ToolReturned")).toMatchObject({
       result: { error: "unknown tool: ghost. Call one of: echo." }
@@ -104,7 +105,7 @@ describe("agentOf", () => {
   })
 
   test("compactionFor's context reaches the render, so the guard and the request hold one policy", () => {
-    const render = renderOf([codeMode, compactionFor({ messageRenderCap: 1234 })], [])
+    const render = renderOf<AgentR>([codeMode, compactionFor({ messageRenderCap: 1234 })], [])
     expect(render.context).toEqual({ messageRenderCap: 1234 })
   })
 
