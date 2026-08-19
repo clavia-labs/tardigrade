@@ -6,9 +6,9 @@
   </picture>
 </p>
 
-# Tardigrade
+<h1 align="center">Tardigrade</h1>
 
-A modular and durable agent harness built for self-improvement.
+<p align="center">A modular and durable agent harness built for self-improvement.</p>
 
 ### A harness made for self-improvement
 
