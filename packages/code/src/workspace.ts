@@ -21,6 +21,11 @@ export interface SqlRunner {
     readonly truncated?: boolean
     readonly error?: string
   }>
+  // doc is what the platform knows about the surface it bound and the generic text cannot say: the
+  // tables that are already there, their columns, the dialect. The sql description is the generic
+  // text, then a single space, then this sentence; an absent doc leaves the generic text alone
+  // (workspace.test.ts, "the sql verb").
+  readonly doc?: string
 }
 
 // WorkspaceSql is the binding platforms declare their SQL surface through. Its default is absent,
@@ -47,6 +52,11 @@ export const workspacePolicyOf = (policy: Partial<WorkspacePolicy> = {}): Worksp
   maxMatches: policy.maxMatches ?? DEFAULT_WORKSPACE_POLICY.maxMatches
 })
 
+// WORKSPACE_SQL_DESCRIPTION is the part of the sql doc that holds wherever the verb exists. What is
+// true of one platform's surface arrives from the runner's own `doc` and is spliced onto the end.
+export const WORKSPACE_SQL_DESCRIPTION =
+  "Run SQL against the workspace. Spilled values live under their refs; use read/grep for those, and CREATE whatever tables you need for structure. A value above the platform's row bound is not readable through sql; read and grep never miss it."
+
 export interface WorkspaceOptions {
   readonly sql?: SqlRunner
   readonly policy?: Partial<WorkspacePolicy>
@@ -62,7 +72,9 @@ export const workspacePackage = (store: KeyValueStore.KeyValueStore, options: Wo
     effect.pipe(Effect.provideService(KeyValueStore.KeyValueStore, store))
   const sqlDoc = {
     description:
-      "Run SQL against the workspace. Spilled values live under their refs; use read/grep for those, and CREATE whatever tables you need for structure. A value above the platform's row bound is not readable through sql; read and grep never miss it.",
+      runner?.doc === undefined || runner.doc === ""
+        ? WORKSPACE_SQL_DESCRIPTION
+        : `${WORKSPACE_SQL_DESCRIPTION} ${runner.doc}`,
     input: {
       type: "object",
       properties: { query: { type: "string" }, params: { type: "array" } },
