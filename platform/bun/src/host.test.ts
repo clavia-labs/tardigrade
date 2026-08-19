@@ -3,11 +3,14 @@ import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@tardigrade/core/event"
 import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
+import { hydrate, refs, spill } from "@tardigrade/code/store"
 
 import { createBunHost, type BunHostOptions } from "./host"
 import { fileTelemetry } from "./file"
+import { bunWorkspace } from "./workspace"
 
 // The bun binding against the reference host's contract, plus the two behaviors only physics
 // can show: a reopened database keeps the log, and recover() settles work a death interrupted.
@@ -103,6 +106,97 @@ describe("the bun host", () => {
     ])
     expect((await h.read("echo")).map((e) => String((e as { id?: unknown }).id))).toEqual(["a", "b", "c"])
     await h.close()
+  })
+})
+
+// The workspace the host binds: a value spilled by one process is on disk, so the next process
+// hydrates the same bytes and reads the same manifest.
+
+const REF = "e1.result"
+const VALUE = JSON.stringify({ rows: Array.from({ length: 500 }, (_, i) => ({ i, text: "wideé\n\"quoted\"" })) })
+
+const workspaceKeyOf = (e: Event): string | undefined =>
+  e.type === "Spilled" || e.type === "Loaded" ? `${e.type}:${String((e as { id?: unknown }).id)}` : undefined
+
+// One reactor spills, the other hydrates: the pair runs in two processes over one database file.
+const reactorOver = (
+  type: string,
+  act: (id: string) => Effect.Effect<Event, KeyValueStore.KeyValueStoreError, KeyValueStore.KeyValueStore>
+): Reactor<KeyValueStore.KeyValueStore> =>
+(events) =>
+  events
+    .filter((e) => e.type === "MessageReceived")
+    .map((e) => {
+      const id = String((e as { id?: unknown }).id)
+      return transition({
+        key: `${type}:${id}`,
+        input: id,
+        act: (input: string) => act(input).pipe(Effect.map((event) => [event]), Effect.orDie)
+      })
+    })
+
+const spiller: Actor<KeyValueStore.KeyValueStore> = {
+  keyOf: workspaceKeyOf,
+  reactors: [reactorOver("Spilled", (id) => Effect.as(spill(REF, VALUE), { type: "Spilled", id, at: 1 } as Event))]
+}
+
+const loader: Actor<KeyValueStore.KeyValueStore> = {
+  keyOf: workspaceKeyOf,
+  reactors: [
+    reactorOver("Loaded", (id) =>
+      Effect.map(Effect.all([hydrate(REF), refs()]), ([value, held]) => ({ type: "Loaded", id, value, refs: held, at: 1 } as Event)))
+  ]
+}
+
+describe("the durable workspace", () => {
+  test("a value spilled before a restart hydrates from disk, manifest and all", async () => {
+    const path = freshPath()
+    const first = await createBunHost({
+      log: path,
+      keyOf: workspaceKeyOf,
+      actorFor: (lane) => (lane === "ws" ? spiller : undefined)
+    })
+    await first.seed("ws", [{ type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
+    await first.wake("ws")
+    await first.close()
+
+    const second = await createBunHost({
+      log: path,
+      keyOf: workspaceKeyOf,
+      actorFor: (lane) => (lane === "ws" ? loader : undefined)
+    })
+    await second.seed("ws", [{ type: "MessageReceived", id: "m2", text: "load", at: 2 } as Event])
+    await second.wake("ws")
+    const loaded = (await second.read("ws")).find((e) => e.type === "Loaded") as { value?: unknown; refs?: unknown }
+    expect(loaded.value).toBe(VALUE)
+    expect(loaded.refs).toEqual([REF])
+    await second.close()
+  })
+
+  test("the workspace option replaces the default store", async () => {
+    const path = freshPath()
+    const first = await createBunHost({
+      log: path,
+      keyOf: workspaceKeyOf,
+      workspace: bunWorkspace("elsewhere"),
+      actorFor: (lane) => (lane === "ws" ? spiller : undefined)
+    })
+    await first.seed("ws", [{ type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
+    await first.wake("ws")
+    await first.close()
+
+    // The default table never saw the write: a host on it hydrates nothing.
+    const second = await createBunHost({
+      log: path,
+      keyOf: workspaceKeyOf,
+      actorFor: (lane) => (lane === "ws" ? loader : undefined)
+    })
+    await second.seed("ws", [{ type: "MessageReceived", id: "m2", text: "load", at: 2 } as Event])
+    await second.wake("ws")
+    const loaded = (await second.read("ws")).find((e) => e.type === "Loaded") as { value?: unknown; refs?: unknown }
+    expect(loaded.value).toBeUndefined()
+    expect(loaded.refs).toEqual([])
+    await second.close()
   })
 })
 

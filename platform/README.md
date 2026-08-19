@@ -11,4 +11,4 @@ in-memory and dependency-free, and it is the executable contract a platform bind
 against.
 
 Nothing lives here yet. `platform/model` (the Infer binding over the AI SDK) is the first
-planned tenant; `platform/bun` binds the log to SQLite through @effect/sql-sqlite-bun; `platform/cloudflare` arrives with the v6 extraction.
+planned tenant; `platform/bun` binds the log to SQLite through @effect/sql-sqlite-bun, and binds the workspace a bounded value spills to (docs/explanations/boundary.md) to a table in that same database, so a run is one file; `platform/cloudflare` arrives with the v6 extraction.

@@ -60,6 +60,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@effect/sql-sqlite-bun": "4.0.0-rc.110",
+        "@tardigrade/code": "workspace:*",
         "@tardigrade/core": "workspace:*",
         "@tardigrade/host": "workspace:*",
         "effect": "4.0.0-rc.110",
