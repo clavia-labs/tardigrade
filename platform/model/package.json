@@ -1,6 +1,7 @@
 {
   "name": "@clavia/tardigrade-model",
   "version": "0.0.1",
+  "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "Infer binding for tardigrade over TanStack AI.",
@@ -32,9 +33,9 @@
     "@clavia/tardigrade": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@smithy/fetch-http-handler": "^5.6.3",
-    "@tanstack/ai": "0.44.0",
-    "@tanstack/ai-bedrock": "0.2.1",
-    "@tanstack/ai-openai": "0.19.0",
+    "@tanstack/ai": "0.46.0",
+    "@tanstack/ai-bedrock": "0.2.3",
+    "@tanstack/ai-openai": "0.20.0",
     "effect": "4.0.0-rc.110"
   },
   "scripts": {
