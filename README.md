@@ -57,7 +57,7 @@ clickhouse local -q "
 
 ## Docs
 
-- [Quickstart](docs/quickstart.md): the concepts in one page: events, projections, transitions, reactors, an agent in three reactors.
+- [Quickstart](docs/quickstart.md): all the core concepts you need to get started.
 - [Why tardigrade](docs/explanations/why.md): {transitions} = f(log), and what the log-as-state shape enables.
 
 ## Layout
