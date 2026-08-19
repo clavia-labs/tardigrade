@@ -34,13 +34,13 @@ export interface Capability<R = never> {
   // The reactors that settle this capability's work.
   readonly reactors?: ReadonlyArray<Reactor<R>>
   // tools derives what the model is shown, a projection of the log like any other: a constant
-  // capability ignores its argument, a gated one filters by what has happened
-  // (docs/how-to/gate-tools.md). The composed tools are what the infer reactor hands the model
+  // capability ignores its argument, a gated one filters by what has happened.
+  // The composed tools are what the infer reactor hands the model
   // binding per attempt; nothing about tools lives in ModelConfig.
   readonly tools?: (log: ReadonlyArray<Event>) => ReadonlyArray<ToolSpec>
   // The system fragment explaining the tools, a projection of the log like `tools`: a constant
   // string is the constant projection, and a function derives the fragment from what has
-  // happened (docs/how-to/gate-tools.md). Fragments join in agentOf order.
+  // happened. Fragments join in agentOf order.
   readonly system?: string | ((log: ReadonlyArray<Event>) => string)
   // What the render truncates and where. The capability that applies a context policy to its
   // reactor states the same one here, so the binding renders against the policy the guard
@@ -125,8 +125,7 @@ const EXECUTE_TOOL: ToolSpec = {
 
 // CODE_SYSTEM is code mode's default system fragment: it names the tool the model acts with and
 // the packages in scope. A host whose packages come from the log renders its own fragment and
-// passes it to codeModeFor, so the default is a value you can read and a value you can replace
-// (docs/how-to/gate-tools.md).
+// passes it to codeModeFor, so the default is a value you can read and a value you can replace.
 export const CODE_SYSTEM = `You act on the world by calling the execute tool with JavaScript; the packages in scope are:\nnone`
 
 // settleFor reads one execution's outcome, once the code reactor has recorded it.
