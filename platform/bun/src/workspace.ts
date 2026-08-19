@@ -45,6 +45,20 @@ export const bunWorkspaceSqlPolicyOf = (policy: Partial<BunWorkspaceSqlPolicy> =
   bytes: policy.bytes ?? DEFAULT_BUN_WORKSPACE_SQL_POLICY.bytes
 })
 
+// DEFAULT_BUN_WORKSPACE_SQL_DOC is what the model is told about the surface `bunWorkspaceSql()`
+// binds under the default host wiring: its own SQLite file, which starts empty. A consumer who
+// points the surface at another database passes the `doc` that is true of it, and one who points it
+// at the host's own client has `bunWorkspaceLogSqlDoc` for the tables that are already there.
+export const DEFAULT_BUN_WORKSPACE_SQL_DOC =
+  "The surface is SQLite, and the database is yours: it starts empty, holds the tables you CREATE, and lasts as long as the run's log does. Spilled values are held outside it, so read and grep are how you reach those."
+
+// bunWorkspaceLogSqlDoc names the workspace store's own table, for a surface built over the host's
+// client, where the log's database is the one the model queries. `id` is the ref a truncation
+// pointed at and `value` is its JSON, so a row here is a spilled value; read and grep still see one
+// whole whatever its size, which SQL over this table does not promise.
+export const bunWorkspaceLogSqlDoc = (table: string = WORKSPACE_TABLE): string =>
+  `This database is the run's own. ${table}(id, value, value_type) is the workspace store: id is a value's ref and value is its JSON. Use read and grep to see a spilled value whole, and SQL here for shape across them.`
+
 // workspaceSqlFile is where the default surface's database lives: a sibling of the log, named after
 // it, so the two files of one run travel together. A volatile log gets a volatile surface.
 export const workspaceSqlFile = (log: string): string => {
@@ -82,14 +96,15 @@ const boundedBy = (policy: BunWorkspaceSqlPolicy, rows: ReadonlyArray<Record<str
 // piece of information and it is the one who has to fix the SQL (packages/code/src/workspace.ts;
 // host.test.ts, "a broken query answers an error the model can read").
 export const bunWorkspaceSql = (
-  policy: Partial<BunWorkspaceSqlPolicy> = {}
+  options: Partial<BunWorkspaceSqlPolicy> & { readonly doc?: string } = {}
 ): Layer.Layer<never, never, SqlClient.SqlClient> => {
-  const bounds = bunWorkspaceSqlPolicyOf(policy)
+  const bounds = bunWorkspaceSqlPolicyOf(options)
   return Layer.effect(
     WorkspaceSql,
     Effect.map(
       SqlClient.SqlClient,
       (sql): SqlRunner => ({
+        doc: options.doc ?? DEFAULT_BUN_WORKSPACE_SQL_DOC,
         sql: (query, params) =>
           sql.unsafe<Record<string, unknown>>(query, params).pipe(
             Effect.map((rows) => boundedBy(bounds, rows)),

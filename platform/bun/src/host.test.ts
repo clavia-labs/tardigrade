@@ -8,11 +8,17 @@ import type { Event } from "@tardigrade/core/event"
 import { transition, type Actor, type Reactor } from "@tardigrade/core/actor"
 import { hydrate, refs, spill } from "@tardigrade/code/store"
 
-import { workspaceFor } from "@tardigrade/code/workspace"
+import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@tardigrade/code/workspace"
 
 import { createBunHost, type BunHost, type BunHostOptions } from "./host"
 import { fileTelemetry } from "./file"
-import { bunWorkspace, bunWorkspaceSql } from "./workspace"
+import {
+  bunWorkspace,
+  bunWorkspaceLogSqlDoc,
+  bunWorkspaceSql,
+  DEFAULT_BUN_WORKSPACE_SQL_DOC,
+  WORKSPACE_TABLE
+} from "./workspace"
 
 // The bun binding against the reference host's contract, plus the two behaviors only physics
 // can show: a reopened database keeps the log, and recover() settles work a death interrupted.
@@ -301,6 +307,7 @@ const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStor
                     id: input,
                     methods: Object.keys(pkg.methods).sort(),
                     doc: pkg.docs?.["sql"] !== undefined,
+                    sqlDoc: pkg.docs?.["sql"]?.description ?? "",
                     answers,
                     at: 1
                   } as Event
@@ -314,11 +321,16 @@ const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStor
 const asked = async (
   host: BunHost,
   id: string
-): Promise<{ methods: ReadonlyArray<string>; doc: boolean; answers: ReadonlyArray<Answer> }> => {
+): Promise<{ methods: ReadonlyArray<string>; doc: boolean; sqlDoc: string; answers: ReadonlyArray<Answer> }> => {
   await host.seed("ws", [{ type: "MessageReceived", id, text: "ask", at: 1 } as Event])
   await host.wake("ws")
   const found = (await host.read("ws")).find((e) => e.type === "Answered" && String((e as { id?: unknown }).id) === id)
-  return found as unknown as { methods: ReadonlyArray<string>; doc: boolean; answers: ReadonlyArray<Answer> }
+  return found as unknown as {
+    methods: ReadonlyArray<string>
+    doc: boolean
+    sqlDoc: string
+    answers: ReadonlyArray<Answer>
+  }
 }
 
 describe("the workspace sql surface", () => {
@@ -351,6 +363,28 @@ describe("the workspace sql surface", () => {
       actorFor: (lane) => (lane === "ws" ? asker(["SELECT COUNT(*) AS n FROM events"]) : undefined)
     })
     expect((await asked(h, "m1")).answers[0]?.error).toContain("events")
+    await h.close()
+  })
+
+  test("the sql doc says what the bound surface is, generic text first", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      actorFor: (lane) => (lane === "ws" ? asker([]) : undefined)
+    })
+    expect((await asked(h, "m1")).sqlDoc).toBe(`${WORKSPACE_SQL_DESCRIPTION} ${DEFAULT_BUN_WORKSPACE_SQL_DOC}`)
+    await h.close()
+  })
+
+  test("a surface over the log's own client names the table the spilled values are in", async () => {
+    const h = await createBunHost({
+      log: freshPath(),
+      keyOf: askKeyOf,
+      workspaceSql: bunWorkspaceSql({ doc: bunWorkspaceLogSqlDoc() }),
+      actorFor: (lane) => (lane === "ws" ? asker([]) : undefined)
+    })
+    expect((await asked(h, "m1")).sqlDoc).toBe(`${WORKSPACE_SQL_DESCRIPTION} ${bunWorkspaceLogSqlDoc()}`)
+    expect(bunWorkspaceLogSqlDoc()).toContain(`${WORKSPACE_TABLE}(id, value, value_type)`)
     await h.close()
   })
 
