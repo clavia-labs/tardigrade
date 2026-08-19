@@ -1,19 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="30 294 1240 712" width="1240" height="712">
-<mask id="cuts-dark">
-  <circle cx="1060" cy="694" r="190" fill="#fff"/>
-  <circle cx="1060" cy="694" r="190" fill="none" stroke="#000" stroke-width="48"/>
-  <circle cx="830" cy="639" r="255" fill="#fff"/>
-  <circle cx="830" cy="639" r="255" fill="none" stroke="#000" stroke-width="48"/>
-  <circle cx="565" cy="604" r="300" fill="#fff"/>
-  <circle cx="565" cy="604" r="300" fill="none" stroke="#000" stroke-width="48"/>
-  <circle cx="255" cy="674" r="205" fill="#fff"/>
-  <circle cx="255" cy="674" r="205" fill="none" stroke="#000" stroke-width="48"/>
-  <circle cx="555" cy="954" r="42" fill="#fff"/>
-  <circle cx="850" cy="954" r="42" fill="#fff"/>
-  <circle cx="1125" cy="954" r="42" fill="#fff"/>
-</mask>
-<g>
-<rect width="1300" height="1300" fill="#ffffff" mask="url(#cuts-dark)"/>
-<circle cx="180" cy="704" r="54" fill="none" stroke="#111318" stroke-width="40"/>
+<g transform="translate(10 254)" fill="#ffffff">
+  <circle cx="245" cy="420" r="181"/>
+  <path d="M 320.83 203.92 A 276 276 0 1 1 406.32 582.53 A 229 229 0 0 0 320.83 203.92 Z"/>
+  <path d="M 813.07 154.10 A 231 231 0 1 1 753.36 606.18 A 324 324 0 0 0 813.07 154.10 Z"/>
+  <path d="M 1076.91 276.20 A 166 166 0 1 1 999.89 598.26 A 279 279 0 0 0 1076.91 276.20 Z"/>
+  <circle cx="545" cy="700" r="42"/>
+  <circle cx="840" cy="700" r="42"/>
+  <circle cx="1115" cy="700" r="42"/>
+  <circle cx="170" cy="450" r="54" fill="none" stroke="#111318" stroke-width="40"/>
 </g>
 </svg>
