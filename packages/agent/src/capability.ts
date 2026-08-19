@@ -1,4 +1,5 @@
 import { Clock, Effect } from "effect"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import { actor, transition, type Actor, type Reactor, type Self } from "@tardigrade/core/actor"
 import { composeKeys, type KeyFragment } from "@tardigrade/core/event-log"
 import { messageKeys } from "@tardigrade/core/message"
@@ -180,7 +181,7 @@ const codeServe: Serve = (call, log, answer) => {
 export const codeModeFor = (
   policy: Partial<CodePolicy>,
   render: { readonly system?: Capability["system"] } = {}
-): Capability => ({
+): Capability<KeyValueStore.KeyValueStore> => ({
   name: "code",
   keys: codeKeys,
   reactors: [codeReactorFor(policy)],
@@ -190,7 +191,7 @@ export const codeModeFor = (
 })
 
 // codeMode is that capability on defaults: the library default work surface.
-export const codeMode: Capability = codeModeFor({})
+export const codeMode: Capability<KeyValueStore.KeyValueStore> = codeModeFor({})
 
 // A NativeTool is one named tool the model calls directly: its wire shape, and the effect that
 // runs it. The effect's failures are the tool's own answer, so a tool that throws returns an

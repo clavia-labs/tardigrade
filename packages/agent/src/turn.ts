@@ -1,4 +1,5 @@
 import { Clock, Effect } from "effect"
+import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@tardigrade/core/event-log"
 import { send, type Actor } from "@tardigrade/core/actor"
 import type { Router } from "@tardigrade/core/router"
@@ -11,8 +12,10 @@ import type { CodePolicy } from "@tardigrade/code/execute"
 export { Infer } from "./infer"
 
 // AgentR is the runtime's needs: Infer for the model, EventLog for settle, Router and Self for
-// reply. Capabilities add their own on top (capability.ts, RequirementsOf).
-export type AgentR = Infer | EventLog | Router | Self
+// reply, and KeyValueStore for the spill store code mode writes bounded results to
+// (packages/code/src/spill.ts). Capabilities add their own on top (capability.ts,
+// RequirementsOf).
+export type AgentR = Infer | EventLog | Router | Self | KeyValueStore.KeyValueStore
 export type RlmR = AgentR
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
