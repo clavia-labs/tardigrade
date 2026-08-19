@@ -38,7 +38,7 @@ export {
 
 // The capability assembly: code mode is the default, and an agent measured against a fixed
 // tool list mounts its own (capability.ts).
-export { agentOf, renderOf, codeMode, codeModeFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
+export { agentOf, renderOf, codeMode, codeModeFor, CODE_SYSTEM, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
 
 export interface CreateAgentOptions {
   readonly packages?: ReadonlyArray<Package>

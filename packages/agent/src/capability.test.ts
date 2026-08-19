@@ -4,7 +4,7 @@ import type { Event } from "@tardigrade/core/event"
 import { EventLog, withWatermark } from "@tardigrade/core/event-log"
 import { Router } from "@tardigrade/core/router"
 import { Self } from "@tardigrade/core/actor"
-import { agentOf, budget, codeMode, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
+import { agentOf, budget, CODE_SYSTEM, codeMode, codeModeFor, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
 import { receive } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
@@ -112,5 +112,34 @@ describe("agentOf", () => {
     const render = renderOf([codeMode, echoTable], [])
     expect(render.tools.map((t) => t.name)).toEqual(["execute", "echo"])
     expect(render.system.indexOf("execute")).toBeLessThan(render.system.indexOf("echo"))
+  })
+
+  test("a system fragment is a projection: it reads the log renderOf was handed", () => {
+    const seen: ReadonlyArray<Event>[] = []
+    const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }, { type: "PackageInstalled", name: "slack" }]
+    const catalog = {
+      name: "catalog",
+      system: (events: ReadonlyArray<Event>) => {
+        seen.push(events)
+        return `packages: ${events.map((e) => String((e as { name?: unknown }).name)).join(", ")}`
+      }
+    }
+    const render = renderOf([catalog, echoTable], log)
+    expect(seen).toEqual([log])
+    expect(render.system).toContain("packages: github, slack")
+    // A constant fragment stays what it says, beside the derived one.
+    expect(render.system).toContain("echo")
+  })
+
+  test("renderOf over one log is deterministic", () => {
+    const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
+    const capability = { name: "catalog", system: (events: ReadonlyArray<Event>) => `count: ${events.length}` }
+    expect(renderOf([codeMode, capability], log)).toEqual(renderOf([codeMode, capability], log))
+  })
+
+  test("codeModeFor takes a system fragment, and the bare capability renders the exported default", () => {
+    const overridden = renderOf([codeModeFor({}, { system: (events) => `the packages in scope are:\n${events.length}` })], [{ type: "PackageInstalled" }])
+    expect(overridden.system).toBe("the packages in scope are:\n1")
+    expect(renderOf([codeMode], []).system).toBe(CODE_SYSTEM)
   })
 })
