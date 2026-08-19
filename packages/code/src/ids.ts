@@ -12,4 +12,4 @@ export const mintedRunId = (mint: string): string => `${RUN_PREFIX}${mint}`
 export const callId = (execId: string, n: number): string => `${execId}.${n}`
 
 // replyId and REPLY_SUFFIX come from core: a reply answers any actor, code or agent alike.
-export { REPLY_SUFFIX, replyId } from "@tardigrade/core/reply"
+export { REPLY_SUFFIX, replyId } from "@clavia/tardigrade-core/reply"

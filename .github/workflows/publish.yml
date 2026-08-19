@@ -1,0 +1,41 @@
+name: publish
+
+# Trusted publishing (OIDC). The workflow filename is part of the trust
+# pin on npmjs.com; renaming this file breaks publishes until the package
+# settings match. bun publish does not speak OIDC, so tools/publish.ts packs
+# with bun and uploads with npm.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Pack without publishing
+        type: boolean
+        default: false
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bun run gate
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Publish
+        run: bun run tools/publish.ts ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}

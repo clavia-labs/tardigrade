@@ -1,5 +1,5 @@
 import * as Graph from "effect/Graph"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 // Deadlock detection over the waits-for graph. Lanes are nodes; an
 // unanswered awaiting call is an edge to the lane whose settle answers

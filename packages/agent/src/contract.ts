@@ -1,5 +1,5 @@
 import { Validator } from "@cfworker/json-schema"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 // The turn's output contract. A declared schema is checked here before an answer becomes the
 // terminal: a model can produce a well-formed tool call whose arguments still miss the schema,

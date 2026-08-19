@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@tardigrade/core/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "./events"
 import { Effect } from "effect"
 import { createRlmAgent } from "./index"

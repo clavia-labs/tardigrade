@@ -1,8 +1,8 @@
 import { Clock, Effect } from "effect"
-import { transition, type Reactor } from "@tardigrade/core/actor"
+import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { compactionCompleted } from "./events"
-import type { Event } from "@tardigrade/core/event"
-import { turnOf, turnView } from "@tardigrade/code/turns"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
 import { Infer } from "./infer"
 
 // The compaction reactor: a pure observer of the context size, with the hysteresis design. A

@@ -1,18 +1,39 @@
 {
-  "name": "@tardigrade/agent",
+  "name": "@clavia/tardigrade",
   "version": "0.0.0",
-  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "A durable agent harness. State is a pure function of the log.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/agent"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@tardigrade/core": "workspace:*",
-    "@tardigrade/code": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
     "effect": "4.0.0-rc.110",
-    "@tardigrade/host": "workspace:*"
+    "@clavia/tardigrade-host": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

@@ -1,8 +1,8 @@
 import { Clock, Effect } from "effect"
-import { transition, type Reactor, type Transition } from "@tardigrade/core/actor"
+import { transition, type Reactor, type Transition } from "@clavia/tardigrade-core/actor"
 import { budgetRequested, toolReturned } from "./events"
-import type { Event } from "@tardigrade/core/event"
-import { turnView } from "@tardigrade/code/turns"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { turnView } from "@clavia/tardigrade-code/turns"
 import { budgetSpent } from "./budget"
 import { answerErrors, outputSchemaOf, repairText } from "./contract"
 // The tools reactor: the agent's side of the tool table. The policy here is the same whatever
