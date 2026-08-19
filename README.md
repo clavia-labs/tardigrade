@@ -8,9 +8,13 @@
 
 # Tardigrade
 
-### Log is all you need
+### A harness made for self-improvement
 
-Tardigrade is a durable agent harness built with the log as its core. State at any point is a pure function of the log, and the harness is a set of transitions derived from it.
+Building and running an agent in production is tough. There are a thousand reasons your agents can misbehave. We often handcraft a new eval case and hope the agent doesn't run into a similar situation in the future. As models get more capable, they will be able to do these improvements themselves. To create a cycle of self-improvement, we need a harness that can be inspected, forked, and varied (meta-harnesses explore this). Observability and the ergonomics around using it should be native to the harness. Imagine an agent taking any production run that went wrong, forking it, customizing any part of the harness, and replaying thousands of variations before your users hit the next one. We made this possible with tardigrade.
+
+### How it works
+
+How can a harness be extremely customizable, yet remain reliable in production? We took inspiration from React. Designing a harness is not very different from designing a user interface, except here the user is a language model. React solved this for the DOM by declaring the component tree as a function of state: `UI = f(state)`. Less known is that the set of valid state transitions is also derived from the same function: `{transitions} = f(state)`. The simplicity of React enabled expressiveness in authoring applications without sacrificing reliability. A harness needs the same shape as React, but with the log as state. A harness can and should be described simply as
 
 $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
