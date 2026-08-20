@@ -25,11 +25,11 @@ Base path `/v1`. One actor is served today, named `agent`.
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
 ```bash
-curl -X POST localhost:4111/v1/actors/agent/threads/inv-81/events \
+curl -X POST localhost:4242/v1/actors/agent/threads/inv-81/events \
   -d '{"id":"m1","type":"MessageReceived","text":"audit the deploy"}'
 # {"actor":"agent","thread":"inv-81"}
 
-curl localhost:4111/v1/actors/agent/threads/inv-81/turns
+curl localhost:4242/v1/actors/agent/threads/inv-81/turns
 # [{"turn":"m1","status":"completed","output":"…","epoch":0}]
 ```
 
@@ -53,7 +53,7 @@ Every failure is `application/problem+json`.
 
 | | |
 | --- | --- |
-| `PORT` | `4111` |
+| `PORT` | `4242` |
 | `TARDIGRADE_DB` | `agents.sqlite` |
 | `TARDIGRADE_TOKEN` | Unset. When set, every route but `/healthz`, `/openapi.json`, and `/docs` needs `Authorization: Bearer` |
 | `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
@@ -67,6 +67,6 @@ The server boots without a model and serves every read; turns fail naming what i
 ```ts
 import { makeClient } from "tardie/client"
 
-const client = makeClient({ baseUrl: "http://localhost:4111" })
+const client = makeClient({ baseUrl: "http://localhost:4242" })
 await client.append("inv-81", { id: "m1", type: "MessageReceived", text: "audit the deploy" })
 ```

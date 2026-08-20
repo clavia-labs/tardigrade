@@ -7,7 +7,7 @@ import { Context, Layer } from "effect"
 // a test can supply its own without touching process.env (http.test.ts).
 
 // Where the HTTP server listens when PORT is absent.
-export const DEFAULT_PORT = 4111
+export const DEFAULT_PORT = 4242
 
 // Where the log lives when TARDIGRADE_DB is absent: a SQLite file beside the working directory.
 export const DEFAULT_DB = "agents.sqlite"

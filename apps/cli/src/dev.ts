@@ -1,5 +1,6 @@
-import { Effect, Layer } from "effect"
-import { HttpRouter, HttpStaticServer } from "effect/unstable/http"
+import { Console, Context, Effect, Layer } from "effect"
+import { createServer } from "node:net"
+import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
@@ -17,9 +18,68 @@ import { resolveAssets } from "./assets"
 // (docs/how-to/server.md, dev.test.ts, "the API answers without a token, on loopback").
 export const DEV_HOST = "127.0.0.1"
 
+// DEV_URL_HOST is the hostname shown to a person and opened in their browser. The listening
+// interface remains DEV_HOST (dev.test.ts, "the API answers without a token, on loopback").
+export const DEV_URL_HOST = "localhost"
+
+// DEFAULT_MIN_PORT is the lowest automatic fallback `tdg dev` tries when its implicit default is
+// occupied. The `--min-port` flag lets a caller narrow this range.
+export const DEFAULT_MIN_PORT = 1024
+
 // The status that means the router matched nothing. It is the seam the UI is served through: the
 // declared routes answer first, and only a path none of them owns reaches the build.
 export const UNMATCHED = 404
+
+export type BrowserPlatform = "darwin" | "linux" | "win32"
+
+// browserCommand returns the operating system command that opens an HTTP URL in the default
+// browser.
+export const browserCommand = (url: string, platform: BrowserPlatform = process.platform as BrowserPlatform): Array<string> =>
+  platform === "darwin"
+    ? ["open", url]
+    : platform === "win32"
+    ? ["cmd", "/c", "start", "", url]
+    : ["xdg-open", url]
+
+// openBrowser opens a URL and reports a launcher failure after the operating system command exits.
+export const openBrowser = async (url: string): Promise<void> => {
+  const command = browserCommand(url)
+  const child = Bun.spawn(command, { stdin: "ignore", stdout: "ignore", stderr: "ignore" })
+  const code = await child.exited
+  if (code !== 0) throw new Error(`${command[0]} exited ${code}`)
+}
+
+export type PortAvailable = (port: number, host: string) => Promise<boolean>
+
+// portIsAvailable probes one loopback port before the application layer starts listening.
+export const portIsAvailable: PortAvailable = (port, host) =>
+  new Promise((resolve, reject) => {
+    const server = createServer()
+    server.unref()
+    server.once("error", (error: NodeJS.ErrnoException) => {
+      if (error.code === "EADDRINUSE") resolve(false)
+      else reject(error)
+    })
+    server.once("listening", () => {
+      server.close((error) => error === undefined ? resolve(true) : reject(error))
+    })
+    server.listen({ port, host, exclusive: true })
+  })
+
+// availableDevPort returns the first available port at or below preferred, down to minimum.
+export const availableDevPort = async (
+  preferred: number,
+  minimum: number = DEFAULT_MIN_PORT,
+  available: PortAvailable = portIsAvailable
+): Promise<number> => {
+  if (!Number.isInteger(minimum) || minimum < 0 || minimum > preferred) {
+    throw new Error(`--min-port must be an integer between 0 and ${preferred}, got ${minimum}`)
+  }
+  for (let candidate = preferred; candidate >= minimum; candidate--) {
+    if (await available(candidate, DEV_HOST)) return candidate
+  }
+  throw new Error(`no available port between ${minimum} and ${preferred}`)
+}
 
 // layerVoyager serves a built directory under whatever the router did not match. It is a middleware
 // rather than a `GET /*` route because the server already answers every unmatched path with a
@@ -52,6 +112,8 @@ export interface DevOptions {
   readonly threads?: ThreadsOptions | undefined
   readonly disableLogger?: boolean | undefined
   readonly disableListenLog?: boolean | undefined
+  // onListen receives the UI URL after the server owns its listening socket.
+  readonly onListen?: ((url: string) => Promise<void>) | undefined
 }
 
 // dev is the whole command: resolve the build, open the store, listen on loopback. It answers a
@@ -64,11 +126,21 @@ export const dev = (options: DevOptions) => {
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).
-  return Layer.provideMerge(
+  const running = Layer.provideMerge(
     HttpRouter.serve(Layer.mergeAll(layerApp(), layerVoyager(root)), {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
     [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads]
   )
+  if (options.onListen === undefined) return running
+  return Layer.tap(running, (context) => {
+    const server = Context.get(context, HttpServer.HttpServer)
+    const address = server.address
+    const port = address._tag === "TcpAddress" ? address.port : options.config.port
+    const url = `http://${DEV_URL_HOST}:${port}`
+    return Effect.tryPromise(() => options.onListen!(url)).pipe(
+      Effect.catch((error) => Console.log(`could not open ${url}: ${String(error)}`))
+    )
+  })
 }

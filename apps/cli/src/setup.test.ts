@@ -10,6 +10,9 @@ import {
   CONFIG_DIR_MODE,
   CONFIG_MODE,
   homeOf,
+  listedModels,
+  modelListUrl,
+  modelsAt,
   PRESETS,
   setupJson,
   setupSummary,
@@ -42,13 +45,57 @@ describe("the presets", () => {
   // Every entry is a URL this repository promises to keep correct, so the list stays short and each
   // prefill is an absolute https origin (setup.ts, PRESETS).
   test("each preset either prefills an https base URL or asks for one", () => {
-    expect(PRESETS.length).toBeLessThanOrEqual(5)
     for (const preset of PRESETS) {
       if (preset.baseUrl !== undefined) expect(preset.baseUrl.startsWith("https://")).toBe(true)
       expect(preset.title.length).toBeGreaterThan(0)
     }
+    expect(PRESETS.find((preset) => preset.title === "Vercel AI Gateway")?.baseUrl).toBe("https://ai-gateway.vercel.sh/v1")
+    expect(PRESETS.find((preset) => preset.title === "Cloudflare AI Gateway")?.baseUrl).toBeUndefined()
+    expect(PRESETS.find((preset) => preset.title === "OpenRouter")?.modelExample).toContain("/")
+    expect(PRESETS.find((preset) => preset.title === "OpenRouter")?.credential).toBe("OpenRouter API key")
     expect(PRESETS.some((preset) => preset.provider === "bedrock")).toBe(true)
     expect(PRESETS.some((preset) => preset.baseUrl === undefined && preset.provider === undefined)).toBe(true)
+  })
+})
+
+describe("model discovery", () => {
+  test("the common list shape becomes stable searchable choices", () => {
+    expect(listedModels({
+      data: [
+        { id: "z/model", name: "Zed" },
+        { id: "a/model" },
+        { id: "z/model", name: "Zed latest" },
+        { name: "missing id" },
+        "b/model"
+      ]
+    })).toEqual([
+      { id: "a/model" },
+      { id: "b/model" },
+      { id: "z/model", name: "Zed latest" }
+    ])
+  })
+
+  test("modelsAt sends the credential to the base URL's discovery route", async () => {
+    let url = ""
+    let authorization = ""
+    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      url = String(input)
+      authorization = new Headers(init?.headers).get("authorization") ?? ""
+      return Response.json({ data: [{ id: "provider/model" }] })
+    }) as typeof fetch
+    expect(await modelsAt("https://models.example/v1/", KEY, { fetch: fetcher, timeoutMillis: 100 })).toEqual([
+      { id: "provider/model" }
+    ])
+    expect(url).toBe(modelListUrl("https://models.example/v1/"))
+    expect(authorization).toBe(`Bearer ${KEY}`)
+  })
+
+  test("a refused discovery request is available to the manual fallback", async () => {
+    const fetcher = (async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
+      new Response(undefined, { status: 404 })) as typeof fetch
+    expect(modelsAt("https://models.example/v1", KEY, { fetch: fetcher, timeoutMillis: 100 })).rejects.toThrow(
+      "model list returned 404"
+    )
   })
 })
 
@@ -116,7 +163,7 @@ describe("what setup prints", () => {
     expect(summary).not.toContain(KEY)
     expect(summary).toContain(path)
     expect(summary).toContain("a-model")
-    expect(summary).toContain("stored")
+    expect(summary).not.toContain("key")
     const json = setupJson(path, { ...answers, provider: "bedrock" })
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.apiKey).toBe("stored")

@@ -28,7 +28,7 @@ import { stream, type OpenEventSource, type StreamOptions } from "./stream"
 
 // Where the server listens when a caller states no base URL, matching the server's own DEFAULT_PORT
 // (apps/server/src/config.ts).
-export const DEFAULT_BASE_URL = "http://localhost:4111"
+export const DEFAULT_BASE_URL = "http://localhost:4242"
 
 // The titles a failure that carries no problem document shows. They stand where the server's own
 // `title` would be, so a screen renders one field either way.

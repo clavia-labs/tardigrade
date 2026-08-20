@@ -1,4 +1,4 @@
-import { Effect, Redacted } from "effect"
+import { Console, Effect, Redacted } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 
@@ -18,6 +18,11 @@ import { configPathIn, parseFileConfig, type Env, type FileConfig } from "./conf
 export const CONFIG_MODE = 0o600
 export const CONFIG_DIR_MODE = 0o700
 
+// DEFAULT_MODEL_LIST_TIMEOUT_MILLIS bounds the optional model discovery request. A provider that
+// does not answer still leaves manual entry available, and callers of modelsAt can state another
+// bound.
+export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
+
 // Preset is one entry in the provider select. `baseUrl` prefills the next prompt and stays
 // editable; an absent one asks with no default. `provider` names a protocol other than the
 // OpenAI-compatible one the model binding speaks by default (platform/model/src/model.ts).
@@ -29,23 +34,48 @@ export interface Preset {
   readonly description: string
   readonly baseUrl?: string
   readonly provider?: string
+  readonly modelExample?: string
+  readonly credential?: string
+  readonly modelsUrl?: string
 }
 
 export const PRESETS: ReadonlyArray<Preset> = [
   {
     title: "OpenAI",
     description: "The OpenAI-compatible protocol the binding speaks by default",
-    baseUrl: "https://api.openai.com/v1"
+    baseUrl: "https://api.openai.com/v1",
+    modelExample: "gpt-5.2",
+    credential: "OpenAI API key",
+    modelsUrl: "https://platform.openai.com/docs/models"
   },
   {
     title: "OpenRouter",
     description: "One key across many providers, over the same protocol",
-    baseUrl: "https://openrouter.ai/api/v1"
+    baseUrl: "https://openrouter.ai/api/v1",
+    modelExample: "anthropic/claude-sonnet-latest",
+    credential: "OpenRouter API key",
+    modelsUrl: "https://openrouter.ai/models"
+  },
+  {
+    title: "Vercel AI Gateway",
+    description: "One Vercel key across providers, over the OpenAI-compatible protocol",
+    baseUrl: "https://ai-gateway.vercel.sh/v1",
+    modelExample: "anthropic/claude-opus-5",
+    credential: "Vercel AI Gateway API key",
+    modelsUrl: "https://vercel.com/ai-gateway/models"
+  },
+  {
+    title: "Cloudflare AI Gateway",
+    description: "Cloudflare's account-scoped OpenAI-compatible endpoint",
+    modelExample: "openai/gpt-4.1",
+    credential: "Cloudflare API token",
+    modelsUrl: "https://developers.cloudflare.com/ai-gateway/models/"
   },
   {
     title: "Amazon Bedrock",
     description: "Bedrock's own protocol. The base URL is your region's runtime endpoint",
-    provider: "bedrock"
+    provider: "bedrock",
+    credential: "AI Gateway API key"
   },
   {
     title: "Other",
@@ -64,11 +94,69 @@ export interface SetupAnswers {
 const nonEmpty = (what: string) => (value: string): Effect.Effect<string, string> =>
   value.trim().length === 0 ? Effect.fail(`${what} cannot be empty`) : Effect.succeed(value.trim())
 
-// setupPrompt is the conversation: the provider, then the base URL that provider suggested, then
-// the model id, then the key. The key prompt is `Prompt.password`, so the characters never reach
-// the terminal, and the value it answers with is `Redacted` until this function unwraps it to hand
-// it to the writer.
-export const setupPrompt = Effect.gen(function*() {
+export interface ListedModel {
+  readonly id: string
+  readonly name?: string
+}
+
+export interface ModelListOptions {
+  readonly fetch?: typeof globalThis.fetch
+  readonly timeoutMillis?: number
+}
+
+// modelListUrl is the OpenAI-compatible discovery route for a configured base URL.
+export const modelListUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, "")}/models`
+
+// listedModels reads the common OpenAI model-list shape. Unknown rows are ignored, duplicate IDs
+// collapse, and the returned order is stable for the picker.
+export const listedModels = (raw: unknown): ReadonlyArray<ListedModel> => {
+  if (typeof raw !== "object" || raw === null) return []
+  const source = raw as Record<string, unknown>
+  const rows = Array.isArray(source["data"]) ? source["data"] : Array.isArray(source["models"]) ? source["models"] : []
+  const found = new Map<string, ListedModel>()
+  for (const row of rows) {
+    if (typeof row === "string") {
+      const id = row.trim()
+      if (id.length > 0) found.set(id, { id })
+      continue
+    }
+    if (typeof row !== "object" || row === null) continue
+    const value = row as Record<string, unknown>
+    if (typeof value["id"] !== "string" || value["id"].trim().length === 0) continue
+    const id = value["id"].trim()
+    const name = typeof value["name"] === "string" && value["name"].trim().length > 0 ? value["name"].trim() : undefined
+    found.set(id, name === undefined ? { id } : { id, name })
+  }
+  return [...found.values()].sort((left, right) => left.id.localeCompare(right.id))
+}
+
+// modelsAt asks an OpenAI-compatible endpoint for the models visible to the supplied credential.
+export const modelsAt = async (
+  baseUrl: string,
+  apiKey: string,
+  options: ModelListOptions = {}
+): Promise<ReadonlyArray<ListedModel>> => {
+  const fetcher = options.fetch ?? globalThis.fetch
+  const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
+  const response = await fetcher(modelListUrl(baseUrl), {
+    headers: { accept: "application/json", authorization: `Bearer ${apiKey}` },
+    signal: AbortSignal.timeout(timeoutMillis)
+  })
+  if (!response.ok) throw new Error(`model list returned ${response.status}`)
+  return listedModels(await response.json())
+}
+
+export interface SetupPromptOptions {
+  readonly current?: { readonly id?: string | undefined }
+  readonly modelList?: ModelListOptions
+}
+
+type ModelPick = { readonly tag: "model"; readonly id: string } | { readonly tag: "manual" }
+
+// setupPrompt is the conversation: provider, base URL, credential, then a searchable model list.
+// The password prompt keeps the credential redacted, and a failed discovery request falls back to
+// manual entry without blocking setup.
+export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(function*() {
   const preset = yield* Prompt.select({
     message: "Which model provider?",
     choices: PRESETS.map((preset) => ({ title: preset.title, value: preset, description: preset.description }))
@@ -78,8 +166,45 @@ export const setupPrompt = Effect.gen(function*() {
     ...(preset.baseUrl === undefined ? {} : { default: preset.baseUrl }),
     validate: nonEmpty("the base URL")
   })
-  const id = yield* Prompt.text({ message: "Model id", validate: nonEmpty("the model id") })
-  const apiKey = yield* Prompt.password({ message: "API key", validate: nonEmpty("the API key") })
+  const apiKey = yield* Prompt.password({
+    message: preset.credential ?? "API key",
+    validate: nonEmpty("the API key")
+  })
+  const loaded = yield* Effect.tryPromise(() => modelsAt(baseUrl, Redacted.value(apiKey), options.modelList)).pipe(
+    Effect.match({ onFailure: () => undefined, onSuccess: (models) => models })
+  )
+  const current = options.current?.id?.trim()
+  const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
+  const manual = () => Prompt.text({
+    message: `${preset.modelExample === undefined ? "Model ID" : `Model ID, for example ${preset.modelExample}`}${catalog}`,
+    ...(current === undefined || current.length === 0 ? {} : { default: current }),
+    validate: nonEmpty("the model ID")
+  })
+  let id: string
+  if (loaded === undefined || loaded.length === 0) {
+    yield* Console.log(`Could not load a model list from ${modelListUrl(baseUrl)}. Enter a model ID manually.`)
+    id = yield* manual()
+  } else {
+    const models = [...loaded]
+    if (current !== undefined && current.length > 0 && !models.some((model) => model.id === current)) {
+      models.unshift({ id: current, name: "Currently configured" })
+    }
+    const picked = yield* Prompt.autoComplete<ModelPick>({
+      message: `Choose a model${catalog}`,
+      filterLabel: "model",
+      filterPlaceholder: "type to filter",
+      choices: [
+        ...models.map((model) => ({
+          title: model.id,
+          value: { tag: "model", id: model.id } as const,
+          ...(model.name === undefined || model.name === model.id ? {} : { description: model.name }),
+          ...(model.id === current ? { selected: true } : {})
+        })),
+        { title: "Enter a model ID manually", value: { tag: "manual" } as const }
+      ]
+    })
+    id = picked.tag === "model" ? picked.id : yield* manual()
+  }
   return {
     baseUrl,
     id,
@@ -135,8 +260,7 @@ export const setupSummary = (path: string, answers: SetupAnswers): string =>
   [
     `wrote ${path}`,
     `model ${answers.id}`,
-    `at    ${answers.baseUrl}${answers.provider === undefined ? "" : ` (${answers.provider})`}`,
-    "key   stored, never printed"
+    `at    ${answers.baseUrl}${answers.provider === undefined ? "" : ` (${answers.provider})`}`
   ].join("\n")
 
 export const setupJson = (path: string, answers: SetupAnswers): {

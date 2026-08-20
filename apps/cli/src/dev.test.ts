@@ -12,7 +12,7 @@ import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 
 import { tdg } from "./commands"
 import { resolveServer } from "./config"
-import { dev, DEV_HOST } from "./dev"
+import { availableDevPort, browserCommand, dev, DEV_HOST, DEV_URL_HOST, type DevOptions } from "./dev"
 import { layerCli } from "./services"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
@@ -49,7 +49,8 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // keeps the store to this process, so the case owns every event it reads.
 const booted = <A>(
   body: (baseUrl: string, hostname: string) => Promise<A>,
-  env: Record<string, string | undefined> = {}
+  env: Record<string, string | undefined> = {},
+  options: Pick<DevOptions, "onListen"> = {}
 ): Promise<A> =>
   Effect.gen(function*() {
     const server = yield* HttpServer.HttpServer
@@ -64,7 +65,8 @@ const booted = <A>(
         assets: buildDirectory(),
         threads: { infer: layerScripted },
         disableLogger: true,
-        disableListenLog: true
+        disableListenLog: true,
+        ...options
       })
     ),
     Effect.scoped,
@@ -89,6 +91,45 @@ const drive = async (baseUrl: string, args: ReadonlyArray<string>) => {
 }
 
 describe("tdg dev", () => {
+  test("the browser launcher is selected by the operating system", () => {
+    expect(browserCommand("http://localhost:4242", "darwin")).toEqual(["open", "http://localhost:4242"])
+    expect(browserCommand("http://localhost:4242", "linux")).toEqual(["xdg-open", "http://localhost:4242"])
+    expect(browserCommand("http://localhost:4242", "win32")).toEqual([
+      "cmd",
+      "/c",
+      "start",
+      "",
+      "http://localhost:4242"
+    ])
+  })
+
+  test("an occupied implicit port selects the next lower port", async () => {
+    const tried: Array<number> = []
+    const selected = await availableDevPort(4242, 4240, async (port, host) => {
+      tried.push(port)
+      expect(host).toBe(DEV_HOST)
+      return port === 4240
+    })
+    expect(selected).toBe(4240)
+    expect(tried).toEqual([4242, 4241, 4240])
+  })
+
+  test("an invalid fallback range is refused", async () => {
+    expect(availableDevPort(4242, 4243)).rejects.toThrow("--min-port")
+  })
+
+  test("the browser callback receives a live UI URL after listening", async () => {
+    let opened = ""
+    const baseUrl = await booted(async (url) => url, {}, {
+      onListen: async (url) => {
+        opened = url
+        expect((await fetch(`${url}/healthz`)).status).toBe(200)
+      }
+    })
+    expect(new URL(opened).hostname).toBe(DEV_URL_HOST)
+    expect(new URL(opened).port).toBe(new URL(baseUrl).port)
+  })
+
   test("the API answers and the UI is served from one port", async () => {
     const seen = await booted(async (baseUrl) => {
       const health = await fetch(`${baseUrl}/healthz`)
