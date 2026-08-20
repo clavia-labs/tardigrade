@@ -19,6 +19,13 @@ import { navigate, useRoute } from "./nav"
 import { API_SCHEMA_DEPTH, ICON_SIZE } from "./policy"
 import { ThemeToggle } from "./ThemeToggle"
 
+const apiTarget = (operation: string | undefined): string => operation === undefined ? "api-overview" : `api-${operation}`
+
+const jumpTo = (operation: string | undefined): void => {
+  navigate({ operation })
+  globalThis.document.getElementById(apiTarget(operation))?.scrollIntoView({ block: "start" })
+}
+
 const useApiDocument = () => {
   const [document, setDocument] = useState<ApiDocument | undefined>(undefined)
   const [problem, setProblem] = useState<string | undefined>(undefined)
@@ -107,13 +114,11 @@ const Content = ({
 const OperationDetail = ({
   depth,
   document,
-  operation,
-  operations
+  operation
 }: {
   readonly depth: number
   readonly document: ApiDocument
   readonly operation: ApiOperation
-  readonly operations: ReadonlyArray<ApiOperation>
 }): ReactElement => {
   const requestContent = operation.request[0]
   const success = operation.responses.find((response) => response.status.startsWith("2")) ?? operation.responses[0]
@@ -130,24 +135,7 @@ const OperationDetail = ({
     ])
   ].join(" \\\n")
   return (
-    <article className="api-detail api-operation-detail">
-      <section className="api-tag-overview">
-        <div>
-          <div className="mono api-eyebrow">Resource</div>
-          <h1>{operation.tag}</h1>
-        </div>
-        <div className="api-operations-card">
-          <div className="api-card-title">Operations</div>
-          <div className="api-operations-list">
-            {operations.map((candidate) => (
-              <button type="button" key={candidate.key} onClick={() => navigate({ operation: candidate.key })}>
-                <span className={`mono api-method api-method-${candidate.method}`}>{candidate.method.toUpperCase()}</span>
-                <span className="mono">{candidate.path}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-      </section>
+    <section className="api-endpoint" id={`api-${operation.key}`}>
       <header className="api-detail-head">
         <h2 className="mono">{operation.path}</h2>
         {operation.operationId === undefined ? null : <div className="mono api-operation-id">{operation.operationId}</div>}
@@ -216,12 +204,12 @@ const OperationDetail = ({
           )}
         </aside>
       </div>
-    </article>
+    </section>
   )
 }
 
 const Overview = ({ document }: { readonly document: ApiDocument }): ReactElement => (
-  <article className="api-detail api-overview">
+  <section className="api-overview" id="api-overview">
     <div className="mono api-eyebrow">API reference</div>
     <h1>{document.title}</h1>
     {document.version === undefined ? null : <span className="mono api-version">v{document.version}</span>}
@@ -231,6 +219,42 @@ const Overview = ({ document }: { readonly document: ApiDocument }): ReactElemen
       <div><dt>Operations</dt><dd className="mono">{document.operations.length}</dd></div>
       <div><dt>Specification</dt><dd className="mono">OpenAPI 3.1</dd></div>
     </dl>
+  </section>
+)
+
+const ApiReference = ({
+  depth,
+  document
+}: {
+  readonly depth: number
+  readonly document: ApiDocument
+}): ReactElement => (
+  <article className="api-detail api-operation-detail">
+    <Overview document={document} />
+    {apiGroupsOf(document.operations).map(([tag, operations]) => (
+      <section className="api-resource" key={tag}>
+        <div className="api-tag-overview">
+          <div>
+            <div className="mono api-eyebrow">Resource</div>
+            <h1>{tag}</h1>
+          </div>
+          <div className="api-operations-card">
+            <div className="api-card-title">Operations</div>
+            <div className="api-operations-list">
+              {operations.map((operation) => (
+                <button type="button" key={operation.key} onClick={() => jumpTo(operation.key)}>
+                  <span className={`mono api-method api-method-${operation.method}`}>{operation.method.toUpperCase()}</span>
+                  <span className="mono">{operation.path}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+        {operations.map((operation) => (
+          <OperationDetail key={operation.key} operation={operation} document={document} depth={depth} />
+        ))}
+      </section>
+    ))}
   </article>
 )
 
@@ -243,6 +267,11 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
     [document, query]
   )
   const selected = document?.operations.find((operation) => operation.key === route.operation)
+  useEffect(() => {
+    if (document === undefined) return
+    const target = globalThis.document.getElementById(apiTarget(route.operation))
+    target?.scrollIntoView({ block: "start" })
+  }, [document, route.operation])
   return (
     <div className="api-view">
       <aside className="api-nav">
@@ -274,7 +303,7 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
           <button
             type="button"
             className={`api-overview-link${route.operation === undefined ? " api-nav-selected" : ""}`}
-            onClick={() => navigate({ operation: undefined })}
+            onClick={() => jumpTo(undefined)}
           >
             Overview
           </button>
@@ -286,7 +315,7 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
                   type="button"
                   key={operation.key}
                   className={`api-nav-row${selected?.key === operation.key ? " api-nav-selected" : ""}`}
-                  onClick={() => navigate({ operation: operation.key })}
+                  onClick={() => jumpTo(operation.key)}
                 >
                   <span className={`mono api-method api-method-${operation.method}`}>{operation.method.toUpperCase()}</span>
                   <span className="mono api-nav-path">{operation.path}</span>
@@ -305,15 +334,8 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
           <div className="problem api-load-problem"><div className="problem-title">API description unavailable</div><div className="problem-detail">{problem}</div></div>
         ) : document === undefined ? (
           <div className="mono pane-empty">loading API description</div>
-        ) : selected === undefined ? (
-          <Overview document={document} />
         ) : (
-          <OperationDetail
-            operation={selected}
-            operations={document.operations.filter((operation) => operation.tag === selected.tag)}
-            document={document}
-            depth={schemaDepth}
-          />
+          <ApiReference document={document} depth={schemaDepth} />
         )}
       </main>
       <ThemeToggle />

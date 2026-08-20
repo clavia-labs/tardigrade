@@ -645,6 +645,26 @@ textarea {
   text-transform: lowercase;
 }
 
+.api-resource {
+  padding-top: var(--space-7);
+  scroll-margin-top: var(--space-5);
+}
+
+.api-resource + .api-resource {
+  margin-top: var(--space-7);
+  border-top: 1px solid var(--hair);
+}
+
+.api-endpoint {
+  scroll-margin-top: var(--space-5);
+}
+
+.api-endpoint + .api-endpoint {
+  margin-top: var(--space-7);
+  padding-top: var(--space-7);
+  border-top: 1px solid var(--hair);
+}
+
 .api-detail-head h2 {
   margin: 0;
   color: var(--ink);
@@ -902,7 +922,9 @@ textarea {
 }
 
 .api-overview {
-  padding-top: 96px;
+  padding: var(--space-4) 0 var(--space-7);
+  scroll-margin-top: var(--space-5);
+  border-bottom: 1px solid var(--hair);
 }
 
 .api-overview .api-eyebrow {
