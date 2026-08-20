@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Agent } from "./Agent"
-import { listAgents, VoyagerError, type AgentSummary } from "./api"
+import { NO_ANSWER, ProblemError, type AgentSummary } from "@clavia/tardigrade-client"
+
+import { client } from "./client"
 import { useRoute } from "./nav"
 import { ROSTER_POLL_MS } from "./policy"
 import { Rail } from "./Rail"
@@ -23,20 +25,20 @@ interface Reading {
 const useRoster = (intervalMs: number) => {
   const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
   const [summaries, setSummaries] = useState<ReadonlyArray<AgentSummary>>([])
-  const [problem, setProblem] = useState<VoyagerError | undefined>(undefined)
+  const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
 
   useEffect(() => {
     let live = true
     const read = async () => {
       try {
-        const all = await listAgents()
+        const all = await client.list()
         if (!live) return
         setSummaries(all)
         setReading({ roster: rosterOf(all), at: Date.now() })
         setProblem(undefined)
       } catch (error) {
         if (!live) return
-        setProblem(error instanceof VoyagerError ? error : new VoyagerError({ title: String(error), status: 0 }))
+        setProblem(error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER }))
       }
     }
     void read()

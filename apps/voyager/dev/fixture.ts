@@ -15,7 +15,7 @@ import { serve } from "@clavia/tardigrade-server/http"
 // Every agent this fixture serves is invented by the script below. Nothing here is imported by the
 // app; the app only ever speaks HTTP.
 
-// Where the fixture listens, matching the client's DEFAULT_API_URL (src/api.ts).
+// Where the fixture listens, matching the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
 export const FIXTURE_PORT = 4111
 
 // How many children the spawning brief asks for. The forest is worth looking at only when it has a

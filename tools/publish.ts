@@ -28,6 +28,7 @@ const sources = [
   { dir: "packages/core", namespace: "core" },
   { dir: "packages/code", namespace: "code" },
   { dir: "packages/host", namespace: "host" },
+  { dir: "packages/client", namespace: "client" },
   { dir: "platform/bun", namespace: "bun" },
   { dir: "platform/model", namespace: "model" }
 ] as const
@@ -188,6 +189,8 @@ try {
       "./code": "./src/code/index.ts",
       "./code/*": "./src/code/*.ts",
       "./host/*": "./src/host/*.ts",
+      "./client": "./src/client/index.ts",
+      "./client/*": "./src/client/*.ts",
       "./bun/*": "./src/bun/*.ts",
       "./model": "./src/model/model.ts",
       "./model/*": "./src/model/*.ts",

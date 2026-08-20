@@ -1,7 +1,7 @@
 import { SidebarSimple } from "@phosphor-icons/react"
 import { useState, type ReactElement } from "react"
 
-import type { VoyagerError } from "./api"
+import type { ProblemError } from "@clavia/tardigrade-client"
 import { navigate } from "./nav"
 import { COLLAPSED_RAIL_WIDTH, ICON_SIZE, RAIL_WIDTH } from "./policy"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
@@ -63,7 +63,7 @@ export const Rail = ({
   selected
 }: {
   readonly now: number
-  readonly problem: VoyagerError | undefined
+  readonly problem: ProblemError | undefined
   readonly roster: Roster
   readonly selected: string | undefined
 }): ReactElement => {

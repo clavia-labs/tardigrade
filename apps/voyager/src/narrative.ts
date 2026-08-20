@@ -1,4 +1,4 @@
-import type { Event, EventRow } from "./api"
+import type { Event, EventRow } from "@clavia/tardigrade-client"
 import { FIELD_INLINE_CHARS, SUMMARY_CHARS } from "./policy"
 
 // The event list's projections: what a row says, what color its stamp carries, how long the thing

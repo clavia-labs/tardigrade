@@ -1,4 +1,4 @@
-import type { AgentStatus, AgentSummary } from "./api"
+import type { AgentStatus, AgentSummary } from "@clavia/tardigrade-client"
 
 // The rail's projections. GET /agents answers with every agent and its parent, and the rail shows
 // roots alone, so these functions turn one flat listing into the rows the rail renders. They are
