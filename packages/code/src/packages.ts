@@ -1,18 +1,6 @@
 import { Context, Effect } from "effect"
 import type { Park } from "./errors"
 
-// Mail is one message a source produces, before it becomes a `MessageReceived` on a mailbox.
-// `msgId` is the provider's id: the dedup key end to end. `data` carries the structured record
-// (a Linear issue, a calendar event); `text` is its readable rendering, and the criteria match
-// against it.
-export interface Mail {
-  readonly msgId: string
-  readonly chat?: string
-  readonly sender?: string
-  readonly text: string
-  readonly data?: unknown
-}
-
 // DoorRequest is a request through a connection's door: method, a RELATIVE path (the door
 // joins it onto the pinned origin, so an absolute URL cannot name another host), headers, and a
 // string body. The answer comes back as a value; a provider error is a status the caller reads.
@@ -101,18 +89,21 @@ export const annotationsOf = (pkg: Package, method: string): Required<MethodAnno
   ...pkg.annotations?.[method]
 })
 
-// Package is the unit of the real world: a named object with methods; code calls them as
-// `zohorecruit.insert_record(args)`. The platform binds the methods to providers; tests bind
-// fakes. An MCP server becomes a package through one adapter, never a second concept.
+// Package is one named unit of an actor's world face, the dual of a Capability on its model
+// face (packages/agent/src/capability.ts). A capability declares what the model is offered
+// (`tools`, `system`) and what settles its calls (`serve`); a package declares what code is
+// offered (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls
+// methods as `zohorecruit.insert_record(args)`. The platform binds the methods to providers;
+// tests bind fakes. An MCP server becomes a package through one adapter, never a second
+// concept.
 //
 // `ctx.callId` is the call's recorded pair key. A method that sends a message across actors
 // uses it as the message id, so a replayed call carries the same id and the receiver absorbs
 // the duplicate.
-// A package declares both directions: `methods` act on the world, `source` is how the world's
-// events arrive. A provider with native webhooks declares `webhook` (verify the POST, parse it
-// into mail). A provider without push declares `poll` (fetch deltas from a cursor on a
-// cadence); the poll reactor is the bridge, and no separate deployable exists. A stateful
-// bridge (a held socket) stays outside the package and POSTs the webhook like any provider.
+//
+// Inbound delivery, where a provider's webhooks or polls become `MessageReceived`, is
+// deliberately outside Package: it belongs to the host boundary and gets its own concept once a
+// consumer exists.
 export interface Package {
   readonly name: string
   readonly description: string
@@ -130,16 +121,6 @@ export interface Package {
   readonly methods: Readonly<
     Record<string, (args: unknown, ctx: { readonly callId: string }) => Effect.Effect<unknown, Park>>
   >
-  readonly source?: {
-    readonly webhook?: {
-      readonly verify: (request: { readonly headers: Readonly<Record<string, string>>; readonly body: string }, secret: string) => boolean
-      readonly parse: (body: string) => ReadonlyArray<Mail>
-    }
-    readonly poll?: {
-      readonly everyMs: number
-      readonly fetch: (cursor: string | null) => Effect.Effect<{ readonly mail: ReadonlyArray<Mail>; readonly cursor: string | null }>
-    }
-  }
 }
 
 // Packages is the registry seam. Which packages exist here is capability scoping: a task that
