@@ -4,7 +4,7 @@ import { EventLog } from "@clavia/tardigrade-core/event-log"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { workOwed } from "./projections"
-import { annotationsOf, Packages } from "./packages"
+import { annotationsOf, Packages, type PackagesService } from "./packages"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
@@ -32,13 +32,13 @@ type CallOutcome = { readonly parked: true } | { readonly parked: false; readonl
 // (callId, src/grammar/grammar.ts); a committed answer replays, an uncommitted call runs live
 // and records its pair before the body continues. A parked call records no pair: the next
 // attempt asks again.
-const executeRecorded = (
+const executeRecorded = <R = never>(
   execId: string,
   code: string,
   spill: SpillPolicy,
   turn?: string,
   dispatchedAt?: number
-): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore> =>
+): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore | R> =>
   Effect.gen(function* () {
     const stamp = turn === undefined ? {} : { turn }
     const log = yield* EventLog
@@ -46,12 +46,17 @@ const executeRecorded = (
     // The shadow reading rides the turn's own brief, folded once here: it never changes
     // mid-turn, and every package call below reads the same value.
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
-    const packages = yield* Packages
+    // The registry reference is R-erased (packages.ts, Packages). This attempt runs its packages
+    // under `R`, the requirement the reactor declared and the caller provided, so the funnel
+    // reads the registry back at that type.
+    const packages = (yield* Packages) as PackagesService<R>
     const sandbox = yield* Sandbox
     // The proxy runs each call as its own promise, so it carries the attempt's context. The spill
     // store is in it: a call's own hydrate and spill run under the same store the attempt was
-    // provided.
-    const context = yield* Effect.context<KeyValueStore.KeyValueStore>()
+    // provided. So is `R`: a method that reaches for a service reaches into this same context,
+    // which is why the requirement rides the reactor's type (execute.test.ts, "a package method
+    // reads its service through the funnel").
+    const context = yield* Effect.context<KeyValueStore.KeyValueStore | R>()
     let n = 0
     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
     // or park; parkGate completes when every open call settled or parked and at least one
@@ -284,7 +289,13 @@ export interface CodePolicy {
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the lane
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
-export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor<KeyValueStore.KeyValueStore> => (events) => {
+//
+// `R` is what this lane's packages need beyond the spill store: a reactor over a registry of
+// `Package<R>` declares the same R, so the environment that runs it must provide it
+// (packages.ts, Package). The default is the powerless one.
+export const codeReactorFor = <R = never>(
+  policy: Partial<CodePolicy> = {}
+): Reactor<KeyValueStore.KeyValueStore | R> => (events) => {
   const spill = spillPolicyOf(policy.spill)
   const owed = workOwed(events)
   if (owed === undefined) return []
@@ -296,7 +307,7 @@ export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor<KeyVal
   return [
     transition<
       { execId: string; code: string; turn: string | undefined; at: number | undefined },
-      KeyValueStore.KeyValueStore
+      KeyValueStore.KeyValueStore | R
     >({
       key: `cs:${owed.execId}`,
       input: {
@@ -305,7 +316,7 @@ export const codeReactorFor = (policy: Partial<CodePolicy> = {}): Reactor<KeyVal
         turn: turnOf(dispatch),
         at: typeof d.at === "number" ? d.at : undefined
       },
-      act: (input) => executeRecorded(input.execId, input.code, spill, input.turn, input.at)
+      act: (input) => executeRecorded<R>(input.execId, input.code, spill, input.turn, input.at)
     })
   ]
 }

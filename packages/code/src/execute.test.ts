@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import { Packages, type Package } from "./packages"
+import { Packages, type Package, type PackagesService } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
@@ -238,5 +238,67 @@ describe("the spill bound", () => {
     const whole = (await drive(codeReactor)).find((e) => e.type === "CodeSettled") as { tmp?: string; result?: unknown }
     expect(whole.tmp).toBeUndefined()
     expect(whole.result).toBe("q".repeat(60))
+  })
+})
+
+describe("a package's requirements ride its type", () => {
+  // A package that reaches for a service names it in its type, and the reactor that runs the
+  // package declares the same requirement, so the environment that drives the lane must provide
+  // it. The funnel is what makes this true at run time: every method runs under the attempt's own
+  // context (execute.ts, executeRecorded).
+  class Ticker extends Context.Service<Ticker, string>()("code/test/Ticker") {}
+
+  const tickerPackage: Package<Ticker> = {
+    name: "ticker",
+    description: "answers with the value the environment bound",
+    annotations: { now: { readOnlyHint: true, openWorldHint: false } },
+    methods: {
+      now: () =>
+        Effect.gen(function* () {
+          return { tick: yield* Ticker }
+        })
+    }
+  }
+
+  const tickerRegistry: PackagesService<Ticker> = {
+    resolve: (name: string) => (name === "ticker" ? tickerPackage : undefined),
+    list: () => Effect.succeed([{ name: "ticker", description: tickerPackage.description }])
+  }
+
+  test("a package method reads its service through the funnel", async () => {
+    const log: Event[] = [
+      { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+      { type: "CodeDispatched", execId: "e1", code: "return await ticker.now({})", turn: "t1", at: 2 }
+    ]
+    const events = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* settleActor({ reactors: [codeReactorFor<Ticker>()], keyOf: composeKeys(messageKeys, codeKeys) })
+        return yield* Effect.flatMap(EventLog, (l) => l.read)
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            memoryLog(log),
+            Layer.succeed(Packages, tickerRegistry),
+            jsSandbox,
+            KeyValueStore.layerMemory,
+            Layer.succeed(Ticker, "bound")
+          )
+        )
+      ) as Effect.Effect<ReadonlyArray<Event>>
+    )
+    const settle = events.find((e) => e.type === "CodeSettled") as { result?: { tick?: string }; error?: string }
+    expect(settle.error).toBeUndefined()
+    // The value the environment bound, carried into the method's own effect by the attempt's
+    // context: the requirement is real work, not a phantom type parameter.
+    expect(settle.result?.tick).toBe("bound")
+  })
+
+  test("a registry the powerless reactor can run refuses a package that names a service", () => {
+    // codeReactorFor at its default R promises an environment of KeyValueStore alone, so the
+    // registry it runs is a PackagesService<never>. A package whose method reaches for Ticker has
+    // nowhere to read it from there, and the type says so before anything runs.
+    // @ts-expect-error a Package<Ticker> is not a Package<never>
+    const powerless: PackagesService<never> = tickerRegistry
+    expect(powerless.resolve("ticker")?.name).toBe("ticker")
   })
 })

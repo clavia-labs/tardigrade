@@ -62,14 +62,13 @@ export interface WorkspaceOptions {
   readonly policy?: Partial<WorkspacePolicy>
 }
 
-// workspacePackage builds the package over one store. The store is a value here rather than a
-// requirement of the methods, because a package method's environment is fixed by the Package type;
-// the lane that holds the store binding builds the package from it (workspaceFor).
-export const workspacePackage = (store: KeyValueStore.KeyValueStore, options: WorkspaceOptions = {}): Package => {
+// workspacePackage builds the package. The store is a requirement of its methods, stated in the
+// type as `Package<KeyValueStore.KeyValueStore>`: the code funnel runs every method under the
+// attempt's own context, and the spill store is always in it, so this package mounts on the code
+// reactor at any R (packages/code/src/execute.ts, executeRecorded).
+export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyValueStore.KeyValueStore> => {
   const policy = workspacePolicyOf(options.policy)
   const runner = options.sql
-  const of = <A>(effect: Effect.Effect<A, KeyValueStore.KeyValueStoreError, KeyValueStore.KeyValueStore>) =>
-    effect.pipe(Effect.provideService(KeyValueStore.KeyValueStore, store))
   const sqlDoc = {
     description:
       runner?.doc === undefined || runner.doc === ""
@@ -142,7 +141,7 @@ export const workspacePackage = (store: KeyValueStore.KeyValueStore, options: Wo
         Effect.gen(function* () {
           const a = args as { ref?: string; offset?: number; length?: number } | undefined
           if (!a?.ref) return { error: "workspace.read needs { ref }" }
-          const whole = yield* of(hydrate(a.ref)).pipe(Effect.orElseSucceed(() => undefined))
+          const whole = yield* hydrate(a.ref).pipe(Effect.orElseSucceed(() => undefined))
           if (whole === undefined) return { error: `no value under ref '${a.ref}'` }
           const from = Math.max(0, Math.floor(a.offset ?? 0))
           const take = Math.min(Math.max(0, Math.floor(a.length ?? policy.sliceChars)), policy.sliceChars)
@@ -156,11 +155,11 @@ export const workspacePackage = (store: KeyValueStore.KeyValueStore, options: Wo
           const pattern = a?.pattern ?? ""
           if (pattern === "") return { error: "workspace.grep needs { pattern }" }
           const one = a?.ref === undefined || a.ref === "" ? undefined : a.ref
-          const held = one === undefined ? yield* of(refs()).pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>)) : [one]
+          const held = one === undefined ? yield* refs().pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>)) : [one]
           const matches: Array<{ ref: string; offset: number; context: string }> = []
           let truncated = false
           for (const ref of held) {
-            const whole = yield* of(hydrate(ref)).pipe(Effect.orElseSucceed(() => undefined))
+            const whole = yield* hydrate(ref).pipe(Effect.orElseSucceed(() => undefined))
             if (whole === undefined) continue
             let at = whole.indexOf(pattern)
             while (at !== -1) {
@@ -182,13 +181,14 @@ export const workspacePackage = (store: KeyValueStore.KeyValueStore, options: Wo
   }
 }
 
-// workspaceFor builds the package from the lane's own bindings: the store it spills to, and the SQL
-// surface if the platform declared one. A lane with no SQL binding gets the two-verb workspace.
+// workspaceFor builds the package from the lane's own bindings: the SQL surface, if the platform
+// declared one. A lane with no SQL binding gets the two-verb workspace. Which verbs exist is a
+// construction-time reading of the bindings, so the build is an effect; what the verbs need at
+// call time stays in the package's own type, and the funnel supplies it.
 export const workspaceFor = (
   policy: Partial<WorkspacePolicy> = {}
-): Effect.Effect<Package, never, KeyValueStore.KeyValueStore> =>
+): Effect.Effect<Package<KeyValueStore.KeyValueStore>> =>
   Effect.gen(function* () {
-    const store = yield* KeyValueStore.KeyValueStore
     const sql = yield* WorkspaceSql
-    return workspacePackage(store, { ...(sql === undefined ? {} : { sql }), policy })
+    return workspacePackage({ ...(sql === undefined ? {} : { sql }), policy })
   })
