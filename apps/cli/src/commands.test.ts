@@ -4,7 +4,7 @@ import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
 import { ProblemError, RESERVED_ACTOR, type Accepted, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
 
-import { problemLine, tdg } from "./commands"
+import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
 import { Cli, type CliProjections, type CliServices } from "./services"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
@@ -295,5 +295,15 @@ describe("failures", () => {
     const ran = await drive(["events", "ghost"], { answers: { fail: problem } })
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("Unknown Thread (404)")
+  })
+})
+
+describe("dev asks only where someone can answer", () => {
+  // A boot inside CI, a container, or a script has nobody to answer a prompt, so it takes the
+  // notice and serves anyway. The terminal check is what separates the two (commands.ts, canAsk).
+  test("says what is missing when stdin is not a terminal", () => {
+    expect(process.stdin.isTTY).not.toBe(true)
+    expect(NO_MODEL_NOTICE).toContain("tdg setup")
+    expect(NO_MODEL_NOTICE).toContain("MODEL_BASE_URL")
   })
 })

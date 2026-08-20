@@ -118,11 +118,16 @@ const settle = (
     }
   })
 
-// What `tdg dev` says when no source named a model. It names the command that fixes it and stops
-// there: the process still boots, still answers every read, and every turn it is asked to run
-// fails with the server's own sentence.
+// What `tdg dev` says when no source named a model and nobody can be asked. It names the command
+// that fixes it and stops there: the process still boots, still answers every read, and every turn
+// it is asked to run fails with the server's own sentence.
 export const NO_MODEL_NOTICE =
   "no model is configured, so reads work and turns fail. Run `tdg setup` to write one, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID."
+
+// asking is only honest at a terminal. A boot inside CI, a container, or a script has no one to
+// answer, and a prompt there waits forever on input that never arrives, so those boots take the
+// notice instead (commands.test.ts, "dev asks only where someone can answer").
+const canAsk = (): boolean => process.stdin.isTTY === true
 
 export const setupCommand = Command.make("setup", { json }, (flags) =>
   Effect.gen(function*() {
@@ -162,13 +167,29 @@ export const devCommand = Command.make("dev", {
       try: () => resolveServer({ port: Option.getOrUndefined(flags.port), db: stated(flags.db) }, cli.env, file),
       catch: userErrorOf
     })
-    // The notice is one line on boot, and the process serves anyway: every read is a projection of
-    // a log and none of them needs a model, so a server with no model is a useful server that
-    // cannot run a turn (apps/server/src/host.ts, MISSING_MODEL). Nothing is prompted here; asking
-    // is `tdg setup`, and a boot that stopped to ask would be a boot a script could not do.
-    if (!modelIsConfigured(config)) yield* Console.log(NO_MODEL_NOTICE)
+    // A first boot with no model asks for one, because two commands to see anything is one too
+    // many. Away from a terminal it says the notice and serves anyway: every read is a projection
+    // of a log and none of them needs a model, so a server with no model is a useful server that
+    // cannot run a turn (apps/server/src/host.ts, MISSING_MODEL).
+    const asked = yield* modelIsConfigured(config)
+      ? Effect.succeed(config)
+      : canAsk()
+      ? Effect.gen(function*() {
+        const home = homeOf(cli.env)
+        if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
+        const answers = yield* Effect.mapError(setupPrompt, userErrorOf)
+        const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
+        yield* Console.log(setupSummary(path, answers))
+        const written = yield* readFileConfig(cli.env)
+        return yield* Effect.try({
+          try: () => resolveServer({ port: Option.getOrUndefined(flags.port), db: stated(flags.db) }, cli.env, written),
+          catch: userErrorOf
+        })
+      })
+      : Effect.as(Console.log(NO_MODEL_NOTICE), config)
+    const config2 = asked
     const layer = yield* Effect.try({
-      try: () => dev({ config, assets: stated(flags.ui) }),
+      try: () => dev({ config: config2, assets: stated(flags.ui) }),
       catch: userErrorOf
     })
     yield* Effect.mapError(Layer.launch(layer), userErrorOf)
