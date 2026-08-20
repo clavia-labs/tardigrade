@@ -1,0 +1,185 @@
+import { describe, expect, test } from "bun:test"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { replyId } from "@clavia/tardigrade-core/message"
+
+import { statusOf, summaryOf, treeOf, turnsOf } from "./projections"
+
+// The projections are functions of an event array, so the fixtures are event arrays: the shapes
+// below are the ones an assembled agent writes (packages/agent/src/index.test.ts and
+// packages/code/src/events.ts), trimmed to the fields a projection reads.
+
+let clock = 0
+const at = () => ++clock
+
+const inbound = (id: string, text = "do the thing"): Event =>
+  ({ type: "MessageReceived", id, text, at: at() }) as Event
+
+const dispatched = (execId: string): Event =>
+  ({ type: "CodeDispatched", execId, code: "return 1", at: at() }) as Event
+
+const called = (callId: string, name = "agents"): Event =>
+  ({ type: "PackageCalled", callId, name, arguments: {}, at: at() }) as Event
+
+const blocked = (callId: string, awaiting: string): Event =>
+  ({ type: "BlockedOn", callId, awaiting, at: at() }) as Event
+
+const settledCode = (execId: string): Event =>
+  ({ type: "CodeSettled", execId, result: "ok", at: at() }) as Event
+
+const completed = (turn: string, output: string): Event =>
+  ({ type: "TurnCompleted", turn, output, at: at() }) as Event
+
+const failed = (turn: string, error: string): Event =>
+  ({ type: "TurnFailed", turn, error, at: at() }) as Event
+
+const requested = (turn: string, callId: string): Event =>
+  ({ type: "BudgetRequested", turn, callId, reason: "more calls", amount: 5, at: at() }) as Event
+
+const reply = (id: string, text = "done"): Event =>
+  ({ type: "MessageReceived", id: replyId(id), text, outcome: "completed", at: at() }) as Event
+
+describe("statusOf", () => {
+  test("an empty log rests", () => {
+    expect(statusOf([])).toBe("resting")
+  })
+
+  test("a settled turn rests", () => {
+    const log = [inbound("m1"), dispatched("t1"), settledCode("t1"), completed("m1", "42")]
+    expect(statusOf(log)).toBe("resting")
+  })
+
+  test("a fresh turn is working", () => {
+    expect(statusOf([inbound("m1")])).toBe("working")
+  })
+
+  test("an unsettled execution that can move is working", () => {
+    expect(statusOf([inbound("m1"), dispatched("t1"), called("t1.0")])).toBe("working")
+  })
+
+  test("an open BlockedOn with the reply away is blocked", () => {
+    const log = [inbound("m1"), dispatched("t1"), called("t1.0"), blocked("t1.0", replyId("t1.0"))]
+    expect(statusOf(log)).toBe("blocked")
+  })
+
+  test("a landed reply unblocks the lane", () => {
+    const log = [
+      inbound("m1"),
+      dispatched("t1"),
+      called("t1.0"),
+      blocked("t1.0", replyId("t1.0")),
+      reply("t1.0")
+    ]
+    expect(statusOf(log)).toBe("working")
+  })
+
+  test("a failed last turn with nothing owed is failed", () => {
+    const log = [inbound("m1"), dispatched("t1"), settledCode("t1"), failed("m1", "the tool exploded")]
+    expect(statusOf(log)).toBe("failed")
+  })
+
+  test("a failed turn followed by a live one is working, not failed", () => {
+    const log = [inbound("m1"), failed("m1", "boom"), inbound("m2")]
+    expect(statusOf(log)).toBe("working")
+  })
+})
+
+describe("summaryOf", () => {
+  test("a summary counts events and carries the last timestamp", () => {
+    const log = [inbound("m1"), completed("m1", "42")]
+    const summary = summaryOf("root", log)
+    expect(summary.id).toBe("root")
+    expect(summary.events).toBe(2)
+    expect(summary.lastAt).toBe(log[1]!["at"] as number)
+    expect(summary.status).toBe("resting")
+    expect("parent" in summary).toBe(false)
+  })
+
+  test("a summary carries the parent the caller supplies", () => {
+    expect(summaryOf("t1.0", [], "root").parent).toBe("root")
+  })
+
+  test("an empty log has no last timestamp", () => {
+    expect("lastAt" in summaryOf("root", [])).toBe(false)
+  })
+})
+
+describe("treeOf", () => {
+  // Two roots, and one of them three levels deep: root -> t1.0 -> t9.0. The claim is the parent's
+  // own PackageCalled, so a level is one call recorded one log up.
+  const forest = (): ReadonlyMap<string, ReadonlyArray<Event>> =>
+    new Map<string, ReadonlyArray<Event>>([
+      ["root", [inbound("m1"), dispatched("t1"), called("t1.0"), called("t1.1")]],
+      ["t1.0", [inbound("t1.0"), dispatched("t9"), called("t9.0")]],
+      ["t1.1", [inbound("t1.1")]],
+      ["t9.0", [inbound("t9.0")]],
+      ["other", [inbound("m2")]]
+    ])
+
+  test("three levels, two roots", () => {
+    const roots = treeOf(forest())
+    expect(roots.map((node) => node.id)).toEqual(["root", "other"])
+    const root = roots[0]!
+    expect(root.children.map((node) => node.id)).toEqual(["t1.0", "t1.1"])
+    expect(root.children[0]!.children.map((node) => node.id)).toEqual(["t9.0"])
+    expect(root.children[0]!.children[0]!.children).toEqual([])
+    expect(roots[1]!.children).toEqual([])
+  })
+
+  test("every node carries its own summary, and a child names its parent", () => {
+    const root = treeOf(forest())[0]!
+    expect(root.status).toBe("working")
+    const child = root.children[0]!
+    expect(child.parent).toBe("root")
+    expect(child.events).toBe(3)
+    expect(root.children[0]!.children[0]!.parent).toBe("t1.0")
+    expect("parent" in root).toBe(false)
+  })
+
+  test("a package call to a non-agent claims nothing", () => {
+    const logs = new Map<string, ReadonlyArray<Event>>([
+      ["root", [inbound("m1"), dispatched("t1"), called("t1.0", "workspace")]]
+    ])
+    expect(treeOf(logs).map((node) => node.id)).toEqual(["root"])
+  })
+
+  test("roots sort by first event time", () => {
+    const early = [inbound("a")]
+    const late = [inbound("b")]
+    const logs = new Map<string, ReadonlyArray<Event>>([["late", late], ["early", early]])
+    expect(treeOf(logs).map((node) => node.id)).toEqual(["early", "late"])
+  })
+})
+
+describe("turnsOf", () => {
+  test("one entry per inbound message, with its boundary", () => {
+    const log = [
+      inbound("m1"),
+      completed("m1", "42"),
+      inbound("m2"),
+      failed("m2", "boom"),
+      inbound("m3")
+    ]
+    expect(turnsOf(log)).toEqual([
+      { turn: "m1", status: "completed", output: "42" },
+      { turn: "m2", status: "failed", error: "boom" },
+      { turn: "m3", status: "pending" }
+    ])
+  })
+
+  test("a reply message is not a turn", () => {
+    const log = [inbound("m1"), reply("t1.0"), completed("m1", "42")]
+    expect(turnsOf(log).map((view) => view.turn)).toEqual(["m1"])
+  })
+
+  test("an unanswered budget ask is parked", () => {
+    const log = [inbound("m1"), requested("m1", "c1")]
+    expect(turnsOf(log)).toEqual([{ turn: "m1", status: "parked" }])
+  })
+
+  test("a prefix takes a turn back to pending", () => {
+    const log = [inbound("m1"), completed("m1", "42")]
+    expect(turnsOf(log)[0]!.status).toBe("completed")
+    expect(turnsOf(log, 1)).toEqual([{ turn: "m1", status: "pending" }])
+    expect(turnsOf(log, 0)).toEqual([])
+  })
+})

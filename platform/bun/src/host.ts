@@ -65,6 +65,10 @@ export type BunHostOptions<R> = {
 export interface BunHost {
   readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
+  // lanes names every lane the log holds, ordered by name. An app that lists what exists asks the
+  // host rather than the database, so the store stays this module's (host.test.ts, "lanes names
+  // every lane the log holds").
+  readonly lanes: () => Promise<ReadonlyArray<string>>
   readonly deliver: (address: string, event: Event) => Promise<void>
   readonly wake: (lane: string) => Promise<void>
   readonly drive: () => Promise<void>
@@ -237,10 +241,17 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
   }
 
+  const lanesEffect: Effect.Effect<ReadonlyArray<string>, never> = sql<{
+    lane: string
+  }>`SELECT DISTINCT lane FROM events ORDER BY lane`.pipe(
+    Effect.map((rows) => rows.map((row) => row.lane)),
+    Effect.orDie
+  )
+
   const lanesMap = async (): Promise<Map<string, ReadonlyArray<Event>>> => {
-    const rows = await runtime.runPromise(sql<{ lane: string }>`SELECT DISTINCT lane FROM events`.pipe(Effect.orDie))
+    const lanes = await runtime.runPromise(lanesEffect)
     const map = new Map<string, ReadonlyArray<Event>>()
-    for (const row of rows) map.set(row.lane, await runtime.runPromise(readEffect(row.lane)))
+    for (const lane of lanes) map.set(lane, await runtime.runPromise(readEffect(lane)))
     return map
   }
 
@@ -284,6 +295,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   return {
     seed: (lane, events) => runtime.runPromise(appendEffect(lane, events)),
     read: (lane) => runtime.runPromise(readEffect(lane)),
+    lanes: () => runtime.runPromise(lanesEffect),
     deliver: (address, event) => runtime.runPromise(deliverEffect(address, event)),
     wake: (lane) => {
       dirty.add(lane)

@@ -7,7 +7,8 @@
   },
   "workspaces": [
     "packages/*",
-    "platform/*"
+    "platform/*",
+    "apps/*"
   ],
   "scripts": {
     "gate": "bun run tools/gate.ts",

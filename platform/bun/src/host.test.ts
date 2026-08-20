@@ -105,6 +105,16 @@ describe("the bun host", () => {
     await second.close()
   })
 
+  test("lanes names every lane the log holds", async () => {
+    const h = await createBunHost(options(freshPath()))
+    expect(await h.lanes()).toEqual([])
+    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.seed("other", [{ type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
+    await h.drive()
+    expect(await h.lanes()).toEqual(["echo", "other"])
+    await h.close()
+  })
+
   test("a batch appends atomically: a mid-batch key collision absorbs that row only", async () => {
     const h = await createBunHost(options(freshPath()))
     await h.seed("echo", [{ type: "Done", id: "a", at: 1 } as Event])
