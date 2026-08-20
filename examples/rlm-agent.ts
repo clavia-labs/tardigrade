@@ -5,8 +5,8 @@
 // add provider: "bedrock" to the infer options for Bedrock.
 
 // The workspace names resolve in this repository. Against the published package the last two
-// are "@clavia/tardigrade/model" and "@clavia/tardigrade/bun/host" (tools/publish.ts).
-import { agentOf, agentsPackage, boundaryOf, budget, codeModeFor, compaction, reply, workspacePackage } from "@clavia/tardigrade"
+// are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
+import { agentOf, agentsPackage, boundaryOf, budget, codeModeFor, compaction, reply, workspacePackage } from "tardie"
 import { infer } from "@clavia/tardigrade-model/model"
 import { createBunHost } from "@clavia/tardigrade-bun/host"
 

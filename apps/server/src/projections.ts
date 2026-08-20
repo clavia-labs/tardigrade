@@ -1,7 +1,7 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { REPLY_SUFFIX } from "@clavia/tardigrade-core/message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/projections"
-import { boundaryOf } from "@clavia/tardigrade/boundary"
+import { boundaryOf } from "tardie/boundary"
 
 // The read side of the API. Every endpoint that answers a question about a thread answers it here,
 // as a pure function of that thread's events (apps-server-spec.md, "Principles": every read is a
@@ -10,7 +10,7 @@ import { boundaryOf } from "@clavia/tardigrade/boundary"
 //
 // The projections read the framework's own projections wherever one already answers the question:
 // the lane's owed work comes from the code lane (@clavia/tardigrade-code/projections), and a turn's
-// outcome comes from the thread's boundary (@clavia/tardigrade/boundary). The vocabulary the wire
+// outcome comes from the thread's boundary (tardie/boundary). The vocabulary the wire
 // speaks is the only thing added here.
 
 // ThreadStatus is the summary vocabulary of GET /v1/actors/:actor/threads. Four answers, in the order they are

@@ -1,8 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Infer, type InferRequest } from "@clavia/tardigrade"
-import type { Action } from "@clavia/tardigrade/events"
+import { Infer, type InferRequest } from "tardie"
+import type { Action } from "tardie/events"
 
 import { layerConfig, readConfig } from "./config"
 import { Threads, layerThreads } from "./host"

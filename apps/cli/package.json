@@ -34,6 +34,6 @@
     "start": "bun run src/main.ts"
   },
   "devDependencies": {
-    "@clavia/tardigrade": "workspace:*"
+    "tardie": "workspace:*"
   }
 }

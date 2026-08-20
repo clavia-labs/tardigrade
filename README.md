@@ -32,7 +32,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Run and observe the default agent. Use Bun 1.4 or later.
 
 ```bash
-bunx @clavia/tardigrade dev
+bunx tardie dev
 ```
 
 Start a thread from another shell:
@@ -49,17 +49,17 @@ tdg run "read this repo and tell me what it does"
 ## Build one
 
 ```bash
-bun add @clavia/tardigrade
+bun add tardie
 ```
 
-You can use `npm install @clavia/tardigrade` instead. Install `@clavia/tardigrade@next` to test a release candidate.
+You can use `npm install tardie` instead. Install `tardie@next` to test a release candidate.
 
 ### Create a capability
 
 An agent is made of capabilities. A capability is one value with two halves: what the model is shown (`tools`, `system`), and how the calls that come back are handled (`serve`). This one gives the model a single tool:
 
 ```ts
-import type { Capability } from "@clavia/tardigrade"
+import type { Capability } from "tardie"
 
 const deploys: Capability = {
   name: "deploys",
@@ -91,7 +91,7 @@ The call follows one route:
 Mount the capability beside the built-in parts that this task needs:
 
 ```ts
-import { agentOf, budget, codeMode, compaction, reply } from "@clavia/tardigrade"
+import { agentOf, budget, codeMode, compaction, reply } from "tardie"
 
 const releaseAnalyst = agentOf([
   deploys,     // recent_deploys and its handler
@@ -122,8 +122,8 @@ Each action and result becomes an event that every capability can interpret.
 The three code blocks form one program.
 
 ```ts
-import { infer } from "@clavia/tardigrade/model"
-import { createBunHost } from "@clavia/tardigrade/bun/host"
+import { infer } from "tardie/model"
+import { createBunHost } from "tardie/bun/host"
 
 const model = infer({
   baseUrl: process.env.MODEL_BASE_URL!,

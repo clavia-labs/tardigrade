@@ -26,7 +26,7 @@
     "react-dom": "^19.2.7"
   },
   "devDependencies": {
-    "@clavia/tardigrade": "workspace:*",
+    "tardie": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-server": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.110",

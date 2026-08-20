@@ -4,13 +4,13 @@ import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import { Infer, type InferRequest } from "@clavia/tardigrade/infer"
-import type { Action } from "@clavia/tardigrade/events"
+import { Infer, type InferRequest } from "tardie/infer"
+import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { answerErrors, outputSchemaOf } from "@clavia/tardigrade/contract"
-import { modelRequest, type AgentMessage, type ToolSpec } from "@clavia/tardigrade/request"
-import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@clavia/tardigrade/usage"
+import { answerErrors, outputSchemaOf } from "tardie/contract"
+import { modelRequest, type AgentMessage, type ToolSpec } from "tardie/request"
+import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -540,7 +540,7 @@ export const infer = (config: ModelConfig) => {
             fetch: fetcher
           })
     // The actor decides the request, render included; the platform maps it to the wire and
-    // streams it, holding no opinion about tools (@clavia/tardigrade, capability.ts).
+    // streams it, holding no opinion about tools (tardie, capability.ts).
     const req = modelRequest(request.trajectory, request, request.context ?? {})
     const schema = outputSchemaOf(request.trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({

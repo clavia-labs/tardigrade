@@ -62,10 +62,10 @@ The server boots without a model and serves every read; turns fail naming what i
 
 ## Clients
 
-`@clavia/tardigrade/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
+`tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
 
 ```ts
-import { makeClient } from "@clavia/tardigrade/client"
+import { makeClient } from "tardie/client"
 
 const client = makeClient({ baseUrl: "http://localhost:4111" })
 await client.append("inv-81", { id: "m1", type: "MessageReceived", text: "audit the deploy" })
