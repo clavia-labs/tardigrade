@@ -22,7 +22,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 - **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent capabilities.
 - **Strongly typed, built on Effect.** Typed services and Layers make each capability's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
-- **Inspect and improve every run.** Log as core supports natively debugging, replay, and experiments with forked logs.
+- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with forked logs.
 
 ## Quickstart
 
