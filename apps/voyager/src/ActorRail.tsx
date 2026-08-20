@@ -4,6 +4,7 @@ import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
 import { ACTOR_RAIL_WIDTH, COLLAPSED_ACTOR_RAIL_WIDTH, ICON_SIZE, PANE_HEADER_HEIGHT } from "./policy"
+import { ProductMark } from "./ProductMark"
 import { matches } from "./roster"
 
 const ACTOR_RAIL_KEY = "voyager.actor-rail"
@@ -38,7 +39,7 @@ export const ActorRail = ({
       <div className="pane-chrome" style={{ height: headerHeight }}>
         <div className="actor-head">
           <div className="actor-only actor-identity">
-            <div className="rail-wordmark">voyager</div>
+            <ProductMark />
             <div className="mono actor-label">actors</div>
           </div>
           <button
