@@ -18,18 +18,21 @@
    SERVICE: every owed lane is eventually served, whatever the other
      lanes do: crashes bounded, arrivals adversarial, passes recurring.
 
-   REST (unpaid): a lane whose visits always crash eventually settles
-     as failed and goes quiet. No action discharges it today: the
-     give-up guard died with the room machine, so a deterministic
-     crasher retries on the watchdog forever. DriverPoisoned.cfg is
-     the ledger entry: EventuallyServed over a poisoned lane, expected
-     to FAIL until a GiveUp action pays the debt.
+   REST: a lane whose visits always crash eventually settles as
+     failed and goes quiet. GiveUp pays it: a per-lane tries counter
+     rises on each zero-progress attempt and any progress clears it,
+     and at the limit the driver discharges the lane as failed. The
+     counter's key is the log length: the log is append-only, so an
+     unchanged length across an attempt IS zero progress, and the
+     give-up itself is one more append (the failed CodeSettled).
+     DriverPoisoned.cfg checks it over a poisoned lane.
 
    THE MODEL. Lanes' owed work is a boolean derivation (the abstraction
    of Reactor.tla's WorkOwed). Arrive raises it and arms the alarm (the
    deliver contract: every append arms). Fire consumes the alarm and
-   opens a pass over every lane. A visit serves its lane or crashes;
-   either way it leaves the pass. The pass ends with a re-arm, and the
+   opens a pass over every lane. A visit serves its lane, crashes, or
+   gives up at the tries limit; every way it leaves the pass. The pass
+   ends with a re-arm, and the
    re-arm is where drivers die, so it comes in two shapes:
 
    ReArm (the contract): fold the live owed derivations in, and keep
@@ -48,13 +51,19 @@ EXTENDS Naturals, FiniteSets, TLC
    are free: the MaxCrashes budget bounds only transient failures, so
    the budget cannot smuggle convergence past a lane that never
    converges. *)
-CONSTANTS Lanes, MaxCrashes, Poisoned
+CONSTANTS Lanes, MaxCrashes, Poisoned, GiveUpLimit
 
 ASSUME Poisoned \subseteq Lanes
+ASSUME GiveUpLimit \in Nat /\ GiveUpLimit > 0
 
-VARIABLES owed, armed, inPass, queue, answers, crashes
+(* tries counts a lane's consecutive zero-progress attempts: the
+   abstraction of the (facet, log length) key. A crash appended
+   nothing, so it raises the count; a serve is progress and clears
+   it; so does a fresh arrival, because an arrival is an append and
+   the next attempt reads a new length. *)
+VARIABLES owed, armed, inPass, queue, answers, crashes, tries
 
-vars == <<owed, armed, inPass, queue, answers, crashes>>
+vars == <<owed, armed, inPass, queue, answers, crashes, tries>>
 
 TypeOK ==
   /\ owed \in [Lanes -> BOOLEAN]
@@ -63,6 +72,7 @@ TypeOK ==
   /\ queue \subseteq Lanes
   /\ answers \in [Lanes -> BOOLEAN]
   /\ crashes \in 0..MaxCrashes
+  /\ tries \in [Lanes -> 0..GiveUpLimit]
 
 Init ==
   /\ owed = [l \in Lanes |-> FALSE]
@@ -71,6 +81,7 @@ Init ==
   /\ queue = {}
   /\ answers = [l \in Lanes |-> FALSE]
   /\ crashes = 0
+  /\ tries = [l \in Lanes |-> 0]
 
 (* Work arrives on a lane, any time, mid-pass included. The deliver
    contract: every arrival arms. *)
@@ -78,6 +89,7 @@ Arrive(l) ==
   /\ ~owed[l]
   /\ owed' = [owed EXCEPT ![l] = TRUE]
   /\ armed' = TRUE
+  /\ tries' = [tries EXCEPT ![l] = 0]
   /\ UNCHANGED <<inPass, queue, answers, crashes>>
 
 (* The alarm fires: consume the arm, open a pass over every lane. *)
@@ -87,7 +99,7 @@ Fire ==
   /\ armed' = FALSE
   /\ inPass' = TRUE
   /\ queue' = Lanes
-  /\ UNCHANGED <<owed, answers, crashes>>
+  /\ UNCHANGED <<owed, answers, crashes, tries>>
 
 (* A visit serves its lane: owed work discharges, and the lane answers
    the pass "quiet as of my visit". *)
@@ -98,6 +110,7 @@ VisitOk(l) ==
   /\ owed' = [owed EXCEPT ![l] = FALSE]
   /\ answers' = [answers EXCEPT ![l] = FALSE]
   /\ queue' = queue \ {l}
+  /\ tries' = [tries EXCEPT ![l] = 0]
   /\ UNCHANGED <<armed, inPass, crashes>>
 
 (* A visit crashes: the lane's owed derivation is untouched (REDRIVE:
@@ -107,10 +120,27 @@ VisitCrash(l) ==
   /\ inPass
   /\ l \in queue
   /\ (l \in Poisoned \/ crashes < MaxCrashes)
+  /\ tries[l] < GiveUpLimit
   /\ answers' = [answers EXCEPT ![l] = FALSE]
   /\ queue' = queue \ {l}
   /\ crashes' = IF l \in Poisoned THEN crashes ELSE crashes + 1
+  /\ tries' = [tries EXCEPT ![l] = @ + 1]
   /\ UNCHANGED <<owed, armed, inPass>>
+
+(* A visit gives up: the tries limit is reached, so the driver
+   discharges the lane as failed instead of retrying. The discharge
+   is an append like any other (the failed CodeSettled), so REDRIVE
+   is not violated: the log records the failure, and a later arrival
+   starts the lane fresh. *)
+VisitGiveUp(l) ==
+  /\ inPass
+  /\ l \in queue
+  /\ tries[l] = GiveUpLimit
+  /\ owed' = [owed EXCEPT ![l] = FALSE]
+  /\ answers' = [answers EXCEPT ![l] = FALSE]
+  /\ queue' = queue \ {l}
+  /\ tries' = [tries EXCEPT ![l] = 0]
+  /\ UNCHANGED <<armed, inPass, crashes>>
 
 (* The contract re-arm: live derivations folded in, mid-pass arms kept. *)
 ReArm ==
@@ -118,7 +148,7 @@ ReArm ==
   /\ queue = {}
   /\ inPass' = FALSE
   /\ armed' = (armed \/ \E l \in Lanes: owed[l])
-  /\ UNCHANGED <<owed, queue, answers, crashes>>
+  /\ UNCHANGED <<owed, queue, answers, crashes, tries>>
 
 (* The defective re-arm: trust only the pass's own answers. *)
 ReArmDrop ==
@@ -126,10 +156,10 @@ ReArmDrop ==
   /\ queue = {}
   /\ inPass' = FALSE
   /\ armed' = (\E l \in Lanes: answers[l])
-  /\ UNCHANGED <<owed, queue, answers, crashes>>
+  /\ UNCHANGED <<owed, queue, answers, crashes, tries>>
 
 ArriveAny == \E l \in Lanes: Arrive(l)
-VisitAny  == \E l \in Lanes: VisitOk(l) \/ VisitCrash(l)
+VisitAny  == \E l \in Lanes: VisitOk(l) \/ VisitCrash(l) \/ VisitGiveUp(l)
 
 Next     == ArriveAny \/ Fire \/ VisitAny \/ ReArm
 NextDrop == ArriveAny \/ Fire \/ VisitAny \/ ReArmDrop
@@ -146,10 +176,11 @@ LiveSpec ==
   /\ WF_vars(ReArm)
   /\ \A l \in Lanes: SF_vars(VisitOk(l))
   (* Every queued lane is eventually visited: a visit completes, by
-     serve or by crash. This is the fail-fast assumption. A visit
-     that HANGS holds the pass open past this module's model; the
-     runtime's alarm time limit owns that door, unmodeled here. *)
-  /\ \A l \in Lanes: WF_vars(VisitOk(l) \/ VisitCrash(l))
+     serve, by crash, or by give-up. This is the fail-fast
+     assumption. A visit that HANGS holds the pass open past this
+     module's model; the runtime's alarm time limit owns that door,
+     unmodeled here. *)
+  /\ \A l \in Lanes: WF_vars(VisitOk(l) \/ VisitCrash(l) \/ VisitGiveUp(l))
 
 -----------------------------------------------------------------------
 (* The debts. *)
@@ -157,10 +188,11 @@ LiveSpec ==
 (* ACCOUNTING: owed work always has a wake coming. *)
 Accounting == (\E l \in Lanes: owed[l]) => (armed \/ inPass)
 
-(* SERVICE (under LiveSpec, Poisoned empty): every owed lane is
-   eventually served. Over a nonempty Poisoned this same formula is
-   the REST debt, and DriverPoisoned.cfg expects TLC to refute it:
-   the counterexample is the eternal watchdog retry. *)
+(* SERVICE and REST (under LiveSpec): every owed lane eventually
+   rests, served or settled as failed. GiveUp is what carries the
+   poisoned case: crashes are unbounded there, and the tries limit
+   converts the eternal retry into a discharge. DriverPoisoned.cfg
+   checks the poisoned case; DriverLive.cfg the healthy one. *)
 EventuallyServed == \A l \in Lanes: [](owed[l] => <>(~owed[l]))
 
 (* ISOLATION (under LiveSpec): every healthy lane is eventually
