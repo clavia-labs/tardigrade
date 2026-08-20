@@ -292,8 +292,8 @@ export const Thread = ({
     <>
       <div className="pane-chrome" style={{ height: headerHeight }}>
         <Head id={id} status={status} />
-        <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
       </div>
+      <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
       {problem === undefined ? null : <Problem problem={problem} />}
       {!dropped ? null : <div className="mono stream-note">stream dropped; polling</div>}
       <div

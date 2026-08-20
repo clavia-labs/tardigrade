@@ -97,15 +97,15 @@ export const Rail = ({
             <SidebarSimple size={ICON_SIZE} weight="light" aria-hidden="true" />
           </button>
         </div>
-        <div className="rail-only" style={{ padding: "0 var(--space-3) 10px" }}>
-          <input
-            className="input rail-search"
-            value={query}
-            placeholder="search id…"
-            aria-label="search id"
-            onChange={(changed) => setQuery(changed.target.value)}
-          />
-        </div>
+      </div>
+      <div className="rail-only" style={{ padding: "10px var(--space-3)" }}>
+        <input
+          className="input rail-search"
+          value={query}
+          placeholder="search id…"
+          aria-label="search id"
+          onChange={(changed) => setQuery(changed.target.value)}
+        />
       </div>
       {problem === undefined ? null : (
         <div className="problem rail-only" style={{ margin: "0 var(--space-3) 10px" }}>

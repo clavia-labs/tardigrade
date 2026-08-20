@@ -342,7 +342,7 @@ textarea {
 }
 
 .actor-search-wrap {
-  padding: 0 var(--space-3) 10px;
+  padding: 10px var(--space-3);
 }
 
 .actor-search {

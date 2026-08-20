@@ -10,9 +10,9 @@ export const RAIL_WIDTH = 320
 // a narrower measure than the run rail beside it.
 export const ACTOR_RAIL_WIDTH = 208
 
-// The shared header band height in pixels. Actor rows, run rows, and trace events begin below this
-// same horizontal datum, and each pane accepts another height when embedded in a tighter shell.
-export const PANE_HEADER_HEIGHT = 156
+// The shared identity-row height in pixels. Each pane's title begins on the same horizontal datum,
+// and each pane accepts another height when embedded in a tighter shell.
+export const PANE_HEADER_HEIGHT = 64
 
 // The width the rail keeps when it is collapsed, in pixels. It holds the toggle and nothing else,
 // so a reader can always open the list again from where they closed it.

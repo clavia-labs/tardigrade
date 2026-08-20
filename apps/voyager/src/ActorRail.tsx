@@ -25,15 +25,15 @@ export const ActorRail = ({
           <div className="rail-wordmark">voyager</div>
           <div className="mono actor-label">actors</div>
         </div>
-        <div className="actor-search-wrap">
-          <input
-            className="input actor-search"
-            value={query}
-            placeholder="search name…"
-            aria-label="search actor name"
-            onChange={(changed) => setQuery(changed.target.value)}
-          />
-        </div>
+      </div>
+      <div className="actor-search-wrap">
+        <input
+          className="input actor-search"
+          value={query}
+          placeholder="search name…"
+          aria-label="search actor name"
+          onChange={(changed) => setQuery(changed.target.value)}
+        />
       </div>
       {problem === undefined ? null : (
         <div className="problem actor-problem">
