@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
+import { ApiSurface } from "./ApiSurface"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { client, clientFor } from "./client"
@@ -8,7 +9,7 @@ import { navigate, useRoute } from "./nav"
 import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
-import { EMPTY_ROSTER, rosterOf, type Roster } from "./roster"
+import { EMPTY_ROSTER, latestRootOf, rosterOf, type Roster } from "./roster"
 import { ThemeToggle } from "./ThemeToggle"
 import { ActorRail } from "./ActorRail"
 
@@ -103,6 +104,13 @@ export const App = (): ReactElement => {
     if (route.actor !== undefined || actor === undefined) return
     navigate({ actor }, { replace: true })
   }, [actor, route.actor])
+  useEffect(() => {
+    if (!ready || route.view !== undefined || route.thread !== undefined) return
+    const latest = latestRootOf(reading.roster)
+    if (latest === undefined) return
+    navigate({ thread: latest.id, from: undefined, to: undefined }, { replace: true })
+  }, [reading.roster, ready, route.thread, route.view])
+  if (route.view === "api") return <ApiSurface />
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
       <ActorRail actors={discovered.actors} problem={discovered.problem} selected={actor} />

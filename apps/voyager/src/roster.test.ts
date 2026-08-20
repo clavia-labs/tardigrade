@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { ThreadSummary } from "@clavia/tardigrade-client"
-import { agoOf, countsOf, matches, rosterOf } from "./roster"
+import { agoOf, countsOf, latestRootOf, matches, rosterOf } from "./roster"
 
 // The rail's decisions: which threads are rows, how big each root's family is, what a row's counts
 // say, and how an age reads. All pure, so none of them needs a server or a DOM.
@@ -24,6 +24,11 @@ describe("rosterOf", () => {
 
   test("the rows are the roots, in the order the listing published them", () => {
     expect(rosterOf(listing).roots.map((row) => row.id)).toEqual(["root", "alone"])
+  })
+
+  test("the latest root is the last published root", () => {
+    expect(latestRootOf(rosterOf(listing))?.id).toBe("alone")
+    expect(latestRootOf(rosterOf([]))).toBeUndefined()
   })
 
   test("a root's family is every thread under it, at any depth", () => {

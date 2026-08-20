@@ -20,7 +20,7 @@ const Row = ({
 }): ReactElement => {
   // Choosing a run clears the window: the edges are fractions of the log a reader was looking at,
   // and they name nothing in the log they are moving to (src/nav.ts, Route).
-  const open = () => navigate({ thread: row.id, from: undefined, to: undefined })
+  const open = () => navigate({ thread: row.id, view: undefined, from: undefined, to: undefined })
   return (
     <div
       role="button"
@@ -87,7 +87,7 @@ export const Rail = ({
           {problem.detail === undefined ? null : <div className="problem-detail">{problem.detail}</div>}
         </div>
       )}
-      <div style={{ flex: 1, overflowY: "auto", minHeight: 0 }}>
+      <div className="run-list">
         {rows.map((row) => (
           <Row key={row.id} row={row} now={now} selected={row.id === selected} />
         ))}

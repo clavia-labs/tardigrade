@@ -1,8 +1,8 @@
 import { useCallback, useSyncExternalStore } from "react"
 
-// The URL is the app's only navigation state. `?thread=` chooses the screen and `?from=` and `?to=`
-// carry the window's two edges, so a view is shareable and survives a refresh (voyager-spec.md,
-// "Conventions"). There is no routing library: three params and pushState are the whole of it.
+// The URL is the app's only navigation state. `?thread=` chooses a trace, `?view=api` chooses the
+// API reference, and `?from=` and `?to=` carry the window's two edges, so a view is shareable and
+// survives a refresh (voyager-spec.md, "Conventions").
 
 // The params the app reads. Anything else in the query belongs to something other than navigation
 // and is preserved untouched by `navigate`.
@@ -13,6 +13,8 @@ import { useCallback, useSyncExternalStore } from "react"
 export interface Route {
   readonly actor: string | undefined
   readonly thread: string | undefined
+  readonly view: "api" | undefined
+  readonly operation: string | undefined
   readonly from: number | undefined
   readonly to: number | undefined
 }
@@ -27,9 +29,13 @@ const parse = (search: string): Route => {
   const params = new URLSearchParams(search)
   const thread = params.get("thread")
   const actor = params.get("actor")
+  const view = params.get("view")
+  const operation = params.get("operation")
   return {
     actor: actor === null || actor.length === 0 ? undefined : actor,
     thread: thread === null || thread.length === 0 ? undefined : thread,
+    view: view === "api" ? view : undefined,
+    operation: operation === null || operation.length === 0 ? undefined : operation,
     from: fraction(params.get("from")),
     to: fraction(params.get("to"))
   }
@@ -47,6 +53,8 @@ export const navigate = (next: Partial<Route>, options: { readonly replace?: boo
   }
   if ("thread" in next) write("thread", next.thread)
   if ("actor" in next) write("actor", next.actor)
+  if ("view" in next) write("view", next.view)
+  if ("operation" in next) write("operation", next.operation)
   if ("from" in next) write("from", next.from)
   if ("to" in next) write("to", next.to)
   const search = params.toString()
