@@ -13,7 +13,10 @@ const packages = ["core", "code", "agent", "host"]
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun"]
 const appPkg = (name: string) => `${root}apps/${name}`
-const apps = ["server"]
+const apps = ["server", "voyager"]
+// Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
+// can resolve and emit them.
+const bundled = ["voyager"]
 
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
@@ -27,6 +30,7 @@ const tasks: ReadonlyArray<Task> = [
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
+  ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
   { id: "knip", cmd: ["bun", "--bun", "node_modules/.bin/knip"] }
 ]
 

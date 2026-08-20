@@ -1,0 +1,45 @@
+{
+  "name": "@clavia/tardigrade-voyager",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Trajectory explorer for the tardigrade server.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "apps/voyager"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "dependencies": {
+    "@base-ui-components/react": "1.0.0-rc.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@clavia/tardigrade": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-server": "workspace:*",
+    "@effect/platform-bun": "4.0.0-rc.110",
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.2",
+    "effect": "4.0.0-rc.110",
+    "vite": "^8.0.16"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "bun test",
+    "dev": "vite",
+    "dev:fixture": "bun run dev/fixture.ts",
+    "build": "vite build",
+    "preview": "vite preview"
+  }
+}

@@ -14,9 +14,9 @@ import { boundaryOf } from "@clavia/tardigrade/boundary"
 // speaks is the only thing added here.
 
 // AgentStatus is the summary vocabulary of GET /agents. Four answers, in the order they are
-// decided: an agent whose work cannot move is blocked, an agent that owes a transition is working,
-// an agent whose last turn died owing nothing is failed, and anything else rests.
-export type AgentStatus = "resting" | "working" | "blocked" | "failed"
+// decided: an agent whose work cannot move is blocked, an agent that owes a transition is running,
+// an agent whose last turn died owing nothing is failed, and anything else has settled.
+export type AgentStatus = "settled" | "running" | "blocked" | "failed"
 
 const numberAt = (event: Event): number | undefined => {
   const at = (event as { at?: unknown }).at
@@ -50,19 +50,19 @@ const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
 // it: `workOwed` is this head plus `canProgress`, so blocked is exactly the case that leaves
 // `workOwed` empty while an execution is still open (@clavia/tardigrade-code/projections). Blocked
 // means an open `BlockedOn` whose awaited reply has not landed; the moment it lands the same head
-// can progress and reads working again (projections.test.ts, "a landed reply unblocks the lane").
+// can progress and reads running again (projections.test.ts, "a landed reply unblocks the lane").
 //
-// A turn with no terminal and no owed execution is working as well: the model owes the next
-// transition, and no code has been dispatched yet (projections.test.ts, "a fresh turn is working").
+// A turn with no terminal and no owed execution is running as well: the model owes the next
+// transition, and no code has been dispatched yet (projections.test.ts, "a fresh turn is running").
 export const statusOf = (events: ReadonlyArray<Event>): AgentStatus => {
   const head = factsOf(events).find((facts) => !facts.settled)
-  if (head !== undefined) return canProgress(head) ? "working" : "blocked"
+  if (head !== undefined) return canProgress(head) ? "running" : "blocked"
   const turns = inboundOf(events)
   const last = turns[turns.length - 1]
-  if (last === undefined) return "resting"
+  if (last === undefined) return "settled"
   const boundary = boundaryOf(events, last)
-  if (boundary === undefined) return "working"
-  return boundary.kind === "failed" ? "failed" : "resting"
+  if (boundary === undefined) return "running"
+  return boundary.kind === "failed" ? "failed" : "settled"
 }
 
 // AgentSummary is one row of GET /agents: what an agent is, without its events. `parent` is absent

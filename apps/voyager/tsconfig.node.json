@@ -1,0 +1,7 @@
+{
+  // The pieces that run under Bun rather than in the browser: the build config and the development
+  // fixture. They are a separate project because the browser project adds the DOM library, and the
+  // fixture reaches into apps/server, whose sources are written against Bun's globals alone.
+  "extends": "../../tsconfig.base.json",
+  "include": ["dev", "vite.config.ts"]
+}

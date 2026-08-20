@@ -25,6 +25,20 @@
       "project": [
         "src/**/*.ts"
       ]
+    },
+    "apps/voyager": {
+      "entry": [
+        "src/api.ts",
+        "src/nav.ts",
+        "src/policy.ts"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "dev/**/*.ts"
+      ],
+      "ignoreDependencies": [
+        "@base-ui-components/react"
+      ]
     }
   }
 }
