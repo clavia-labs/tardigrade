@@ -6,6 +6,7 @@ import { messageKeys } from "@clavia/tardigrade-core/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/events"
 import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execute"
+import type { Package, PackageRequirements } from "@clavia/tardigrade-code/packages"
 import type { Router } from "@clavia/tardigrade-core/router"
 import type { ToolSpec } from "./request"
 import { agentKeys, toolReturned } from "./events"
@@ -123,10 +124,17 @@ const EXECUTE_TOOL: ToolSpec = {
   }
 }
 
-// CODE_SYSTEM is code mode's default system fragment: it names the tool the model acts with and
-// the packages in scope. A host whose packages come from the log renders its own fragment and
-// passes it to codeModeFor, so the default is a value you can read and a value you can replace.
-export const CODE_SYSTEM = `You act on the world by calling the execute tool with JavaScript; the packages in scope are:\nnone`
+// CODE_SYSTEM is code mode's system fragment with nothing in scope: it names the tool the model
+// acts with and says the scope is empty. codeSystemFor renders the same sentence over the
+// packages an assembly passed, so what the model reads is derived from the same values the code
+// reactor mounts (capability.test.ts, "a mounted package names itself in the system fragment").
+const CODE_SYSTEM_LEAD = "You act on the world by calling the execute tool with JavaScript; the packages in scope are:"
+export const CODE_SYSTEM = `${CODE_SYSTEM_LEAD}\nnone`
+
+// codeSystemFor names each package on its own line, `name: description`. An empty list reads
+// "none", which is CODE_SYSTEM.
+export const codeSystemFor = (packages: ReadonlyArray<Package<unknown>>): string =>
+  `${CODE_SYSTEM_LEAD}\n${packages.length === 0 ? "none" : packages.map((p) => `${p.name}: ${p.description}`).join("\n")}`
 
 // settleFor reads one execution's outcome, once the code reactor has recorded it.
 const settleFor = (
@@ -174,22 +182,29 @@ const codeServe: Serve = (call, log, answer) => {
 
 // codeModeFor is the code-execution capability: one `execute` tool, served by dispatching to
 // the code reactor and answered from its settle. The policy is the code lane's own
-// (packages/code/src/execute.ts, CodePolicy). `render.system` replaces CODE_SYSTEM, as a string
-// or as a projection of the log, for a host that names the packages in scope from its own
-// events (capability.test.ts, "codeModeFor takes a system fragment").
-export const codeModeFor = (
+// (packages/code/src/execute.ts, CodePolicy). `packages` are the values the code may name; the
+// capability's R is the spill store plus what those packages need, and the model's fragment is
+// derived from the same values, so what the code can call and what the model is told cannot
+// drift. `render.system` replaces that derivation, as a string or as a projection of the log,
+// for a host that names its scope from its own events (capability.test.ts, "codeModeFor takes a
+// system fragment").
+export const codeModeFor = <
+  const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>> = readonly []
+>(
   policy: Partial<CodePolicy>,
-  render: { readonly system?: Capability["system"] } = {}
-): Capability<KeyValueStore.KeyValueStore> => ({
+  render: { readonly system?: Capability["system"] } = {},
+  packages: P = [] as unknown as P
+): Capability<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => ({
   name: "code",
   keys: codeKeys,
-  reactors: [codeReactorFor(policy)],
+  reactors: [codeReactorFor(policy, packages)],
   tools: () => [EXECUTE_TOOL],
-  system: render.system ?? CODE_SYSTEM,
+  system: render.system ?? codeSystemFor(packages as ReadonlyArray<Package<unknown>>),
   serve: codeServe
 })
 
-// codeMode is that capability on defaults: the library default work surface.
+// codeMode is that capability on defaults, with nothing in scope: the library default work
+// surface.
 export const codeMode: Capability<KeyValueStore.KeyValueStore> = codeModeFor({})
 
 // A NativeTool is one named tool the model calls directly: its wire shape, and the effect that

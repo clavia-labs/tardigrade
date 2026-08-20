@@ -4,16 +4,20 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { settleActor } from "@clavia/tardigrade-core/actor"
-import { Packages, type Package } from "@clavia/tardigrade-code/packages"
+import type { Package } from "@clavia/tardigrade-code/packages"
 import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Infer, receive } from "./turn"
-import { agentOf, budget, codeMode, compaction, reply, toolList } from "./capability"
+import { agentOf, budget, codeModeFor, compaction, reply, toolList } from "./capability"
 
-// The default assembly and its runtime reactors, reconstructed the way agentOf mounts them:
-// reactors[0] is the infer loop, reactors[1] is the call router.
-const rlmAgent = agentOf([codeMode, reply, budget, compaction])
+// The default assembly over a stated scope, and its runtime reactors, reconstructed the way
+// agentOf mounts them: reactors[0] is the infer loop, reactors[1] is the call router. The
+// packages are values the assembly passes, so a test that needs one names it here
+// (capability.ts, codeModeFor).
+const agentWith = (packages: ReadonlyArray<Package>) =>
+  agentOf([codeModeFor({}, {}, packages), reply, budget, compaction])
+const rlmAgent = agentWith([])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -48,12 +52,6 @@ const jsSandbox = Layer.succeed(Sandbox, {
       }
     })
 })
-
-const registry = (packages: ReadonlyArray<Package>) =>
-  Layer.succeed(Packages, {
-    resolve: (name: string) => packages.find((p) => p.name === name),
-    list: () => Effect.succeed(packages.map((p) => ({ name: p.name, description: p.description })))
-  })
 
 const zoho = (spies: { insert: number; search: number }): Package => ({
   name: "zohorecruit",
@@ -106,12 +104,13 @@ describe("the agent with execute as the only tool", () => {
   test("the model's code runs with every package call recorded", async () => {
     const count = { calls: 0 }
     const spies = { insert: 0, search: 0 }
+    const agent = agentWith([zoho(spies)])
     const layers = Layer.mergeAll(
     KeyValueStore.layerMemory,
-    memoryLog(), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
+    memoryLog(), codeThenComplete(count), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(rlmAgent, { id: "m1", text: "add the JD and search candidates" })
+        yield* receive(agent, { id: "m1", text: "add the JD and search candidates" })
         return yield* readLog
       }),
       layers
@@ -184,10 +183,10 @@ describe("the agent with execute as the only tool", () => {
     ]
     const count = { calls: 0 }
     const spies = { insert: 0, search: 0 }
-    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), registry([zoho(spies)]), jsSandbox, noRouter)
+    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
-        yield* settleActor(rlmAgent)
+        yield* settleActor(agentWith([zoho(spies)]))
         return yield* readLog
       }),
       layers
@@ -213,7 +212,6 @@ describe("the agent with execute as the only tool", () => {
           )
         }
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )
@@ -246,7 +244,7 @@ describe("the agent with execute as the only tool", () => {
     })
     const layers = Layer.mergeAll(
     KeyValueStore.layerMemory,
-    memoryLog(queued), echoHead, registry([]), jsSandbox, noRouter)
+    memoryLog(queued), echoHead, jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
         yield* settleActor(rlmAgent)
@@ -273,7 +271,7 @@ describe("the agent with execute as the only tool", () => {
       { type: "ModelCalled", callId: "m1/infer/2", turn: "m1", at: 4 }
     ]
     const count = { calls: 0 }
-    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), registry([]), jsSandbox, noRouter)
+    const layers = Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(crashed), codeThenComplete(count), jsSandbox, noRouter)
     const events = await run(
       Effect.gen(function* () {
         yield* settleActor(rlmAgent)
@@ -296,7 +294,6 @@ describe("the agent with execute as the only tool", () => {
           return Effect.succeed({ kind: "complete" as const, output: "ok" })
         }
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )
@@ -327,7 +324,6 @@ describe("the agent with execute as the only tool", () => {
       Layer.succeed(Infer, {
         react: () => Effect.succeed({ kind: "complete" as const, output: "ok", usage: spent })
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )
@@ -363,7 +359,6 @@ describe("the agent with execute as the only tool", () => {
             failure: { cause: "inference_attempts_exhausted" as const, attempts: 2, policy: retry }
           })
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )
@@ -425,7 +420,6 @@ describe("a turn that declares an output schema", () => {
           )
         }
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )
@@ -462,7 +456,6 @@ describe("a turn that declares an output schema", () => {
           })
         }
       }),
-      registry([]),
       jsSandbox,
       noRouter
     )

@@ -9,7 +9,6 @@ import { DEFAULT_SANDBOX_POLICY, Sandbox } from "./sandbox"
 import { jsSandbox, jsSandboxFor } from "./defaults"
 import { codeReactor } from "./execute"
 import { codeKeys } from "./events"
-import { Packages } from "./packages"
 
 // Console capture: a body's prints come back on the result's `logs`, capped, and ride the
 // settle so the model reads them beside the result (TODO.md item 8: a print-to-inspect habit
@@ -123,11 +122,6 @@ const memoryLog = (initial: ReadonlyArray<Event>) =>
     })
   )
 
-const packagesLayer = Layer.succeed(Packages, {
-  resolve: () => undefined,
-  list: () => Effect.succeed([])
-})
-
 describe("logs ride the settle", () => {
   test("CodeSettled carries the body's prints", async () => {
     const log: Event[] = [
@@ -138,7 +132,7 @@ describe("logs ride the settle", () => {
       Effect.gen(function* () {
         yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
         ReadonlyArray<Event>
       >
     )

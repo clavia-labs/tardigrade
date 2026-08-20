@@ -3,9 +3,9 @@ import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { settleActor } from "@clavia/tardigrade-core/actor"
+import { settleActor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import { Packages, type Package, type PackagesService } from "./packages"
+import type { Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
@@ -62,11 +62,6 @@ const worldPackage: Package = {
   }
 }
 
-const packagesLayer = Layer.succeed(Packages, {
-  resolve: (name: string) => (name === "world" ? worldPackage : undefined),
-  list: () => Effect.succeed([{ name: "world", description: worldPackage.description }])
-})
-
 const code = `
   const a = await world.read({})
   const b = await world.ownedWrite({})
@@ -79,9 +74,9 @@ const settled = async (head: Event): Promise<ReadonlyArray<Event>> => {
   const log: Event[] = [head, { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
-    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+    }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
   )
 }
 
@@ -105,10 +100,6 @@ describe("transience never reaches the body", () => {
           })
       }
     }
-    const flakyLayer = Layer.succeed(Packages, {
-      resolve: (name: string) => (name === "flaky" ? flakyPackage : undefined),
-      list: () => Effect.succeed([{ name: "flaky", description: flakyPackage.description }])
-    })
     // The body's catch is the trap: if transience rejects, the fallback becomes data.
     const code = `
       const a = await flaky.read({}).catch(() => ({ fell: "back" }))
@@ -120,9 +111,9 @@ describe("transience never reaches the body", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ reactors: [codeReactorFor({}, [flakyPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), flakyLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { result?: { a: unknown } } | undefined
     expect(settle).toBeDefined()
@@ -154,9 +145,9 @@ describe("the replay guard", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")
@@ -177,9 +168,9 @@ describe("the replay guard", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
-      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { error?: string }
     expect(settle.error).toContain("nondeterministic body")
@@ -225,11 +216,11 @@ describe("the spill bound", () => {
         Effect.gen(function* () {
           yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
           return yield* Effect.flatMap(EventLog, (l) => l.read)
-        }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), packagesLayer, jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
+        }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
           ReadonlyArray<Event>
         >
       )
-    const spilled = (await drive(codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }))).find(
+    const spilled = (await drive(codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }, []))).find(
       (e) => e.type === "CodeSettled"
     ) as { tmp?: string; size?: number; preview?: string; result?: unknown }
     expect(spilled.tmp).toBe("e1.result")
@@ -260,11 +251,6 @@ describe("a package's requirements ride its type", () => {
     }
   }
 
-  const tickerRegistry: PackagesService<Ticker> = {
-    resolve: (name: string) => (name === "ticker" ? tickerPackage : undefined),
-    list: () => Effect.succeed([{ name: "ticker", description: tickerPackage.description }])
-  }
-
   test("a package method reads its service through the funnel", async () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "t1", text: "go", at: 1 },
@@ -272,13 +258,12 @@ describe("a package's requirements ride its type", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor<Ticker>()], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ reactors: [codeReactorFor({}, [tickerPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
             memoryLog(log),
-            Layer.succeed(Packages, tickerRegistry),
             jsSandbox,
             KeyValueStore.layerMemory,
             Layer.succeed(Ticker, "bound")
@@ -293,12 +278,21 @@ describe("a package's requirements ride its type", () => {
     expect(settle.result?.tick).toBe("bound")
   })
 
-  test("a registry the powerless reactor can run refuses a package that names a service", () => {
-    // codeReactorFor at its default R promises an environment of KeyValueStore alone, so the
-    // registry it runs is a PackagesService<never>. A package whose method reaches for Ticker has
-    // nowhere to read it from there, and the type says so before anything runs.
-    // @ts-expect-error a Package<Ticker> is not a Package<never>
-    const powerless: PackagesService<never> = tickerRegistry
-    expect(powerless.resolve("ticker")?.name).toBe("ticker")
+  test("the reactor a service-needing package builds cannot stand where the service is missing", () => {
+    // The packages are values, so the reactor's environment is derived from them: mounting the
+    // ticker package makes a Reactor<KeyValueStore | Ticker>, and the powerless environment has
+    // nowhere to read Ticker from. The type says so before anything runs.
+    const powered: Reactor<KeyValueStore.KeyValueStore | Ticker> = codeReactorFor({}, [tickerPackage])
+    // @ts-expect-error a Reactor<KeyValueStore | Ticker> is not a Reactor<KeyValueStore>
+    const powerless: Reactor<KeyValueStore.KeyValueStore> = powered
+    expect(powerless([])).toEqual([])
+  })
+
+  test("two packages under one name fail at construction", () => {
+    // One name, one object in the body's scope: a second package under it would decide which
+    // methods the code reaches by list order (execute.ts, codeReactorFor).
+    expect(() => codeReactorFor({}, [tickerPackage, { ...tickerPackage, description: "another" }])).toThrow(
+      'package "ticker" declared twice'
+    )
   })
 })

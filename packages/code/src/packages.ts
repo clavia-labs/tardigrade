@@ -1,4 +1,4 @@
-import { Context, Effect } from "effect"
+import type { Effect } from "effect"
 import type { Park } from "./errors"
 
 // DoorRequest is a request through a connection's door: method, a RELATIVE path (the door
@@ -107,10 +107,14 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
 // deliberately outside Package: it belongs to the host boundary and gets its own concept once a
 // consumer exists.
 //
+// Which packages an assembly passes is capability scoping: a task that must never send messages
+// is given no sending package, and the code cannot name what the assembly did not pass. The
+// powerless default is the empty array (execute.ts, codeReactor).
+//
 // `R` is what a package's methods need from the environment, the dual of `Capability<R>` on the
 // model face. A package that reaches for a service names it in its type, and the reactor that
-// runs the package must declare the same requirement (execute.ts, codeReactorFor); a package
-// that reaches for nothing is `Package<never>` and runs anywhere.
+// runs the package declares the union of what its packages need (execute.ts, codeReactorFor); a
+// package that reaches for nothing is `Package<never>` and runs anywhere.
 export interface Package<R = never> {
   readonly name: string
   readonly description: string
@@ -130,22 +134,9 @@ export interface Package<R = never> {
   >
 }
 
-// Packages is the registry seam. Which packages exist here is capability scoping: a task that
-// must never send messages is bound to a registry that holds no sending package, and the code
-// cannot name what the registry does not hold. The default registry holds nothing, so the
-// unwired case is the powerless one.
-export interface PackagesService<R = never> {
-  readonly resolve: (name: string) => Package<R> | undefined
-  readonly list: () => Effect.Effect<ReadonlyArray<{ readonly name: string; readonly description: string }>>
-}
-
-// The reference stands at `unknown`, the widest registry: a Context.Reference carries one type,
-// and `Package<R>` widens to `Package<unknown>` for every R, so a registry of service-needing
-// packages mounts here without a cast. What the packages need is checked at the two ends that
-// can see it: the package value states its own R, and the reactor that runs the registry
-// declares the environment it will run them in (execute.ts, codeReactorFor; the funnel restores
-// the reactor's R over the erased reference). A registry typed at `never` refuses a package that
-// names a service (execute.test.ts, "a package's requirements ride its type").
-export const Packages: Context.Reference<PackagesService<unknown>> = Context.Reference("code/Packages", {
-  defaultValue: (): PackagesService<unknown> => ({ resolve: () => undefined, list: () => Effect.succeed([]) })
-})
+// PackageRequirements extracts one package's R, so a mixed list infers the union of what its
+// members need rather than collapsing on the first element's R. It is the package-face twin of
+// RequirementsOf (packages/agent/src/capability.ts), and what makes the environment a code
+// reactor demands a function of the packages it was passed (execute.test.ts, "a package's
+// requirements ride its type").
+export type PackageRequirements<T> = T extends Package<infer R> ? R : never
