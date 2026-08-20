@@ -39,7 +39,7 @@ Configuration is the environment and nothing else. Every default is an exported 
 
 ## Running without a model
 
-The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails with `no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID`. The failure is an event in the log like any other, so `GET /v1/actors/agent/threads/:id/turns?turn=<id>` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `client.resume(thread, turn)` appends the `TurnResumed` that runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
+The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails saying no model is configured, naming `tdg setup` and the three variables `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_ID`. The failure is an event in the log like any other, so `GET /v1/actors/agent/threads/:id/turns?turn=<id>` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `client.resume(thread, turn)` appends the `TurnResumed` that runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
 
 ## Endpoints
 

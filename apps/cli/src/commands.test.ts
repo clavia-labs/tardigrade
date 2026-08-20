@@ -134,6 +134,15 @@ describe("parsing", () => {
     expect(ran.lines.join("\n")).toContain("events")
   })
 
+  // Every command is a declaration, so a command that exists is a command the help names. `setup`
+  // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
+  test("the tree names setup, and its help says what it writes", async () => {
+    expect((await drive([])).lines.join("\n")).toContain("setup")
+    const help = (await drive(["setup", "--help"])).lines.join("\n")
+    expect(help).toContain("~/.tardigrade/config.json")
+    expect(help).toContain("0600")
+  })
+
   test("a command's help names its flags", async () => {
     const ran = await drive(["events", "--help"])
     const help = ran.lines.join("\n")

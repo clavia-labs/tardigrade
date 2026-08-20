@@ -5,9 +5,11 @@
 ## Run it
 
 ```bash
-bun add @clavia/tardigrade
-bunx tdg --help
+bunx @clavia/tardigrade setup
+bunx @clavia/tardigrade dev
 ```
+
+`setup` asks for a provider, a model id, and a key, and writes them to `~/.tardigrade/config.json` at mode `CONFIG_MODE` (`apps/cli/src/setup.ts`). It never prints the key back. `dev` then serves the API and the UI on one port.
 
 Inside this repository the same command runs from the workspace:
 
@@ -24,6 +26,7 @@ bun run --cwd apps/cli start -- --help
 | `tdg send <thread> "<brief>"` | Deliver a brief and print the turn handle without waiting. |
 | `tdg ls` | Every thread a store holds, parent before child, as a table. |
 | `tdg events <thread>` | The log, one line per event. |
+| `tdg setup` | Ask for a provider, a model id, and a key, and save them. |
 
 `tdg --help` prints the tree and `tdg <command> --help` prints one command. A command nobody declared exits non-zero and says which command it looked like.
 
@@ -31,7 +34,7 @@ Every command names a thread, never an actor. A v1 server serves one actor and r
 
 ## Configuration resolves in one place
 
-A flag beats the environment, and the environment is the server's own surface, read by the server's own reader (`apps/server/src/config.ts`, `readConfig`), so a variable the server honours is a variable this command honours. There is no config file and no third source.
+A flag beats the environment, the environment beats the file `tdg setup` wrote, and the file beats the exported default. That order lives in one function (`apps/cli/src/config.ts`, `resolve`), so every value every command reads passes through the same rule. The environment is the server's own surface, read by the server's own reader (`apps/server/src/config.ts`, `readConfig`), so a variable the server honours is a variable this command honours.
 
 | What | Flag | Environment | Default |
 | --- | --- | --- | --- |
@@ -39,9 +42,22 @@ A flag beats the environment, and the environment is the server's own surface, r
 | The bearer token the remote commands present | `--token` | `TARDIGRADE_TOKEN` | absent |
 | The port `tdg dev` listens on | `--port` | `PORT` | `DEFAULT_PORT` (`apps/server/src/config.ts`) |
 | The store `tdg dev` opens | `--db` | `TARDIGRADE_DB` | `DEFAULT_DB` (`apps/server/src/config.ts`) |
-| The model binding | absent | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER` | absent |
+| The model binding | absent | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER` | the file `tdg setup` wrote |
 
-The model is yours. This framework ships no provider, no endpoint, and no key, so a turn runs against whatever `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_ID` name, on your account, with `MODEL_PROVIDER` naming a protocol other than the OpenAI-compatible default. A server with those unset still boots and still answers every read, and a turn it is asked to run fails saying which variables are missing.
+The model is yours. This framework ships no provider, no endpoint, and no key, so a turn runs against whatever `tdg setup` saved or the `MODEL_` variables name, on your account, with `MODEL_PROVIDER` naming a protocol other than the OpenAI-compatible default. A server with none of that still boots and still answers every read; it says so on one line at boot and names `tdg setup`, and a turn it is asked to run fails saying what is missing.
+
+## What the actor can reach
+
+`tdg dev` serves one actor, and the packages mounted on it are what its code can name. Two of them reach the world:
+
+| Package | Methods | Reach |
+| --- | --- | --- |
+| `files` | `read`, `list`, `search`, `write` | Only under its root, which defaults to the working directory (`packages/code/src/files.ts`, `defaultFilesRoot`). A path that resolves outside the root is an error the model reads. |
+| `fetch` | `get`, `request` | Any host. A response past `DEFAULT_FETCH_BODY_CHARS` comes back truncated and says so. |
+
+Two more reach inward rather than outward: `agents` spawns children, and `workspace` reads values a large result spilled to the store.
+
+Every method states its own annotations, so a read and a write are distinguishable before either runs (`packages/code/src/packages.ts`, `MethodAnnotations`). There is no shell package: a root or a host list can be scoped and a shell cannot, and nothing here asks a human before it acts.
 
 `--url` has no variable of its own because `PORT` says where a server this machine starts listens, and a command may be pointed at a server on another machine. Point it with `--url` and the two stay separate things. The token is a remote-command value for the same reason: it is what a command presents to a server, and `tdg dev` gates nothing.
 

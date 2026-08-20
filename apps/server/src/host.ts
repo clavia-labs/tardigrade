@@ -1,11 +1,13 @@
 import { Clock, Context, Effect, Layer } from "effect"
+import { FetchHttpClient } from "effect/unstable/http"
+import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Infer, type RlmR } from "@clavia/tardigrade"
+import { Infer } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { infer } from "@clavia/tardigrade-model/model"
 
-import { assemblyOf } from "./actor"
+import { assemblyOf, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
 import { DriverGauge } from "./http"
 
@@ -45,16 +47,33 @@ export class Threads extends Context.Service<
 // The model binding the configured coordinates name. Absent coordinates are not an endpoint this
 // server invents: every attempt fails with what is missing, so the process still boots, still
 // answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
-const MISSING_MODEL = "no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID"
+export const MISSING_MODEL = "no model is configured: run `tdg setup`, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID"
+
+// modelIsConfigured says whether a turn can reach a model at all. The command line reads it to say
+// so once on boot rather than letting every turn be the first news (apps/cli/src/commands.ts).
+export const modelIsConfigured = (config: ServerConfigValue): boolean =>
+  config.model.baseUrl !== undefined && config.model.apiKey !== undefined && config.model.id !== undefined
 
 const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
   const { apiKey, baseUrl, id, provider } = config.model
-  if (baseUrl === undefined || apiKey === undefined || id === undefined) {
+  if (!modelIsConfigured(config) || baseUrl === undefined || apiKey === undefined || id === undefined) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
   return infer({ baseUrl, apiKey, model: id, ...(provider === undefined ? {} : { provider }) })
 }
+
+// The lane environment: everything the assembly needs that the bun host does not bind. The model
+// binding is one of them, and so are the platform services the files and fetch packages reach
+// through, bound here to their bun implementations. The union comes off the assembly's own type
+// (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
+const layerLane = (config: ServerConfigValue, options: ThreadsOptions) =>
+  Layer.mergeAll(
+    options.infer ?? layerInferFrom(config),
+    BunFileSystem.layer,
+    BunPath.layer,
+    FetchHttpClient.layer
+  )
 
 export interface ThreadsOptions {
   // The model seam. Absent, the binding is derived from ServerConfig; present, it replaces that
@@ -69,13 +88,13 @@ const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
     const assembly = assemblyOf()
-    const inferLayer = options.infer ?? layerInferFrom(config)
+    const lane = layerLane(config, options)
     const host: BunHost = yield* Effect.acquireRelease(
       Effect.promise(() =>
-        createBunHost<RlmR>({
+        createBunHost<ServerR>({
           log: config.db,
           actorFor: (lane) => (idOf(lane) === undefined ? undefined : assembly),
-          layersFor: () => inferLayer,
+          layersFor: () => lane,
           keyOf: (event) => assembly.keyOf?.(event)
         })
       ),
