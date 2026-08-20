@@ -30,6 +30,7 @@ No silent hardcoding. When the framework applies a policy value, such as a cap, 
 - Go stdlib register: start with the identifier's name; one declarative sentence is the contract; further sentences only for constraints.
 - State what the code cannot: the contract, the constraint, the why. Never narrate mechanics or edit history.
 - Cite the spec or test that proves any property claimed (e.g. "tla/Reconcile.tla, NoVoid"). A citation can dangle visibly; a freehand assertion rots invisibly.
+- No rhetorical uniqueness: avoid "the one X", "the canonical X", "never a second concept" as phrasing. When exactly-one is a real invariant, state what enforces it ("duplicate names throw at construction"); when it is not, describe the thing plainly.
 
 ## Style
 
