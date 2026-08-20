@@ -11,6 +11,7 @@ import { useCallback, useSyncExternalStore } from "react"
 // A fraction is what the handle is dragged to, so the URL states the position the reader chose
 // rather than a seq the app would have to derive from it.
 export interface Route {
+  readonly actor: string | undefined
   readonly thread: string | undefined
   readonly from: number | undefined
   readonly to: number | undefined
@@ -25,7 +26,9 @@ const fraction = (raw: string | null): number | undefined => {
 const parse = (search: string): Route => {
   const params = new URLSearchParams(search)
   const thread = params.get("thread")
+  const actor = params.get("actor")
   return {
+    actor: actor === null || actor.length === 0 ? undefined : actor,
     thread: thread === null || thread.length === 0 ? undefined : thread,
     from: fraction(params.get("from")),
     to: fraction(params.get("to"))
@@ -43,6 +46,7 @@ export const navigate = (next: Partial<Route>, options: { readonly replace?: boo
     else params.set(name, String(value))
   }
   if ("thread" in next) write("thread", next.thread)
+  if ("actor" in next) write("actor", next.actor)
   if ("from" in next) write("from", next.from)
   if ("to" in next) write("to", next.to)
   const search = params.toString()

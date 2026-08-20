@@ -198,6 +198,26 @@ export const Health = Schema.Struct({
 
 export type Health = typeof Health.Type
 
+export const ActorSummary = Schema.Struct({
+  name: Schema.String,
+  builtIn: Schema.Boolean,
+  digest: Schema.optionalKey(Schema.String)
+}).annotate({ identifier: "ActorSummary" })
+
+export type ActorSummary = typeof ActorSummary.Type
+
+export const ActorArtifact = Schema.Struct({
+  manifest: Schema.Struct({
+    schema: Schema.Literal(1),
+    name: Schema.String,
+    module: Schema.String,
+    digest: Schema.String
+  }),
+  module: Schema.String
+}).annotate({ identifier: "ActorArtifact" })
+
+export type ActorArtifact = typeof ActorArtifact.Type
+
 // One event to append. `type` is the only field the platform requires, because an event is one fact
 // and what its other fields mean is the actor's own knowledge: a brief is
 // `{ type: "MessageReceived", id, text }`, and a resume is a `TurnResumed`. The platform stamps `at`
@@ -264,6 +284,15 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
 
 export const healthGroup = HttpApiGroup.make("health").add(
   HttpApiEndpoint.get("healthz", "/healthz", { success: Health })
+)
+
+export const actorsGroup = HttpApiGroup.make("actors").add(
+  HttpApiEndpoint.get("actors", "/v1/actors", { success: Schema.Array(ActorSummary) }),
+  HttpApiEndpoint.put("pushActor", "/v1/actors", {
+    payload: ActorArtifact,
+    success: ActorSummary,
+    error: [InvalidRequest.schema]
+  })
 )
 
 // A projection is a pure read of one thread's events, declared by the actor whose reactors wrote
@@ -366,7 +395,7 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
 // platform's to know: a server builds the API it serves from the actor it mounts
 // (apps/server/src/api.ts, ServerApi).
 export const apiOf = <const P extends Projections>(projections: P) =>
-  HttpApi.make("tardigrade").add(threadsGroup, projectionsGroupOf(projections), healthGroup)
+  HttpApi.make("tardigrade").add(actorsGroup, threadsGroup, projectionsGroupOf(projections), healthGroup)
     .middleware(RequestProblems)
     .annotateMerge(
       OpenApi.annotations({

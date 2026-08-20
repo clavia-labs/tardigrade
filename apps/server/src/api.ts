@@ -6,6 +6,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import {
   Api,
   apiOf,
+  InvalidRequest,
   invalidRequest,
   RESERVED_ACTOR,
   unacceptableField,
@@ -16,7 +17,7 @@ import {
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
 import { agentProjections } from "./actor"
-import { Threads } from "./host"
+import { Threads, type ActorThreads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
 
@@ -62,14 +63,19 @@ const integerOf = (raw: string | undefined): number | undefined => {
 const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id)} has ever existed.`
 
 const unknownActorDetail = (actor: string) =>
-  `This server serves one actor, ${JSON.stringify(RESERVED_ACTOR)}, and nothing named ${JSON.stringify(actor)}.`
+  `No actor named ${JSON.stringify(actor)} is available on this server.`
 
 // actorOf is the guard every declared route runs first. The actor level is a path parameter so the
 // declaration states the shape a deploy will vary (contract.ts, RESERVED_ACTOR), and this build
 // serves exactly the reserved name: any other is code nobody deployed here, which is its own 404
 // rather than an empty listing (api.test.ts, "an actor nobody deployed is its own 404").
-const actorOf = (actor: string): Effect.Effect<string, ReturnType<typeof UnknownActor.of>> =>
-  actor === RESERVED_ACTOR ? Effect.succeed(actor) : Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
+const actorOf = (actor: string): Effect.Effect<ActorThreads, ReturnType<typeof UnknownActor.of>, Threads> =>
+  Effect.flatMap(Threads, (threads) => {
+    const selected = actor === RESERVED_ACTOR ? threads : threads.actor?.(actor)
+    return selected === undefined
+      ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
+      : Effect.succeed(selected)
+  })
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
@@ -174,9 +180,10 @@ export const layerStream = (options: ApiOptions = {}) => {
       // The tail answers the same actor guard the declared routes do. It is spelled out rather than
       // shared with them because this route decodes its own request: it is not a declared endpoint
       // (contract.ts, the SSE note; api.test.ts, "the tail refuses an actor nobody deployed").
-      if (actor !== RESERVED_ACTOR) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
       const id = paramOf(params, "id")
-      const threads = yield* Threads
+      const registry = yield* Threads
+      const threads = actor === RESERVED_ACTOR ? registry : registry.actor?.(actor)
+      if (threads === undefined) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
       const log = yield* threads.events(id)
       if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
       const query = yield* HttpServerRequest.ParsedSearchParams
@@ -211,21 +218,18 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       // layerRequestProblems), so the handler only ever sees an event.
       .handle("append", ({ params, payload }) =>
         Effect.gen(function*() {
-          const actor = yield* actorOf(params.actor)
-          const threads = yield* Threads
+          const threads = yield* actorOf(params.actor)
           yield* threads.append(params.id, payload)
-          return { actor, thread: params.id }
+          return { actor: params.actor, thread: params.id }
         }))
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
-          yield* actorOf(params.actor)
-          const threads = yield* Threads
+          const threads = yield* actorOf(params.actor)
           return flatten(treeOf(logsOf(yield* threads.list())))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
-          yield* actorOf(params.actor)
-          const threads = yield* Threads
+          const threads = yield* actorOf(params.actor)
           const log = yield* logOf(threads.events, params.id)
           const { after, limit: page } = query
           // The comma list is the one rule the query Schema does not state: every value it could
@@ -238,8 +242,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {
-          yield* actorOf(params.actor)
-          const threads = yield* Threads
+          const threads = yield* actorOf(params.actor)
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
           const node = findNode(treeOf(logsOf(yield* threads.list())), params.id)
@@ -267,8 +270,7 @@ const readOf = (declaration: ProjectionDeclaration) =>
   readonly query: never
 }) =>
   Effect.gen(function*() {
-    yield* actorOf(request.params.actor)
-    const threads = yield* Threads
+    const threads = yield* actorOf(request.params.actor)
     const log = yield* logOf(threads.events, request.params.id)
     return declaration.run(log, request.query)
   })
@@ -309,7 +311,10 @@ export const layerUnknownProjection = () => {
     Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const actor = paramOf(params, "actor")
-      if (actor !== RESERVED_ACTOR) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
+      const registry = yield* Threads
+      if (actor !== RESERVED_ACTOR && registry.actor?.(actor) === undefined) {
+        return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
+      }
       const name = paramOf(params, "name")
       return problemResponse(
         UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${detail}`)
@@ -317,3 +322,19 @@ export const layerUnknownProjection = () => {
     })
   )
 }
+
+export const layerActorsGroup = () =>
+  HttpApiBuilder.group(ServerApi, "actors", (handlers) =>
+    handlers
+      .handle("actors", () =>
+        Effect.flatMap(Threads, (threads) => threads.actors ?? Effect.succeed([
+          { name: RESERVED_ACTOR, builtIn: true }
+        ])))
+      .handle("pushActor", ({ payload }) =>
+        Effect.gen(function*() {
+          const threads = yield* Threads
+          if (threads.push === undefined) {
+            return yield* Effect.fail(InvalidRequest.of("This server does not accept actor pushes."))
+          }
+          return yield* Effect.mapError(threads.push(payload), (error) => InvalidRequest.of(error.message))
+        })))

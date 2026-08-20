@@ -1,4 +1,11 @@
 export { type AgentPolicy, type AgentR, type RlmR, receive } from "./turn"
+export {
+  ACTOR_ARTIFACT_VERSION,
+  ACTOR_NAME_PATTERN,
+  defineActor,
+  type ActorArtifactManifest,
+  type ActorDefinition
+} from "./artifact"
 
 // The parts a caller lists. An agent is capabilities over one log; the reactors underneath
 // remain reachable for a bespoke assembly.

@@ -1,4 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
+import { createHash } from "node:crypto"
+import { mkdtemp, rm } from "node:fs/promises"
+import { join } from "node:path"
+import { tmpdir } from "node:os"
 import { Effect, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
@@ -59,7 +63,10 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
 
-const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:" }))
+const config = layerConfig(readConfig({
+  TARDIGRADE_DB: ":memory:",
+  TARDIGRADE_ACTORS: `/tmp/tardigrade-api-test-${process.pid}`
+}))
 
 const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
   BunHttpServer.layer({ port: 0 }),
@@ -97,6 +104,13 @@ const post = (base: string, path: string, body?: unknown) =>
     method: "POST",
     headers: { "content-type": "application/json" },
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  })
+
+const put = (base: string, path: string, body: unknown) =>
+  fetch(`${base}${path}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body)
   })
 
 // turnOf reads one turn through the actor's declared projection, narrowed by its `turn` query.
@@ -166,6 +180,56 @@ describe("appending", () => {
       return [before, after]
     })
     expect(counts[1]).toBe(counts[0]!)
+  })
+})
+
+describe("actors", () => {
+  test("a pushed actor is discovered and serves its own log", async () => {
+    const root = await mkdtemp(join(tmpdir(), "tardigrade-actors-"))
+    const actorData = await mkdtemp(join(tmpdir(), "tardigrade-actor-data-"))
+    const isolatedConfig = layerConfig(readConfig({
+      TARDIGRADE_DB: ":memory:",
+      TARDIGRADE_ACTORS: root,
+      TARDIGRADE_ACTOR_DATA: actorData
+    }))
+    const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
+      BunHttpServer.layer({ port: 0 }),
+      isolatedConfig,
+      Layer.provide(layerThreads({ infer: layerScripted }), isolatedConfig)
+    ])
+    const module = `export default { name: "reviewer", actor: { reactors: [], keyOf: () => undefined } }\n`
+    const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
+    try {
+      const result = await Effect.gen(function*() {
+        const server = yield* HttpServer.HttpServer
+        const address = server.address
+        const port = address._tag === "TcpAddress" ? address.port : 0
+        const base = `http://127.0.0.1:${port}`
+        return yield* Effect.promise(async () => {
+          const pushed = await put(base, "/v1/actors", {
+            manifest: { schema: 1, name: "reviewer", module: "actor.mjs", digest },
+            module
+          })
+          const summary = await pushed.json()
+          const accepted = await post(base, "/v1/actors/reviewer/threads/review/events", {
+            type: "MessageReceived",
+            id: "m1",
+            text: "inspect"
+          })
+          const actors = await (await fetch(`${base}/v1/actors`)).json()
+          const events = await (await fetch(`${base}/v1/actors/reviewer/threads/review/events`)).json()
+          return { pushStatus: pushed.status, summary, accepted: await accepted.json(), actors, events }
+        })
+      }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)
+      expect(result.pushStatus).toBe(200)
+      expect(result.summary).toEqual({ name: "reviewer", builtIn: false, digest })
+      expect(result.accepted).toEqual({ actor: "reviewer", thread: "review" })
+      expect(result.actors).toContainEqual({ name: "reviewer", builtIn: false, digest })
+      expect(result.events).toHaveLength(1)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+      await rm(actorData, { recursive: true, force: true })
+    }
   })
 })
 

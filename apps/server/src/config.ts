@@ -12,6 +12,10 @@ export const DEFAULT_PORT = 4242
 // Where the log lives when TARDIGRADE_DB is absent: a hidden directory under the working directory.
 export const DEFAULT_DB = ".tardigrade/agents.sqlite"
 
+export const DEFAULT_ACTORS = ".tardigrade/actors"
+
+export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
+
 // The model binding's coordinates. Absent values are absent rather than guessed: the model layer
 // decides what it can do without them, and the server does not invent an endpoint.
 export interface ModelConfig {
@@ -24,6 +28,8 @@ export interface ModelConfig {
 export interface ServerConfigValue {
   readonly port: number
   readonly db: string
+  readonly actors: string
+  readonly actorData: string
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
   // makes a bearer token required on every route except /healthz (http.ts).
   readonly token: string | undefined
@@ -59,6 +65,8 @@ const port = (env: Env): number => {
 export const readConfig = (env: Env): ServerConfigValue => ({
   port: port(env),
   db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
+  actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
+  actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
   token: text(env, "TARDIGRADE_TOKEN"),
   model: {
     baseUrl: text(env, "MODEL_BASE_URL"),

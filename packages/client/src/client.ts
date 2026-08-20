@@ -7,6 +7,7 @@ import {
   RESERVED_ACTOR,
   ResumeRefused,
   type Accepted,
+  type ActorSummary,
   type Append,
   type ThreadNode,
   type ThreadSummary,
@@ -103,6 +104,7 @@ export interface Client<P extends Projections = {}> {
   readonly baseUrl: string
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
+  readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
   readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
   readonly tree: (thread: string) => Promise<ThreadNode>
   readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
@@ -228,6 +230,7 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
   return {
     baseUrl,
     actor,
+    actors: () => run(api.actors.actors({})),
     list: () => run(api.threads.list({ params: { actor } })),
     tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
     events: (thread, events = {}) =>

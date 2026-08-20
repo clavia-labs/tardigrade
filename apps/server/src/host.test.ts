@@ -37,7 +37,10 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 })
 
 // The database is ":memory:", so each test opens its own store and closes it with the scope.
-const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:" }))
+const config = layerConfig(readConfig({
+  TARDIGRADE_DB: ":memory:",
+  TARDIGRADE_ACTORS: `/tmp/tardigrade-host-test-${process.pid}`
+}))
 
 // The body runs with both services the layer provides: the threads it drives, and the gauge
 // /healthz reads over the same driver (http.ts, DriverGauge).

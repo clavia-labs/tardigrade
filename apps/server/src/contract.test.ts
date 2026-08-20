@@ -55,6 +55,8 @@ setDefaultTimeout(BOOT_MS)
 // what the platform declares; `turns` is there because the actor this build mounts declares it
 // (actor.ts, agentProjections), and it appears in the document by being declared.
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ["get", "/v1/actors"],
+  ["put", "/v1/actors"],
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
   ["get", "/v1/actors/{actor}/threads"],
   ["get", "/v1/actors/{actor}/threads/{id}/events"],

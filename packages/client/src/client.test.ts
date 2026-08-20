@@ -54,6 +54,11 @@ const problemAnswer = (status: number, document: unknown) => () =>
   new Response(JSON.stringify(document), { status, headers: { "content-type": PROBLEM_CONTENT_TYPE } })
 
 describe("the address a call goes to", () => {
+  test("discovers actors at the collection", async () => {
+    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).actors()
+    expect(lastUrl().pathname).toBe("/v1/actors")
+  })
+
   // The transport reads its default fetch once per process, so a stated one is the only way a
   // caller routes requests elsewhere: a global assigned later is never consulted (client.ts,
   // ClientOptions.fetch).

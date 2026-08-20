@@ -61,7 +61,11 @@ const booted = <A>(
   }).pipe(
     Effect.provide(
       dev({
-        config: resolveServer({ port: 0, db: ":memory:" }, env),
+        config: resolveServer({
+          port: 0,
+          db: ":memory:",
+          actors: `/tmp/tardigrade-dev-test-${process.pid}`
+        }, env),
         assets: buildDirectory(),
         threads: { infer: layerScripted },
         disableLogger: true,
