@@ -30,6 +30,19 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Use Bun 1.4 or later.
 
 ```bash
+bunx @clavia/tardigrade setup
+bunx @clavia/tardigrade dev
+```
+
+`setup` asks for a provider, a model id, and a key. `dev` serves the API and the explorer on one port, over a SQLite log beside you. Start a thread from another shell:
+
+```bash
+tdg run "read this repo and tell me what it does"
+```
+
+## Build one
+
+```bash
 bun add @clavia/tardigrade
 ```
 
