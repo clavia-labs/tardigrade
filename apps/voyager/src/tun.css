@@ -609,6 +609,11 @@ textarea {
   line-height: 1.5;
 }
 
+.event-json {
+  line-height: 1.55;
+  tab-size: 2;
+}
+
 /* Entrances only, opacity only (voyager-design-system.md, principle 4). */
 @keyframes fade-in {
   from {

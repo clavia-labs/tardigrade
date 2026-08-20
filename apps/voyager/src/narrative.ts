@@ -1,5 +1,5 @@
 import type { Event, EventRow } from "@clavia/tardigrade-client"
-import { FIELD_INLINE_CHARS, SUMMARY_CHARS } from "./policy"
+import { DEFAULT_JSON_PARSE_DEPTH, FIELD_INLINE_CHARS, SUMMARY_CHARS } from "./policy"
 
 // The event list's projections: what a row says, what color its stamp carries, how long the thing
 // it names took, and which events are ends rather than rows. Every function here is pure, so the
@@ -57,10 +57,37 @@ export const truncate = (text: string, chars: number): string => {
   return flat.length <= chars ? flat : `${flat.slice(0, Math.max(0, chars - 1))}…`
 }
 
+const parsedJson = (value: string): unknown => {
+  const text = value.trim()
+  if (!((text.startsWith("{") && text.endsWith("}")) || (text.startsWith("[") && text.endsWith("]")))) return value
+  try {
+    const parsed: unknown = JSON.parse(text)
+    return typeof parsed === "object" && parsed !== null ? parsed : value
+  } catch {
+    return value
+  }
+}
+
+// structuredValue decodes JSON-shaped strings while preserving the object fields that contain
+// them. depth bounds strings nested inside strings and is a caller-visible display policy.
+export const structuredValue = (value: unknown, depth: number = DEFAULT_JSON_PARSE_DEPTH): unknown => {
+  if (typeof value === "string") {
+    if (depth <= 0) return value
+    const parsed = parsedJson(value)
+    return parsed === value ? value : structuredValue(parsed, depth - 1)
+  }
+  if (Array.isArray(value)) return value.map((item) => structuredValue(item, depth))
+  if (typeof value === "object" && value !== null) {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, structuredValue(item, depth)]))
+  }
+  return value
+}
+
 // preview renders any payload as one line: a string as itself, anything else as its JSON.
-const preview = (value: unknown, chars: number): string => {
+const preview = (value: unknown, chars: number, jsonDepth: number): string => {
   if (value === undefined) return ""
-  const text = typeof value === "string" ? value : JSON.stringify(value)
+  const shown = structuredValue(value, jsonDepth)
+  const text = typeof shown === "string" ? shown : JSON.stringify(shown)
   return text === undefined ? String(value) : truncate(text, chars)
 }
 
@@ -71,7 +98,7 @@ const argumentsPreview = (value: unknown, chars: number): string => {
     const code = (value as { readonly code: unknown }).code
     if (typeof code === "string") return truncate(code, chars)
   }
-  return preview(value, chars)
+  return preview(value, chars, DEFAULT_JSON_PARSE_DEPTH)
 }
 
 const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =>
@@ -81,7 +108,11 @@ const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =
 // it. The known alphabet is the agent lane's and the code lane's (packages/agent/src/events.ts,
 // packages/code/src/events.ts); a type from neither renders its field names, so an event the app has
 // never seen still says what it carries rather than nothing.
-export const summaryOf = (event: Event, chars: number = SUMMARY_CHARS): string => {
+export const summaryOf = (
+  event: Event,
+  chars: number = SUMMARY_CHARS,
+  jsonDepth: number = DEFAULT_JSON_PARSE_DEPTH
+): string => {
   switch (event.type) {
     case "MessageReceived": {
       // A reply is an inbound message answering an id this thread sent out, and it reads as the
@@ -100,18 +131,18 @@ export const summaryOf = (event: Event, chars: number = SUMMARY_CHARS): string =
     case "ToolCalled":
       return line([str(event.name), argumentsPreview(event.arguments, chars)], chars)
     case "ToolReturned":
-      return line([str(event.callId), preview(event.result, chars)], chars)
+      return line([str(event.callId), preview(event.result, chars, jsonDepth)], chars)
     case "CodeDispatched": {
       const code = str(event.code) ?? ""
       const lines = code.length === 0 ? 0 : code.split("\n").length
       return line([str(event.execId), `${lines} ${lines === 1 ? "line" : "lines"}`], chars)
     }
     case "PackageCalled":
-      return line([str(event.name), preview(event.arguments, chars)], chars)
+      return line([str(event.name), preview(event.arguments, chars, jsonDepth)], chars)
     case "BlockedOn":
       return line([`awaiting ${str(event.awaiting) ?? ""}`], chars)
     case "TurnCompleted":
-      return line([preview(event.output, chars)], chars)
+      return line([preview(event.output, chars, jsonDepth)], chars)
     case "TurnFailed":
       return line([str(event.cause) ?? "failed", str(event.error)], chars)
     case "TurnResumed":
@@ -129,7 +160,7 @@ export const summaryOf = (event: Event, chars: number = SUMMARY_CHARS): string =
     case "BudgetDenied":
       return line([str(event.reason) ?? "denied"], chars)
     case "CompactionCompleted":
-      return line([`keep from ${str(event.keepFrom) ?? ""}`, preview(event.summary, chars)], chars)
+      return line([`keep from ${str(event.keepFrom) ?? ""}`, preview(event.summary, chars, jsonDepth)], chars)
     default:
       return line([Object.keys(event).filter((field) => field !== "type").join(", ")], chars)
   }
@@ -159,7 +190,7 @@ export const instantOf = (at: number): string => {
 export interface Field {
   readonly key: string
   readonly value: string
-  readonly kind: "text" | "code"
+  readonly kind: "text" | "code" | "json"
 }
 
 // STAMP is what the host writes onto every event it records, whatever lane minted it: the turn the
@@ -202,12 +233,13 @@ export const TIME_FIELDS: ReadonlyArray<string> = ["at"]
 // valueOf renders one field for the value cell. A string is itself, so a code body keeps its own
 // line breaks and the cell wraps them. Anything else is its JSON, on one line while it fits within
 // `inlineChars` and indented past that, because a long object is read by its shape.
-const valueOf = (value: unknown, inlineChars: number): string => {
-  if (typeof value === "string") return value
-  if (value === null || typeof value !== "object") return String(value)
-  const compact = JSON.stringify(value)
-  if (compact === undefined) return String(value)
-  return compact.length <= inlineChars ? compact : JSON.stringify(value, null, 2)
+const valueOf = (value: unknown, inlineChars: number, jsonDepth: number): { readonly text: string; readonly json: boolean } => {
+  const shown = structuredValue(value, jsonDepth)
+  if (typeof shown === "string") return { text: shown, json: false }
+  if (shown === null || typeof shown !== "object") return { text: String(shown), json: false }
+  const compact = JSON.stringify(shown)
+  if (compact === undefined) return { text: String(shown), json: false }
+  return { text: compact.length <= inlineChars ? compact : JSON.stringify(shown, null, 2), json: true }
 }
 
 // fieldsOf is what an opened row shows: the event's own fields, in the order its type states, each
@@ -216,17 +248,24 @@ const valueOf = (value: unknown, inlineChars: number): string => {
 // line. A summary the row had to cut is not verbatim, so the long text stays and the reader gets
 // the whole of it. Nothing else is dropped: ids, correlation keys, instants, and payloads are what
 // a row is opened for.
-export const fieldsOf = (event: Event, inlineChars: number = FIELD_INLINE_CHARS): ReadonlyArray<Field> => {
+export const fieldsOf = (
+  event: Event,
+  inlineChars: number = FIELD_INLINE_CHARS,
+  jsonDepth: number = DEFAULT_JSON_PARSE_DEPTH
+): ReadonlyArray<Field> => {
   const own = Object.keys(event).filter((field) => field !== "type" && event[field] !== undefined)
   const order = ORDER[event.type] ?? []
   const keys = [...order.filter((field) => own.includes(field)), ...own.filter((field) => !order.includes(field))]
-  const summary = summaryOf(event)
+  const summary = summaryOf(event, SUMMARY_CHARS, jsonDepth)
   const fields: Array<Field> = []
   for (const key of keys) {
     const raw = event[key]
-    const value = TIME_FIELDS.includes(key) && typeof raw === "number" ? instantOf(raw) : valueOf(raw, inlineChars)
-    if (value === summary) continue
-    fields.push({ key, value, kind: event.type === "CodeDispatched" && key === "code" ? "code" : "text" })
+    const rendered = TIME_FIELDS.includes(key) && typeof raw === "number"
+      ? { text: instantOf(raw), json: false }
+      : valueOf(raw, inlineChars, jsonDepth)
+    if (rendered.text === summary) continue
+    const kind = event.type === "CodeDispatched" && key === "code" ? "code" : rendered.json ? "json" : "text"
+    fields.push({ key, value: rendered.text, kind })
   }
   return fields
 }

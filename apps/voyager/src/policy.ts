@@ -79,6 +79,10 @@ export const FIELD_WIDTH = 660
 // a long object is read by its shape and a single line of it is read by nobody.
 export const FIELD_INLINE_CHARS = 120
 
+// How many nested JSON strings the trace reader decodes for display. A caller can pass another
+// depth to summaryOf or fieldsOf when encoded JSON is part of the value rather than its container.
+export const DEFAULT_JSON_PARSE_DEPTH = 4
+
 // How near the list's end still counts as being at the end. Auto-scroll follows a live log only
 // from the bottom, and a reader who has scrolled up is reading; this is the slack that a fractional
 // scroll position is allowed to leave.

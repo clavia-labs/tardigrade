@@ -10,6 +10,7 @@ import {
   momentsOf,
   spanOf,
   stampOf,
+  structuredValue,
   summaryOf,
   TIME_FIELDS,
   truncate
@@ -155,7 +156,7 @@ describe("fieldsOf", () => {
     ])
   })
 
-  test("a code body carried as a tool argument is a payload, not a well", () => {
+  test("a code body carried as a tool argument is a JSON payload", () => {
     const event: Event = {
       type: "ToolCalled",
       callId: "survey",
@@ -167,18 +168,40 @@ describe("fieldsOf", () => {
       ["callId", "text"],
       ["name", "text"],
       ["at", "text"],
-      ["arguments", "text"]
+      ["arguments", "json"]
     ])
   })
 
   test("an object renders as compact JSON on one line while it fits", () => {
     const event: Event = { type: "PackageCalled", callId: "t1.0", name: "agents.run", arguments: { text: "shard 1" }, at: stamped }
-    expect(fieldsOf(event).at(-1)).toEqual({ key: "arguments", value: '{"text":"shard 1"}', kind: "text" })
+    expect(fieldsOf(event).at(-1)).toEqual({ key: "arguments", value: '{"text":"shard 1"}', kind: "json" })
   })
 
   test("an object past the inline length is indented in the same cell", () => {
     const event: Event = { type: "ToolReturned", callId: "t1", result: { text: "y".repeat(40) }, at: stamped }
     expect(fieldsOf(event, 20).at(-1)?.value).toBe(`{\n  "text": "${"y".repeat(40)}"\n}`)
+  })
+
+  test("a JSON string nested in an object renders as structured JSON", () => {
+    const event: Event = {
+      type: "ToolReturned",
+      callId: "t1",
+      result: { result: '{"entries":[{"name":"README.md","type":"File"}]}' },
+      at: stamped
+    }
+    const field = fieldsOf(event, 20).at(-1)
+    expect(field?.kind).toBe("json")
+    expect(field?.value).toContain('"result": {')
+    expect(field?.value).toContain('"entries": [')
+    expect(field?.value).not.toContain("\\\"")
+    expect(summaryOf(event)).toContain('{"result":{"entries":[')
+  })
+
+  test("the JSON parse depth is a caller override", () => {
+    const value = { result: '{"nested":true}' }
+    expect(structuredValue(value, 0)).toEqual(value)
+    expect(structuredValue(value, 1)).toEqual({ result: { nested: true } })
+    expect(structuredValue("{not json}")).toBe("{not json}")
   })
 
   test("a type the app has never seen lists its own keys in insertion order", () => {

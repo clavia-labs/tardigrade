@@ -96,7 +96,7 @@ const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
       <Fragment key={field.key}>
         <span className="mono event-key">{field.key}</span>
         <span
-          className={`mono event-value${field.kind === "code" ? " event-code" : ""}`}
+          className={`mono event-value${field.kind === "code" ? " event-code" : field.kind === "json" ? " event-json" : ""}`}
           style={{ maxWidth: FIELD_WIDTH }}
         >
           {field.value}
