@@ -336,9 +336,15 @@ textarea {
 }
 
 .actor-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: var(--space-4);
+}
+
+.actor-identity {
   display: grid;
   gap: 3px;
-  padding: var(--space-4);
 }
 
 .actor-search-wrap {
@@ -405,20 +411,19 @@ textarea {
 }
 
 @media (max-width: 900px) {
-  .actor-rail {
+  .actor-rail:not(.actor-rail-collapsed) {
     width: 160px !important;
   }
 }
 
-/* Everything a collapsed rail hides. The toggle is outside the class, so the rail can always be
-   opened again from where it was closed. */
-.rail-collapsed .rail-only {
+/* Everything a collapsed actor pane hides. The toggle is outside the class, so the pane can always
+   be opened again from where it was closed. */
+.actor-rail-collapsed .actor-only {
   display: none;
 }
 
-.rail-collapsed .rail-head {
+.actor-rail-collapsed .actor-head {
   justify-content: center;
-  padding-left: var(--space-3);
 }
 
 .rail-search {

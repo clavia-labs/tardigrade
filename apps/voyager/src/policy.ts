@@ -4,7 +4,7 @@
 
 // The rail's width in pixels (mock.html, the aside). It is a number here because the layout
 // measures against it.
-export const RAIL_WIDTH = 320
+export const RAIL_WIDTH = 280
 
 // The actor pane's width in pixels. Actor names are shorter than run ids, so the first level keeps
 // a narrower measure than the run rail beside it.
@@ -14,9 +14,9 @@ export const ACTOR_RAIL_WIDTH = 208
 // and each pane accepts another height when embedded in a tighter shell.
 export const PANE_HEADER_HEIGHT = 64
 
-// The width the rail keeps when it is collapsed, in pixels. It holds the toggle and nothing else,
-// so a reader can always open the list again from where they closed it.
-export const COLLAPSED_RAIL_WIDTH = 48
+// The width the actor pane keeps when it is collapsed, in pixels. It holds the toggle and nothing
+// else, so a reader can always open the list again from where they closed it.
+export const COLLAPSED_ACTOR_RAIL_WIDTH = 48
 
 // The size every icon renders at, in pixels (voyager-design-system.md, the icon policy). One number
 // for the whole set, because a second size would be a second style.
