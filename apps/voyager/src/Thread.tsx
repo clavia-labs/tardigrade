@@ -1,4 +1,3 @@
-import { Moon, Sun } from "@phosphor-icons/react"
 import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
@@ -6,8 +5,7 @@ import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clav
 import { client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
-import { useTheme } from "./theme"
+import { BOTTOM_SLACK_PX, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
@@ -81,29 +79,6 @@ const useLog = (id: string, pollMs: number) => {
   }, [id, dropped, pollMs])
 
   return { rows, problem, dropped, loaded }
-}
-
-// The theme toggle. An icon earns its place only by a recorded decision, and this is one of the two
-// the system records: the sun and the moon name the two themes in one glyph and no word does
-// (voyager-design-system.md, the icon policy). The glyph is Phosphor's at the light weight, which
-// every icon in the app shares.
-const ThemeToggle = (): ReactElement => {
-  const { theme, toggle } = useTheme()
-  return (
-    <button
-      type="button"
-      className="icon-btn"
-      onClick={toggle}
-      aria-label={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
-      title="Toggle theme"
-    >
-      {theme === "dark" ? (
-        <Moon size={ICON_SIZE} weight="light" aria-hidden="true" />
-      ) : (
-        <Sun size={ICON_SIZE} weight="light" aria-hidden="true" />
-      )}
-    </button>
-  )
 }
 
 // windowOf reads the window a URL states. An edge the link omits is that end of the log, so a
@@ -186,8 +161,6 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
     {status === undefined ? null : (
       <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>
     )}
-    <span style={{ marginLeft: "auto" }} />
-    <ThemeToggle />
   </div>
 )
 

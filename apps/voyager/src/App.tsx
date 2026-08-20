@@ -9,6 +9,7 @@ import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
 import { EMPTY_ROSTER, rosterOf, type Roster } from "./roster"
+import { ThemeToggle } from "./ThemeToggle"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
 // selected thread's log (mock.html). The reader chooses on the left and reads on the right, and
@@ -61,7 +62,7 @@ export const App = (): ReactElement => {
   const { problem, reading, summaries, ready } = useRoster(ROSTER_POLL_MS)
   const status = summaries.find((summary) => summary.id === route.thread)?.status
   return (
-    <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
+    <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
       <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
@@ -72,6 +73,7 @@ export const App = (): ReactElement => {
           <Thread id={route.thread} status={status} />
         )}
       </main>
+      <ThemeToggle />
     </div>
   )
 }
