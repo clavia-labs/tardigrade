@@ -5,7 +5,7 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { replyId } from "@clavia/tardigrade-core/reply"
+import { replyId } from "@clavia/tardigrade-core/message"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { agentsPackage } from "./spawn"
 

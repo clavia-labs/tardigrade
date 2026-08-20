@@ -6,7 +6,7 @@ import type { Package } from "@clavia/tardigrade-code/packages"
 import { budgetPolicyOf, type BudgetPolicy } from "./budget"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { address as addressOf, readAddress } from "@clavia/tardigrade-core/router"
-import { replyId } from "@clavia/tardigrade-core/reply"
+import { replyId } from "@clavia/tardigrade-core/message"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;

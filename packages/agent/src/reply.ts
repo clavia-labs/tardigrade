@@ -3,7 +3,7 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { replyDelivered } from "./events"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { replyEvent } from "@clavia/tardigrade-core/reply"
+import { replyEvent } from "@clavia/tardigrade-core/message"
 import { turnTerminalOf, replyView } from "@clavia/tardigrade-code/turns"
 
 // The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
