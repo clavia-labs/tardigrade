@@ -21,6 +21,24 @@ export type HostPorts = EventLog | Router | Self | Facets
 // Construction may require HostPorts; Layer.provideMerge discharges them.
 export type LaneEnv<R> = Layer.Layer<Exclude<R, HostPorts>, never, HostPorts>
 
+// Alarm is the platform timer, stated as a projection of one lane's log:
+// the instant the lane is next owed a visit, and the fact to append when
+// that instant arrives. Undefined is nothing due. The host re-derives the
+// answer after every settle and on recovery, so an armed alarm survives a
+// death and a lane holds one timer at a time (packages/core/tla/Driver.tla,
+// armed and Accounting).
+//
+// The fact is the owner's, because a reactor may not read the clock: time
+// is data on events (packages/core/src/actor.ts, Reactor). The fact must
+// name its occurrence in the owner's key table, and the host refuses to arm
+// a lane whose log already records that key, because a fact the log
+// absorbs would arm the same instant forever (host.test.ts, "an alarm the
+// log already records refuses to arm").
+export type Alarm = (
+  lane: string,
+  events: ReadonlyArray<Event>
+) => { readonly at: number; readonly event: Event } | undefined
+
 type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
   ? { readonly layersFor?: (lane: string) => LaneEnv<R> }
   : { readonly layersFor: (lane: string) => LaneEnv<R> }
@@ -51,6 +69,10 @@ export type HostOptions<R> = {
   // cross-lane delivery loudly. MessageReceived is exempt only because
   // its key is its own id, deduped by `seen` here.
   readonly keyOf?: (e: Event) => string | undefined
+  // alarm arms the platform timer per lane. Absent, no lane is ever woken
+  // by time, and a process that owes future work runs its own loop over
+  // `wake` instead (Alarm).
+  readonly alarm?: Alarm
 } & LayersFor<R>
 
 export interface Host {
@@ -67,7 +89,19 @@ export interface Host {
   // deliveries onto lanes they dirty, until the whole graph is quiet.
   // This loop is this binding's payment of Driver.tla's fairness:
   // while the process lives, every owed serve runs.
+  //
+  // Drives are serialized and coalesced, so a caller never has to hold a
+  // lock of its own: a drive requested while one runs adds exactly one
+  // follow-up pass, and both callers await the same promise. The promise
+  // resolves once the graph is quiet, so a caller that delivered first is
+  // served by a pass that started after its event landed.
   readonly drive: () => Promise<void>
+  // recover marks every lane that has an actor as owed a visit, arms the
+  // alarms their logs derive, and drives: the pass a process runs at start,
+  // so work interrupted by a death settles from the surviving log. Volatile
+  // here, so it re-settles what this process still holds; the durable
+  // binding re-settles what the store kept (platform/bun/src/host.ts).
+  readonly recover: () => Promise<void>
   // resting is the graph-wide quiescence question over lanes with actors.
   readonly resting: () => boolean
   // router is the host's router as a Layer, for environments built
@@ -173,6 +207,50 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
   }
 
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  // The failure of a drive that had no caller, the one an alarm starts. It
+  // is raised by the next drive, so the process dies on it rather than
+  // driving on over a broken host.
+  let failure: unknown = undefined
+
+  // arm holds one timer per lane, re-derived from the lane's own log. A
+  // lane with nothing due holds none, so the timer table is a projection
+  // like everything else and a stale arm cannot outlive the fact that
+  // caused it (tla/Driver.tla, Accounting).
+  const arm = (lane: string): void => {
+    if (options.alarm === undefined) return
+    const held = timers.get(lane)
+    if (held !== undefined) {
+      clearTimeout(held)
+      timers.delete(lane)
+    }
+    const events = read(lane)
+    const due = options.alarm(lane, events)
+    if (due === undefined) return
+    const key = options.keyOf?.(due.event)
+    if (key !== undefined && events.some((e) => options.keyOf?.(e) === key)) {
+      throw new Error(
+        `alarm for lane "${lane}" names "${due.event.type}" under key "${key}", which the log already records: a fired fact the log absorbs arms the same instant forever`
+      )
+    }
+    const timer = setTimeout(() => {
+      timers.delete(lane)
+      // The fire is a delivery like any other: the fact lands, the lane is
+      // owed a visit, and the same coalescing drive serves it. A drive
+      // nobody asked for has no caller to report to, so its failure is held
+      // for the next one.
+      append(lane, [due.event])
+      dirty.add(lane)
+      void drive().catch((error: unknown) => {
+        failure = error
+      })
+    }, Math.max(0, due.at - Date.now()))
+    // The timer must not hold the process open. What keeps a server alive
+    // is its own socket, and a test that leaves a lane armed still exits.
+    timer.unref?.()
+    timers.set(lane, timer)
+  }
+
   const drain = async (): Promise<void> => {
     while (dirty.size > 0) {
       const lane = options.pick?.(dirty) ?? (dirty.values().next().value as string)
@@ -180,10 +258,11 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       const actor = options.actorFor(lane)
       if (actor === undefined) continue
       await Effect.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
+      arm(lane)
     }
   }
 
-  const drive = async (): Promise<void> => {
+  const pass = async (): Promise<void> => {
     await drain()
     if (options.edgesOf === undefined) return
     // A quiet graph may still be knotted: the sentinel fails one
@@ -205,6 +284,44 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }
   }
 
+  // The driver runs one pass at a time. A drive requested while one runs
+  // coalesces into exactly one follow-up pass, and every caller awaits the
+  // same promise, so one lane never settles twice at once however many
+  // senders arrive together. This is the binding's discharge of the
+  // platform's obligation to serialize sends per actor
+  // (packages/core/src/actor.ts, Self; packages/core/src/event-log.ts,
+  // guarantee 3). Two request handlers delivering at the same instant is
+  // the ordinary shape of an event-driven process, and two settles over one
+  // log derive the same transition and run its effect twice
+  // (host.test.ts, "concurrent drives settle a lane once").
+  let driving: Promise<void> | undefined
+  let follow = false
+  const pump = async (): Promise<void> => {
+    try {
+      do {
+        follow = false
+        await pass()
+      } while (follow)
+    } finally {
+      driving = undefined
+      follow = false
+    }
+  }
+
+  const drive = (): Promise<void> => {
+    if (failure !== undefined) {
+      const held = failure
+      failure = undefined
+      return Promise.reject(held)
+    }
+    if (driving !== undefined) {
+      follow = true
+      return driving
+    }
+    driving = pump()
+    return driving
+  }
+
   const resting = (): boolean => {
     for (const [lane, events] of lanes) {
       const actor = options.actorFor(lane)
@@ -218,5 +335,14 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
-  return { seed, read, deliver, drive, wake, resting, router, self }
+  const recover = async (): Promise<void> => {
+    for (const lane of lanes.keys()) {
+      if (options.actorFor(lane) === undefined) continue
+      dirty.add(lane)
+      arm(lane)
+    }
+    await drive()
+  }
+
+  return { seed, read, deliver, drive, wake, recover, resting, router, self }
 }

@@ -21,6 +21,7 @@
   },
   "dependencies": {
     "@types/node": "^24",
+    "effect": "4.0.0-rc.110",
     "typescript": "6.0.3"
   },
   "devDependencies": {

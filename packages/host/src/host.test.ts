@@ -95,6 +95,145 @@ describe("the host", () => {
   })
 })
 
+// A lane whose one transition takes long enough to be interrupted, and counts its own runs. Two
+// senders arriving together is the ordinary shape of an event-driven process: the count is what
+// says whether the second one re-ran an effect the first was already running.
+const slowLane = () => {
+  const runs = { n: 0 }
+  const doneKeys = (e: Event): string | undefined => (e.type === "Done" ? "dn:1" : undefined)
+  const reactor: Reactor = (events) =>
+    events.some((e) => e.type === "Done")
+      ? []
+      : [
+          transition({
+            key: "dn:1",
+            input: null,
+            act: () =>
+              Effect.gen(function* () {
+                runs.n += 1
+                yield* Effect.sleep("5 millis")
+                return [{ type: "Done", at: 1 } as Event]
+              })
+          })
+        ]
+  const host = createHost({
+    actorFor: (lane) => (lane === "one" ? { reactors: [reactor], keyOf: doneKeys } : undefined),
+    keyOf: doneKeys
+  })
+  host.seed("one", [{ type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event])
+  return { host, runs }
+}
+
+describe("the driver", () => {
+  test("concurrent drives settle a lane once", async () => {
+    const { host, runs } = slowLane()
+    // Three senders, none of them awaiting the ones before it: the drive in flight takes the two
+    // that follow as one coalesced follow-up pass, and the pass they share finds the work done.
+    await Promise.all([host.wake("one"), host.wake("one"), host.wake("one")])
+    expect(runs.n).toBe(1)
+    expect(host.read("one").filter((e) => e.type === "Done")).toHaveLength(1)
+    expect(host.resting()).toBe(true)
+  })
+
+  test("a drive requested mid-pass serves what its own delivery enabled", async () => {
+    const { host } = slowLane()
+    const first = host.wake("one")
+    host.deliver("mem:one", { type: "MessageReceived", id: "m2", text: "again", at: 2 } as Event)
+    // The second sender awaits a pass that started after its own event landed, so the answer it
+    // waited for is on the log by the time it returns.
+    await Promise.all([first, host.drive()])
+    expect(host.read("one").map((e) => e.type)).toEqual(["MessageReceived", "MessageReceived", "Done"])
+    expect(host.resting()).toBe(true)
+  })
+
+  test("recover() settles the owed work of every lane that has an actor", async () => {
+    const { host, runs } = slowLane()
+    // The seed did not wake the lane, so the owed Done exists only as a derivation over the log.
+    expect(host.resting()).toBe(false)
+    await host.recover()
+    expect(runs.n).toBe(1)
+    expect(host.resting()).toBe(true)
+  })
+})
+
+// The alarm, over an application vocabulary the host knows nothing about: a `Reminder` states the
+// instant, and the fact the host appends when it arrives is the owner's `Fired`.
+const reminderKeys = (e: Event): string | undefined => {
+  const id = str((e as { id?: unknown }).id)
+  if (e.type === "Fired") return `fd:${id}`
+  if (e.type === "Answered") return `an:${id}`
+  return undefined
+}
+
+const answerFired: Reactor = (events) =>
+  events
+    .filter((e) => e.type === "Fired")
+    .filter((e) => !events.some((f) => f.type === "Answered" && str((f as { id?: unknown }).id) === str((e as { id?: unknown }).id)))
+    .map((e) => {
+      const id = str((e as { id?: unknown }).id)
+      return transition({
+        key: `an:${id}`,
+        input: id,
+        act: (input: string) => Effect.succeed([{ type: "Answered", id: input, at: 2 } as Event])
+      })
+    })
+
+// The due reminder: one with no `Fired` naming it. `repeat` keeps naming the same fact after it has
+// landed, which is the misuse the host refuses.
+const dueOf = (repeat: boolean) => (_lane: string, events: ReadonlyArray<Event>) => {
+  const due = events.find(
+    (e) =>
+      e.type === "Reminder" &&
+      (repeat || !events.some((f) => f.type === "Fired" && str((f as { id?: unknown }).id) === str((e as { id?: unknown }).id)))
+  ) as { id?: unknown; at?: unknown } | undefined
+  if (due === undefined) return undefined
+  const id = str(due.id)
+  return { at: Number(due.at), event: { type: "Fired", id, at: Number(due.at) } as Event }
+}
+
+const armed = (seeded: ReadonlyArray<Event>, repeat = false) => {
+  const host = createHost({
+    actorFor: (lane) => (lane === "one" ? { reactors: [answerFired], keyOf: reminderKeys } : undefined),
+    keyOf: reminderKeys,
+    alarm: dueOf(repeat)
+  })
+  host.seed("one", seeded)
+  return host
+}
+
+const reminder = { type: "Reminder", id: "r1", at: Date.now() } as Event
+
+const until = async (check: () => boolean): Promise<void> => {
+  for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 5))
+}
+
+describe("the platform alarm", () => {
+  test("an armed lane wakes at its instant and settles the fact", async () => {
+    const host = armed([reminder])
+    await host.recover()
+    await until(() => host.read("one").some((e) => e.type === "Answered"))
+    expect(host.read("one").map((e) => e.type)).toEqual(["Reminder", "Fired", "Answered"])
+    expect(host.resting()).toBe(true)
+  })
+
+  test("a lane with nothing due arms no timer", async () => {
+    const host = armed([reminder, { type: "Fired", id: "r1", at: 1 } as Event])
+    await host.recover()
+    await until(() => host.read("one").some((e) => e.type === "Answered"))
+    // The reminder already has its fact, so the projection finds nothing due and the log stops
+    // growing where the settle left it.
+    expect(host.read("one").filter((e) => e.type === "Fired")).toHaveLength(1)
+    expect(host.resting()).toBe(true)
+  })
+
+  test("an alarm the log already records refuses to arm", async () => {
+    // The fired fact is on the log and this alarm still names it, so the same instant would arm
+    // forever. The arm refuses instead, and the caller asking for the drive hears it.
+    const host = armed([reminder, { type: "Fired", id: "r1", at: 1 } as Event], true)
+    await expect(host.recover()).rejects.toThrow('alarm for lane "one" names "Fired"')
+  })
+})
+
 describe("the router membrane", () => {
   test("an unkeyed cross-lane event refuses loudly; a keyed one travels", () => {
     const host = createHost<never>({

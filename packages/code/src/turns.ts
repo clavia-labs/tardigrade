@@ -6,6 +6,11 @@ import { REPLY_SUFFIX } from "./ids"
 // so concurrent ingress cannot cross-wire turns: a message committed mid-turn waits, unserved.
 // turnView is the current turn: the earliest unserved head plus its stamped events. replyView
 // lags one stage behind: terminal stamped, reply not. An empty view is quiescence.
+//
+// One lane is one serial conversation: these views name a single current turn, so the heads of one
+// log are served in order and a queued message waits for the one ahead of it. A process that must
+// serve conversations at the same time gives each conversation its own lane, and shares what they
+// have in common through a lane they all read (packages/core/src/facets.ts, Facets).
 
 const idOf = (e: Event): string => String((e as { id?: unknown }).id ?? "")
 export const turnOf = (e: Event): string | undefined => {
@@ -63,12 +68,17 @@ const claimedByPark = (log: ReadonlyArray<Event>, index: number): boolean => {
   return open
 }
 
-const heads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
+// turnHeads returns every message that heads a turn, in log order: each MessageReceived except
+// one an open package call was awaiting (claimedByPark). An application deriving its own per-turn
+// work, an outbound post to a chat provider or a status update, reads this rather than filtering
+// MessageReceived itself, because the park rule is what keeps a harvested reply from heading a
+// turn of its own (turns.test.ts, "turnHeads excludes a reply an open call awaits").
+export const turnHeads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
   log.filter((e, i) => e.type === "MessageReceived" && !claimedByPark(log, i))
 
 // turnHead returns the current turn's head: the earliest message with no stamped terminal.
 export const turnHead = (log: ReadonlyArray<Event>): Event | undefined =>
-  heads(log).find((head) => turnTerminalOf(log, idOf(head)) === undefined)
+  turnHeads(log).find((head) => turnTerminalOf(log, idOf(head)) === undefined)
 
 // turnView returns the current turn's slice: its head plus its stamped events, in log order.
 export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
@@ -76,9 +86,12 @@ export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   return head === undefined ? [] : [head, ...activeStamped(log, idOf(head))]
 }
 
-// replyView returns the turn owed a reply: terminal stamped, reply not.
+// replyView returns the turn owed a reply: terminal stamped, reply not. The absence it reads is
+// `ReplyDelivered`, this package's own marker, so an application reporting a terminal somewhere
+// else (a chat provider, a webhook) derives its own view over turnHeads and its own marker rather
+// than sharing this one, which the reply reactor closes as soon as it fires.
 export const replyView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
-  const head = heads(log).find(
+  const head = turnHeads(log).find(
     (candidate) => {
       const turn = idOf(candidate)
       const terminal = turnTerminalOf(log, turn)
@@ -95,7 +108,7 @@ export const replyView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
 export const trajectoryOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const current = turnHead(log)
   const emitted = new Set<string>()
-  const byId = new Map(heads(log).map((h) => [idOf(h), h]))
+  const byId = new Map(turnHeads(log).map((h) => [idOf(h), h]))
   const out: Event[] = []
   for (const e of log) {
     if (e.type === "MessageReceived") continue

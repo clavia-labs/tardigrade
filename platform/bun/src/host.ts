@@ -9,7 +9,7 @@ import { Router, type CallResult } from "@clavia/tardigrade-core/router"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
-import type { HostPorts } from "@clavia/tardigrade-host/host"
+import type { Alarm, HostPorts } from "@clavia/tardigrade-host/host"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 
@@ -60,6 +60,11 @@ export type BunHostOptions<R> = {
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
+  // The platform timer, the reference host's own option and semantics
+  // (packages/host/src/host.ts, Alarm). Durable here: the due instant is a
+  // projection of a log that survived, so `recover()` re-arms what a death
+  // interrupted (host.test.ts, "recover() re-arms an alarm a death lost").
+  readonly alarm?: Alarm
 } & LayersFor<R>
 
 export interface BunHost {
@@ -71,9 +76,12 @@ export interface BunHost {
   readonly lanes: () => Promise<ReadonlyArray<string>>
   readonly deliver: (address: string, event: Event) => Promise<void>
   readonly wake: (lane: string) => Promise<void>
+  // drive is serialized and coalesced, the reference host's own contract
+  // (packages/host/src/host.ts, Host.drive).
   readonly drive: () => Promise<void>
-  // recover marks every lane that has an actor as owed a visit and drives: the alarm a real
-  // process runs at start, so work interrupted by a death settles from the surviving log.
+  // recover marks every lane that has an actor as owed a visit, arms the alarms their logs derive,
+  // and drives: the pass a real process runs at start, so work interrupted by a death settles from
+  // the surviving log.
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
   readonly self: (lane: string) => string
@@ -231,6 +239,45 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
   }
 
+  const timers = new Map<string, ReturnType<typeof setTimeout>>()
+  // The failure of a drive that had no caller, the one an alarm starts, raised by the next drive
+  // (packages/host/src/host.ts).
+  let failure: unknown = undefined
+
+  // arm holds one timer per lane, re-derived from the lane's own log, the reference host's own
+  // rule with a durable log under it (packages/host/src/host.ts, arm).
+  const arm = async (lane: string): Promise<void> => {
+    if (options.alarm === undefined) return
+    const held = timers.get(lane)
+    if (held !== undefined) {
+      clearTimeout(held)
+      timers.delete(lane)
+    }
+    const events = await runtime.runPromise(readEffect(lane))
+    const due = options.alarm(lane, events)
+    if (due === undefined) return
+    const key = options.keyOf?.(due.event)
+    if (key !== undefined && events.some((e) => options.keyOf?.(e) === key)) {
+      throw new Error(
+        `alarm for lane "${lane}" names "${due.event.type}" under key "${key}", which the log already records: a fired fact the log absorbs arms the same instant forever`
+      )
+    }
+    const timer = setTimeout(() => {
+      timers.delete(lane)
+      void runtime
+        .runPromise(appendEffect(lane, [due.event]))
+        .then(() => {
+          dirty.add(lane)
+          return drive()
+        })
+        .catch((error: unknown) => {
+          failure = error
+        })
+    }, Math.max(0, due.at - Date.now()))
+    timer.unref?.()
+    timers.set(lane, timer)
+  }
+
   const drain = async (): Promise<void> => {
     while (dirty.size > 0) {
       const lane = options.pick?.(dirty) ?? (dirty.values().next().value as string)
@@ -238,6 +285,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const actor = options.actorFor(lane)
       if (actor === undefined) continue
       await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
+      await arm(lane)
     }
   }
 
@@ -255,7 +303,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return map
   }
 
-  const drive = async (): Promise<void> => {
+  const pass = async (): Promise<void> => {
     await drain()
     if (options.edgesOf === undefined) return
     for (;;) {
@@ -277,6 +325,37 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
   }
 
+  // One pass at a time, coalesced, the reference host's own loop
+  // (packages/host/src/host.ts): a durable store makes a double settle worse, not better, because
+  // the effects it re-runs have already reached the world.
+  let driving: Promise<void> | undefined
+  let follow = false
+  const pump = async (): Promise<void> => {
+    try {
+      do {
+        follow = false
+        await pass()
+      } while (follow)
+    } finally {
+      driving = undefined
+      follow = false
+    }
+  }
+
+  const drive = (): Promise<void> => {
+    if (failure !== undefined) {
+      const held = failure
+      failure = undefined
+      return Promise.reject(held)
+    }
+    if (driving !== undefined) {
+      follow = true
+      return driving
+    }
+    driving = pump()
+    return driving
+  }
+
   const resting = async (): Promise<boolean> => {
     for (const [lane, events] of await lanesMap()) {
       const actor = options.actorFor(lane)
@@ -287,7 +366,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
 
   const recover = async (): Promise<void> => {
     for (const lane of (await lanesMap()).keys()) {
-      if (options.actorFor(lane) !== undefined) dirty.add(lane)
+      if (options.actorFor(lane) === undefined) continue
+      dirty.add(lane)
+      await arm(lane)
     }
     await drive()
   }
@@ -305,6 +386,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     recover,
     resting,
     self,
-    close: () => runtime.dispose()
+    // The close drops every armed timer first: a process that stops writing must not be woken to
+    // write again, and the next process re-arms from the log it left behind (recover).
+    close: () => {
+      for (const timer of timers.values()) clearTimeout(timer)
+      timers.clear()
+      return runtime.dispose()
+    }
   }
 }

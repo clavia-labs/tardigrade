@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { replyView, trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
+import { replyView, trajectoryOf, turnEpochOf, turnHead, turnHeads, turnTerminalOf, turnView } from "./turns"
 
-// `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every
+// `turnHeads` is what `turnHead`/`turnView` fold over: every
 // `MessageReceived`, except a reply a package call was still parked on when it landed. That
 // exclusion is what stops a foreground `agents.run`/`tasks.fire` park from also spawning a ghost
 // turn once its outer turn completes and the reply row is still sitting on the log, unconsumed by
@@ -45,6 +45,38 @@ describe("turnHead: a reply claimed by a still-open package call", () => {
     ]
     const head = turnHead(log)
     expect(head).toMatchObject({ id: "run-c1.reply" })
+  })
+})
+
+// An application reporting a turn's terminal somewhere the framework knows nothing about, a chat
+// provider or a webhook, derives its own owed work over turnHeads and its own marker. What it must
+// not do is filter MessageReceived itself, because the park rule is the difference between one post
+// per turn and one post per harvested reply.
+describe("turnHeads", () => {
+  test("excludes a reply an open call awaits and keeps every other inbound", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "hello", at: 1 },
+      { type: "PackageCalled", callId: "c1", name: "agents.run", arguments: {}, turn: "m1", at: 2 },
+      { type: "MessageReceived", id: "c1.reply", outcome: "completed", text: "4", from: "child", at: 3 },
+      { type: "MessageReceived", id: "m2", text: "again", at: 4 }
+    ]
+    expect(turnHeads(log).map((event) => event["id"])).toEqual(["m1", "m2"])
+  })
+
+  test("names the turns owed an application's own marker", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "hello", at: 1 },
+      { type: "TurnCompleted", output: "hi", turn: "m1", at: 2 },
+      { type: "Posted", turn: "m1", at: 3 },
+      { type: "MessageReceived", id: "m2", text: "again", at: 4 },
+      { type: "TurnCompleted", output: "hi again", turn: "m2", at: 5 }
+    ]
+    const owed = turnHeads(log).filter(
+      (head) =>
+        turnTerminalOf(log, String(head["id"])) !== undefined &&
+        !log.some((event) => event.type === "Posted" && event["turn"] === head["id"])
+    )
+    expect(owed.map((event) => event["id"])).toEqual(["m2"])
   })
 })
 

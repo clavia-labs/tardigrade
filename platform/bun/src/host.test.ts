@@ -113,6 +113,68 @@ describe("the bun host", () => {
     await second.close()
   })
 
+  // Serializing the passes is the reference host's contract, and a durable store makes a double
+  // settle worse rather than better: the effects it re-runs have already reached the world
+  // (packages/host/src/host.test.ts, "concurrent drives settle a lane once").
+  test("concurrent drives settle a lane once", async () => {
+    let runs = 0
+    const slow: Reactor = (events) =>
+      events.some((e) => e.type === "Done")
+        ? []
+        : [
+            transition({
+              key: "dn:m1",
+              input: null,
+              act: () =>
+                Effect.gen(function* () {
+                  runs += 1
+                  yield* Effect.sleep("5 millis")
+                  return [{ type: "Done", id: "m1", at: 1 } as Event]
+                })
+            })
+          ]
+    const h = await createBunHost({
+      log: freshPath(),
+      actorFor: (lane) => (lane === "echo" ? { reactors: [slow], keyOf } : undefined),
+      keyOf
+    })
+    await h.seed("echo", [{ type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event])
+    await Promise.all([h.wake("echo"), h.wake("echo"), h.wake("echo")])
+    expect(runs).toBe(1)
+    expect((await h.read("echo")).filter((e) => e.type === "Done")).toHaveLength(1)
+    await h.close()
+  })
+
+  test("recover() re-arms an alarm a death lost", async () => {
+    const path = freshPath()
+    // The reminder is on the log and its fact is not, so the due instant is a derivation over what
+    // survived. The process that lost the timer is not the process that owes the fire.
+    const alarmOptions = (): BunHostOptions<never> => ({
+      log: path,
+      actorFor: (lane) => (lane === "echo" ? echo : undefined),
+      keyOf: (e) => (e.type === "Fired" ? `fd:${String((e as { id?: unknown }).id)}` : keyOf(e)),
+      alarm: (_lane, events) => {
+        const due = events.find(
+          (e) => e.type === "Reminder" && !events.some((f) => f.type === "Fired" && f["id"] === e["id"])
+        ) as { id?: unknown; at?: unknown } | undefined
+        return due === undefined
+          ? undefined
+          : { at: Number(due.at), event: { type: "Fired", id: String(due.id), at: Number(due.at) } as Event }
+      }
+    })
+    const first = await createBunHost(alarmOptions())
+    await first.seed("echo", [{ type: "Reminder", id: "r1", at: Date.now() } as Event])
+    await first.close()
+
+    const second = await createBunHost(alarmOptions())
+    await second.recover()
+    for (let i = 0; i < 200 && !(await second.read("echo")).some((e) => e.type === "Fired"); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect((await second.read("echo")).map((e) => e.type)).toEqual(["Reminder", "Fired"])
+    await second.close()
+  })
+
   test("lanes names every lane the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(await h.lanes()).toEqual([])

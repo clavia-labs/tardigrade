@@ -101,33 +101,26 @@ const make = (options: ThreadsOptions) =>
       (open) => Effect.promise(() => open.close())
     )
 
-    // The drive loop. Deliveries request a drive rather than run one: drives are serialized, so
-    // two lanes never settle at once, and coalesced, so a request arriving mid-drive schedules
-    // exactly one follow-up pass however many arrive. The follow-up runs inside the same promise,
-    // so a caller awaiting a requested drive also awaits the work its own delivery enabled.
+    // A delivery requests a drive rather than running one. Serializing and coalescing the passes
+    // is the host's own contract, so this holds only what the host cannot: the count a health
+    // probe reads, and the defect a fire-and-forget request has no caller to report to
+    // (packages/host/src/host.ts, Host.drive).
     let driving: Promise<void> | undefined
-    let follow = false
+    let owed = 0
     let failure: unknown = undefined
-    const pump = async (): Promise<void> => {
-      try {
-        do {
-          follow = false
-          await host.drive()
-        } while (follow)
-      } catch (e) {
-        failure = e
-      } finally {
-        driving = undefined
-        follow = false
-      }
-    }
     const request = (): Promise<void> => {
-      if (driving !== undefined) {
-        follow = true
-        return driving
-      }
-      driving = pump()
-      return driving
+      owed += 1
+      const pass = host.drive().then(
+        () => {
+          owed -= 1
+        },
+        (error: unknown) => {
+          owed -= 1
+          failure = error
+        }
+      )
+      driving = pass
+      return pass
     }
 
     // A drive that threw is a defect the loop cannot report to the delivery that caused it, so it
@@ -172,12 +165,12 @@ const make = (options: ThreadsOptions) =>
       settled
     }
 
-    // dirty counts the drive passes owed, not lanes: 0 resting, 1 while a drive runs, 2 when that
-    // drive has already coalesced a follow-up. The host's own dirty set is private to it, and the
-    // number a client reads is the one this loop acts on.
+    // dirty counts the drive passes owed, not lanes: 0 resting, 1 while a drive runs, 2 when a
+    // second was requested during it. The host's own dirty set is private to it, and the number a
+    // client reads is the one this service asked for.
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
       resting: Effect.promise(() => host.resting()),
-      dirty: Effect.sync(() => (driving === undefined ? 0 : follow ? 2 : 1))
+      dirty: Effect.sync(() => owed)
     }
 
     return Context.make(Threads, service).pipe(Context.add(DriverGauge, gauge))
