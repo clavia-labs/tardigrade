@@ -166,3 +166,28 @@ export const schemaTypeOf = (schema: ApiSchema): string => {
   if (schema.type === "array" && schema.items !== undefined) return `${schemaTypeOf(schema.items)}[]`
   return schema.type ?? "unknown"
 }
+
+export const schemaExampleOf = (
+  schema: ApiSchema,
+  schemas: Readonly<Record<string, ApiSchema>>,
+  depth: number
+): unknown => {
+  const resolved = resolvedSchema(schema, schemas)
+  if (resolved.enum !== undefined) return resolved.enum[0]
+  if (resolved.anyOf !== undefined && resolved.anyOf[0] !== undefined) return schemaExampleOf(resolved.anyOf[0], schemas, depth)
+  if (resolved.allOf !== undefined) {
+    return Object.assign({}, ...resolved.allOf.map((part) => schemaExampleOf(part, schemas, depth)))
+  }
+  if (depth <= 0) return resolved.type === "array" ? [] : resolved.type === "object" ? {} : null
+  if (resolved.type === "array") {
+    return resolved.items === undefined ? [] : [schemaExampleOf(resolved.items, schemas, depth - 1)]
+  }
+  if (resolved.type === "object" || resolved.properties !== undefined) {
+    return Object.fromEntries(
+      Object.entries(resolved.properties ?? {}).map(([name, property]) => [name, schemaExampleOf(property, schemas, depth - 1)])
+    )
+  }
+  if (resolved.type === "integer" || resolved.type === "number") return 0
+  if (resolved.type === "boolean") return true
+  return "string"
+}

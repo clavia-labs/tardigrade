@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { apiDocumentOf, apiGroupsOf, matchesOperation, resolvedSchema, schemaTypeOf } from "./api"
+import { apiDocumentOf, apiGroupsOf, matchesOperation, resolvedSchema, schemaExampleOf, schemaTypeOf } from "./api"
 
 const raw = {
   info: { title: "Tardigrade", version: "1" },
@@ -37,5 +37,12 @@ describe("apiDocumentOf", () => {
     const reference = { $ref: "#/components/schemas/Actor" }
     expect(resolvedSchema(reference, document.schemas).type).toBe("object")
     expect(schemaTypeOf({ type: "array", items: reference })).toBe("Actor[]")
+  })
+
+  test("builds examples from component schemas", () => {
+    const document = apiDocumentOf(raw)
+    expect(schemaExampleOf({ type: "array", items: { $ref: "#/components/schemas/Actor" } }, document.schemas, 3)).toEqual([
+      { name: "string" }
+    ])
   })
 })

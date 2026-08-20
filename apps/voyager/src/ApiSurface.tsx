@@ -7,6 +7,7 @@ import {
   apiGroupsOf,
   matchesOperation,
   resolvedSchema,
+  schemaExampleOf,
   schemaTypeOf,
   type ApiContent,
   type ApiDocument,
@@ -106,64 +107,118 @@ const Content = ({
 const OperationDetail = ({
   depth,
   document,
-  operation
+  operation,
+  operations
 }: {
   readonly depth: number
   readonly document: ApiDocument
   readonly operation: ApiOperation
-}): ReactElement => (
-  <article className="api-detail">
-    <header className="api-detail-head">
-      <div className="api-operation-title">
-        <span className={`mono api-method api-method-${operation.method}`}>{operation.method.toUpperCase()}</span>
-        <h1 className="mono">{operation.path}</h1>
-      </div>
-      {operation.operationId === undefined ? null : <div className="mono api-operation-id">{operation.operationId}</div>}
-      {operation.summary === undefined ? null : <p>{operation.summary}</p>}
-      {operation.description === undefined ? null : <p>{operation.description}</p>}
-    </header>
-    {operation.parameters.length === 0 ? null : (
-      <section className="api-section">
-        <h2>Parameters</h2>
-        <div className="api-parameters">
-          {operation.parameters.map((parameter) => (
-            <div className="api-parameter" key={`${parameter.in}:${parameter.name}`}>
-              <div>
-                <span className="mono api-property-name">{parameter.name}</span>
-                <span className="mono api-parameter-in">{parameter.in}</span>
-              </div>
-              <div className="mono api-property-type">
-                {parameter.schema === undefined ? "unknown" : schemaTypeOf(parameter.schema)}
-              </div>
-              <span className={parameter.required ? "api-required" : "api-optional"}>{parameter.required ? "required" : "optional"}</span>
-              {parameter.description === undefined ? null : <p>{parameter.description}</p>}
-            </div>
-          ))}
+  readonly operations: ReadonlyArray<ApiOperation>
+}): ReactElement => {
+  const requestContent = operation.request[0]
+  const success = operation.responses.find((response) => response.status.startsWith("2")) ?? operation.responses[0]
+  const responseContent = success?.content[0]
+  const requestExample = requestContent?.schema === undefined ? undefined : schemaExampleOf(requestContent.schema, document.schemas, depth)
+  const responseExample = responseContent?.schema === undefined ? undefined : schemaExampleOf(responseContent.schema, document.schemas, depth)
+  const curl = [
+    `curl ${client.baseUrl}${operation.path}`,
+    ...(operation.method === "get" ? [] : [`  --request ${operation.method.toUpperCase()}`]),
+    "  --header 'Accept: application/json'",
+    ...(requestExample === undefined ? [] : [
+      `  --header 'Content-Type: ${requestContent?.mediaType ?? "application/json"}'`,
+      `  --data '${JSON.stringify(requestExample, null, 2)}'`
+    ])
+  ].join(" \\\n")
+  return (
+    <article className="api-detail api-operation-detail">
+      <section className="api-tag-overview">
+        <div>
+          <div className="mono api-eyebrow">Resource</div>
+          <h1>{operation.tag}</h1>
+        </div>
+        <div className="api-operations-card">
+          <div className="api-card-title">Operations</div>
+          <div className="api-operations-list">
+            {operations.map((candidate) => (
+              <button type="button" key={candidate.key} onClick={() => navigate({ operation: candidate.key })}>
+                <span className={`mono api-method api-method-${candidate.method}`}>{candidate.method.toUpperCase()}</span>
+                <span className="mono">{candidate.path}</span>
+              </button>
+            ))}
+          </div>
         </div>
       </section>
-    )}
-    {operation.request.length === 0 ? null : (
-      <section className="api-section">
-        <h2>Request body</h2>
-        <Content content={operation.request} schemas={document.schemas} depth={depth} />
-      </section>
-    )}
-    <section className="api-section">
-      <h2>Responses</h2>
-      <div className="api-responses">
-        {operation.responses.map((response) => (
-          <div className="api-response" key={response.status}>
-            <div className="api-response-head">
-              <span className={`mono api-status${response.status.startsWith("2") ? " api-status-ok" : ""}`}>{response.status}</span>
-              <span>{response.description}</span>
+      <header className="api-detail-head">
+        <h2 className="mono">{operation.path}</h2>
+        {operation.operationId === undefined ? null : <div className="mono api-operation-id">{operation.operationId}</div>}
+        {operation.summary === undefined ? null : <p>{operation.summary}</p>}
+        {operation.description === undefined ? null : <p>{operation.description}</p>}
+      </header>
+      <div className="api-operation-grid">
+        <div className="api-operation-docs">
+          {operation.parameters.length === 0 ? null : (
+            <section className="api-section">
+              <h3>Parameters</h3>
+              <div className="api-parameters">
+                {operation.parameters.map((parameter) => (
+                  <div className="api-parameter" key={`${parameter.in}:${parameter.name}`}>
+                    <div>
+                      <span className="mono api-property-name">{parameter.name}</span>
+                      <span className="mono api-parameter-in">{parameter.in}</span>
+                    </div>
+                    <div className="mono api-property-type">
+                      {parameter.schema === undefined ? "unknown" : schemaTypeOf(parameter.schema)}
+                    </div>
+                    <span className={parameter.required ? "api-required" : "api-optional"}>{parameter.required ? "required" : "optional"}</span>
+                    {parameter.description === undefined ? null : <p>{parameter.description}</p>}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          {operation.request.length === 0 ? null : (
+            <section className="api-section">
+              <h3>Request body</h3>
+              <Content content={operation.request} schemas={document.schemas} depth={depth} />
+            </section>
+          )}
+          <section className="api-section">
+            <h3>Responses</h3>
+            <div className="api-responses">
+              {operation.responses.map((response) => (
+                <div className="api-response" key={response.status}>
+                  <div className="api-response-head">
+                    <span className={`mono api-status${response.status.startsWith("2") ? " api-status-ok" : ""}`}>{response.status}</span>
+                    <span>{response.description}</span>
+                  </div>
+                  {response.content.length === 0 ? null : <Content content={response.content} schemas={document.schemas} depth={depth} />}
+                </div>
+              ))}
             </div>
-            {response.content.length === 0 ? null : <Content content={response.content} schemas={document.schemas} depth={depth} />}
-          </div>
-        ))}
+          </section>
+        </div>
+        <aside className="api-operation-examples">
+          <section className="api-code-card">
+            <div className="api-code-head">
+              <div><span className={`mono api-method api-method-${operation.method}`}>{operation.method.toUpperCase()}</span><span className="mono">{operation.path}</span></div>
+              <span className="mono">Shell Curl</span>
+            </div>
+            <pre><code>{curl}</code></pre>
+          </section>
+          {responseExample === undefined ? null : (
+            <section className="api-code-card">
+              <div className="api-code-head">
+                <div><span className="mono api-status api-status-ok">{success?.status}</span><span>{success?.description}</span></div>
+                <span className="mono">{responseContent?.mediaType}</span>
+              </div>
+              <pre><code>{JSON.stringify(responseExample, null, 2)}</code></pre>
+            </section>
+          )}
+        </aside>
       </div>
-    </section>
-  </article>
-)
+    </article>
+  )
+}
 
 const Overview = ({ document }: { readonly document: ApiDocument }): ReactElement => (
   <article className="api-detail api-overview">
@@ -253,7 +308,12 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
         ) : selected === undefined ? (
           <Overview document={document} />
         ) : (
-          <OperationDetail operation={selected} document={document} depth={schemaDepth} />
+          <OperationDetail
+            operation={selected}
+            operations={document.operations.filter((operation) => operation.tag === selected.tag)}
+            document={document}
+            depth={schemaDepth}
+          />
         )}
       </main>
       <ThemeToggle />
