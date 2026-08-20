@@ -8,7 +8,7 @@
 
 # Tardigrade
 
-[![npm version](https://img.shields.io/npm/v/@clavia/tardigrade.svg)](https://www.npmjs.com/package/@clavia/tardigrade)
+[![npm version](https://img.shields.io/npm/v/tardie.svg)](https://www.npmjs.com/package/tardie)
 
 A durable and modular agent harness built for self-improvement.
 
@@ -29,10 +29,11 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Run and observe the default agent. Use Bun 1.4 or later.
+Install the release candidate and run the default agent. Use Bun 1.4 or later.
 
 ```bash
-bunx tardie dev
+bun add --global tardie@next
+tdg dev
 ```
 
 Start a thread from another shell:
@@ -40,6 +41,8 @@ Start a thread from another shell:
 ```bash
 tdg run "read this repo and tell me what it does"
 ```
+
+Watch the live trajectory at [localhost:4242](http://localhost:4242).
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">

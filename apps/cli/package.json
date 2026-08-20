@@ -26,6 +26,7 @@
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-server": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.110",
+    "@effect/platform-node-shared": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
   },
   "scripts": {

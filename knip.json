@@ -26,6 +26,11 @@
         "src/**/*.ts"
       ]
     },
+    "apps/cli": {
+      "ignoreDependencies": [
+        "@effect/platform-node-shared"
+      ]
+    },
     "apps/voyager": {
       "entry": [
         "src/client.ts",
