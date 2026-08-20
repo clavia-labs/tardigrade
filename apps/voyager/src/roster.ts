@@ -24,6 +24,8 @@ export interface Roster {
 
 export const EMPTY_ROSTER: Roster = { roots: [] }
 
+export const latestRootOf = (roster: Roster): RootRow | undefined => roster.roots.at(-1)
+
 // rootOf walks a thread's parents to the root of its family. Parentage is the server's fact: only
 // the forest can see it, and a summary states it (apps/server/src/projections.ts, treeOf). The
 // guard stops a claim cycle, which minted call ids cannot produce but an argument can.

@@ -1,6 +1,6 @@
-import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
-import { ArrowLeft, ArrowSquareOut, MagnifyingGlass } from "@phosphor-icons/react"
-import { useEffect, useMemo, useState, type ReactElement } from "react"
+import { OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
+import { ArrowLeft, MagnifyingGlass } from "@phosphor-icons/react"
+import { useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 
 import {
   apiDocumentOf,
@@ -123,6 +123,8 @@ const OperationDetail = ({
   const requestContent = operation.request[0]
   const success = operation.responses.find((response) => response.status.startsWith("2")) ?? operation.responses[0]
   const responseContent = success?.content[0]
+  const headerParameters = operation.parameters.filter((parameter) => parameter.in === "header")
+  const otherParameters = operation.parameters.filter((parameter) => parameter.in !== "header")
   const requestExample = requestContent?.schema === undefined ? undefined : schemaExampleOf(requestContent.schema, document.schemas, depth)
   const responseExample = responseContent?.schema === undefined ? undefined : schemaExampleOf(responseContent.schema, document.schemas, depth)
   const curl = [
@@ -144,11 +146,24 @@ const OperationDetail = ({
       </header>
       <div className="api-operation-grid">
         <div className="api-operation-docs">
-          {operation.parameters.length === 0 ? null : (
+          <section className="api-section api-headers-section">
+            <h3>Headers</h3>
+            <div className="api-header-line">
+              <span className="mono api-property-name">Accept</span>
+              <span className="mono api-header-example">{responseContent?.mediaType ?? "*/*"}</span>
+            </div>
+            {headerParameters.map((parameter) => (
+              <div className="api-header-line" key={parameter.name}>
+                <span className="mono api-property-name">{parameter.name}</span>
+                <span className="mono api-header-example">{parameter.schema === undefined ? "unknown" : schemaTypeOf(parameter.schema)}</span>
+              </div>
+            ))}
+          </section>
+          {otherParameters.length === 0 ? null : (
             <section className="api-section">
               <h3>Parameters</h3>
               <div className="api-parameters">
-                {operation.parameters.map((parameter) => (
+                {otherParameters.map((parameter) => (
                   <div className="api-parameter" key={`${parameter.in}:${parameter.name}`}>
                     <div>
                       <span className="mono api-property-name">{parameter.name}</span>
@@ -174,13 +189,13 @@ const OperationDetail = ({
             <h3>Responses</h3>
             <div className="api-responses">
               {operation.responses.map((response) => (
-                <div className="api-response" key={response.status}>
-                  <div className="api-response-head">
+                <details className="api-response" key={response.status}>
+                  <summary className="api-response-head">
                     <span className={`mono api-status${response.status.startsWith("2") ? " api-status-ok" : ""}`}>{response.status}</span>
                     <span>{response.description}</span>
-                  </div>
+                  </summary>
                   {response.content.length === 0 ? null : <Content content={response.content} schemas={document.schemas} depth={depth} />}
-                </div>
+                </details>
               ))}
             </div>
           </section>
@@ -262,6 +277,9 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
   const route = useRoute()
   const { document, problem } = useApiDocument()
   const [query, setQuery] = useState("")
+  const followingScroll = useRef(false)
+  const activeOperation = useRef(route.operation)
+  activeOperation.current = route.operation
   const shown = useMemo(
     () => document?.operations.filter((operation) => matchesOperation(operation, query)) ?? [],
     [document, query]
@@ -269,9 +287,48 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
   const selected = document?.operations.find((operation) => operation.key === route.operation)
   useEffect(() => {
     if (document === undefined) return
+    if (followingScroll.current) {
+      followingScroll.current = false
+      return
+    }
     const target = globalThis.document.getElementById(apiTarget(route.operation))
     target?.scrollIntoView({ block: "start" })
   }, [document, route.operation])
+  useEffect(() => {
+    if (document === undefined) return
+    const reading = globalThis.document.querySelector<HTMLElement>(".api-reading")
+    if (reading === null) return
+    let frame: number | undefined
+    const sections: Array<readonly [string | undefined, HTMLElement]> = []
+    const overview = globalThis.document.getElementById(apiTarget(undefined))
+    if (overview !== null) sections.push([undefined, overview])
+    for (const operation of document.operations) {
+      const section = globalThis.document.getElementById(apiTarget(operation.key))
+      if (section !== null) sections.push([operation.key, section])
+    }
+    const track = () => {
+      if (frame !== undefined) cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const readingTop = reading.getBoundingClientRect().top
+        let next: string | undefined
+        for (const [key, section] of sections) {
+          const scrollMargin = Number.parseFloat(getComputedStyle(section).scrollMarginTop) || 0
+          if (section.getBoundingClientRect().top > readingTop + scrollMargin) break
+          next = key
+        }
+        if (next === activeOperation.current) return
+        activeOperation.current = next
+        followingScroll.current = true
+        navigate({ operation: next }, { replace: true })
+      })
+    }
+    reading.addEventListener("scroll", track, { passive: true })
+    track()
+    return () => {
+      reading.removeEventListener("scroll", track)
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [document])
   return (
     <div className="api-view">
       <aside className="api-nav">
@@ -324,10 +381,6 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
             </section>
           ))}
         </nav>
-        <a className="api-full-reference" href={`${client.baseUrl}${DOCS_PATH}`} target="_blank" rel="noreferrer">
-          Interactive reference
-          <ArrowSquareOut size={ICON_SIZE} weight="light" aria-hidden="true" />
-        </a>
       </aside>
       <main className="api-reading">
         {problem !== undefined ? (

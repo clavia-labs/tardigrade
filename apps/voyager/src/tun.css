@@ -589,21 +589,6 @@ textarea {
   white-space: nowrap;
 }
 
-.api-full-reference {
-  display: flex;
-  min-height: 48px;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 var(--space-4);
-  border-top: 1px solid var(--hair);
-  color: var(--ink-2);
-}
-
-.api-full-reference:hover {
-  color: var(--ink);
-}
-
 .api-reading {
   flex: 1;
   min-width: 0;
@@ -832,6 +817,76 @@ textarea {
   border: 1px solid var(--hair);
   border-radius: var(--radius);
   background: var(--surface);
+}
+
+.api-operation-docs .api-section {
+  padding: var(--space-5) 0;
+}
+
+.api-operation-docs .api-response {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+  background: transparent;
+}
+
+.api-operation-docs .api-response:first-child {
+  border-top: 1px solid var(--hair);
+}
+
+.api-operation-docs .api-response-head {
+  min-height: 52px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.api-operation-docs .api-response-head::-webkit-details-marker {
+  display: none;
+}
+
+.api-operation-docs .api-response-head::before {
+  width: 7px;
+  height: 7px;
+  border-right: 1px solid var(--faint);
+  border-bottom: 1px solid var(--faint);
+  content: "";
+  transform: rotate(-45deg);
+  transition: transform var(--fast) var(--ease);
+}
+
+.api-operation-docs .api-response[open] .api-response-head::before {
+  transform: rotate(45deg);
+}
+
+.api-operation-docs .api-response .api-content-list {
+  margin: 0 0 var(--space-4) 22px;
+}
+
+.api-operation-docs .api-response .api-content {
+  border: 0;
+  background: transparent;
+}
+
+.api-headers-section {
+  padding-top: 0;
+}
+
+.api-header-line {
+  display: grid;
+  min-height: 44px;
+  grid-template-columns: 120px minmax(0, 1fr);
+  align-items: center;
+  border-top: 1px solid var(--hair);
+}
+
+.api-header-line:last-child {
+  border-bottom: 1px solid var(--hair);
+}
+
+.api-header-example {
+  color: var(--faint);
+  font-size: 11.5px;
 }
 
 .api-parameter {
