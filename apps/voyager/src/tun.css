@@ -329,10 +329,25 @@ textarea {
   background: var(--bg);
 }
 
+.pane-chrome {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hair);
+}
+
 .actor-head {
   display: grid;
   gap: 3px;
   padding: var(--space-4);
+}
+
+.actor-search-wrap {
+  padding: 0 var(--space-3) 10px;
+}
+
+.actor-search {
+  width: 100%;
+  height: 30px;
 }
 
 .actor-problem {

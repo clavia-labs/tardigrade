@@ -5,7 +5,7 @@ import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clav
 import { clientFor } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
+import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, LOG_POLL_MS, PANE_HEADER_HEIGHT, SUMMARY_WIDTH } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
@@ -205,6 +205,7 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
 export const Thread = ({
   actor,
   fieldCollapsedHeight = FIELD_COLLAPSED_HEIGHT,
+  headerHeight = PANE_HEADER_HEIGHT,
   id,
   stampWidth = EVENT_STAMP_WIDTH,
   status
@@ -212,6 +213,7 @@ export const Thread = ({
   readonly actor: string
   readonly id: string
   readonly fieldCollapsedHeight?: number | undefined
+  readonly headerHeight?: number | undefined
   readonly stampWidth?: number | undefined
   readonly status: ThreadStatus | undefined
 }): ReactElement => {
@@ -278,7 +280,9 @@ export const Thread = ({
   if (problem !== undefined && problem.status === 404) {
     return (
       <>
-        <Head id={id} status={status} />
+        <div className="pane-chrome" style={{ height: headerHeight }}>
+          <Head id={id} status={status} />
+        </div>
         <Problem problem={problem} />
       </>
     )
@@ -286,8 +290,10 @@ export const Thread = ({
 
   return (
     <>
-      <Head id={id} status={status} />
-      <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
+      <div className="pane-chrome" style={{ height: headerHeight }}>
+        <Head id={id} status={status} />
+        <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
+      </div>
       {problem === undefined ? null : <Problem problem={problem} />}
       {!dropped ? null : <div className="mono stream-note">stream dropped; polling</div>}
       <div
