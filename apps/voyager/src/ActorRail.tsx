@@ -1,5 +1,5 @@
 import type { ActorSummary, ProblemError } from "@clavia/tardigrade-client"
-import { SidebarSimple } from "@phosphor-icons/react"
+import { ArrowLeft, ArrowRight } from "@phosphor-icons/react"
 import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
@@ -53,7 +53,9 @@ export const ActorRail = ({
               if (typeof localStorage !== "undefined") localStorage.setItem(ACTOR_RAIL_KEY, next ? "collapsed" : "open")
             }}
           >
-            <SidebarSimple size={ICON_SIZE} weight="light" aria-hidden="true" />
+            {collapsed
+              ? <ArrowRight size={ICON_SIZE} weight="light" aria-hidden="true" />
+              : <ArrowLeft size={ICON_SIZE} weight="light" aria-hidden="true" />}
           </button>
         </div>
       </div>
