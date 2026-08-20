@@ -17,9 +17,9 @@ interface Reading {
   readonly at: number
 }
 
-// useRoster polls GET /agents once for the whole screen: the rail's rows and totals, and the
-// header's status chip, are the same listing read twice rather than two calls. The last good
-// reading survives a failure, so a server restart dims the rail rather than blanking it.
+// useRoster polls GET /agents once for the whole screen: the rail's rows and the header's status
+// chip are the same listing read twice rather than two calls. The last good reading survives a
+// failure, so a server restart holds the rail rather than blanking it.
 const useRoster = (intervalMs: number) => {
   const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
   const [summaries, setSummaries] = useState<ReadonlyArray<AgentSummary>>([])
