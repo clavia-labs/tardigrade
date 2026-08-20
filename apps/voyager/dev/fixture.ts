@@ -4,7 +4,7 @@ import { Infer, type InferRequest } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
-import { layerAgents } from "@clavia/tardigrade-server/host"
+import { layerThreads } from "@clavia/tardigrade-server/host"
 import { serve } from "@clavia/tardigrade-server/http"
 
 // The development server: the real apps/server process, on a volatile database, with the model seam
@@ -12,7 +12,7 @@ import { serve } from "@clavia/tardigrade-server/http"
 // (apps/server/src/api.test.ts), so the UI develops against real projections, a real driver, and a
 // real SSE tail, and needs no model credentials.
 //
-// Every agent this fixture serves is invented by the script below. Nothing here is imported by the
+// Every thread this fixture serves is invented by the script below. Nothing here is imported by the
 // app; the app only ever speaks HTTP.
 
 // Where the fixture listens, matching the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
@@ -65,31 +65,31 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // loop wants: the forest on screen is the forest this session made.
 const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:", PORT: String(FIXTURE_PORT) }))
 
-const agents = Layer.provide(layerAgents({ infer: layerScripted }), config)
+const threads = Layer.provide(layerThreads({ infer: layerScripted }), config)
 
 const app = Layer.provideMerge(serve({ disableLogger: true }), [
   BunHttpServer.layer({ port: FIXTURE_PORT }),
   config,
-  agents
+  threads
 ])
 
 // The briefs the fixture delivers at boot, so the UI has a forest before anyone types anything. The
 // server dedups by message id, so re-running a brief costs nothing (apps/server/src/host.ts).
-export const FIXTURE_BRIEFS: ReadonlyArray<{ readonly agent: string; readonly id: string; readonly text: string }> = [
-  { agent: "root", id: "m1", text: `${SPAWN_BRIEF}survey` },
-  { agent: "root", id: "m2", text: "summarize the survey" },
-  { agent: "deriver", id: "m3", text: "derive the shape of the log" }
+export const FIXTURE_BRIEFS: ReadonlyArray<{ readonly thread: string; readonly id: string; readonly text: string }> = [
+  { thread: "root", id: "m1", text: `${SPAWN_BRIEF}survey` },
+  { thread: "root", id: "m2", text: "summarize the survey" },
+  { thread: "deriver", id: "m3", text: "derive the shape of the log" }
 ]
 
-const post = (agent: string, body: unknown) =>
-  fetch(`http://127.0.0.1:${FIXTURE_PORT}/agents/${encodeURIComponent(agent)}/messages`, {
+const post = (thread: string, body: unknown) =>
+  fetch(`http://127.0.0.1:${FIXTURE_PORT}/v1/actors/agent/threads/${encodeURIComponent(thread)}/events`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body)
   })
 
 const seed = Effect.promise(async () => {
-  for (const { agent, ...message } of FIXTURE_BRIEFS) await post(agent, message)
+  for (const { thread, ...message } of FIXTURE_BRIEFS) await post(thread, message)
   console.log(`fixture: seeded ${FIXTURE_BRIEFS.length} briefs on http://127.0.0.1:${FIXTURE_PORT}`)
 })
 

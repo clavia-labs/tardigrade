@@ -62,7 +62,7 @@ const booted = <A>(
       dev({
         config: resolveServer({ port: 0, db: ":memory:" }, env),
         assets: buildDirectory(),
-        agents: { infer: layerScripted },
+        threads: { infer: layerScripted },
         disableLogger: true,
         disableListenLog: true
       })
@@ -96,10 +96,10 @@ describe("tdg dev", () => {
       const asset = await fetch(`${baseUrl}/assets/app-abc123.js`)
       // A path the router does not own, asked for by something that renders HTML, is the UI's own
       // route: a deep link into the explorer is not a 404.
-      const deep = await fetch(`${baseUrl}/agents/root`, { headers: { accept: "text/html" } })
+      const deep = await fetch(`${baseUrl}/v1/actors/agent/threads/root`, { headers: { accept: "text/html" } })
       // The same path asked for as JSON is still the API's answer, so a script sees the problem
       // document rather than a page.
-      const ghost = await fetch(`${baseUrl}/agents/ghost/events`, { headers: { accept: "application/json" } })
+      const ghost = await fetch(`${baseUrl}/v1/actors/agent/threads/ghost/events`, { headers: { accept: "application/json" } })
       return {
         health: { status: health.status, body: await health.json() },
         index: { status: index.status, body: await index.text(), type: index.headers.get("content-type") },
@@ -126,7 +126,7 @@ describe("tdg dev", () => {
   // the token set (docs/how-to/server.md).
   test("the API answers without a token, on loopback", async () => {
     const seen = await booted(async (baseUrl, hostname) => {
-      const listed = await fetch(`${baseUrl}/agents`)
+      const listed = await fetch(`${baseUrl}/v1/actors/agent/threads`)
       const index = await fetch(`${baseUrl}/`, { headers: { accept: "text/html" } })
       return {
         hostname,
@@ -141,7 +141,7 @@ describe("tdg dev", () => {
 
   test("run drives a brief to a completed turn with no model credentials", async () => {
     const seen = await booted(async (baseUrl) => {
-      const ran = await drive(baseUrl, ["run", "survey the log", "--agent", "root", "--id", "m1", "--poll", "10"])
+      const ran = await drive(baseUrl, ["run", "survey the log", "--thread", "root", "--id", "m1", "--poll", "10"])
       const listed = await drive(baseUrl, ["ls", "--json"])
       const logged = await drive(baseUrl, ["events", "root", "--types", "MessageReceived"])
       const ghost = await drive(baseUrl, ["events", "ghost"])

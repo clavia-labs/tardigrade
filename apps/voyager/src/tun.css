@@ -166,7 +166,7 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
-/* A working agent breathes and nothing else moves at rest (voyager-design-system.md, principle 4). */
+/* A working thread breathes and nothing else moves at rest (voyager-design-system.md, principle 4). */
 @keyframes breathe {
   0%,
   100% {
@@ -214,7 +214,7 @@ textarea {
 }
 
 /* One class per word of the status vocabulary the server publishes (apps/server/src/projections.ts,
-   AgentStatus). The app renames nothing on the way in. */
+   ThreadStatus). The app renames nothing on the way in. */
 .chip-running {
   background: var(--run-wash);
   color: var(--run);
@@ -354,8 +354,8 @@ textarea {
   color: var(--faint);
 }
 
-/* The pane's header: who this agent is, what it is doing, and the theme toggle at the right edge. */
-.agent-head {
+/* The pane's header: who this thread is, what it is doing, and the theme toggle at the right edge. */
+.thread-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);

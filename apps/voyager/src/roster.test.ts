@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 
-import type { AgentSummary } from "@clavia/tardigrade-client"
+import type { ThreadSummary } from "@clavia/tardigrade-client"
 import { agoOf, countsOf, matches, rosterOf } from "./roster"
 
-// The rail's decisions: which agents are rows, how big each root's family is, what a row's counts
+// The rail's decisions: which threads are rows, how big each root's family is, what a row's counts
 // say, and how an age reads. All pure, so none of them needs a server or a DOM.
 
-const summary = (id: string, parent?: string, events = 1): AgentSummary => ({
+const summary = (id: string, parent?: string, events = 1): ThreadSummary => ({
   id,
   ...(parent === undefined ? {} : { parent }),
   events,
@@ -26,7 +26,7 @@ describe("rosterOf", () => {
     expect(rosterOf(listing).roots.map((row) => row.id)).toEqual(["root", "alone"])
   })
 
-  test("a root's family is every agent under it, at any depth", () => {
+  test("a root's family is every thread under it, at any depth", () => {
     const roots = rosterOf(listing).roots
     expect(roots[0]?.family).toBe(3)
     expect(roots[1]?.family).toBe(0)
@@ -49,12 +49,12 @@ describe("rosterOf", () => {
 describe("countsOf", () => {
   const row = { id: "root", status: "settled" as const, events: 34, lastAt: undefined }
 
-  test("a root that spawned nothing says nothing about agents", () => {
+  test("a root that spawned nothing says nothing about threads", () => {
     expect(countsOf({ ...row, family: 0 })).toBe("34 ev")
   })
 
   test("a root with a family states its size", () => {
-    expect(countsOf({ ...row, family: 9 })).toBe("34 ev · 9 agents")
+    expect(countsOf({ ...row, family: 9 })).toBe("34 ev · 9 threads")
   })
 })
 

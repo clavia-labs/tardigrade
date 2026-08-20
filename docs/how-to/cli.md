@@ -20,12 +20,14 @@ bun run --cwd apps/cli start -- --help
 | Command | What it does |
 | --- | --- |
 | `tdg dev` | Boot the API and serve the built UI at one URL. One process, one port, one thing to stop. |
-| `tdg run "<brief>"` | Deliver a brief, wait for the turn to settle, and print what it answered. |
-| `tdg send <agent> "<brief>"` | Deliver a brief and print the turn handle without waiting. |
-| `tdg ls` | Every agent a store holds, parent before child, as a table. |
-| `tdg events <agent>` | The log, one line per event. |
+| `tdg run "<brief>"` | Start a thread, wait for its turn to settle, and print what it answered. |
+| `tdg send <thread> "<brief>"` | Deliver a brief and print the turn handle without waiting. |
+| `tdg ls` | Every thread a store holds, parent before child, as a table. |
+| `tdg events <thread>` | The log, one line per event. |
 
 `tdg --help` prints the tree and `tdg <command> --help` prints one command. A command nobody declared exits non-zero and says which command it looked like.
+
+Every command names a thread, never an actor. A v1 server serves one actor and reserves the name `agent` for it, so the client fills that level in and a command states only the thread it reads or writes ([the server's vocabulary](server.md)).
 
 ## Configuration resolves in one place
 
@@ -59,7 +61,7 @@ The server boots without model coordinates and every turn it drives fails with t
 
 `tdg send` returns as soon as the server has accepted the message, because a delivery answers `202` and the turn settles on the server's own loop. `tdg run` waits: it delivers, then reads the turn every `DEFAULT_POLL_MILLIS` until it leaves `pending`, and gives up after `DEFAULT_TIMEOUT_MILLIS` while saying that the turn is still running (`apps/cli/src/commands.ts`). `--poll` and `--timeout` set both. The exit code is zero only when the turn completed.
 
-Both commands mint a message id per invocation unless `--id` states one. The id is the dedup key end to end and becomes the turn id, so an invocation retried with the same `--id` is absorbed by the server rather than started twice, and an invocation retried without one starts a second turn. `tdg run` also mints the agent when `--agent` states none, which births a new agent, since an agent exists once its log has an event.
+Both commands mint a message id per invocation unless `--id` states one. The id is the dedup key end to end and becomes the turn id, so an invocation retried with the same `--id` is absorbed by the server rather than started twice, and an invocation retried without one starts a second turn. `tdg run` also mints the thread when `--thread` states none, which births a new thread, since a thread exists once its log has an event.
 
 ## Output for people, and for pipes
 

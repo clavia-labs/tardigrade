@@ -1,4 +1,4 @@
-import type { AgentSummary, EventRow, TurnView } from "@clavia/tardigrade-client"
+import type { ThreadSummary, EventRow, TurnView } from "@clavia/tardigrade-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the
@@ -38,19 +38,19 @@ const truncate = (value: string, width: number): string =>
 const timeOf = (at: number | undefined): string =>
   at === undefined ? ABSENT : new Date(at).toISOString()
 
-// Every agent a store holds, parent before child. `events` is the count of events in the log, which is the size of the
+// Every thread a store holds, parent before child. `events` is the count of events in the log, which is the size of the
 // thing every other read projects from, and `last` is when the log last grew.
-export const agentsTable = (agents: ReadonlyArray<AgentSummary>): string =>
-  agents.length === 0
-    ? "no agents"
+export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
+  threads.length === 0
+    ? "no threads"
     : table(
-      ["AGENT", "STATUS", "EVENTS", "LAST", "PARENT"],
-      agents.map((agent) => [
-        agent.id,
-        agent.status,
-        String(agent.events),
-        timeOf(agent.lastAt),
-        agent.parent ?? ABSENT
+      ["THREAD", "STATUS", "EVENTS", "LAST", "PARENT"],
+      threads.map((thread) => [
+        thread.id,
+        thread.status,
+        String(thread.events),
+        timeOf(thread.lastAt),
+        thread.parent ?? ABSENT
       ])
     )
 
@@ -75,8 +75,8 @@ export const eventsTable = (rows: ReadonlyArray<EventRow>, width = DEFAULT_DETAI
 
 // A turn's boundary as a person reads it: the status word, then whichever of output or error the
 // projection carried.
-export const turnLines = (agent: string, view: TurnView): string => {
-  const head = `${agent} ${view.turn} ${view.status}`
+export const turnLines = (thread: string, view: TurnView): string => {
+  const head = `${thread} ${view.turn} ${view.status}`
   if (view.output !== undefined) return `${head}\n${view.output}`
   if (view.error !== undefined) return `${head}\n${view.error}`
   return head

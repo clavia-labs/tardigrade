@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
-import { Agent } from "./Agent"
-import { NO_ANSWER, ProblemError, type AgentSummary } from "@clavia/tardigrade-client"
+import { Thread } from "./Thread"
+import { NO_ANSWER, ProblemError, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { client } from "./client"
 import { useRoute } from "./nav"
@@ -10,7 +10,7 @@ import { Rail } from "./Rail"
 import { EMPTY_ROSTER, rosterOf, type Roster } from "./roster"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
-// selected agent's log (mock.html). The reader chooses on the left and reads on the right, and
+// selected thread's log (mock.html). The reader chooses on the left and reads on the right, and
 // there is nowhere else to go: voyager reads a run and never writes to it.
 
 interface Reading {
@@ -19,12 +19,12 @@ interface Reading {
   readonly at: number
 }
 
-// useRoster polls GET /agents once for the whole screen: the rail's rows and the header's status
+// useRoster polls GET /v1/actors/:actor/threads once for the whole screen: the rail's rows and the header's status
 // chip are the same listing read twice rather than two calls. The last good reading survives a
 // failure, so a server restart holds the rail rather than blanking it.
 const useRoster = (intervalMs: number) => {
   const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
-  const [summaries, setSummaries] = useState<ReadonlyArray<AgentSummary>>([])
+  const [summaries, setSummaries] = useState<ReadonlyArray<ThreadSummary>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
 
   useEffect(() => {
@@ -55,15 +55,15 @@ const useRoster = (intervalMs: number) => {
 export const App = (): ReactElement => {
   const route = useRoute()
   const { problem, reading, summaries } = useRoster(ROSTER_POLL_MS)
-  const status = summaries.find((summary) => summary.id === route.agent)?.status
+  const status = summaries.find((summary) => summary.id === route.thread)?.status
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
-      <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.agent} />
+      <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {route.agent === undefined ? (
+        {route.thread === undefined ? (
           <div className="mono pane-empty">select a run</div>
         ) : (
-          <Agent id={route.agent} status={status} />
+          <Thread id={route.thread} status={status} />
         )}
       </main>
     </div>

@@ -1,31 +1,24 @@
 import { Clock, Context, Data, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { messageReceived } from "@clavia/tardigrade-core/message"
-import {
-  agentOf,
-  agentsPackage,
-  budget,
-  codeModeFor,
-  compaction,
-  Infer,
-  reply,
-  resumeTurn,
-  workspacePackage,
-  type RlmR
-} from "@clavia/tardigrade"
+import { Infer, resumeTurn, type RlmR } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { infer } from "@clavia/tardigrade-model/model"
 
+import { assemblyOf } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
 import { DriverGauge } from "./http"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
-// routes speak agent ids; the lane a host knows lives here and nowhere else, so a route can never
+// routes speak thread ids; the lane a host knows lives here and nowhere else, so a route can never
 // name a lane and the store can never see an id.
 
 // LANE_PREFIX is the id-to-lane map (apps-server-spec.md, "Resources"). A lane outside it belongs
-// to something other than an agent and never appears in a listing.
+// to something other than a thread and never appears in a listing. The prefix stays `ag.` while the
+// API's noun is the thread, because the lane is where the agent assembly runs, and that assembly
+// mints its own child lanes under the same prefix (packages/agent/src/spawn.ts, `sibling`). Renaming
+// it would rename addresses a spawn already wrote into a durable log.
 export const LANE_PREFIX = "ag."
 
 export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
@@ -54,12 +47,12 @@ export class ResumeRefused extends Data.TaggedError("ResumeRefused")<{
 }> {}
 
 // The operations the HTTP surface has: deliver a message, read a log, list what exists, resume a
-// failed turn. Every one speaks an agent id. Reads return raw events because the projections are
+// failed turn. Every one speaks a thread id. Reads return raw events because the projections are
 // pure functions of a log (projections.ts); a route joins the two.
-export class Agents extends Context.Service<
-  Agents,
+export class Threads extends Context.Service<
+  Threads,
   {
-    readonly deliver: (id: string, message: Inbound) => Effect.Effect<{ agent: string; turn: string }>
+    readonly deliver: (id: string, message: Inbound) => Effect.Effect<{ thread: string; turn: string }>
     readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
     readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
     readonly resume: (id: string, turn: string) => Effect.Effect<void, ResumeRefused>
@@ -68,18 +61,7 @@ export class Agents extends Context.Service<
     // a shutdown do (host.test.ts).
     readonly settled: Effect.Effect<void>
   }
->()("tardigrade/server/Agents") {}
-
-// The assembly this server runs, one for every lane: code mode with the spawn and workspace
-// packages in scope, plus the three policy capabilities. v1 runs this one assembly and forking is
-// the customization path (apps-server-spec.md, "Explicitly out of scope for v1").
-const assemblyOf = () =>
-  agentOf([
-    codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
-    reply,
-    budget,
-    compaction
-  ])
+>()("tardigrade/server/Threads") {}
 
 // The model binding the configured coordinates name. Absent coordinates are not an endpoint this
 // server invents: every attempt fails with what is missing, so the process still boots, still
@@ -95,7 +77,7 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
   return infer({ baseUrl, apiKey, model: id, ...(provider === undefined ? {} : { provider }) })
 }
 
-export interface AgentsOptions {
+export interface ThreadsOptions {
   // The model seam. Absent, the binding is derived from ServerConfig; present, it replaces that
   // derivation whole, which is how a test runs a scripted mind with no credentials
   // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
@@ -104,7 +86,7 @@ export interface AgentsOptions {
 
 // make builds the host, recovers what a death interrupted, and returns the service pair. The
 // close is a scope finalizer, so the process that stops listening also stops writing.
-const make = (options: AgentsOptions) =>
+const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
     const assembly = assemblyOf()
@@ -168,7 +150,7 @@ const make = (options: AgentsOptions) =>
 
     const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
 
-    const service: Context.Service.Shape<typeof Agents> = {
+    const service: Context.Service.Shape<typeof Threads> = {
       deliver: (id, message) =>
         Effect.gen(function*() {
           const at = yield* Clock.currentTimeMillis
@@ -185,7 +167,7 @@ const make = (options: AgentsOptions) =>
             )
           )
           request()
-          return { agent: id, turn: message.id }
+          return { thread: id, turn: message.id }
         }),
       events: read,
       list: () =>
@@ -221,10 +203,10 @@ const make = (options: AgentsOptions) =>
       dirty: Effect.sync(() => (driving === undefined ? 0 : follow ? 2 : 1))
     }
 
-    return Context.make(Agents, service).pipe(Context.add(DriverGauge, gauge))
+    return Context.make(Threads, service).pipe(Context.add(DriverGauge, gauge))
   })
 
-// layerAgents is the host, the assembly, and the driver: the Agents the routes consume and the
+// layerThreads is the host, the assembly, and the driver: the Threads the routes consume and the
 // DriverGauge /healthz reads, built once and closed with the scope.
-export const layerAgents = (options: AgentsOptions = {}): Layer.Layer<Agents | DriverGauge, never, ServerConfig> =>
+export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | DriverGauge, never, ServerConfig> =>
   Layer.effectContext(make(options))

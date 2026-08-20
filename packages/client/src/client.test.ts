@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test } from "bun:test"
+import { Schema } from "effect"
 
 import { makeClient, UNEXPECTED_RESPONSE_TITLE } from "./client"
-import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./contract"
+import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
 import { ProblemError } from "./problem"
 
 // The client against a stand-in for the network. What is asserted here is what the client decides
@@ -45,12 +46,12 @@ describe("the address a call goes to", () => {
   test("sends every request through the stated fetch", async () => {
     await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
     expect(calls).toHaveLength(1)
-    expect(lastUrl().pathname).toBe("/agents")
+    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads")
   })
 
-  test("an agent id is encoded into the path", async () => {
+  test("a thread id is encoded into the path", async () => {
     await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
-    expect(lastUrl().pathname).toBe("/agents/ag%2Fone%20two/events")
+    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads/ag%2Fone%20two/events")
   })
 
   test("a stated option is a query param and an absent one is absent", async () => {
@@ -63,7 +64,7 @@ describe("the address a call goes to", () => {
 
   test("a base with a trailing slash does not double it", async () => {
     await makeClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
-    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/agents")
+    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/agent/threads")
   })
 })
 
@@ -84,10 +85,10 @@ describe("the token", () => {
 describe("a failed call", () => {
   test("a declared problem+json failure keeps all four fields", async () => {
     const document = {
-      type: `${PROBLEM_TYPE_BASE}unknown-agent`,
-      title: "Unknown Agent",
+      type: `${PROBLEM_TYPE_BASE}unknown-thread`,
+      title: "Unknown Thread",
       status: 404,
-      detail: 'No agent named "ghost" has ever existed.'
+      detail: 'No thread named "ghost" has ever existed.'
     }
     answer = problemAnswer(404, document)
     const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ghost").catch((error: unknown) => error)
@@ -119,5 +120,48 @@ describe("a failed call", () => {
     const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe(UNEXPECTED_RESPONSE_TITLE)
     expect(failure.status).toBe(502)
+  })
+})
+
+// The platform's API is the log, and everything else a thread can be asked is a projection its
+// actor declares. A client states the same declaration the server mounts, and gets a call typed by
+// it (contract.ts, apiOf; apps/server/src/actor.ts).
+describe("a declared projection", () => {
+  const projections = projectionsOf({
+    turns: projection({
+      params: { at: Schema.optionalKey(Schema.Int) },
+      result: Schema.Array(Schema.Struct({ turn: Schema.String, status: Schema.String })),
+      run: () => []
+    })
+  })
+
+  test("serves at the name it was declared under, and carries its own query", async () => {
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    await client.projection("root", "turns", { at: 3 })
+    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads/root/turns")
+    expect(lastUrl().searchParams.get("at")).toBe("3")
+  })
+
+  test("an absent query is an absent param rather than a stated default", async () => {
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    await client.projection("root", "turns")
+    expect(lastUrl().searchParams.has("at")).toBe(false)
+  })
+
+  // The declaration's own types reach the call: the name is one it declares, the query is what that
+  // projection accepts, and the answer is what it promises. A name it does not declare, or a query
+  // field it does not accept, does not compile.
+  test("types the answer from the declaration", async () => {
+    answer = () =>
+      new Response(JSON.stringify([{ turn: "m1", status: "completed" }]), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    const views: ReadonlyArray<{ readonly turn: string; readonly status: string }> = await client.projection(
+      "root",
+      "turns"
+    )
+    expect(views).toEqual([{ turn: "m1", status: "completed" }])
   })
 })

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import type { AgentSummary, EventRow } from "@clavia/tardigrade-client"
+import type { ThreadSummary, EventRow } from "@clavia/tardigrade-client"
 
-import { agentsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, table, turnLines } from "./render"
+import { threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, table, turnLines } from "./render"
 
 // The human rendering. A table is plain aligned text, so these assert on columns rather than on
 // escape sequences, and a value the projection did not carry reads as absent rather than as empty.
 
-const agents: ReadonlyArray<AgentSummary> = [
+const threads: ReadonlyArray<ThreadSummary> = [
   { id: "root", events: 12, lastAt: 0, status: "settled" },
   { id: "root.1", parent: "root", events: 3, status: "running" }
 ]
@@ -18,10 +18,10 @@ describe("table", () => {
   })
 })
 
-describe("agentsTable", () => {
+describe("threadsTable", () => {
   test("a run is one row, and an absent field reads as absent", () => {
-    const lines = agentsTable(agents).split("\n")
-    expect(lines[0]).toContain("AGENT")
+    const lines = threadsTable(threads).split("\n")
+    expect(lines[0]).toContain("THREAD")
     expect(lines[1]).toContain("root")
     expect(lines[1]).toContain("settled")
     expect(lines[1]).toContain("1970-01-01T00:00:00.000Z")
@@ -30,7 +30,7 @@ describe("agentsTable", () => {
   })
 
   test("an empty store says so", () => {
-    expect(agentsTable([])).toBe("no agents")
+    expect(threadsTable([])).toBe("no threads")
   })
 })
 

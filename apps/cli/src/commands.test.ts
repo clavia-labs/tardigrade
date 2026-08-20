@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
 import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ProblemError, type Accepted, type AgentSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
+import { ProblemError, RESERVED_ACTOR, type Accepted, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
 
 import { problemLine, tdg } from "./commands"
 import { Cli, type CliServices } from "./services"
@@ -10,7 +10,7 @@ import { Cli, type CliServices } from "./services"
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
 
-const agents: ReadonlyArray<AgentSummary> = [
+const threads: ReadonlyArray<ThreadSummary> = [
   { id: "root", events: 2, lastAt: 0, status: "settled" }
 ]
 
@@ -20,8 +20,8 @@ const events: ReadonlyArray<EventRow> = [
 ]
 
 interface Recorded {
-  readonly delivered: Array<{ agent: string; id: string; text: string }>
-  readonly asked: Array<{ agent: string; options: unknown }>
+  readonly delivered: Array<{ thread: string; id: string; text: string }>
+  readonly asked: Array<{ thread: string; options: unknown }>
 }
 
 const refuse = () => Promise.reject(new Error("this command should not have called that"))
@@ -31,7 +31,7 @@ const refuse = () => Promise.reject(new Error("this command should not have call
 const clientOf = (
   recorded: Recorded,
   answers: {
-    readonly list?: ReadonlyArray<AgentSummary>
+    readonly list?: ReadonlyArray<ThreadSummary>
     readonly events?: ReadonlyArray<EventRow>
     readonly turns?: ReadonlyArray<TurnView>
     readonly fail?: ProblemError
@@ -40,24 +40,25 @@ const clientOf = (
   let read = 0
   return {
     baseUrl: "http://localhost:0",
+    actor: RESERVED_ACTOR,
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
-    events: (agent, options) => {
-      recorded.asked.push({ agent, options })
+    events: (thread, options) => {
+      recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
     },
-    turn: (_agent, _turn) => {
+    turn: (_thread, _turn) => {
       const views = answers.turns ?? []
       const view = views[Math.min(read++, views.length - 1)]
       return view === undefined ? refuse() : Promise.resolve(view)
     },
-    deliver: (agent, message) => {
-      recorded.delivered.push({ agent, id: message.id, text: message.text })
+    deliver: (thread, message) => {
+      recorded.delivered.push({ thread, id: message.id, text: message.text })
       return answers.fail === undefined
-        ? Promise.resolve({ agent, turn: message.id } satisfies Accepted)
+        ? Promise.resolve({ actor: RESERVED_ACTOR, thread, turn: message.id } satisfies Accepted)
         : Promise.reject(answers.fail)
     },
     tree: refuse,
-    turns: refuse,
+    projection: refuse,
     resume: refuse,
     health: refuse,
     follow: () => () => {}
@@ -143,7 +144,7 @@ describe("parsing", () => {
   test("a missing argument fails", async () => {
     const ran = await drive(["events"])
     expect(ran.failed).toBe(true)
-    expect(failureText(ran).toLowerCase()).toContain("agent")
+    expect(failureText(ran).toLowerCase()).toContain("thread")
   })
 
   test("an unknown flag fails", async () => {
@@ -160,16 +161,16 @@ describe("parsing", () => {
 
 describe("ls", () => {
   test("the human rendering is a table", async () => {
-    const ran = await drive(["ls"], { answers: { list: agents } })
+    const ran = await drive(["ls"], { answers: { list: threads } })
     expect(ran.failed).toBe(false)
     const lines = (ran.lines[0] ?? "").split("\n")
-    expect(lines[0]).toContain("AGENT")
+    expect(lines[0]).toContain("THREAD")
     expect(lines[1]).toContain("root")
   })
 
   test("--json prints the client's value verbatim", async () => {
-    const ran = await drive(["ls", "--json"], { answers: { list: agents } })
-    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(agents)
+    const ran = await drive(["ls", "--json"], { answers: { list: threads } })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(threads)
   })
 })
 
@@ -192,7 +193,7 @@ describe("events", () => {
       { answers: { events } }
     )
     expect(ran.recorded.asked[0]).toEqual({
-      agent: "root",
+      thread: "root",
       options: { after: 3, limit: 5, types: ["MessageReceived", "TurnCompleted"] }
     })
   })
@@ -202,7 +203,7 @@ describe("send", () => {
   test("the turn handle is printed and nothing is waited on", async () => {
     const ran = await drive(["send", "root", "do the thing"])
     expect(ran.lines[0]).toBe("root minted-1")
-    expect(ran.recorded.delivered).toEqual([{ agent: "root", id: "minted-1", text: "do the thing" }])
+    expect(ran.recorded.delivered).toEqual([{ thread: "root", id: "minted-1", text: "do the thing" }])
   })
 
   test("a stated id is the id, so a retry is absorbed", async () => {
@@ -212,14 +213,14 @@ describe("send", () => {
 
   test("--json prints the handle verbatim", async () => {
     const ran = await drive(["send", "root", "again", "--json", "--id", "m1"])
-    expect(JSON.parse(ran.lines[0] ?? "")).toEqual({ agent: "root", turn: "m1" })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual({ actor: RESERVED_ACTOR, thread: "root", turn: "m1" })
   })
 })
 
 describe("run", () => {
   test("a pending turn is polled until it settles, and the output is printed", async () => {
     const ran = await drive(
-      ["run", "summarize", "--agent", "root", "--id", "m1", "--poll", "1"],
+      ["run", "summarize", "--thread", "root", "--id", "m1", "--poll", "1"],
       {
         answers: {
           turns: [
@@ -233,15 +234,15 @@ describe("run", () => {
     expect(ran.lines[0]).toBe("root m1 completed\nthe summary")
   })
 
-  test("an agent nobody named is minted, so a run births its own agent", async () => {
+  test("a thread nobody named is minted, so a run births its own thread", async () => {
     const ran = await drive(["run", "hello", "--poll", "1"], {
       answers: { turns: [{ turn: "minted-2", status: "completed", output: "hi" }] }
     })
-    expect(ran.recorded.delivered).toEqual([{ agent: "minted-1", id: "minted-2", text: "hello" }])
+    expect(ran.recorded.delivered).toEqual([{ thread: "minted-1", id: "minted-2", text: "hello" }])
   })
 
   test("a failed turn prints its error and exits non-zero", async () => {
-    const ran = await drive(["run", "hello", "--agent", "root", "--id", "m1", "--poll", "1"], {
+    const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1"], {
       answers: { turns: [{ turn: "m1", status: "failed", error: "no model is configured" }] }
     })
     expect(ran.lines[0]).toBe("root m1 failed\nno model is configured")
@@ -249,7 +250,7 @@ describe("run", () => {
   })
 
   test("a turn that never settles gives up rather than hanging", async () => {
-    const ran = await drive(["run", "hello", "--agent", "root", "--id", "m1", "--poll", "1", "--timeout", "0"], {
+    const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1", "--timeout", "0"], {
       answers: { turns: [{ turn: "m1", status: "pending" }] }
     })
     expect(ran.failed).toBe(true)
@@ -259,14 +260,14 @@ describe("run", () => {
 
 describe("failures", () => {
   const problem = new ProblemError({
-    type: "https://tardigrade.dev/problems/unknown-agent",
-    title: "Unknown Agent",
+    type: "https://tardigrade.dev/problems/unknown-thread",
+    title: "Unknown Thread",
     status: 404,
-    detail: "No agent named \"ghost\" has ever existed."
+    detail: "No thread named \"ghost\" has ever existed."
   })
 
   test("a problem document prints its title, status, and detail", () => {
-    expect(problemLine(problem)).toBe("Unknown Agent (404): No agent named \"ghost\" has ever existed.")
+    expect(problemLine(problem)).toBe("Unknown Thread (404): No thread named \"ghost\" has ever existed.")
   })
 
   // A call that never reached a response has no status line to quote.
@@ -277,6 +278,6 @@ describe("failures", () => {
   test("a failed call exits non-zero carrying the server's words", async () => {
     const ran = await drive(["events", "ghost"], { answers: { fail: problem } })
     expect(ran.failed).toBe(true)
-    expect(failureText(ran)).toContain("Unknown Agent (404)")
+    expect(failureText(ran)).toContain("Unknown Thread (404)")
   })
 })

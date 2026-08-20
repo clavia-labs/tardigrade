@@ -1,6 +1,6 @@
 import { useCallback, useSyncExternalStore } from "react"
 
-// The URL is the app's only navigation state. `?agent=` chooses the screen and `?from=` and `?to=`
+// The URL is the app's only navigation state. `?thread=` chooses the screen and `?from=` and `?to=`
 // carry the window's two edges, so a view is shareable and survives a refresh (voyager-spec.md,
 // "Conventions"). There is no routing library: three params and pushState are the whole of it.
 
@@ -11,7 +11,7 @@ import { useCallback, useSyncExternalStore } from "react"
 // A fraction is what the handle is dragged to, so the URL states the position the reader chose
 // rather than a seq the app would have to derive from it.
 export interface Route {
-  readonly agent: string | undefined
+  readonly thread: string | undefined
   readonly from: number | undefined
   readonly to: number | undefined
 }
@@ -24,9 +24,9 @@ const fraction = (raw: string | null): number | undefined => {
 
 const parse = (search: string): Route => {
   const params = new URLSearchParams(search)
-  const agent = params.get("agent")
+  const thread = params.get("thread")
   return {
-    agent: agent === null || agent.length === 0 ? undefined : agent,
+    thread: thread === null || thread.length === 0 ? undefined : thread,
     from: fraction(params.get("from")),
     to: fraction(params.get("to"))
   }
@@ -35,14 +35,14 @@ const parse = (search: string): Route => {
 export const routeOf = (search: string): Route => parse(search)
 
 // navigate writes the route into the URL and tells the subscribers. History gets one entry per
-// agent change and none per drag step: moving a handle should not fill the back button.
+// thread change and none per drag step: moving a handle should not fill the back button.
 export const navigate = (next: Partial<Route>, options: { readonly replace?: boolean } = {}): void => {
   const params = new URLSearchParams(location.search)
   const write = (name: string, value: string | number | undefined) => {
     if (value === undefined) params.delete(name)
     else params.set(name, String(value))
   }
-  if ("agent" in next) write("agent", next.agent)
+  if ("thread" in next) write("thread", next.thread)
   if ("from" in next) write("from", next.from)
   if ("to" in next) write("to", next.to)
   const search = params.toString()

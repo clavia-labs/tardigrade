@@ -12,6 +12,24 @@ import { Event } from "@clavia/tardigrade-core/event"
 // The SSE route is absent on purpose. HttpApi is request-and-response shaped, and the tail is a
 // connection with a cursor, so it stays an HttpRouter route beside this app
 // (apps/server/src/api.ts, layerStream) and a hand-written helper follows it (stream.ts).
+//
+// The vocabulary is four levels, and every route names the first three. An actor is the deployed
+// code, addressed by name. A thread is one log under an actor, resumable forever. A turn is one
+// inbound message and the work it caused. An event is one fact. The resource a route reads is the
+// thread; the actor above it is what a deploy will vary.
+
+// Where every versioned route lives. The unversioned paths are the three that describe the process
+// rather than its resources: /healthz, OPENAPI_PATH, and DOCS_PATH (apps/server/src/http.ts,
+// UNAUTHENTICATED_PATHS). The endpoint paths below are written out in full rather than built from
+// this, because a declaration a reader can grep for is worth more than a spared repetition; this
+// constant is what a hand-written helper follows the declaration with (stream.ts, streamUrl).
+export const V1_PREFIX = "/v1"
+
+// The one actor this build serves. The server compiles one assembly into the binary, so the actor
+// level is declared as a path parameter and answered for exactly this name: the shape is honest
+// about what a deploy will vary, and no URL has to be taught twice when it does
+// (apps/server/src/api.ts, actorOf).
+export const RESERVED_ACTOR = "agent"
 
 // Where the derived OpenAPI document is served, and where the reference page renders it. Both are
 // open even when a token is set (apps/server/src/http.ts, UNAUTHENTICATED_PATHS), because a
@@ -64,11 +82,22 @@ const problemKind = <const Kind extends string, const Title extends string, cons
 // problem document").
 export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 400)
 
-// An agent exists once its log has an event, so an empty log is the only unknown agent there is
+// A thread exists once its log has an event, so an empty log is the only unknown thread there is
 // (apps/server/src/api.test.ts, "a log that never existed is the only 404").
-export const UnknownAgent = problemKind("unknown-agent", "Unknown Agent", 404)
+export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
+
+// An actor is deployed code, and this build has one compiled in, so every name but the reserved one
+// is an actor this server does not serve (apps/server/src/api.test.ts, "an actor nobody deployed is
+// its own 404"). It is a separate failure from an unknown thread because the two say different
+// things to a caller: one names code that is not here, the other a log that has never been written.
+export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
 
 export const UnknownTurn = problemKind("unknown-turn", "Unknown Turn", 404)
+
+// A name the actor never declared. The platform mounts what an actor declares and nothing else, so
+// this is the answer for any other name under a thread, and its detail lists the names that do
+// exist (apps/server/src/api.ts, layerProjections).
+export const UnknownProjection = problemKind("unknown-projection", "Unknown Projection", 404)
 
 // The library's guard is the API's 409: a turn resumes only from a failed active epoch, and its
 // refusal carries the reason a caller acts on (apps/server/src/host.ts, ResumeRefused).
@@ -97,31 +126,31 @@ export const missingField = (field: string): string => `\`${field}\` is missing.
 
 export const unacceptableField = (field: string): string => `\`${field}\` is not a value it accepts.`
 
-export const AgentStatus = Schema.Literals(["settled", "running", "blocked", "failed"])
+export const ThreadStatus = Schema.Literals(["settled", "running", "blocked", "failed"])
 
-export type AgentStatus = typeof AgentStatus.Type
+export type ThreadStatus = typeof ThreadStatus.Type
 
-// One row of GET /agents: what an agent is, without its events. `parent` is absent for a root, and
-// `lastAt` for an agent whose events carry no timestamp.
-export const AgentSummary = Schema.Struct({
+// One row of GET /v1/actors/:actor/threads: what a thread is, without its events. `parent` is absent for a root, and
+// `lastAt` for a thread whose events carry no timestamp.
+export const ThreadSummary = Schema.Struct({
   id: Schema.String,
   parent: Schema.optionalKey(Schema.String),
   events: Schema.Number,
   lastAt: Schema.optionalKey(Schema.Number),
-  status: AgentStatus
-}).annotate({ identifier: "AgentSummary" })
+  status: ThreadStatus
+}).annotate({ identifier: "ThreadSummary" })
 
-export type AgentSummary = typeof AgentSummary.Type
+export type ThreadSummary = typeof ThreadSummary.Type
 
-export interface AgentNode extends AgentSummary {
-  readonly children: ReadonlyArray<AgentNode>
+export interface ThreadNode extends ThreadSummary {
+  readonly children: ReadonlyArray<ThreadNode>
 }
 
-// A summary with the agents it spawned, the shape GET /agents/:id/tree serves.
-export const AgentNode = Schema.Struct({
-  ...AgentSummary.fields,
-  children: Schema.Array(Schema.suspend((): Schema.Codec<AgentNode> => AgentNode))
-}).annotate({ identifier: "AgentNode" })
+// A summary with the threads it spawned, the shape GET /v1/actors/:actor/threads/:id/tree serves.
+export const ThreadNode = Schema.Struct({
+  ...ThreadSummary.fields,
+  children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
+}).annotate({ identifier: "ThreadNode" })
 
 export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "parked"])
 
@@ -136,7 +165,7 @@ export const TurnView = Schema.Struct({
 
 export type TurnView = typeof TurnView.Type
 
-// One row of GET /agents/:id/events. `seq` is the event's 1-based position in the whole log,
+// One row of GET /v1/actors/:actor/threads/:id/events. `seq` is the event's 1-based position in the whole log,
 // assigned before any filter runs, so a `types` filter narrows the rows without renumbering them
 // and `after` still means the same place (apps/server/src/api.test.ts, "after and limit page the
 // log, and types filters without renumbering it").
@@ -148,9 +177,12 @@ export const EventRow = Schema.Struct({
 export type EventRow = typeof EventRow.Type
 
 // The turn handle a delivery and a resume both answer with. 202 either way: the host dedups by
-// message id, so a retrying client gets the same answer and never learns it retried.
+// message id, so a retrying client gets the same answer and never learns it retried. All three
+// levels the request named are echoed, so a caller holds the whole address of the work it started
+// without reassembling it from the URL.
 export const Accepted = Schema.Struct({
-  agent: Schema.String,
+  actor: Schema.String,
+  thread: Schema.String,
   turn: Schema.String
 }).annotate({ identifier: "Accepted" }).pipe(HttpApiSchema.status(202))
 
@@ -180,57 +212,155 @@ export type Inbound = typeof Inbound.Type
 // carries it as text and the declaration is what turns it into a number: a value that is not one is
 // refused here rather than read as page one (apps/server/src/contract.test.ts, "a refused request
 // is a problem document").
-const Seq = Schema.Int.pipe(
+export const Seq = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))
 )
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-const AgentParams = { id: Schema.String }
+// The actor level, on every route that reads or writes a thread. It is a parameter rather than the
+// literal `agent` so the declaration states the shape a deploy will vary, and every route can refuse
+// a name this build does not serve in the same way (apps/server/src/api.ts, actorOf).
+const ActorParams = { actor: Schema.String }
 
-const TurnParams = { id: Schema.String, turn: Schema.String }
+const ThreadParams = { actor: Schema.String, id: Schema.String }
 
-export const agentsGroup = HttpApiGroup.make("agents").add(
-  HttpApiEndpoint.post("deliver", "/agents/:id/messages", {
-    params: AgentParams,
+const TurnParams = { actor: Schema.String, id: Schema.String, turn: Schema.String }
+
+// The log, which is the whole of what the platform guarantees: list the threads an actor holds,
+// append an event, read the events back. A tail follows beside this group (stream.ts). Everything
+// else a thread can be asked is a projection its actor declares, mounted by name below.
+export const threadsGroup = HttpApiGroup.make("threads").add(
+  // Delivery is an append: a message is an event, and the log is where it lands, so the write side
+  // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
+  HttpApiEndpoint.post("deliver", "/v1/actors/:actor/threads/:id/events", {
+    params: ThreadParams,
     payload: Inbound,
-    success: Accepted
+    success: Accepted,
+    error: [UnknownActor.schema]
   }),
-  HttpApiEndpoint.get("list", "/agents", {
-    success: Schema.Array(AgentSummary)
+  HttpApiEndpoint.get("list", "/v1/actors/:actor/threads", {
+    params: ActorParams,
+    success: Schema.Array(ThreadSummary),
+    error: [UnknownActor.schema]
   }),
-  HttpApiEndpoint.get("events", "/agents/:id/events", {
-    params: AgentParams,
+  HttpApiEndpoint.get("events", "/v1/actors/:actor/threads/:id/events", {
+    params: ThreadParams,
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
-    error: [UnknownAgent.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   }),
-  HttpApiEndpoint.get("turns", "/agents/:id/turns", {
-    params: AgentParams,
-    query: { at: SeqQuery },
-    success: Schema.Array(TurnView),
-    error: [UnknownAgent.schema]
-  }),
-  HttpApiEndpoint.get("turn", "/agents/:id/turns/:turn", {
+  // The assembly's surface, pending its own change: one turn's boundary, read by id rather than
+  // over the whole log, so its path is not the `{name}` a projection mounts at.
+  HttpApiEndpoint.get("turn", "/v1/actors/:actor/threads/:id/turns/:turn", {
     params: TurnParams,
     success: TurnView,
-    error: [UnknownAgent.schema, UnknownTurn.schema]
+    error: [UnknownActor.schema, UnknownThread.schema, UnknownTurn.schema]
   }),
-  HttpApiEndpoint.post("resume", "/agents/:id/turns/:turn/resume", {
+  // The assembly's surface, pending its own change: a resume is a guard over an appended
+  // TurnResumed, so folding it in means deciding how a reactor records a refusal.
+  HttpApiEndpoint.post("resume", "/v1/actors/:actor/threads/:id/turns/:turn/resume", {
     params: TurnParams,
     success: Accepted,
-    error: [ResumeRefused.schema]
+    error: [UnknownActor.schema, ResumeRefused.schema]
   }),
-  HttpApiEndpoint.get("tree", "/agents/:id/tree", {
-    params: AgentParams,
-    success: AgentNode,
-    error: [UnknownAgent.schema]
+  // The assembly's surface, pending its own change: the tree reads the whole family rather than one
+  // thread's events, and its parentage rule comes from PackageCalled claims in a parent's log.
+  HttpApiEndpoint.get("tree", "/v1/actors/:actor/threads/:id/tree", {
+    params: ThreadParams,
+    success: ThreadNode,
+    error: [UnknownActor.schema, UnknownThread.schema]
   })
 )
 
 export const healthGroup = HttpApiGroup.make("health").add(
   HttpApiEndpoint.get("healthz", "/healthz", { success: Health })
 )
+
+// A projection is a pure read of one thread's events, declared by the actor whose reactors wrote
+// them. The platform holds the log and mounts what the actor declares; what the events mean is the
+// actor's own knowledge, so the declaration lives beside its reactors (apps/server/src/actor.ts).
+//
+// `run` is a projection in the framework's sense: pure over the event set, recomputed per request,
+// never stored. Nothing here performs IO, and a prefix of a log is a valid argument.
+export interface ProjectionDeclaration {
+  readonly params: Schema.Struct.Fields
+  readonly result: Schema.Top
+  // `never` is the widest parameter a constraint can ask for: it accepts a `run` typed against its
+  // own decoded query, which is what `projection` below infers for an author.
+  readonly run: (events: ReadonlyArray<Event>, params: never) => unknown
+}
+
+export type Projections = Record<string, ProjectionDeclaration>
+
+// projection is how an actor writes one, and exists so `run` is inferred rather than annotated: the
+// query it receives is `params` decoded, and what it answers is `result`'s type.
+export const projection = <Params extends Schema.Struct.Fields, Result extends Schema.Top>(
+  declaration: {
+    readonly params: Params
+    readonly result: Result
+    readonly run: (events: ReadonlyArray<Event>, params: Schema.Struct<Params>["Type"]) => Result["Type"]
+  }
+): typeof declaration => declaration
+
+// The two names a projection may not claim. The log is not a projection of itself: `events` is the
+// log read back and `stream` is the same log followed, and both are the platform's own guarantee
+// rather than anything an actor derives (projectionsOf refuses either, the way agentOf refuses a
+// duplicate tool).
+export const RESERVED_PROJECTIONS: ReadonlyArray<string> = ["events", "stream"]
+
+// projectionsOf is the constructor an actor declares through. It refuses a reserved name where the
+// declaration is written rather than where a request arrives, so a build that would shadow the log
+// never starts (apps/server/src/actor.test.ts, "a projection may not claim a reserved name").
+export const projectionsOf = <const P extends Projections>(projections: P): P => {
+  for (const name of Object.keys(projections)) {
+    if (RESERVED_PROJECTIONS.includes(name)) {
+      throw new Error(
+        `a projection may not be named ${JSON.stringify(name)}: ${
+          RESERVED_PROJECTIONS.map((reserved) => JSON.stringify(reserved)).join(" and ")
+        } are the log itself`
+      )
+    }
+  }
+  return projections
+}
+
+// One endpoint from one declaration. The schemas are type parameters of this function rather than
+// fields reached through one declaration parameter, because inference through an indexed access
+// widens `success` to `Schema.Top` and the derived client then answers `unknown`.
+const projectionEndpoint = <
+  const Name extends string,
+  Params extends Schema.Struct.Fields,
+  Result extends Schema.Top
+>(name: Name, params: Params, result: Result) =>
+  HttpApiEndpoint.get(name, `/v1/actors/:actor/threads/:id/${name}` as const, {
+    params: ThreadParams,
+    query: params,
+    success: result,
+    error: [UnknownActor.schema, UnknownThread.schema]
+  })
+
+export type ProjectionEndpoint<Name extends string, D extends ProjectionDeclaration> = ReturnType<
+  typeof projectionEndpoint<Name, D["params"], D["result"]>
+>
+
+export type ProjectionEndpoints<P extends Projections> = {
+  readonly [Name in keyof P & string]: ProjectionEndpoint<Name, P[Name]>
+}[keyof P & string]
+
+// The endpoints a declaration mounts. The assertion is about arity, not shape: the element type is
+// derived from the same record the values are built from, and a loop over `Object.entries` cannot
+// carry a key's literal type, which is what `add` needs to key the group by name. An actor that
+// declares nothing yields a group with no endpoints, which is what it should.
+const projectionEndpointsOf = <const P extends Projections>(
+  projections: P
+): readonly [ProjectionEndpoints<P>, ...ReadonlyArray<ProjectionEndpoints<P>>] =>
+  Object.entries(projections).map(([name, declaration]) =>
+    projectionEndpoint(name, declaration.params, declaration.result)
+  ) as never
+
+export const projectionsGroupOf = <const P extends Projections>(projections: P) =>
+  HttpApiGroup.make("projections").add(...projectionEndpointsOf(projections))
 
 // RequestProblems is the declaration's own guarantee: whatever a Schema in it refuses, the caller
 // reads as a problem document. It is API-wide middleware rather than an error on each endpoint
@@ -242,11 +372,22 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
   { error: InvalidRequest.schema }
 ) {}
 
-export const Api = HttpApi.make("tardigrade").add(agentsGroup, healthGroup).middleware(RequestProblems)
-  .annotateMerge(
-    OpenApi.annotations({
-      title: "Tardigrade",
-      description:
-        "The agent server: every read is a projection of a durable log, and every failure is an RFC 9457 problem document."
-    })
-  )
+// apiOf is the whole surface for one actor: the log, the projections that actor declares, and the
+// health probe. It is a function rather than a constant because the projections are not the
+// platform's to know: a server builds the API it serves from the actor it mounts
+// (apps/server/src/api.ts, ServerApi).
+export const apiOf = <const P extends Projections>(projections: P) =>
+  HttpApi.make("tardigrade").add(threadsGroup, projectionsGroupOf(projections), healthGroup)
+    .middleware(RequestProblems)
+    .annotateMerge(
+      OpenApi.annotations({
+        title: "Tardigrade",
+        description:
+          "Actors, threads, turns, and events: the platform holds the log, and every other read is a projection its actor declares. Every failure is an RFC 9457 problem document."
+      })
+    )
+
+// The platform's own API, with no actor mounted. It is what a consumer that reads the log alone
+// derives from (client.ts, makeClient), and the group identifiers it carries are the ones every
+// build shares, so a handler written against it serves an API with projections too.
+export const Api = apiOf({})

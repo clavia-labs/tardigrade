@@ -14,7 +14,7 @@ export const COLLAPSED_RAIL_WIDTH = 48
 // for the whole set, because a second size would be a second style.
 export const ICON_SIZE = 15
 
-// How often the rail re-reads GET /agents for the roster: the roots and their counts. The server
+// How often the rail re-reads GET /v1/actors/:actor/threads for the roster: the roots and their counts. The server
 // publishes no change feed for the listing, so the rail polls, and this is both the delay between a
 // run changing and the rail saying so and the resolution of the age column.
 export const ROSTER_POLL_MS = 2000

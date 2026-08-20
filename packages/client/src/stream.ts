@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 
-import type { EventRow } from "./contract"
+import { RESERVED_ACTOR, V1_PREFIX, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"
 
 // The log tail. The stream is not a declared endpoint, because HttpApi is request-and-response
@@ -46,7 +46,10 @@ const globalEventSource: OpenEventSource = (url) => {
 
 export interface StreamOptions {
   readonly baseUrl: string
-  readonly agent: string
+  readonly thread: string
+  // Which actor holds the thread. The default is the name a v1 server reserves (contract.ts,
+  // RESERVED_ACTOR); the derived client always states it (client.ts, follow).
+  readonly actor?: string | undefined
   // Where the first connection starts. A reconnect ignores it: the source replays the same URL with
   // a Last-Event-ID header, and the server prefers that header, so a resume lands where the dropped
   // connection stopped rather than back at `after` (apps/server/src/api.ts, layerStream).
@@ -58,15 +61,24 @@ export interface StreamOptions {
 
 const trimSlash = (url: string): string => (url.endsWith("/") ? url.slice(0, -1) : url)
 
-// streamUrl is the address one tail is opened at. The agent id is encoded because it is a minted
-// call id and is not guaranteed to be path-safe (stream.test.ts, "the first connection carries
-// after").
-export const streamUrl = (baseUrl: string, agent: string, after?: number): string => {
+// streamUrl is the address one tail is opened at. It follows the declaration by hand because the
+// tail is not a declared endpoint (contract.ts, the SSE note), so the prefix and the actor level
+// come from the declaration's own constants rather than a second spelling of them. Both ids are
+// encoded because a thread id is a minted call id and is not guaranteed to be path-safe
+// (stream.test.ts, "the first connection carries after").
+export const streamUrl = (
+  baseUrl: string,
+  thread: string,
+  after?: number,
+  actor: string = RESERVED_ACTOR
+): string => {
   const suffix = after === undefined ? "" : `?after=${after}`
-  return `${trimSlash(baseUrl)}/agents/${encodeURIComponent(agent)}/events/stream${suffix}`
+  return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/${
+    encodeURIComponent(thread)
+  }/events/stream${suffix}`
 }
 
-// stream follows one agent's log and returns the unsubscribe. Reconnection belongs to the
+// stream follows one thread's log and returns the unsubscribe. Reconnection belongs to the
 // EventSource, and so does the Last-Event-ID it carries; this function adds only the frame decoding
 // and the seq, so a source that drops and resumes keeps feeding the same handler and no event is
 // numbered twice (stream.test.ts, "a resumed connection keeps feeding the same handler").
@@ -77,7 +89,7 @@ export const streamUrl = (baseUrl: string, agent: string, after?: number): strin
 // an ordinary `events` poll as the fallback.
 export const stream = (options: StreamOptions): (() => void) => {
   const open = options.eventSource ?? globalEventSource
-  const source = open(streamUrl(options.baseUrl, options.agent, options.after))
+  const source = open(streamUrl(options.baseUrl, options.thread, options.after, options.actor))
   source.onmessage = (frame) => {
     const seq = Number(frame.lastEventId)
     if (!Number.isFinite(seq)) return
@@ -95,7 +107,7 @@ export const stream = (options: StreamOptions): (() => void) => {
         new ProblemError({
           title: "Stream Closed",
           status: NO_ANSWER,
-          detail: `The event stream for ${options.agent} ended and will not reconnect.`
+          detail: `The event stream for ${options.thread} ended and will not reconnect.`
         })
       )
     }

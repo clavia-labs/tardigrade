@@ -2,7 +2,7 @@ import { Effect, Layer } from "effect"
 import { HttpRouter, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
-import { layerAgents, type AgentsOptions } from "@clavia/tardigrade-server/host"
+import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
 import { layerApp } from "@clavia/tardigrade-server/http"
 
 import { resolveAssets } from "./assets"
@@ -48,19 +48,19 @@ export interface DevOptions {
   // Where the built UI lives. Absent, the two layouts a build can arrive in are tried in order
   // (assets.ts, ASSET_CANDIDATES).
   readonly assets?: string | undefined
-  // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, AgentsOptions).
-  readonly agents?: AgentsOptions | undefined
+  // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
+  readonly threads?: ThreadsOptions | undefined
   readonly disableLogger?: boolean | undefined
   readonly disableListenLog?: boolean | undefined
 }
 
 // dev is the whole command: resolve the build, open the store, listen on loopback. It answers a
 // Layer rather than a running process, so the caller owns the scope and the process that stops
-// listening stops writing (apps/server/src/host.ts, layerAgents).
+// listening stops writing (apps/server/src/host.ts, layerThreads).
 export const dev = (options: DevOptions) => {
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
-  const agents = Layer.provide(layerAgents(options.agents ?? {}), config)
+  const threads = Layer.provide(layerThreads(options.threads ?? {}), config)
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).
@@ -69,6 +69,6 @@ export const dev = (options: DevOptions) => {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
-    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, agents]
+    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads]
   )
 }

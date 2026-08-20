@@ -84,7 +84,7 @@ const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =
 export const summaryOf = (event: Event, chars: number = SUMMARY_CHARS): string => {
   switch (event.type) {
     case "MessageReceived": {
-      // A reply is an inbound message answering an id this agent sent out, and it reads as the
+      // A reply is an inbound message answering an id this thread sent out, and it reads as the
       // answer it is (packages/core/src/message.ts, replyEvent).
       const outcome = str(event.outcome)
       const from = str(event.from)

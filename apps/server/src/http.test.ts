@@ -4,7 +4,7 @@ import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 
 import { DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
-import { Agents } from "./host"
+import { Threads } from "./host"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
@@ -18,10 +18,10 @@ setDefaultTimeout(BOOT_MS)
 // The HTTP surface against a real Bun server on an ephemeral port, so the assertions are about
 // wire behavior rather than about the shape of a layer.
 
-// The conventions these tests are about hold over any host, so the agent routes get one that owns
+// The conventions these tests are about hold over any host, so the thread routes get one that owns
 // nothing. The routes themselves are exercised against a real host in api.test.ts.
-const layerAgentsEmpty = Layer.succeed(Agents)({
-  deliver: (id, message) => Effect.succeed({ agent: id, turn: message.id }),
+const layerThreadsEmpty = Layer.succeed(Threads)({
+  deliver: (id, message) => Effect.succeed({ thread: id, turn: message.id }),
   events: () => Effect.succeed([]),
   list: () => Effect.succeed([]),
   resume: () => Effect.void,
@@ -50,7 +50,7 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig(options.config ?? configOf()),
         options.gauge ?? layerGaugeResting,
-        layerAgentsEmpty
+        layerThreadsEmpty
       ])
     ),
     Effect.scoped,
@@ -132,7 +132,7 @@ describe("auth", () => {
 
     const anonymous = await serving({ config }, (client) =>
       Effect.gen(function*() {
-        const response = yield* client.get("/agents")
+        const response = yield* client.get("/v1/actors/agent/threads")
         return { status: response.status, contentType: response.headers["content-type"], body: yield* response.json }
       }))
     expect(anonymous.status).toBe(401)
@@ -140,11 +140,11 @@ describe("auth", () => {
     expect(anonymous.body).toMatchObject({ status: 401, title: "Unauthorized" })
 
     const wrong = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/agents"), "guess")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/agent/threads"), "guess")))
     expect(wrong.status).toBe(403)
 
     const right = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/agents"), "secret")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/agent/threads"), "secret")))
     expect(right.status).toBe(200)
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
@@ -161,7 +161,7 @@ describe("cors", () => {
     const allowed = await serving({}, (client) =>
       Effect.map(
         client.execute(
-          HttpClientRequest.setHeaders(HttpClientRequest.options("/agents"), {
+          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/actors/agent/threads"), {
             origin: "http://localhost:5173",
             "access-control-request-method": "GET",
             "access-control-request-headers": ALLOWED_HEADERS.join(",")

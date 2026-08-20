@@ -8,17 +8,17 @@ import { isProblem, problemOf, ProblemError } from "./problem"
 describe("problemOf", () => {
   test("a problem document surfaces all four fields", () => {
     const error = problemOf(404, {
-      type: `${PROBLEM_TYPE_BASE}unknown-agent`,
-      title: "Unknown Agent",
+      type: `${PROBLEM_TYPE_BASE}unknown-thread`,
+      title: "Unknown Thread",
       status: 404,
-      detail: 'No agent named "ghost" has ever existed.'
+      detail: 'No thread named "ghost" has ever existed.'
     }, "Not Found")
     expect(error).toBeInstanceOf(ProblemError)
-    expect(error.type).toBe(`${PROBLEM_TYPE_BASE}unknown-agent`)
-    expect(error.title).toBe("Unknown Agent")
+    expect(error.type).toBe(`${PROBLEM_TYPE_BASE}unknown-thread`)
+    expect(error.title).toBe("Unknown Thread")
     expect(error.status).toBe(404)
-    expect(error.detail).toBe('No agent named "ghost" has ever existed.')
-    expect(error.message).toBe('Unknown Agent: No agent named "ghost" has ever existed.')
+    expect(error.detail).toBe('No thread named "ghost" has ever existed.')
+    expect(error.message).toBe('Unknown Thread: No thread named "ghost" has ever existed.')
   })
 
   test("the document's own status wins over the response's", () => {
