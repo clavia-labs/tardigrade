@@ -892,6 +892,18 @@ textarea {
   margin-bottom: var(--space-3);
 }
 
+.api-operation-docs .api-parameters-section .api-parameter {
+  padding: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--hair);
+  border-radius: 0;
+  background: transparent;
+}
+
+.api-operation-docs .api-parameters-section .api-parameter:last-child {
+  border-bottom: 1px solid var(--hair);
+}
+
 .api-headers-section {
   padding-top: 0;
 }

@@ -161,7 +161,7 @@ const OperationDetail = ({
             ))}
           </section>
           {otherParameters.length === 0 ? null : (
-            <section className="api-section">
+            <section className="api-section api-parameters-section">
               <h3>Parameters</h3>
               <div className="api-parameters">
                 {otherParameters.map((parameter) => (
