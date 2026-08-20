@@ -17,6 +17,7 @@ import {
 import { client } from "./client"
 import { navigate, useRoute } from "./nav"
 import { API_SCHEMA_DEPTH, ICON_SIZE } from "./policy"
+import { ProductMark } from "./ProductMark"
 import { ThemeToggle } from "./ThemeToggle"
 
 const apiTarget = (operation: string | undefined): string => operation === undefined ? "api-overview" : `api-${operation}`
@@ -343,7 +344,7 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
             <ArrowLeft size={ICON_SIZE} weight="light" aria-hidden="true" />
           </button>
           <div>
-            <div className="rail-wordmark">voyager</div>
+            <ProductMark />
             <div className="mono actor-label">api</div>
           </div>
         </div>
