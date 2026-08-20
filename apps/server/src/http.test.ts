@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
@@ -6,6 +6,14 @@ import { BunHttpServer } from "@effect/platform-bun"
 import { DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
 import { Agents } from "./host"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
+
+// Every case here boots a real server on an ephemeral port, so it competes with every other task in
+// a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out
+// under that load; this is the budget a boot actually needs. It stays tight on purpose: a case that
+// wants longer than this is hanging rather than busy.
+const BOOT_MS = 20_000
+
+setDefaultTimeout(BOOT_MS)
 
 // The HTTP surface against a real Bun server on an ephemeral port, so the assertions are about
 // wire behavior rather than about the shape of a layer.

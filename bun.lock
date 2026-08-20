@@ -15,6 +15,20 @@
         "oxlint": "^1.69.0",
       },
     },
+    "apps/cli": {
+      "name": "@clavia/tardigrade-cli",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-client": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-server": "workspace:*",
+        "@effect/platform-bun": "4.0.0-rc.110",
+        "effect": "4.0.0-rc.110",
+      },
+      "devDependencies": {
+        "@clavia/tardigrade": "workspace:*",
+      },
+    },
     "apps/server": {
       "name": "@clavia/tardigrade-server",
       "version": "0.0.1",
@@ -186,6 +200,8 @@
     "@clavia/tardigrade": ["@clavia/tardigrade@workspace:packages/agent"],
 
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
+
+    "@clavia/tardigrade-cli": ["@clavia/tardigrade-cli@workspace:apps/cli"],
 
     "@clavia/tardigrade-client": ["@clavia/tardigrade-client@workspace:packages/client"],
 

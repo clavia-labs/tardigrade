@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpBody, HttpClient } from "effect/unstable/http"
 import { OpenApi } from "effect/unstable/httpapi"
@@ -43,10 +43,13 @@ const serving = <A, E>(
     Effect.runPromise
   ) as Promise<A>
 
-// A case here boots a real server on an ephemeral port, so it competes with every other task in a
-// parallel gate run. The default per-test budget is tuned for a pure function and times out under
-// that load; this is the budget a boot actually needs.
+// Every case here boots a real server on an ephemeral port, so it competes with every other task in
+// a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out
+// under that load; this is the budget a boot actually needs. It stays tight on purpose: a case that
+// wants longer than this is hanging rather than busy.
 const BOOT_MS = 20_000
+
+setDefaultTimeout(BOOT_MS)
 
 // Every route the server answers, as method and OpenAPI path. The stream is absent because it is
 // not a declared endpoint (api.ts, layerStream).
@@ -100,7 +103,7 @@ describe("the OpenAPI document", () => {
     expect(answers.page.status).toBe(200)
     expect(answers.page.type).toContain("text/html")
     expect(answers.page.body).toContain("Scalar")
-  }, BOOT_MS)
+  })
 
   // The document describes the door rather than opening it, so a token does not close it
   // (http.ts, UNAUTHENTICATED_PATHS).
@@ -113,7 +116,7 @@ describe("the OpenAPI document", () => {
         return [document.status, page.status, gated.status]
       }))
     expect(statuses).toEqual([200, 200, 401])
-  }, BOOT_MS)
+  })
 })
 
 describe("problem documents", () => {
@@ -145,7 +148,7 @@ describe("problem documents", () => {
     // An endpoint declaring two failures encodes the one the value names, so the 404 does not
     // render as the 400 beside it (contract.ts, problemKind).
     expect(failures[2]!.body).toMatchObject({ title: "Unknown Agent" })
-  }, BOOT_MS)
+  })
 
   // A Schema in the declaration refusing input is a failure like any other, so it answers in the
   // same shape rather than as the empty 400 the framework renders by default (contract.ts,
@@ -190,5 +193,5 @@ describe("problem documents", () => {
     expect(details[4]).toContain("`id` is not a value it accepts")
     // A body that is not an object at all names no field, so the sentence stops at the part.
     expect(details[5]).toBe("The request body is not what this endpoint accepts.")
-  }, BOOT_MS)
+  })
 })

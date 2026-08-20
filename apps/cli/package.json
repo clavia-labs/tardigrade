@@ -1,40 +1,39 @@
 {
-  "name": "@clavia/tardigrade-client",
+  "name": "@clavia/tardigrade-cli",
   "version": "0.0.1",
   "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
-  "description": "The declared HTTP API of the tardigrade server, and the client derived from it.",
+  "description": "The tdg command: run an agent, watch its log, and serve the API and the UI at one URL.",
   "homepage": "https://github.com/clavia-labs/tardigrade#readme",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clavia-labs/tardigrade.git",
-    "directory": "packages/client"
+    "directory": "apps/cli"
   },
   "bugs": {
     "url": "https://github.com/clavia-labs/tardigrade/issues"
   },
-  "publishConfig": {
-    "access": "public"
-  },
-  "files": [
-    "src",
-    "!src/**/*.test.ts"
-  ],
   "engines": {
     "bun": ">=1.4.0"
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
     "./*": "./src/*.ts"
   },
   "dependencies": {
+    "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-server": "workspace:*",
+    "@effect/platform-bun": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "start": "bun run src/main.ts"
+  },
+  "devDependencies": {
+    "@clavia/tardigrade": "workspace:*"
   }
 }

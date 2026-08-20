@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Infer, type InferRequest } from "@clavia/tardigrade"
@@ -7,6 +7,14 @@ import type { Action } from "@clavia/tardigrade/events"
 import { layerConfig, readConfig } from "./config"
 import { Agents, layerAgents, ResumeRefused } from "./host"
 import { DriverGauge } from "./http"
+
+// Every case here opens a real store on disk and drives a real host, so it competes with every
+// other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
+// times out under that load; this is the budget a boot actually needs. It stays tight on purpose: a
+// case that wants longer than this is hanging rather than busy.
+const BOOT_MS = 20_000
+
+setDefaultTimeout(BOOT_MS)
 
 // The host service against a real durable host on a volatile database, with the model seam bound
 // to a scripted mind: no credentials, no network, and the turn loop is the library's own.

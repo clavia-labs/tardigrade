@@ -153,6 +153,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent capabilities from first principles.
 - [Run the server](docs/how-to/server.md): host the HTTP server over a durable SQLite log, and read its API.
+- [Use the command line](docs/how-to/cli.md): drive a server with `tdg`, and serve the API and the UI from one process.
 - [Runtime and turn recovery](docs/explanations/runtime-and-recovery.md): understand runtime requirements, retry scopes, and failed-turn recovery.
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.
 
