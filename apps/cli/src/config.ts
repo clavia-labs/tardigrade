@@ -115,6 +115,8 @@ export const resolveRemote = (flags: RemoteFlags, env: Env, file: FileConfig = {
 export interface ServerFlags {
   readonly port?: number | undefined
   readonly db?: string | undefined
+  readonly actors?: string | undefined
+  readonly actorData?: string | undefined
 }
 
 // resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
@@ -135,6 +137,8 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     ...base,
     port: flags.port ?? base.port,
     db: text(flags.db) ?? base.db,
+    actors: text(flags.actors) ?? base.actors,
+    actorData: text(flags.actorData) ?? base.actorData,
     token: undefined,
     model: {
       baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),

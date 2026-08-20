@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Effect } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
-import { DEFAULT_DB, DEFAULT_PORT } from "@clavia/tardigrade-server/config"
+import { DEFAULT_ACTORS, DEFAULT_ACTOR_DATA, DEFAULT_DB, DEFAULT_PORT } from "@clavia/tardigrade-server/config"
 
 import { configPathIn, parseFileConfig, readFileConfig, resolve, resolveRemote, resolveServer } from "./config"
 
@@ -43,6 +43,8 @@ describe("resolveServer", () => {
     const config = resolveServer({}, {})
     expect(config.port).toBe(DEFAULT_PORT)
     expect(config.db).toBe(DEFAULT_DB)
+    expect(config.actors).toBe(DEFAULT_ACTORS)
+    expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
     expect(config.token).toBeUndefined()
   })
 

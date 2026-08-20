@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 
-import { DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
+import { DEFAULT_ACTORS, DEFAULT_ACTOR_DATA, DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
 import { Threads } from "./host"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
@@ -61,6 +61,8 @@ describe("config", () => {
     const config = readConfig({})
     expect(config.port).toBe(DEFAULT_PORT)
     expect(config.db).toBe(DEFAULT_DB)
+    expect(config.actors).toBe(DEFAULT_ACTORS)
+    expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
       baseUrl: undefined,
@@ -74,6 +76,8 @@ describe("config", () => {
     const config = readConfig({
       PORT: "8080",
       TARDIGRADE_DB: "/var/lib/agents.sqlite",
+      TARDIGRADE_ACTORS: "/var/lib/actors",
+      TARDIGRADE_ACTOR_DATA: "/var/lib/actor-data",
       TARDIGRADE_TOKEN: "secret",
       MODEL_BASE_URL: "https://api.example.com",
       MODEL_API_KEY: "key",
@@ -82,6 +86,8 @@ describe("config", () => {
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("/var/lib/agents.sqlite")
+    expect(config.actors).toBe("/var/lib/actors")
+    expect(config.actorData).toBe("/var/lib/actor-data")
     expect(config.token).toBe("secret")
     expect(config.model.baseUrl).toBe("https://api.example.com")
     expect(config.model.provider).toBe("openai")

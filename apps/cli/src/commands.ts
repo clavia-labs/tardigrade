@@ -1,11 +1,13 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
-import { NO_ANSWER, ProblemError, type Client, type TurnView } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type TurnView } from "@clavia/tardigrade-client"
 
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 
+import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
 import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
@@ -71,6 +73,11 @@ const json = Flag.boolean("json").pipe(
   Flag.withDefault(false)
 )
 
+const actor = Flag.string("actor").pipe(
+  Flag.withDescription(`The actor to address. Defaults to ${RESERVED_ACTOR}.`),
+  Flag.withDefault(RESERVED_ACTOR)
+)
+
 const messageId = Flag.string("id").pipe(
   Flag.withDescription(
     "The message id, which is also the turn id and the dedup key. A fresh one is minted per invocation, so state it to make a retry absorbed rather than duplicated."
@@ -78,19 +85,20 @@ const messageId = Flag.string("id").pipe(
   Flag.optional
 )
 
-const remote = { url, token, json }
+const remote = { url, token, actor, json }
 
 // clientOf resolves where to call and opens the client, which is the one place the two sources meet
 // (config.ts, resolveRemote).
 const clientOf = (flags: {
   readonly url: Option.Option<string>
   readonly token: Option.Option<string>
+  readonly actor: string
 }) =>
   Effect.gen(function*() {
     const cli = yield* Cli
     const file = yield* readFileConfig(cli.env)
     const resolved = resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env, file)
-    return cli.openClient({ baseUrl: resolved.baseUrl, token: resolved.token })
+    return cli.openClient({ baseUrl: resolved.baseUrl, token: resolved.token, actor: flags.actor })
   })
 
 const stated = (option: Option.Option<string>): string | undefined => Option.getOrUndefined(option)
@@ -151,6 +159,72 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     ])
   )
 
+export const buildCommand = Command.make("build", {
+  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to bundle")),
+  out: Flag.string("out").pipe(
+    Flag.withDescription(`The artifact root. Defaults to ${DEFAULT_BUILD_DIRECTORY}.`),
+    Flag.optional
+  ),
+  json
+}, (flags) =>
+  Effect.gen(function*() {
+    const out = stated(flags.out)
+    const built = yield* Effect.tryPromise({
+      try: () => buildActor(flags.entry, out === undefined ? {} : { out }),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built))
+  })).pipe(
+    Command.withDescription("Bundle and validate one named actor as a portable artifact."),
+    Command.withExamples([
+      { command: "tdg build ./actors/researcher.ts", description: "Build one actor into the default artifact root" }
+    ])
+  )
+
+export const pushCommand = Command.make("push", {
+  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to build and push")),
+  target: Flag.choice("target", PUSH_TARGETS).pipe(
+    Flag.withDescription("Where to push the actor. State local or hosted explicitly.")
+  ),
+  out: Flag.string("out").pipe(
+    Flag.withDescription(`The artifact root. Defaults to ${DEFAULT_BUILD_DIRECTORY}.`),
+    Flag.optional
+  ),
+  actors: Flag.string("actors").pipe(
+    Flag.withDescription(`The local actor root. Defaults to ${DEFAULT_ACTOR_DIRECTORY}.`),
+    Flag.optional
+  ),
+  url,
+  token,
+  json
+}, (flags) =>
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const file = yield* readFileConfig(cli.env)
+    const resolved = flags.target === "hosted"
+      ? resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env, file)
+      : undefined
+    const out = stated(flags.out)
+    const actors = stated(flags.actors)
+    const pushed = yield* Effect.tryPromise({
+      try: () => pushActor(flags.entry, {
+        target: flags.target,
+        ...(out === undefined ? {} : { out }),
+        ...(actors === undefined ? {} : { actors }),
+        ...(resolved === undefined ? {} : { baseUrl: resolved.baseUrl }),
+        ...(resolved?.token === undefined ? {} : { token: resolved.token })
+      }),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf(pushed) : pushSummary(pushed))
+  })).pipe(
+    Command.withDescription("Build one named actor and push the same artifact to a local or hosted actor root."),
+    Command.withExamples([
+      { command: "tdg push ./actors/researcher.ts --target local", description: "Push an actor into the local actor root" },
+      { command: "tdg push ./actors/researcher.ts --target hosted --url https://api.example.com", description: "Push an actor to a hosted server" }
+    ])
+  )
+
 export const devCommand = Command.make("dev", {
   port: Flag.integer("port").pipe(
     Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
@@ -162,6 +236,14 @@ export const devCommand = Command.make("dev", {
   ),
   db: Flag.string("db").pipe(
     Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
+    Flag.optional
+  ),
+  actors: Flag.string("actors").pipe(
+    Flag.withDescription("The directory holding pushed actors. Defaults to TARDIGRADE_ACTORS."),
+    Flag.optional
+  ),
+  actorData: Flag.string("actor-data").pipe(
+    Flag.withDescription("The directory holding pushed actor databases. Defaults to TARDIGRADE_ACTOR_DATA."),
     Flag.optional
   ),
   ui: Flag.string("ui").pipe(
@@ -177,7 +259,12 @@ export const devCommand = Command.make("dev", {
     const cli = yield* Cli
     const file = yield* readFileConfig(cli.env)
     const config = yield* Effect.try({
-      try: () => resolveServer({ port: Option.getOrUndefined(flags.port), db: stated(flags.db) }, cli.env, file),
+      try: () => resolveServer({
+        port: Option.getOrUndefined(flags.port),
+        db: stated(flags.db),
+        actors: stated(flags.actors),
+        actorData: stated(flags.actorData)
+      }, cli.env, file),
       catch: userErrorOf
     })
     // A first boot with no model asks for one, because two commands to see anything is one too
@@ -195,7 +282,12 @@ export const devCommand = Command.make("dev", {
         yield* Console.log(setupSummary(path, answers))
         const written = yield* readFileConfig(cli.env)
         return yield* Effect.try({
-          try: () => resolveServer({ port: Option.getOrUndefined(flags.port), db: stated(flags.db) }, cli.env, written),
+          try: () => resolveServer({
+            port: Option.getOrUndefined(flags.port),
+            db: stated(flags.db),
+            actors: stated(flags.actors),
+            actorData: stated(flags.actorData)
+          }, cli.env, written),
           catch: userErrorOf
         })
       })
@@ -339,5 +431,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, devCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, buildCommand, pushCommand, devCommand, runCommand, sendCommand, lsCommand, eventsCommand])
 )

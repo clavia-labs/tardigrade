@@ -6,6 +6,10 @@
 // measures against it.
 export const RAIL_WIDTH = 320
 
+// The actor pane's width in pixels. Actor names are shorter than run ids, so the first level keeps
+// a narrower measure than the run rail beside it.
+export const ACTOR_RAIL_WIDTH = 208
+
 // The width the rail keeps when it is collapsed, in pixels. It holds the toggle and nothing else,
 // so a reader can always open the list again from where they closed it.
 export const COLLAPSED_RAIL_WIDTH = 48

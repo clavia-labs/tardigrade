@@ -52,3 +52,13 @@ export const token = (): string | undefined => {
 // One client for the tab. The address and the token are read at load, which is when a reader could
 // have stated either: a different `api` param or a pasted token is a different page load.
 export const client: Client = makeClient({ baseUrl: apiUrl(), token: token() })
+
+const clients = new Map<string, Client>()
+
+export const clientFor = (actor: string): Client => {
+  const held = clients.get(actor)
+  if (held !== undefined) return held
+  const created = makeClient({ baseUrl: client.baseUrl, token: token(), actor })
+  clients.set(actor, created)
+  return created
+}

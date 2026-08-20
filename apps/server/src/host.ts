@@ -1,11 +1,23 @@
 import { Clock, Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
+import { createHash } from "node:crypto"
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
+import { join, resolve } from "node:path"
+import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Infer } from "tardie"
+import type { Actor } from "@clavia/tardigrade-core/actor"
+import {
+  ACTOR_ARTIFACT_VERSION,
+  ACTOR_NAME_PATTERN,
+  Infer,
+  type ActorArtifactManifest,
+  type ActorDefinition
+} from "tardie"
 import type { Action } from "tardie/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { infer } from "@clavia/tardigrade-model/model"
+import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
 
 import { assemblyOf, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
@@ -28,19 +40,29 @@ export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
 export const idOf = (lane: string): string | undefined =>
   lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
 
+export interface ActorThreads {
+  readonly append: (id: string, event: Event) => Effect.Effect<void>
+  readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
+  readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
+  readonly settled: Effect.Effect<void>
+}
+
 // The operations the HTTP surface has: append an event, read a log, list what exists. Every one
 // speaks a thread id and none of them reads an event's fields, because what an event means is the
 // actor's knowledge and this service holds the log (actor.ts, agentProjections).
 export class Threads extends Context.Service<
   Threads,
   {
-    readonly append: (id: string, event: Event) => Effect.Effect<void>
-    readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
-    readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
+    readonly append: ActorThreads["append"]
+    readonly events: ActorThreads["events"]
+    readonly list: ActorThreads["list"]
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
     // client never waits on it (a delivery answers 202 and the client polls the turn); a test and
     // a shutdown do (host.test.ts).
-    readonly settled: Effect.Effect<void>
+    readonly settled: ActorThreads["settled"]
+    readonly actors?: Effect.Effect<ReadonlyArray<ActorSummary>>
+    readonly actor?: (name: string) => ActorThreads | undefined
+    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, Error>
   }
 >()("tardigrade/server/Threads") {}
 
@@ -82,104 +104,230 @@ export interface ThreadsOptions {
   readonly infer?: Layer.Layer<Infer>
 }
 
-// make builds the host, recovers what a death interrupted, and returns the service pair. The
-// close is a scope finalizer, so the process that stops listening also stops writing.
+interface ActorRuntime {
+  readonly summary: ActorSummary
+  readonly threads: ActorThreads
+  readonly resting: () => Promise<boolean>
+  readonly dirty: () => number
+  readonly close: () => Promise<void>
+}
+
+const digestOf = (module: string): string =>
+  `sha256:${createHash("sha256").update(module).digest("hex")}`
+
+const definitionOf = async (modulePath: string, expected: ActorArtifactManifest): Promise<ActorDefinition<ServerR>> => {
+  const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?digest=${encodeURIComponent(expected.digest)}`)
+  const definition = (loaded as { readonly default?: unknown }).default
+  if (typeof definition !== "object" || definition === null) {
+    throw new Error("actor artifact must default export defineActor({ name, actor })")
+  }
+  const candidate = definition as Partial<ActorDefinition<ServerR>>
+  if (candidate.name !== expected.name || !ACTOR_NAME_PATTERN.test(expected.name)) {
+    throw new Error(`actor artifact name does not match ${JSON.stringify(expected.name)}`)
+  }
+  if (
+    typeof candidate.actor !== "object" ||
+    candidate.actor === null ||
+    !Array.isArray(candidate.actor.reactors) ||
+    typeof candidate.actor.keyOf !== "function"
+  ) {
+    throw new Error("actor artifact does not contain an Actor")
+  }
+  return candidate as ActorDefinition<ServerR>
+}
+
+const runtimeOf = async (
+  summary: ActorSummary,
+  actor: Actor<ServerR>,
+  log: string,
+  lane: ReturnType<typeof layerLane>
+): Promise<ActorRuntime> => {
+  const host: BunHost = await createBunHost<ServerR>({
+    log,
+    actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
+    layersFor: () => lane,
+    keyOf: (event) => actor.keyOf?.(event)
+  })
+  let driving: Promise<void> | undefined
+  let follow = false
+  let failure: unknown = undefined
+  const pump = async (): Promise<void> => {
+    try {
+      do {
+        follow = false
+        await host.drive()
+      } while (follow)
+    } catch (error) {
+      failure = error
+    } finally {
+      driving = undefined
+      follow = false
+    }
+  }
+  const request = (): Promise<void> => {
+    if (driving !== undefined) {
+      follow = true
+      return driving
+    }
+    driving = pump()
+    return driving
+  }
+  const settled = Effect.suspend(() =>
+    Effect.promise(() => driving ?? Promise.resolve()).pipe(
+      Effect.flatMap(() => {
+        if (failure === undefined) return Effect.void
+        const held = failure
+        failure = undefined
+        return Effect.die(held)
+      })
+    )
+  )
+  await host.recover()
+  const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
+  const threads: ActorThreads = {
+    append: (id, event) =>
+      Effect.gen(function*() {
+        const at = yield* Clock.currentTimeMillis
+        const stamped = event.at === undefined ? { ...event, at } : event
+        yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
+        request()
+      }),
+    events: read,
+    list: () =>
+      Effect.gen(function*() {
+        const lanes = yield* Effect.promise(() => host.lanes())
+        const ids = lanes.flatMap((candidate) => {
+          const id = idOf(candidate)
+          return id === undefined ? [] : [id]
+        })
+        return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
+      }),
+    settled
+  }
+  return {
+    summary,
+    threads,
+    resting: () => host.resting(),
+    dirty: () => (driving === undefined ? 0 : follow ? 2 : 1),
+    close: async () => {
+      await Effect.runPromise(settled)
+      await host.close()
+    }
+  }
+}
+
+const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
+  const raw = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as Partial<ActorArtifactManifest>
+  if (
+    raw.schema !== ACTOR_ARTIFACT_VERSION ||
+    typeof raw.name !== "string" ||
+    typeof raw.module !== "string" ||
+    typeof raw.digest !== "string"
+  ) {
+    throw new Error(`invalid actor manifest in ${directory}`)
+  }
+  const manifest = raw as ActorArtifactManifest
+  const module = await readFile(join(directory, manifest.module), "utf8")
+  const actual = digestOf(module)
+  if (actual !== manifest.digest) throw new Error(`actor artifact digest mismatch for ${manifest.name}`)
+  return { manifest, module }
+}
+
+// make builds one isolated host per actor and returns their shared HTTP-facing registry.
 const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
-    const assembly = assemblyOf()
     const lane = layerLane(config, options)
-    const host: BunHost = yield* Effect.acquireRelease(
-      Effect.promise(() =>
-        createBunHost<ServerR>({
-          log: config.db,
-          actorFor: (lane) => (idOf(lane) === undefined ? undefined : assembly),
-          layersFor: () => lane,
-          keyOf: (event) => assembly.keyOf?.(event)
+    const runtimes = new Map<string, ActorRuntime>()
+    const builtIn = assemblyOf()
+    const open = async (summary: ActorSummary, actor: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
+      const runtime = await runtimeOf(summary, actor, log, lane)
+      runtimes.set(summary.name, runtime)
+      return runtime
+    }
+    yield* Effect.acquireRelease(
+      Effect.promise(async () => {
+        await open({ name: RESERVED_ACTOR, builtIn: true }, builtIn, config.db)
+        const root = resolve(config.actors)
+        const entries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return []
+          throw error
         })
-      ),
-      (open) => Effect.promise(() => open.close())
+        for (const entry of entries) {
+          if (!entry.isDirectory()) continue
+          const directory = join(root, entry.name)
+          const artifact = await manifestOf(directory)
+          if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
+          const definition = await definitionOf(join(directory, artifact.manifest.module), artifact.manifest)
+          await open(
+            { name: definition.name, builtIn: false, digest: artifact.manifest.digest },
+            definition.actor,
+            join(resolve(config.actorData), `${definition.name}.sqlite`)
+          )
+        }
+        return runtimes
+      }),
+      (opened) => Effect.promise(() => Promise.all([...opened.values()].map((runtime) => runtime.close())).then(() => undefined))
     )
 
-    // The drive loop. Deliveries request a drive rather than run one: drives are serialized, so
-    // two lanes never settle at once, and coalesced, so a request arriving mid-drive schedules
-    // exactly one follow-up pass however many arrive. The follow-up runs inside the same promise,
-    // so a caller awaiting a requested drive also awaits the work its own delivery enabled.
-    let driving: Promise<void> | undefined
-    let follow = false
-    let failure: unknown = undefined
-    const pump = async (): Promise<void> => {
-      try {
-        do {
-          follow = false
-          await host.drive()
-        } while (follow)
-      } catch (e) {
-        failure = e
-      } finally {
-        driving = undefined
-        follow = false
-      }
-    }
-    const request = (): Promise<void> => {
-      if (driving !== undefined) {
-        follow = true
-        return driving
-      }
-      driving = pump()
-      return driving
-    }
-
-    // A drive that threw is a defect the loop cannot report to the delivery that caused it, so it
-    // is held and raised by the next `settled`: the process dies on it rather than driving on
-    // over a broken host.
-    const settled = Effect.suspend(() =>
-      Effect.promise(() => driving ?? Promise.resolve()).pipe(
-        Effect.flatMap(() => {
-          if (failure === undefined) return Effect.void
-          const held = failure
-          failure = undefined
-          return Effect.die(held)
-        })
-      )
-    )
-
-    yield* Effect.promise(() => host.recover())
-
-    const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
+    const selected = (name: string): ActorThreads | undefined => runtimes.get(name)?.threads
+    const primary = selected(RESERVED_ACTOR)!
+    const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, Error> =>
+      Effect.tryPromise({
+        try: async () => {
+          const manifest = artifact.manifest as ActorArtifactManifest
+          if (manifest.schema !== ACTOR_ARTIFACT_VERSION) throw new Error(`unsupported actor artifact schema ${manifest.schema}`)
+          if (!ACTOR_NAME_PATTERN.test(manifest.name)) throw new Error(`actor name must match ${String(ACTOR_NAME_PATTERN)}`)
+          if (manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
+          if (manifest.module !== "actor.mjs") throw new Error(`actor module must be ${JSON.stringify("actor.mjs")}`)
+          const actual = digestOf(artifact.module)
+          if (actual !== manifest.digest) throw new Error(`actor artifact digest mismatch: expected ${manifest.digest}, got ${actual}`)
+          const root = resolve(config.actors)
+          const destination = join(root, manifest.name)
+          const temporary = `${destination}.incoming`
+          const previous = `${destination}.previous`
+          await mkdir(root, { recursive: true })
+          await rm(temporary, { recursive: true, force: true })
+          await rm(previous, { recursive: true, force: true })
+          await mkdir(temporary, { recursive: true })
+          await writeFile(join(temporary, manifest.module), artifact.module, "utf8")
+          await writeFile(join(temporary, "manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8")
+          const definition = await definitionOf(join(temporary, manifest.module), manifest)
+          const current = runtimes.get(manifest.name)
+          if (current !== undefined) {
+            await current.close()
+            runtimes.delete(manifest.name)
+          }
+          const summary: ActorSummary = { name: manifest.name, builtIn: false, digest: manifest.digest }
+          try {
+            await open(summary, definition.actor, join(resolve(config.actorData), `${manifest.name}.sqlite`))
+            try {
+              await rename(destination, previous)
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+            }
+            await rename(temporary, destination)
+            await rm(previous, { recursive: true, force: true })
+            return summary
+          } catch (error) {
+            await rm(temporary, { recursive: true, force: true })
+            throw error
+          }
+        },
+        catch: (error) => error instanceof Error ? error : new Error(String(error))
+      })
 
     const service: Context.Service.Shape<typeof Threads> = {
-      // An append stamps `at` only when the caller stated none, so a replayed event keeps the time
-      // it happened. Everything else about the fact is passed through: duplicate suppression is the
-      // assembly's own key function, which the host was built with (actor.ts, assemblyOf).
-      append: (id, event) =>
-        Effect.gen(function*() {
-          const at = yield* Clock.currentTimeMillis
-          const stamped = event.at === undefined ? { ...event, at } : event
-          yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
-          request()
-        }),
-      events: read,
-      list: () =>
-        Effect.gen(function*() {
-          const lanes = yield* Effect.promise(() => host.lanes())
-          const ids = lanes.flatMap((lane) => {
-            const id = idOf(lane)
-            return id === undefined ? [] : [id]
-          })
-          return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
-        }),
-      settled
+      ...primary,
+      actors: Effect.sync(() => [...runtimes.values()].map((runtime) => runtime.summary)),
+      actor: selected,
+      push,
+      settled: Effect.forEach(runtimes.values(), (runtime) => runtime.threads.settled, { discard: true })
     }
-
-    // dirty counts the drive passes owed, not lanes: 0 resting, 1 while a drive runs, 2 when that
-    // drive has already coalesced a follow-up. The host's own dirty set is private to it, and the
-    // number a client reads is the one this loop acts on.
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
-      resting: Effect.promise(() => host.resting()),
-      dirty: Effect.sync(() => (driving === undefined ? 0 : follow ? 2 : 1))
+      resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
+      dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
     }
-
     return Context.make(Threads, service).pipe(Context.add(DriverGauge, gauge))
   })
 

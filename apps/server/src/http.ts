@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
-import { layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
+import { layerActorsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
 import { ServerConfig } from "./config"
 import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
@@ -161,6 +161,7 @@ export const layerApp = (options: ApiOptions = {}) =>
   Layer.mergeAll(
     Layer.provide(
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
+        layerActorsGroup(),
         layerThreadsGroup(options),
         layerProjectionsGroup(),
         layerHealthGroup

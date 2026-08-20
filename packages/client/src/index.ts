@@ -23,6 +23,7 @@ export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenE
 
 export type {
   Accepted,
+  ActorSummary,
   ThreadNode,
   ThreadStatus,
   ThreadSummary,

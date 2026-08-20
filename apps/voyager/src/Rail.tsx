@@ -78,7 +78,7 @@ export const Rail = ({
   return (
     <aside className={`rail${collapsed ? " rail-collapsed" : ""}`} style={{ width: collapsed ? COLLAPSED_RAIL_WIDTH : RAIL_WIDTH }}>
       <div className="rail-head">
-        <div className="rail-only rail-wordmark">voyager</div>
+        <div className="mono rail-only rail-section-title">runs</div>
         <button
           type="button"
           className="icon-btn"

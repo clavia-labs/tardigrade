@@ -41,6 +41,7 @@ const clientOf = (
   return {
     baseUrl: "http://localhost:0",
     actor: RESERVED_ACTOR,
+    actors: () => Promise.resolve([{ name: RESERVED_ACTOR, builtIn: true }]),
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
     events: (thread, options) => {
       recorded.asked.push({ thread, options })
@@ -138,6 +139,8 @@ describe("parsing", () => {
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
   test("the tree names setup, and its help says what it writes", async () => {
     expect((await drive([])).lines.join("\n")).toContain("setup")
+    expect((await drive([])).lines.join("\n")).toContain("build")
+    expect((await drive([])).lines.join("\n")).toContain("push")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
     expect(help).toContain("~/.tardigrade/config.json")
     expect(help).toContain("0600")
@@ -150,10 +153,21 @@ describe("parsing", () => {
     expect(help).toContain("--limit")
     expect(help).toContain("--types")
     expect(help).toContain("--json")
+    expect(help).toContain("--actor")
     const devHelp = (await drive(["dev", "--no-open", "--help"])).lines.join("\n")
     expect(devHelp).toContain("--open")
     expect(devHelp).toContain("--no-open")
     expect(devHelp).toContain("--min-port")
+    const pushHelp = (await drive(["push", "--help"])).lines.join("\n")
+    expect(pushHelp).toContain("--target")
+    expect(pushHelp).toContain("local")
+    expect(pushHelp).toContain("hosted")
+  })
+
+  test("push requires an explicit target", async () => {
+    const ran = await drive(["push", "actor.ts"])
+    expect(ran.failed).toBe(true)
+    expect(failureText(ran)).toContain("target")
   })
 
   test("an unknown command fails", async () => {

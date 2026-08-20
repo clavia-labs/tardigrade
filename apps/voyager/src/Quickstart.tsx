@@ -10,10 +10,18 @@ export interface QuickstartCommands {
 }
 
 // quickstartCommands returns commands addressed to the server this tab is reading.
-export const quickstartCommands = (baseUrl: string): QuickstartCommands => ({
-  cli: `tdg run "Tell me what you can do" --url ${baseUrl}`,
+const baseQuickstartCommands = (baseUrl: string, actor: string): QuickstartCommands => ({
+  cli: `tdg run "Tell me what you can do" --actor ${actor} --url ${baseUrl}`,
   curl: `curl -X POST ${baseUrl}/v1/actors/agent/threads/hello/events \\\n+  -H 'content-type: application/json' \\\n+  -d '{"id":"hello-1","type":"MessageReceived","text":"Tell me what you can do"}'`
 })
+
+export const quickstartCommands = (baseUrl: string, actor = "agent"): QuickstartCommands => {
+  const commands = baseQuickstartCommands(baseUrl, actor)
+  return {
+    ...commands,
+    curl: commands.curl.replace("/v1/actors/agent/", `/v1/actors/${encodeURIComponent(actor)}/`)
+  }
+}
 
 const copyText = async (text: string): Promise<boolean> => {
   try {
@@ -64,8 +72,8 @@ const CommandCard = ({ command, label }: { readonly command: string; readonly la
   )
 }
 
-export const Quickstart = (): ReactElement => {
-  const commands = quickstartCommands(client.baseUrl)
+export const Quickstart = ({ actor = "agent" }: { readonly actor?: string | undefined }): ReactElement => {
+  const commands = quickstartCommands(client.baseUrl, actor)
   return (
     <div className="quickstart-empty">
       <div className="quickstart">
