@@ -75,7 +75,7 @@ export class Agents extends Context.Service<
 // the customization path (apps-server-spec.md, "Explicitly out of scope for v1").
 const assemblyOf = () =>
   agentOf([
-    codeModeFor({}, {}, [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })]),
+    codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
     reply,
     budget,
     compaction
