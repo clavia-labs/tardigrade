@@ -8,6 +8,8 @@
 
 # Tardigrade
 
+[![npm version](https://img.shields.io/npm/v/@clavia/tardigrade.svg)](https://www.npmjs.com/package/@clavia/tardigrade)
+
 A durable and modular agent harness built for self-improvement.
 
 ### A harness made for self-improvement
