@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ThreadSummary, EventRow } from "@clavia/tardigrade-client"
 
-import { threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, table, turnLines } from "./render"
+import { actorsTable, threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, table, turnLines } from "./render"
 
 // The human rendering. A table is plain aligned text, so these assert on columns rather than on
 // escape sequences, and a value the projection did not carry reads as absent rather than as empty.
@@ -31,6 +31,23 @@ describe("threadsTable", () => {
 
   test("an empty store says so", () => {
     expect(threadsTable([])).toBe("no threads")
+  })
+})
+
+describe("actorsTable", () => {
+  test("shows built-in and pushed actors", () => {
+    const rendered = actorsTable([
+      { name: "agent", builtIn: true },
+      { name: "reviewer", builtIn: false, digest: "sha256:abc" }
+    ])
+    expect(rendered).toContain("agent")
+    expect(rendered).toContain("built-in")
+    expect(rendered).toContain("reviewer")
+    expect(rendered).toContain("sha256:abc")
+  })
+
+  test("an empty server says so", () => {
+    expect(actorsTable([])).toBe("no actors")
   })
 })
 

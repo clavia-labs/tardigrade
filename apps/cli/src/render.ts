@@ -1,4 +1,4 @@
-import type { ThreadSummary, EventRow, TurnView } from "@clavia/tardigrade-client"
+import type { ActorSummary, ThreadSummary, EventRow, TurnView } from "@clavia/tardigrade-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the
@@ -51,6 +51,18 @@ export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
         String(thread.events),
         timeOf(thread.lastAt),
         thread.parent ?? ABSENT
+      ])
+    )
+
+export const actorsTable = (actors: ReadonlyArray<ActorSummary>): string =>
+  actors.length === 0
+    ? "no actors"
+    : table(
+      ["ACTOR", "KIND", "DIGEST"],
+      actors.map((actor) => [
+        actor.name,
+        actor.builtIn ? "built-in" : "pushed",
+        actor.digest ?? ABSENT
       ])
     )
 

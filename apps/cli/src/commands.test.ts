@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
 import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ProblemError, RESERVED_ACTOR, type Accepted, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
+import { ProblemError, RESERVED_ACTOR, type Accepted, type ActorSummary, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
 
 import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
 import { Cli, type CliProjections, type CliServices } from "./services"
@@ -32,6 +32,7 @@ const clientOf = (
   recorded: Recorded,
   answers: {
     readonly list?: ReadonlyArray<ThreadSummary>
+    readonly actors?: ReadonlyArray<ActorSummary>
     readonly events?: ReadonlyArray<EventRow>
     readonly turns?: ReadonlyArray<TurnView>
     readonly fail?: ProblemError
@@ -41,7 +42,9 @@ const clientOf = (
   return {
     baseUrl: "http://localhost:0",
     actor: RESERVED_ACTOR,
-    actors: () => Promise.resolve([{ name: RESERVED_ACTOR, builtIn: true }]),
+    actors: () => answers.fail === undefined
+      ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
+      : Promise.reject(answers.fail),
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
     events: (thread, options) => {
       recorded.asked.push({ thread, options })
@@ -141,6 +144,7 @@ describe("parsing", () => {
     expect((await drive([])).lines.join("\n")).toContain("setup")
     expect((await drive([])).lines.join("\n")).toContain("build")
     expect((await drive([])).lines.join("\n")).toContain("push")
+    expect((await drive([])).lines.join("\n")).toContain("actors")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
     expect(help).toContain("~/.tardigrade/config.json")
     expect(help).toContain("0600")
@@ -205,6 +209,27 @@ describe("ls", () => {
   test("--json prints the client's value verbatim", async () => {
     const ran = await drive(["ls", "--json"], { answers: { list: threads } })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual(threads)
+  })
+})
+
+describe("actors", () => {
+  const actors: ReadonlyArray<ActorSummary> = [
+    { name: "agent", builtIn: true },
+    { name: "reviewer", builtIn: false, digest: "sha256:abc" }
+  ]
+
+  test("the human rendering lists kind and digest", async () => {
+    const ran = await drive(["actors"], { answers: { actors } })
+    expect(ran.failed).toBe(false)
+    expect(ran.lines[0]).toContain("ACTOR")
+    expect(ran.lines[0]).toContain("reviewer")
+    expect(ran.lines[0]).toContain("pushed")
+    expect(ran.lines[0]).toContain("sha256:abc")
+  })
+
+  test("--json prints the summaries verbatim", async () => {
+    const ran = await drive(["actors", "--json"], { answers: { actors } })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(actors)
   })
 })
 
