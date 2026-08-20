@@ -542,6 +542,7 @@ textarea {
   border-radius: var(--radius-chip);
   font-size: 12px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* One row is one line high, whatever the payload holds. The ellipsis is the browser's, at the width

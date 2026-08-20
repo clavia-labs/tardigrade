@@ -5,7 +5,7 @@ import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clav
 import { client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
+import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
@@ -109,11 +109,13 @@ const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
 const Row = ({
   moment,
   onToggle,
-  open
+  open,
+  stampWidth
 }: {
   readonly moment: Moment
   readonly onToggle: () => void
   readonly open: boolean
+  readonly stampWidth: number
 }): ReactElement => {
   const stamp = stampOf(moment.event.type)
   return (
@@ -130,7 +132,7 @@ const Row = ({
           onToggle()
         }}
       >
-        <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg }}>
+        <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg, width: stampWidth }}>
           {moment.event.type}
         </span>
         {/* A collapsed line takes the pane's whole width; only the wrapped line an open row shows
@@ -164,7 +166,15 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
   </div>
 )
 
-export const Thread = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => {
+export const Thread = ({
+  id,
+  stampWidth = EVENT_STAMP_WIDTH,
+  status
+}: {
+  readonly id: string
+  readonly stampWidth?: number | undefined
+  readonly status: ThreadStatus | undefined
+}): ReactElement => {
   const route = useRoute()
   // The window's own edges. The URL carries them so a view is shareable, and the pane holds them so
   // a drag renders from one place: `navigate` publishes the URL synchronously, and a control that
@@ -258,6 +268,7 @@ export const Thread = ({ id, status }: { readonly id: string; readonly status: T
                 key={moment.seq}
                 moment={moment}
                 open={opened === moment.seq}
+                stampWidth={stampWidth}
                 onToggle={() => setOpened(opened === moment.seq ? undefined : moment.seq)}
               />
             ))}

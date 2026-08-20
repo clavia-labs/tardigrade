@@ -14,6 +14,10 @@ export const COLLAPSED_RAIL_WIDTH = 48
 // for the whole set, because a second size would be a second style.
 export const ICON_SIZE = 15
 
+// The event type pill's width in pixels. One shared width aligns every event summary, and Thread
+// accepts another width when an embedding uses a different event vocabulary.
+export const EVENT_STAMP_WIDTH = 164
+
 // How often the rail re-reads GET /v1/actors/:actor/threads for the roster: the roots and their counts. The server
 // publishes no change feed for the listing, so the rail polls, and this is both the delay between a
 // run changing and the rail saying so and the resolution of the age column.
