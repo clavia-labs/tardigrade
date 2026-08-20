@@ -1,4 +1,4 @@
-import { afterAll, beforeEach, describe, expect, test } from "bun:test"
+import { beforeEach, describe, expect, test } from "bun:test"
 
 import { makeClient, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./contract"
@@ -19,16 +19,14 @@ const emptyList = () => new Response("[]", { status: 200, headers: { "content-ty
 
 let answer: () => Response = emptyList
 
-const realFetch = globalThis.fetch
-globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+// The stand-in is stated to the client rather than assigned to `globalThis`. The transport reads
+// its default once per process, so a global assigned after any other fetch-backed request would
+// never be consulted and these calls would reach whatever owns the port.
+const stub = ((input: string | URL | Request, init?: RequestInit) => {
   const headers = new Headers(init?.headers ?? {})
   calls.push({ url: String(input), headers: Object.fromEntries(headers.entries()) })
   return Promise.resolve(answer())
 }) as typeof globalThis.fetch
-
-afterAll(() => {
-  globalThis.fetch = realFetch
-})
 
 beforeEach(() => {
   calls.length = 0
@@ -41,13 +39,22 @@ const problemAnswer = (status: number, document: unknown) => () =>
   new Response(JSON.stringify(document), { status, headers: { "content-type": PROBLEM_CONTENT_TYPE } })
 
 describe("the address a call goes to", () => {
+  // The transport reads its default fetch once per process, so a stated one is the only way a
+  // caller routes requests elsewhere: a global assigned later is never consulted (client.ts,
+  // ClientOptions.fetch).
+  test("sends every request through the stated fetch", async () => {
+    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
+    expect(calls).toHaveLength(1)
+    expect(lastUrl().pathname).toBe("/agents")
+  })
+
   test("an agent id is encoded into the path", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" }).events("ag/one two")
+    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
     expect(lastUrl().pathname).toBe("/agents/ag%2Fone%20two/events")
   })
 
   test("a stated option is a query param and an absent one is absent", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" }).events("root", { after: 40, types: ["MessageReceived", "TurnEnded"] })
+    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("root", { after: 40, types: ["MessageReceived", "TurnEnded"] })
     const url = lastUrl()
     expect(url.searchParams.get("after")).toBe("40")
     expect(url.searchParams.get("types")).toBe("MessageReceived,TurnEnded")
@@ -55,21 +62,21 @@ describe("the address a call goes to", () => {
   })
 
   test("a base with a trailing slash does not double it", async () => {
-    await makeClient({ baseUrl: "http://127.0.0.1:4111/" }).list()
+    await makeClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
     expect(calls[0]!.url).toBe("http://127.0.0.1:4111/agents")
   })
 })
 
 describe("the token", () => {
   test("rides an authorization header on every request", async () => {
-    const client = makeClient({ baseUrl: "http://localhost:4111", token: "shh" })
+    const client = makeClient({ baseUrl: "http://localhost:4111", token: "shh" , fetch: stub })
     await client.list()
     await client.events("root")
     expect(calls.map((call) => call.headers["authorization"])).toEqual(["Bearer shh", "Bearer shh"])
   })
 
   test("no token means no header", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" }).list()
+    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list()
     expect(calls[0]!.headers["authorization"]).toBeUndefined()
   })
 })
@@ -83,7 +90,7 @@ describe("a failed call", () => {
       detail: 'No agent named "ghost" has ever existed.'
     }
     answer = problemAnswer(404, document)
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" }).events("ghost").catch((error: unknown) => error)
+    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ghost").catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(ProblemError)
     const problem = failure as ProblemError
     expect(problem.type).toBe(document.type)
@@ -101,7 +108,7 @@ describe("a failed call", () => {
       status: 401,
       detail: "This server requires a bearer token."
     })
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" }).list().catch((error: unknown) => error) as ProblemError
+    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe("Unauthorized")
     expect(failure.status).toBe(401)
     expect(failure.detail).toBe("This server requires a bearer token.")
@@ -109,7 +116,7 @@ describe("a failed call", () => {
 
   test("a body that is not a problem document falls back to the status", async () => {
     answer = () => new Response("<html>", { status: 502, headers: { "content-type": "text/html" } })
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" }).list().catch((error: unknown) => error) as ProblemError
+    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe(UNEXPECTED_RESPONSE_TITLE)
     expect(failure.status).toBe(502)
   })

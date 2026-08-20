@@ -43,6 +43,12 @@ export interface ClientOptions {
   readonly token?: string | undefined
   // How the tail opens a connection. The default is `globalThis.EventSource`.
   readonly eventSource?: OpenEventSource | undefined
+  // How a request reaches the network. The default is the platform's own fetch, read through
+  // FetchHttpClient's reference. A caller states this to route requests somewhere else: a test
+  // stub, a proxy, or a runtime whose fetch is not the global one. Patching `globalThis.fetch`
+  // does not work, because the reference resolves its default once per process
+  // (client.test.ts, "sends every request through the stated fetch").
+  readonly fetch?: typeof globalThis.fetch | undefined
 }
 
 export interface EventsOptions {
@@ -129,7 +135,12 @@ export const makeClient = (options: ClientOptions = {}): Client => {
       ...(token === undefined
         ? {}
         : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-    }).pipe(Effect.provide(FetchHttpClient.layer))
+    }).pipe(
+      Effect.provide(FetchHttpClient.layer),
+      options.fetch === undefined
+        ? (self) => self
+        : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
+    )
   )
   return {
     baseUrl,
