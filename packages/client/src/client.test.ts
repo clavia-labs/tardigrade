@@ -65,12 +65,12 @@ describe("the address a call goes to", () => {
   test("sends every request through the stated fetch", async () => {
     await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
     expect(calls).toHaveLength(1)
-    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads")
   })
 
   test("a thread id is encoded into the path", async () => {
     await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
-    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads/ag%2Fone%20two/events")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/ag%2Fone%20two/events")
   })
 
   test("a stated option is a query param and an absent one is absent", async () => {
@@ -83,7 +83,7 @@ describe("the address a call goes to", () => {
 
   test("a base with a trailing slash does not double it", async () => {
     await makeClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
-    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/agent/threads")
+    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/default/threads")
   })
 })
 
@@ -165,7 +165,7 @@ describe("a declared projection", () => {
   test("serves at the name it was declared under, and carries its own query", async () => {
     const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     await client.projection("root", "turns", { at: 3 })
-    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads/root/turns")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/turns")
     expect(lastUrl().searchParams.get("at")).toBe("3")
   })
 
@@ -202,7 +202,7 @@ describe("resuming a turn", () => {
     let read = false
     return () => {
       if (read) {
-        return new Response(JSON.stringify({ actor: "agent", thread: "root" }), {
+        return new Response(JSON.stringify({ actor: "default", thread: "root" }), {
           status: 202,
           headers: { "content-type": "application/json" }
         })
@@ -236,14 +236,14 @@ describe("resuming a turn", () => {
   test("a failed turn appends the TurnResumed its reactors interpret", async () => {
     answer = accepting({ turn: "m1", status: "failed", epoch: 0, error: "boom" })
     const accepted = await client().resume("root", "m1")
-    expect(accepted).toEqual({ actor: "agent", thread: "root" })
+    expect(accepted).toEqual({ actor: "default", thread: "root" })
     // Two calls: the projection it read, then the append it made.
     expect(calls).toHaveLength(2)
     const read = new URL(calls[0]!.url)
-    expect(read.pathname).toBe("/v1/actors/agent/threads/root/turns")
+    expect(read.pathname).toBe("/v1/actors/default/threads/root/turns")
     expect(read.searchParams.get("turn")).toBe("m1")
     const appended = new URL(calls[1]!.url)
-    expect(appended.pathname).toBe("/v1/actors/agent/threads/root/events")
+    expect(appended.pathname).toBe("/v1/actors/default/threads/root/events")
     expect(JSON.parse(calls[1]!.body ?? "")).toEqual({
       type: "TurnResumed",
       turn: "m1",

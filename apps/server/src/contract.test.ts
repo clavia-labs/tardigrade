@@ -113,7 +113,7 @@ describe("the OpenAPI document", () => {
       Effect.gen(function*() {
         const document = yield* client.get(OPENAPI_PATH)
         const page = yield* client.get(DOCS_PATH)
-        const gated = yield* client.get("/v1/actors/agent/threads")
+        const gated = yield* client.get("/v1/actors/default/threads")
         return [document.status, page.status, gated.status]
       }))
     expect(statuses).toEqual([200, 200, 401])
@@ -126,9 +126,9 @@ describe("problem documents", () => {
   test("carry type, title, status, and detail", async () => {
     const failures = await serving({}, (client) =>
       Effect.gen(function*() {
-        const unknownThread = yield* client.get("/v1/actors/agent/threads/ghost/events")
-        const unknownProjection = yield* client.get("/v1/actors/agent/threads/ghost/facts")
-        const unknownTurn = yield* client.get("/v1/actors/agent/threads/ghost/turns?at=1")
+        const unknownThread = yield* client.get("/v1/actors/default/threads/ghost/events")
+        const unknownProjection = yield* client.get("/v1/actors/default/threads/ghost/facts")
+        const unknownTurn = yield* client.get("/v1/actors/default/threads/ghost/turns?at=1")
         return [
           { status: unknownThread.status, type: unknownThread.headers["content-type"], body: yield* unknownThread.json },
           {
@@ -163,12 +163,12 @@ describe("problem documents", () => {
       Effect.gen(function*() {
         const post = (path: string, body: unknown) =>
           client.post(path, { body: HttpBody.jsonUnsafe(body) })
-        const repeated = yield* client.get("/v1/actors/agent/threads/ghost/turns?at=1&at=2")
-        const notANumber = yield* client.get("/v1/actors/agent/threads/ghost/events?after=soon")
-        const negative = yield* client.get("/v1/actors/agent/threads/ghost/events?limit=-1")
-        const missingField = yield* post("/v1/actors/agent/threads/ghost/events", { id: "m1" })
-        const emptyType = yield* post("/v1/actors/agent/threads/ghost/events", { type: "", id: "m1" })
-        const notAnObject = yield* post("/v1/actors/agent/threads/ghost/events", "hello")
+        const repeated = yield* client.get("/v1/actors/default/threads/ghost/turns?at=1&at=2")
+        const notANumber = yield* client.get("/v1/actors/default/threads/ghost/events?after=soon")
+        const negative = yield* client.get("/v1/actors/default/threads/ghost/events?limit=-1")
+        const missingField = yield* post("/v1/actors/default/threads/ghost/events", { id: "m1" })
+        const emptyType = yield* post("/v1/actors/default/threads/ghost/events", { type: "", id: "m1" })
+        const notAnObject = yield* post("/v1/actors/default/threads/ghost/events", "hello")
         return yield* Effect.forEach(
           [repeated, notANumber, negative, missingField, emptyType, notAnObject],
           (response) =>

@@ -137,7 +137,7 @@ describe("auth", () => {
 
     const anonymous = await serving({ config }, (client) =>
       Effect.gen(function*() {
-        const response = yield* client.get("/v1/actors/agent/threads")
+        const response = yield* client.get("/v1/actors/default/threads")
         return { status: response.status, contentType: response.headers["content-type"], body: yield* response.json }
       }))
     expect(anonymous.status).toBe(401)
@@ -145,11 +145,11 @@ describe("auth", () => {
     expect(anonymous.body).toMatchObject({ status: 401, title: "Unauthorized" })
 
     const wrong = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/agent/threads"), "guess")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/default/threads"), "guess")))
     expect(wrong.status).toBe(403)
 
     const right = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/agent/threads"), "secret")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/actors/default/threads"), "secret")))
     expect(right.status).toBe(200)
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
@@ -166,7 +166,7 @@ describe("cors", () => {
     const allowed = await serving({}, (client) =>
       Effect.map(
         client.execute(
-          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/actors/agent/threads"), {
+          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/actors/default/threads"), {
             origin: "http://localhost:5173",
             "access-control-request-method": "GET",
             "access-control-request-headers": ALLOWED_HEADERS.join(",")
