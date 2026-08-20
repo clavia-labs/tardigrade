@@ -20,6 +20,11 @@
       "project": [
         "src/**/*.ts"
       ]
+    },
+    "apps/*": {
+      "project": [
+        "src/**/*.ts"
+      ]
     }
   }
 }

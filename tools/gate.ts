@@ -12,6 +12,8 @@ const pkg = (name: string) => `${root}packages/${name}`
 const packages = ["core", "code", "agent", "host"]
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun"]
+const appPkg = (name: string) => `${root}apps/${name}`
+const apps = ["server"]
 
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
@@ -21,8 +23,10 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...apps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
+  ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "knip", cmd: ["bun", "--bun", "node_modules/.bin/knip"] }
 ]
 

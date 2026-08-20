@@ -15,7 +15,7 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 // needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
 const rlm = agentOf([
-  codeModeFor({}, {}, [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })]),
+  codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
   reply, // reports each turn's terminal to whoever asked
   budget, // the per-turn code budget, inherited by spawned children
   compaction // bounded model context over long investigations
@@ -24,7 +24,8 @@ const rlm = agentOf([
 const model = infer({
   baseUrl: process.env.MODEL_BASE_URL!,
   apiKey: process.env.MODEL_API_KEY!,
-  model: process.env.MODEL_ID!
+  model: process.env.MODEL_ID!,
+  ...(process.env.MODEL_PROVIDER === undefined ? {} : { provider: process.env.MODEL_PROVIDER })
 })
 
 // Every ag. lane runs the same assembly: the root, and every child a spawn births. The lane

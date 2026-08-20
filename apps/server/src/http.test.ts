@@ -1,0 +1,145 @@
+import { describe, expect, test } from "bun:test"
+import { Effect, Layer } from "effect"
+import { HttpClient, HttpClientRequest } from "effect/unstable/http"
+import { BunHttpServer } from "@effect/platform-bun"
+
+import { DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
+import { Agents } from "./host"
+import { layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
+
+// The HTTP surface against a real Bun server on an ephemeral port, so the assertions are about
+// wire behavior rather than about the shape of a layer.
+
+// The conventions these tests are about hold over any host, so the agent routes get one that owns
+// nothing. The routes themselves are exercised against a real host in api.test.ts.
+const layerAgentsEmpty = Layer.succeed(Agents)({
+  deliver: (id, message) => Effect.succeed({ agent: id, turn: message.id }),
+  events: () => Effect.succeed([]),
+  list: () => Effect.succeed([]),
+  resume: () => Effect.void,
+  settled: Effect.void
+})
+
+const configOf = (overrides: Partial<ServerConfigValue> = {}): ServerConfigValue => ({
+  ...readConfig({}),
+  ...overrides
+})
+
+// Boots the application on port 0 and hands the body a client already pointed at it.
+const serving = <A, E>(
+  options: {
+    readonly config?: ServerConfigValue
+    readonly gauge?: Layer.Layer<DriverGauge>
+  },
+  body: (client: HttpClient.HttpClient) => Effect.Effect<A, E>
+): Promise<A> =>
+  Effect.gen(function*() {
+    const client = yield* HttpClient.HttpClient
+    return yield* body(client)
+  }).pipe(
+    Effect.provide(
+      Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
+        BunHttpServer.layerTest,
+        layerConfig(options.config ?? configOf()),
+        options.gauge ?? layerGaugeResting,
+        layerAgentsEmpty
+      ])
+    ),
+    Effect.scoped,
+    Effect.runPromise
+  ) as Promise<A>
+
+describe("config", () => {
+  test("defaults are the exported constants", () => {
+    const config = readConfig({})
+    expect(config.port).toBe(DEFAULT_PORT)
+    expect(config.db).toBe(DEFAULT_DB)
+    expect(config.token).toBeUndefined()
+    expect(config.model).toEqual({
+      baseUrl: undefined,
+      apiKey: undefined,
+      id: undefined,
+      provider: undefined
+    })
+  })
+
+  test("the environment overrides every default", () => {
+    const config = readConfig({
+      PORT: "8080",
+      TARDIGRADE_DB: "/var/lib/agents.sqlite",
+      TARDIGRADE_TOKEN: "secret",
+      MODEL_BASE_URL: "https://api.example.com",
+      MODEL_API_KEY: "key",
+      MODEL_ID: "a-model",
+      MODEL_PROVIDER: "openai"
+    })
+    expect(config.port).toBe(8080)
+    expect(config.db).toBe("/var/lib/agents.sqlite")
+    expect(config.token).toBe("secret")
+    expect(config.model.baseUrl).toBe("https://api.example.com")
+    expect(config.model.provider).toBe("openai")
+  })
+
+  // Listening somewhere other than where the operator asked is worse than refusing to start.
+  test("a PORT that is not a port refuses to resolve", () => {
+    expect(() => readConfig({ PORT: "http" })).toThrow()
+    expect(() => readConfig({ PORT: "70000" })).toThrow()
+  })
+})
+
+describe("healthz", () => {
+  test("healthz reports the gauge", async () => {
+    const body = await serving({}, (client) =>
+      Effect.flatMap(client.get("/healthz"), (response) => response.json))
+    expect(body).toEqual({ status: "resting", dirty: 0 } satisfies Health)
+  })
+
+  test("a driving host with owed lanes reads through", async () => {
+    const gauge = Layer.succeed(DriverGauge)({
+      resting: Effect.succeed(false),
+      dirty: Effect.succeed(3)
+    })
+    const body = await serving({ gauge }, (client) =>
+      Effect.flatMap(client.get("/healthz"), (response) => response.json))
+    expect(body).toEqual({ status: "driving", dirty: 3 } satisfies Health)
+  })
+})
+
+describe("errors", () => {
+  test("an unmatched route is a problem document", async () => {
+    const response = await serving({}, (client) => client.get("/nope"))
+    expect(response.status).toBe(404)
+    expect(response.headers["content-type"]).toContain(PROBLEM_CONTENT_TYPE)
+  })
+})
+
+describe("auth", () => {
+  test("no token leaves every route open", async () => {
+    const response = await serving({}, (client) => client.get("/nope"))
+    expect(response.status).toBe(404)
+  })
+
+  test("a token closes the API and leaves healthz open", async () => {
+    const config = configOf({ token: "secret" })
+
+    const anonymous = await serving({ config }, (client) =>
+      Effect.gen(function*() {
+        const response = yield* client.get("/agents")
+        return { status: response.status, contentType: response.headers["content-type"], body: yield* response.json }
+      }))
+    expect(anonymous.status).toBe(401)
+    expect(anonymous.contentType).toContain(PROBLEM_CONTENT_TYPE)
+    expect(anonymous.body).toMatchObject({ status: 401, title: "Unauthorized" })
+
+    const wrong = await serving({ config }, (client) =>
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/agents"), "guess")))
+    expect(wrong.status).toBe(403)
+
+    const right = await serving({ config }, (client) =>
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/agents"), "secret")))
+    expect(right.status).toBe(200)
+
+    const health = await serving({ config }, (client) => client.get("/healthz"))
+    expect(health.status).toBe(200)
+  })
+})
