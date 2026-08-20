@@ -1,11 +1,11 @@
-import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
 import { client } from "./client"
-import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
+import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
+import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
@@ -86,21 +86,53 @@ const useLog = (id: string, pollMs: number) => {
 const windowOf = (route: Route): Window | undefined =>
   route.from === undefined && route.to === undefined ? undefined : { from: route.from ?? 0, to: route.to ?? 1 }
 
+const FieldValue = ({ collapsedHeight, field }: { readonly collapsedHeight: number; readonly field: Field }): ReactElement => {
+  const value = useRef<HTMLDivElement | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+
+  useLayoutEffect(() => {
+    const element = value.current
+    if (element === null) return
+    const measure = () => setOverflowing(element.scrollHeight > collapsedHeight + 1)
+    measure()
+    if (typeof ResizeObserver !== "function") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [collapsedHeight, field.value])
+
+  const classes = `mono event-value${field.kind === "code" ? " event-code" : field.kind === "json" ? " event-json" : ""}`
+  return (
+    <div className="event-value-frame" style={{ maxWidth: FIELD_WIDTH }}>
+      <div
+        ref={value}
+        className={classes}
+        style={expanded ? undefined : { maxHeight: collapsedHeight, overflow: "hidden" }}
+      >
+        {field.value}
+      </div>
+      {!overflowing ? null : expanded ? (
+        <button type="button" className="field-toggle" onClick={() => setExpanded(false)}>Show less</button>
+      ) : (
+        <div className="field-more">
+          <button type="button" className="field-toggle" onClick={() => setExpanded(true)}>Show more</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // An opened row's fields, hanging off the row on one hairline: the event's own names on the left,
 // its values on the page's own ground on the right. There is no card, because the expansion is the
 // row saying more rather than a second surface (mock.html, .ev-detail). The keys and values are
 // src/narrative.ts's answer, so what a type shows is a tested fact rather than a render decision.
-const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
+const Detail = ({ collapsedHeight, moment }: { readonly collapsedHeight: number; readonly moment: Moment }): ReactElement => (
   <div className="event-detail fade-in">
     {fieldsOf(moment.event).map((field) => (
       <Fragment key={field.key}>
         <span className="mono event-key">{field.key}</span>
-        <span
-          className={`mono event-value${field.kind === "code" ? " event-code" : field.kind === "json" ? " event-json" : ""}`}
-          style={{ maxWidth: FIELD_WIDTH }}
-        >
-          {field.value}
-        </span>
+        <FieldValue field={field} collapsedHeight={collapsedHeight} />
       </Fragment>
     ))}
   </div>
@@ -110,11 +142,13 @@ const Row = ({
   moment,
   onToggle,
   open,
+  fieldCollapsedHeight,
   stampWidth
 }: {
   readonly moment: Moment
   readonly onToggle: () => void
   readonly open: boolean
+  readonly fieldCollapsedHeight: number
   readonly stampWidth: number
 }): ReactElement => {
   const stamp = stampOf(moment.event.type)
@@ -145,7 +179,7 @@ const Row = ({
           {moment.duration === undefined ? "" : ` · ${moment.duration}`}
         </span>
       </div>
-      {!open ? null : <Detail moment={moment} />}
+      {!open ? null : <Detail moment={moment} collapsedHeight={fieldCollapsedHeight} />}
     </div>
   )
 }
@@ -167,11 +201,13 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
 )
 
 export const Thread = ({
+  fieldCollapsedHeight = FIELD_COLLAPSED_HEIGHT,
   id,
   stampWidth = EVENT_STAMP_WIDTH,
   status
 }: {
   readonly id: string
+  readonly fieldCollapsedHeight?: number | undefined
   readonly stampWidth?: number | undefined
   readonly status: ThreadStatus | undefined
 }): ReactElement => {
@@ -268,6 +304,7 @@ export const Thread = ({
                 key={moment.seq}
                 moment={moment}
                 open={opened === moment.seq}
+                fieldCollapsedHeight={fieldCollapsedHeight}
                 stampWidth={stampWidth}
                 onToggle={() => setOpened(opened === moment.seq ? undefined : moment.seq)}
               />

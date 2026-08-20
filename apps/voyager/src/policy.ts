@@ -79,6 +79,10 @@ export const SUMMARY_CHARS = 400
 // browser's, so a long id or a long code line breaks on the glyph and the column keeps its measure.
 export const FIELD_WIDTH = 660
 
+// The maximum height of a collapsed expanded-field value in pixels. Thread accepts another height
+// when an embedding has more or less vertical room.
+export const FIELD_COLLAPSED_HEIGHT = 320
+
 // The longest compact JSON a field value keeps on one line. Past it the value is indented, because
 // a long object is read by its shape and a single line of it is read by nobody.
 export const FIELD_INLINE_CHARS = 120

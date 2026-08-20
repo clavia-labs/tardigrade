@@ -605,10 +605,48 @@ textarea {
 /* A value wraps rather than scrolls, and it keeps the line breaks the payload had. Its measure is
    a number the layout applies at the call site (src/policy.ts, FIELD_WIDTH). */
 .event-value {
+  display: block;
   font-size: 12.5px;
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.event-value-frame {
+  min-width: 0;
+}
+
+.field-more {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-top: -64px;
+  padding: 46px 0 4px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 68%);
+}
+
+.field-toggle {
+  display: block;
+  min-height: 28px;
+  margin: var(--space-2) auto 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: var(--text-meta);
+  box-shadow: var(--shadow);
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.field-toggle:hover {
+  color: var(--ink);
+}
+
+.field-toggle:active {
+  transform: scale(0.97);
 }
 
 /* A source body is the one payload that reads as a block, so it alone sits in a well. */
