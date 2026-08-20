@@ -23,7 +23,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 - **Strongly typed, built on Effect.** Typed services and Layers make each capability's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
 - **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
-- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with forked states.
+- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint.
 
 ## Quickstart
 
