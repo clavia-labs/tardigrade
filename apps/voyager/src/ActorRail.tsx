@@ -15,14 +15,12 @@ const storedCollapsed = (): boolean => {
 
 export const ActorRail = ({
   actors,
-  apiSelected,
   collapsedWidth = COLLAPSED_ACTOR_RAIL_WIDTH,
   headerHeight = PANE_HEADER_HEIGHT,
   problem,
   selected
 }: {
   readonly actors: ReadonlyArray<ActorSummary>
-  readonly apiSelected: boolean
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly problem: ProblemError | undefined
@@ -78,7 +76,7 @@ export const ActorRail = ({
       )}
       <div className="actor-only actor-list">
         {shown.map((actor) => {
-          const chosen = !apiSelected && actor.name === selected
+          const chosen = actor.name === selected
           return (
             <button
               type="button"
@@ -96,8 +94,7 @@ export const ActorRail = ({
       <div className="actor-footer">
         <button
           type="button"
-          className={`actor-api${apiSelected ? " actor-api-selected" : ""}`}
-          aria-current={apiSelected ? "page" : undefined}
+          className="actor-api"
           onClick={() => navigate({ thread: undefined, view: "api", from: undefined, to: undefined })}
         >
           <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />

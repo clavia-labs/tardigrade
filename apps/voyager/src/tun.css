@@ -447,15 +447,16 @@ textarea {
   transform: scale(0.97);
 }
 
-.actor-api-selected,
-.actor-api-selected:hover {
-  background: var(--moss-wash);
-  color: var(--moss-ink);
-}
-
 .actor-rail-collapsed .actor-api {
   justify-content: center;
   padding: 0;
+}
+
+.api-view {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
 }
 
 .api-surface {
@@ -463,6 +464,33 @@ textarea {
   height: 100%;
   border: 0;
   background: var(--bg);
+}
+
+.api-back {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-3);
+  display: inline-flex;
+  min-height: var(--row-h);
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.api-back:hover {
+  color: var(--ink);
+}
+
+.api-back:active {
+  transform: scale(0.97);
 }
 
 @media (max-width: 900px) {
