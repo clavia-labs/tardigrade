@@ -329,6 +329,12 @@ textarea {
   background: var(--bg);
 }
 
+.pane-chrome {
+  flex-shrink: 0;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hair);
+}
+
 .actor-head {
   display: grid;
   gap: 3px;

@@ -2,15 +2,17 @@ import type { ActorSummary, ProblemError } from "@clavia/tardigrade-client"
 import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
-import { ACTOR_RAIL_WIDTH } from "./policy"
+import { ACTOR_RAIL_WIDTH, PANE_HEADER_HEIGHT } from "./policy"
 import { matches } from "./roster"
 
 export const ActorRail = ({
   actors,
+  headerHeight = PANE_HEADER_HEIGHT,
   problem,
   selected
 }: {
   readonly actors: ReadonlyArray<ActorSummary>
+  readonly headerHeight?: number | undefined
   readonly problem: ProblemError | undefined
   readonly selected: string | undefined
 }): ReactElement => {
@@ -18,18 +20,20 @@ export const ActorRail = ({
   const shown = actors.filter((actor) => matches(actor.name, query))
   return (
     <aside className="actor-rail" style={{ width: ACTOR_RAIL_WIDTH }}>
-      <div className="actor-head">
-        <div className="rail-wordmark">voyager</div>
-        <div className="mono actor-label">actors</div>
-      </div>
-      <div className="actor-search-wrap">
-        <input
-          className="input actor-search"
-          value={query}
-          placeholder="search name…"
-          aria-label="search actor name"
-          onChange={(changed) => setQuery(changed.target.value)}
-        />
+      <div className="pane-chrome" style={{ height: headerHeight }}>
+        <div className="actor-head">
+          <div className="rail-wordmark">voyager</div>
+          <div className="mono actor-label">actors</div>
+        </div>
+        <div className="actor-search-wrap">
+          <input
+            className="input actor-search"
+            value={query}
+            placeholder="search name…"
+            aria-label="search actor name"
+            onChange={(changed) => setQuery(changed.target.value)}
+          />
+        </div>
       </div>
       {problem === undefined ? null : (
         <div className="problem actor-problem">

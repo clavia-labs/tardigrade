@@ -3,7 +3,7 @@ import { useState, type ReactElement } from "react"
 
 import type { ProblemError } from "@clavia/tardigrade-client"
 import { navigate } from "./nav"
-import { COLLAPSED_RAIL_WIDTH, ICON_SIZE, RAIL_WIDTH } from "./policy"
+import { COLLAPSED_RAIL_WIDTH, ICON_SIZE, PANE_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
 
 // The rail: the run's roots and nothing else (mock.html, the aside). A root is a run, and the tree
@@ -57,11 +57,13 @@ const Row = ({
 }
 
 export const Rail = ({
+  headerHeight = PANE_HEADER_HEIGHT,
   now,
   problem,
   roster,
   selected
 }: {
+  readonly headerHeight?: number | undefined
   readonly now: number
   readonly problem: ProblemError | undefined
   readonly roster: Roster
@@ -77,31 +79,33 @@ export const Rail = ({
   const label = collapsed ? "Expand the run list" : "Collapse the run list"
   return (
     <aside className={`rail${collapsed ? " rail-collapsed" : ""}`} style={{ width: collapsed ? COLLAPSED_RAIL_WIDTH : RAIL_WIDTH }}>
-      <div className="rail-head">
-        <div className="mono rail-only rail-section-title">runs</div>
-        <button
-          type="button"
-          className="icon-btn"
-          aria-label={label}
-          aria-expanded={!collapsed}
-          title={label}
-          onClick={() => {
-            const next = !collapsed
-            setCollapsed(next)
-            if (typeof localStorage !== "undefined") localStorage.setItem(RAIL_KEY, next ? "collapsed" : "open")
-          }}
-        >
-          <SidebarSimple size={ICON_SIZE} weight="light" aria-hidden="true" />
-        </button>
-      </div>
-      <div className="rail-only" style={{ padding: "0 var(--space-3) 10px" }}>
-        <input
-          className="input rail-search"
-          value={query}
-          placeholder="search id…"
-          aria-label="search id"
-          onChange={(changed) => setQuery(changed.target.value)}
-        />
+      <div className="pane-chrome" style={{ height: headerHeight }}>
+        <div className="rail-head">
+          <div className="mono rail-only rail-section-title">runs</div>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label={label}
+            aria-expanded={!collapsed}
+            title={label}
+            onClick={() => {
+              const next = !collapsed
+              setCollapsed(next)
+              if (typeof localStorage !== "undefined") localStorage.setItem(RAIL_KEY, next ? "collapsed" : "open")
+            }}
+          >
+            <SidebarSimple size={ICON_SIZE} weight="light" aria-hidden="true" />
+          </button>
+        </div>
+        <div className="rail-only" style={{ padding: "0 var(--space-3) 10px" }}>
+          <input
+            className="input rail-search"
+            value={query}
+            placeholder="search id…"
+            aria-label="search id"
+            onChange={(changed) => setQuery(changed.target.value)}
+          />
+        </div>
       </div>
       {problem === undefined ? null : (
         <div className="problem rail-only" style={{ margin: "0 var(--space-3) 10px" }}>
