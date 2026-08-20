@@ -27,7 +27,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Use Bun 1.4 or later.
+Run and observe the default agent. Use Bun 1.4 or later.
 
 ```bash
 bunx @clavia/tardigrade dev
@@ -38,6 +38,11 @@ Start a thread from another shell:
 ```bash
 tdg run "read this repo and tell me what it does"
 ```
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">
+  <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
+</picture>
 
 ## Build one
 
