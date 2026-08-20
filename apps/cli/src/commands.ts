@@ -5,7 +5,7 @@ import { NO_ANSWER, ProblemError, type Client, type TurnView } from "@clavia/tar
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 
 import { readFileConfig, resolveRemote, resolveServer } from "./config"
-import { dev } from "./dev"
+import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
@@ -24,6 +24,10 @@ export const DEFAULT_POLL_MILLIS = 200
 // running on the server, and its output is still one `tdg events` away, so the number bounds the
 // command rather than the work.
 export const DEFAULT_TIMEOUT_MILLIS = 300_000
+
+// DEFAULT_OPEN_BROWSER is whether `tdg dev` opens the UI after listening. The `--no-open` flag
+// overrides it for scripts, containers, and remote shells.
+export const DEFAULT_OPEN_BROWSER = true
 
 // The turn status a run is asked for. Everything else, `failed` and `parked` alike, leaves the
 // command with a non-zero exit: a script that ran a turn and got no answer should not read as
@@ -134,7 +138,8 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     const cli = yield* Cli
     const home = homeOf(cli.env)
     if (home === undefined) return yield* Effect.fail(userErrorOf(HOME_MISSING))
-    const answers = yield* Effect.mapError(setupPrompt, userErrorOf)
+    const file = yield* readFileConfig(cli.env)
+    const answers = yield* Effect.mapError(setupPrompt(file.model === undefined ? {} : { current: file.model }), userErrorOf)
     const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
   })).pipe(
@@ -151,6 +156,10 @@ export const devCommand = Command.make("dev", {
     Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
     Flag.optional
   ),
+  minPort: Flag.integer("min-port").pipe(
+    Flag.withDescription("The lowest automatic fallback when the implicit default port is occupied."),
+    Flag.withDefault(DEFAULT_MIN_PORT)
+  ),
   db: Flag.string("db").pipe(
     Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
     Flag.optional
@@ -158,6 +167,10 @@ export const devCommand = Command.make("dev", {
   ui: Flag.string("ui").pipe(
     Flag.withDescription("The directory holding the built UI. Defaults to the build shipped beside this command."),
     Flag.optional
+  ),
+  open: Flag.boolean("open").pipe(
+    Flag.withDescription("Open the UI in the default browser after the server starts. Use --no-open to keep it closed."),
+    Flag.withDefault(DEFAULT_OPEN_BROWSER)
   )
 }, (flags) =>
   Effect.gen(function*() {
@@ -177,7 +190,7 @@ export const devCommand = Command.make("dev", {
       ? Effect.gen(function*() {
         const home = homeOf(cli.env)
         if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
-        const answers = yield* Effect.mapError(setupPrompt, userErrorOf)
+        const answers = yield* Effect.mapError(setupPrompt({ current: config.model }), userErrorOf)
         const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
         yield* Console.log(setupSummary(path, answers))
         const written = yield* readFileConfig(cli.env)
@@ -187,9 +200,23 @@ export const devCommand = Command.make("dev", {
         })
       })
       : Effect.as(Console.log(NO_MODEL_NOTICE), config)
-    const config2 = asked
+    const portWasStated = Option.isSome(flags.port) || (cli.env["PORT"]?.trim().length ?? 0) > 0
+    const selectedPort = portWasStated
+      ? asked.port
+      : yield* Effect.tryPromise({
+        try: () => availableDevPort(asked.port, flags.minPort),
+        catch: userErrorOf
+      })
+    if (selectedPort !== asked.port) {
+      yield* Console.log(`port ${asked.port} is busy; using http://${DEV_URL_HOST}:${selectedPort}`)
+    }
+    const config2 = selectedPort === asked.port ? asked : { ...asked, port: selectedPort }
     const layer = yield* Effect.try({
-      try: () => dev({ config: config2, assets: stated(flags.ui) }),
+      try: () => dev({
+        config: config2,
+        assets: stated(flags.ui),
+        ...(flags.open ? { onListen: openBrowser } : {})
+      }),
       catch: userErrorOf
     })
     yield* Effect.mapError(Layer.launch(layer), userErrorOf)
@@ -198,7 +225,7 @@ export const devCommand = Command.make("dev", {
         "Boot the API and serve the built UI at one URL, ungated on loopback. One process, one port: the API paths are the server's own and everything else is the UI."
       ),
       Command.withExamples([
-        { command: "tdg dev", description: "Listen on PORT, or on the server's default port" },
+        { command: "tdg dev", description: "Listen on PORT, or find a free port from the server's default" },
         { command: "tdg dev --port 8080 --db runs.sqlite", description: "Listen elsewhere, on another store" }
       ])
     )

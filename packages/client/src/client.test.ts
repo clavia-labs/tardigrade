@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 
-import { makeClient, UNEXPECTED_RESPONSE_TITLE } from "./client"
+import { makeClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
 import { ProblemError } from "./problem"
 
@@ -130,10 +130,18 @@ describe("a failed call", () => {
   })
 
   test("a body that is not a problem document falls back to the status", async () => {
-    answer = () => new Response("<html>", { status: 502, headers: { "content-type": "text/html" } })
+    answer = () => new Response("<html>", { status: 418, headers: { "content-type": "text/html" } })
     const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe(UNEXPECTED_RESPONSE_TITLE)
-    expect(failure.status).toBe(502)
+    expect(failure.status).toBe(418)
+  })
+
+  test("an undocumented server failure gives an actionable message", async () => {
+    answer = () => new Response(null, { status: 500 })
+    const failure = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list().catch((error: unknown) => error) as ProblemError
+    expect(failure.title).toBe(SERVER_ERROR_TITLE)
+    expect(failure.status).toBe(500)
+    expect(failure.detail).toBe(SERVER_ERROR_DETAIL)
   })
 })
 

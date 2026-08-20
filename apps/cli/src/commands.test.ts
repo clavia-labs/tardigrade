@@ -150,6 +150,10 @@ describe("parsing", () => {
     expect(help).toContain("--limit")
     expect(help).toContain("--types")
     expect(help).toContain("--json")
+    const devHelp = (await drive(["dev", "--no-open", "--help"])).lines.join("\n")
+    expect(devHelp).toContain("--open")
+    expect(devHelp).toContain("--no-open")
+    expect(devHelp).toContain("--min-port")
   })
 
   test("an unknown command fails", async () => {

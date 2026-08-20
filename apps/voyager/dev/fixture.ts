@@ -16,7 +16,7 @@ import { serve } from "@clavia/tardigrade-server/http"
 // app; the app only ever speaks HTTP.
 
 // Where the fixture listens, matching the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
-export const FIXTURE_PORT = 4111
+export const FIXTURE_PORT = 4242
 
 // How many children the spawning brief asks for. The forest is worth looking at only when it has a
 // shape, and this is the number that gives it one.

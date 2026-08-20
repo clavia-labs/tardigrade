@@ -28,13 +28,18 @@ import { stream, type OpenEventSource, type StreamOptions } from "./stream"
 
 // Where the server listens when a caller states no base URL, matching the server's own DEFAULT_PORT
 // (apps/server/src/config.ts).
-export const DEFAULT_BASE_URL = "http://localhost:4111"
+export const DEFAULT_BASE_URL = "http://localhost:4242"
 
 // The titles a failure that carries no problem document shows. They stand where the server's own
 // `title` would be, so a screen renders one field either way.
 export const UNREACHABLE_TITLE = "Server Unreachable"
 
 export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
+
+export const SERVER_ERROR_TITLE = "Server Error"
+
+export const SERVER_ERROR_DETAIL =
+  "The server returned no error details. Check the `tdg dev` terminal and restart the server if needed."
 
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 
@@ -143,6 +148,12 @@ const problemErrorOf = (failure: unknown): Effect.Effect<ProblemError> => {
       (body) =>
         isProblem(body)
           ? problemOf(response.status, body, UNEXPECTED_RESPONSE_TITLE)
+          : response.status >= 500
+          ? new ProblemError({
+            title: SERVER_ERROR_TITLE,
+            status: response.status,
+            detail: SERVER_ERROR_DETAIL
+          })
           : new ProblemError({
             title: UNEXPECTED_RESPONSE_TITLE,
             status: response.status,

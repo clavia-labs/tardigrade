@@ -1,13 +1,11 @@
-import { Moon, Sun } from "@phosphor-icons/react"
-import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
 import { client } from "./client"
-import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
+import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
-import { useTheme } from "./theme"
+import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
@@ -83,49 +81,58 @@ const useLog = (id: string, pollMs: number) => {
   return { rows, problem, dropped, loaded }
 }
 
-// The theme toggle. An icon earns its place only by a recorded decision, and this is one of the two
-// the system records: the sun and the moon name the two themes in one glyph and no word does
-// (voyager-design-system.md, the icon policy). The glyph is Phosphor's at the light weight, which
-// every icon in the app shares.
-const ThemeToggle = (): ReactElement => {
-  const { theme, toggle } = useTheme()
-  return (
-    <button
-      type="button"
-      className="icon-btn"
-      onClick={toggle}
-      aria-label={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
-      title="Toggle theme"
-    >
-      {theme === "dark" ? (
-        <Moon size={ICON_SIZE} weight="light" aria-hidden="true" />
-      ) : (
-        <Sun size={ICON_SIZE} weight="light" aria-hidden="true" />
-      )}
-    </button>
-  )
-}
-
 // windowOf reads the window a URL states. An edge the link omits is that end of the log, so a
 // half-written link still opens a window rather than nothing.
 const windowOf = (route: Route): Window | undefined =>
   route.from === undefined && route.to === undefined ? undefined : { from: route.from ?? 0, to: route.to ?? 1 }
 
+const FieldValue = ({ collapsedHeight, field }: { readonly collapsedHeight: number; readonly field: Field }): ReactElement => {
+  const value = useRef<HTMLDivElement | null>(null)
+  const [expanded, setExpanded] = useState(false)
+  const [overflowing, setOverflowing] = useState(false)
+
+  useLayoutEffect(() => {
+    const element = value.current
+    if (element === null) return
+    const measure = () => setOverflowing(element.scrollHeight > collapsedHeight + 1)
+    measure()
+    if (typeof ResizeObserver !== "function") return
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [collapsedHeight, field.value])
+
+  const classes = `mono event-value${field.kind === "code" ? " event-code" : field.kind === "json" ? " event-json" : ""}`
+  return (
+    <div className="event-value-frame" style={{ maxWidth: FIELD_WIDTH }}>
+      <div
+        ref={value}
+        className={classes}
+        style={expanded ? undefined : { maxHeight: collapsedHeight, overflow: "hidden" }}
+      >
+        {field.value}
+      </div>
+      {!overflowing ? null : expanded ? (
+        <button type="button" className="field-toggle" onClick={() => setExpanded(false)}>Show less</button>
+      ) : (
+        <div className="field-more">
+          <button type="button" className="field-toggle" onClick={() => setExpanded(true)}>Show more</button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // An opened row's fields, hanging off the row on one hairline: the event's own names on the left,
 // its values on the page's own ground on the right. There is no card, because the expansion is the
 // row saying more rather than a second surface (mock.html, .ev-detail). The keys and values are
 // src/narrative.ts's answer, so what a type shows is a tested fact rather than a render decision.
-const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
+const Detail = ({ collapsedHeight, moment }: { readonly collapsedHeight: number; readonly moment: Moment }): ReactElement => (
   <div className="event-detail fade-in">
     {fieldsOf(moment.event).map((field) => (
       <Fragment key={field.key}>
         <span className="mono event-key">{field.key}</span>
-        <span
-          className={`mono event-value${field.kind === "code" ? " event-code" : ""}`}
-          style={{ maxWidth: FIELD_WIDTH }}
-        >
-          {field.value}
-        </span>
+        <FieldValue field={field} collapsedHeight={collapsedHeight} />
       </Fragment>
     ))}
   </div>
@@ -134,11 +141,15 @@ const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
 const Row = ({
   moment,
   onToggle,
-  open
+  open,
+  fieldCollapsedHeight,
+  stampWidth
 }: {
   readonly moment: Moment
   readonly onToggle: () => void
   readonly open: boolean
+  readonly fieldCollapsedHeight: number
+  readonly stampWidth: number
 }): ReactElement => {
   const stamp = stampOf(moment.event.type)
   return (
@@ -155,7 +166,7 @@ const Row = ({
           onToggle()
         }}
       >
-        <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg }}>
+        <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg, width: stampWidth }}>
           {moment.event.type}
         </span>
         {/* A collapsed line takes the pane's whole width; only the wrapped line an open row shows
@@ -168,7 +179,7 @@ const Row = ({
           {moment.duration === undefined ? "" : ` · ${moment.duration}`}
         </span>
       </div>
-      {!open ? null : <Detail moment={moment} />}
+      {!open ? null : <Detail moment={moment} collapsedHeight={fieldCollapsedHeight} />}
     </div>
   )
 }
@@ -186,12 +197,20 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
     {status === undefined ? null : (
       <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>
     )}
-    <span style={{ marginLeft: "auto" }} />
-    <ThemeToggle />
   </div>
 )
 
-export const Thread = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => {
+export const Thread = ({
+  fieldCollapsedHeight = FIELD_COLLAPSED_HEIGHT,
+  id,
+  stampWidth = EVENT_STAMP_WIDTH,
+  status
+}: {
+  readonly id: string
+  readonly fieldCollapsedHeight?: number | undefined
+  readonly stampWidth?: number | undefined
+  readonly status: ThreadStatus | undefined
+}): ReactElement => {
   const route = useRoute()
   // The window's own edges. The URL carries them so a view is shareable, and the pane holds them so
   // a drag renders from one place: `navigate` publishes the URL synchronously, and a control that
@@ -285,6 +304,8 @@ export const Thread = ({ id, status }: { readonly id: string; readonly status: T
                 key={moment.seq}
                 moment={moment}
                 open={opened === moment.seq}
+                fieldCollapsedHeight={fieldCollapsedHeight}
+                stampWidth={stampWidth}
                 onToggle={() => setOpened(opened === moment.seq ? undefined : moment.seq)}
               />
             ))}

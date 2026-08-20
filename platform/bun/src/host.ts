@@ -1,4 +1,6 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
+import { mkdir } from "node:fs/promises"
+import { dirname } from "node:path"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
@@ -89,6 +91,7 @@ const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
+  if (options.log !== "" && options.log !== ":memory:") await mkdir(dirname(options.log), { recursive: true })
   const principal = options.principal ?? "bun"
   // The workspace is built with the runtime and over the same client, so its table is created once
   // and every lane spills through the connection the log already holds.

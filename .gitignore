@@ -23,6 +23,7 @@ coverage/
 
 # SQLite files and spill directories the examples write when they run
 examples/.data/
+.tardigrade/
 
 # Reference checkouts and attachments handed to agents, never part of history
 .context/

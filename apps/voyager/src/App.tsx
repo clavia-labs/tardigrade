@@ -6,8 +6,10 @@ import { NO_ANSWER, ProblemError, type ThreadSummary } from "@clavia/tardigrade-
 import { client } from "./client"
 import { useRoute } from "./nav"
 import { ROSTER_POLL_MS } from "./policy"
+import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
 import { EMPTY_ROSTER, rosterOf, type Roster } from "./roster"
+import { ThemeToggle } from "./ThemeToggle"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
 // selected thread's log (mock.html). The reader chooses on the left and reads on the right, and
@@ -26,6 +28,7 @@ const useRoster = (intervalMs: number) => {
   const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
   const [summaries, setSummaries] = useState<ReadonlyArray<ThreadSummary>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
+  const [ready, setReady] = useState(false)
 
   useEffect(() => {
     let live = true
@@ -36,9 +39,11 @@ const useRoster = (intervalMs: number) => {
         setSummaries(all)
         setReading({ roster: rosterOf(all), at: Date.now() })
         setProblem(undefined)
+        setReady(true)
       } catch (error) {
         if (!live) return
         setProblem(error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER }))
+        setReady(true)
       }
     }
     void read()
@@ -49,23 +54,26 @@ const useRoster = (intervalMs: number) => {
     }
   }, [intervalMs])
 
-  return { reading, summaries, problem }
+  return { reading, summaries, problem, ready }
 }
 
 export const App = (): ReactElement => {
   const route = useRoute()
-  const { problem, reading, summaries } = useRoster(ROSTER_POLL_MS)
+  const { problem, reading, summaries, ready } = useRoster(ROSTER_POLL_MS)
   const status = summaries.find((summary) => summary.id === route.thread)?.status
   return (
-    <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
+    <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
       <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {route.thread === undefined ? (
+        {route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
+          <Quickstart />
+        ) : route.thread === undefined ? (
           <div className="mono pane-empty">select a run</div>
         ) : (
           <Thread id={route.thread} status={status} />
         )}
       </main>
+      <ThemeToggle />
     </div>
   )
 }

@@ -11,6 +11,9 @@
   --ink-2: #565a57;
   --faint: #9a9e9a;
 
+  --neutral: #59605b;
+  --neutral-wash: #eceeeb;
+
   --moss: #4f7a5c;
   --moss-ink: #3d6249;
   --moss-wash: #eef3ef;
@@ -72,6 +75,9 @@
     --ink-2: #a3a8a4;
     --faint: #6b706c;
 
+    --neutral: #b8bdb9;
+    --neutral-wash: #272a28;
+
     --moss: #7fae8c;
     --moss-ink: #93c2a0;
     --moss-wash: #22302a;
@@ -99,6 +105,9 @@
   --ink: #e8eae8;
   --ink-2: #a3a8a4;
   --faint: #6b706c;
+
+  --neutral: #b8bdb9;
+  --neutral-wash: #272a28;
 
   --moss: #7fae8c;
   --moss-ink: #93c2a0;
@@ -354,12 +363,12 @@ textarea {
   color: var(--faint);
 }
 
-/* The pane's header: who this thread is, what it is doing, and the theme toggle at the right edge. */
+/* The pane's header names the thread and its current status. */
 .thread-head {
   display: flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-4) var(--space-5) 10px;
+  padding: var(--space-4) calc(var(--space-5) + 34px) 10px var(--space-5);
 }
 
 /* The borderless icon button every icon in the app sits on: 15px of Phosphor at the light weight,
@@ -386,6 +395,19 @@ textarea {
 
 .icon-btn:active {
   transform: scale(0.97);
+}
+
+.theme-toggle {
+  position: absolute;
+  z-index: 2;
+  top: var(--space-3);
+  right: var(--space-5);
+}
+
+@media (max-width: 640px) {
+  .theme-toggle {
+    right: var(--space-4);
+  }
 }
 
 /* The copy control while it confirms. The glyph itself is swapped in React rather than by a rule,
@@ -529,6 +551,7 @@ textarea {
   border-radius: var(--radius-chip);
   font-size: 12px;
   flex-shrink: 0;
+  white-space: nowrap;
 }
 
 /* One row is one line high, whatever the payload holds. The ellipsis is the browser's, at the width
@@ -582,10 +605,48 @@ textarea {
 /* A value wraps rather than scrolls, and it keeps the line breaks the payload had. Its measure is
    a number the layout applies at the call site (src/policy.ts, FIELD_WIDTH). */
 .event-value {
+  display: block;
   font-size: 12.5px;
   color: var(--ink);
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.event-value-frame {
+  min-width: 0;
+}
+
+.field-more {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  margin-top: -64px;
+  padding: 46px 0 4px;
+  background: linear-gradient(to bottom, transparent, var(--bg) 68%);
+}
+
+.field-toggle {
+  display: block;
+  min-height: 28px;
+  margin: var(--space-2) auto 0;
+  padding: 0 var(--space-3);
+  border: 1px solid var(--hair);
+  border-radius: var(--radius-chip);
+  background: var(--surface);
+  color: var(--ink-2);
+  cursor: pointer;
+  font-family: var(--sans);
+  font-size: var(--text-meta);
+  box-shadow: var(--shadow);
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.field-toggle:hover {
+  color: var(--ink);
+}
+
+.field-toggle:active {
+  transform: scale(0.97);
 }
 
 /* A source body is the one payload that reads as a block, so it alone sits in a well. */
@@ -594,6 +655,11 @@ textarea {
   border-radius: 4px;
   background: var(--sunken);
   line-height: 1.5;
+}
+
+.event-json {
+  line-height: 1.55;
+  tab-size: 2;
 }
 
 /* Entrances only, opacity only (voyager-design-system.md, principle 4). */
@@ -617,4 +683,110 @@ textarea {
   text-align: center;
   font-size: var(--text-meta);
   color: var(--faint);
+}
+
+.quickstart-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  min-height: 0;
+  padding: var(--space-6);
+}
+
+.quickstart {
+  width: min(720px, 100%);
+}
+
+.quickstart-intro {
+  margin-bottom: var(--space-5);
+  text-align: center;
+}
+
+.quickstart-intro h1 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-page);
+  font-weight: 500;
+  letter-spacing: -0.02em;
+}
+
+.quickstart-intro p {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: var(--text-read);
+}
+
+.quickstart-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
+.quickstart-card {
+  overflow: hidden;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.quickstart-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 var(--space-3) 0 var(--space-4);
+  border-bottom: 1px solid var(--hair);
+}
+
+.quickstart-label {
+  color: var(--ink-2);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.quickstart-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 var(--space-2);
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  font-size: var(--text-meta);
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.quickstart-copy:hover {
+  color: var(--ink-2);
+}
+
+.quickstart-copy:active {
+  transform: scale(0.97);
+}
+
+.quickstart-copy-done {
+  color: var(--ok);
+}
+
+.quickstart-code {
+  margin: 0;
+  padding: var(--space-4);
+  overflow-x: auto;
+  background: var(--sunken);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .quickstart-empty {
+    align-items: start;
+    padding: var(--space-5) var(--space-4);
+  }
 }

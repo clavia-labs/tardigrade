@@ -14,6 +14,10 @@ export const COLLAPSED_RAIL_WIDTH = 48
 // for the whole set, because a second size would be a second style.
 export const ICON_SIZE = 15
 
+// The event type pill's width in pixels. One shared width aligns every event summary, and Thread
+// accepts another width when an embedding uses a different event vocabulary.
+export const EVENT_STAMP_WIDTH = 164
+
 // How often the rail re-reads GET /v1/actors/:actor/threads for the roster: the roots and their counts. The server
 // publishes no change feed for the listing, so the rail polls, and this is both the delay between a
 // run changing and the rail saying so and the resolution of the age column.
@@ -75,9 +79,17 @@ export const SUMMARY_CHARS = 400
 // browser's, so a long id or a long code line breaks on the glyph and the column keeps its measure.
 export const FIELD_WIDTH = 660
 
+// The maximum height of a collapsed expanded-field value in pixels. Thread accepts another height
+// when an embedding has more or less vertical room.
+export const FIELD_COLLAPSED_HEIGHT = 320
+
 // The longest compact JSON a field value keeps on one line. Past it the value is indented, because
 // a long object is read by its shape and a single line of it is read by nobody.
 export const FIELD_INLINE_CHARS = 120
+
+// How many nested JSON strings the trace reader decodes for display. A caller can pass another
+// depth to summaryOf or fieldsOf when encoded JSON is part of the value rather than its container.
+export const DEFAULT_JSON_PARSE_DEPTH = 4
 
 // How near the list's end still counts as being at the end. Auto-scroll follows a live log only
 // from the bottom, and a reader who has scrolled up is reading; this is the slack that a fractional

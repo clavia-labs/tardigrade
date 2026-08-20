@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 
 // The theme. Both themes are designed and neither is the default: the token sheet resolves the
 // system preference on its own, and this module records the reader's explicit choice as the
@@ -33,11 +33,23 @@ export const applyTheme = (theme: Theme): void => {
 // system's if there is none, so the toggle always moves the reader to the other theme rather than
 // to whichever one the attribute happens to be missing.
 export const useTheme = (): { readonly theme: Theme; readonly toggle: () => void } => {
-  const [theme, setTheme] = useState<Theme>(() => chosenTheme() ?? systemTheme())
+  const recorded = chosenTheme()
+  const [theme, setTheme] = useState<Theme>(() => recorded ?? systemTheme())
+  const [followsSystem, setFollowsSystem] = useState(recorded === undefined)
+
+  useEffect(() => {
+    if (!followsSystem || typeof matchMedia !== "function") return
+    const preference = matchMedia("(prefers-color-scheme: dark)")
+    const follow = () => setTheme(preference.matches ? "dark" : "light")
+    preference.addEventListener("change", follow)
+    return () => preference.removeEventListener("change", follow)
+  }, [followsSystem])
+
   return {
     theme,
     toggle: () => {
       const next: Theme = theme === "dark" ? "light" : "dark"
+      setFollowsSystem(false)
       setTheme(next)
       applyTheme(next)
       if (typeof localStorage !== "undefined") localStorage.setItem(THEME_KEY, next)

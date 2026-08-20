@@ -14,7 +14,7 @@ Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 
 ```bash
 tdg setup                  # provider, model, key
-tdg dev                    # API and UI on http://localhost:4111
+tdg dev                    # API and UI on http://localhost:4242
 tdg run "read this repo and tell me what it does"
 ```
 
@@ -37,10 +37,10 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 
 | | Flag | Environment | Default |
 | --- | --- | --- | --- |
-| Server to call | `--url` | | `http://localhost:4111` |
+| Server to call | `--url` | | `http://localhost:4242` |
 | Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
-| Port for `dev` | `--port` | `PORT` | `4111` |
-| Store for `dev` | `--db` | `TARDIGRADE_DB` | `agents.sqlite` |
+| Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
+| Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Model | | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER` | what `tdg setup` saved |
 
 `tdg setup` writes the file at mode 0600 and never prints the key back. With no model configured the server still boots and still serves every read; it says so at boot and turns fail naming what is missing.
