@@ -3,6 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
 
 // The host against toy reactors, package-pure: no app vocabulary.
@@ -105,5 +106,33 @@ describe("the router membrane", () => {
     )
     host.deliver("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("lane").length).toBe(1)
+  })
+})
+
+describe("the observe privilege", () => {
+  // All lanes share one store here, so the host binds Facets beside Router and Self: a lane reads
+  // a sibling's committed events by name (packages/core/src/logs.ts, Facets).
+  test("a lane reads a seeded sibling lane through Facets", async () => {
+    const watcher: Reactor<Facets> = (events) =>
+      events.some((e) => e.type === "Saw")
+        ? []
+        : [
+            transition({
+              key: "saw:one",
+              input: null,
+              act: () =>
+                Effect.gen(function* () {
+                  const logs = yield* Facets
+                  const seen = yield* logs.read("other")
+                  return [{ type: "Saw", n: seen.length, at: 1 } as Event]
+                })
+            })
+          ]
+    const host = createHost<Facets>({
+      actorFor: (lane) => (lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined)
+    })
+    host.seed("other", [{ type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    await host.wake("watch")
+    expect(host.read("watch")).toEqual([{ type: "Saw", n: 1, at: 1 }])
   })
 })

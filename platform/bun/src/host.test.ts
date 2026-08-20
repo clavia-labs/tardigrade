@@ -6,6 +6,7 @@ import { Effect, Layer, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import { hydrate, refs, spill } from "@clavia/tardigrade-code/store"
 
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/workspace"
@@ -451,6 +452,37 @@ describe("the workspace sql surface", () => {
     expect(answered.methods).toEqual(["grep", "read"])
     expect(answered.doc).toBe(false)
     expect(answered.answers).toEqual([])
+    await h.close()
+  })
+})
+
+describe("the observe privilege", () => {
+  // Every lane's log lives in this one database, so the binding gives a lane the durable read
+  // over its siblings (packages/core/src/logs.ts, Facets).
+  test("a lane reads a seeded sibling lane through Facets", async () => {
+    const watcher: Reactor<Facets> = (events) =>
+      events.some((e) => e.type === "Saw")
+        ? []
+        : [
+            transition({
+              key: "saw:one",
+              input: null,
+              act: () =>
+                Effect.gen(function* () {
+                  const logs = yield* Facets
+                  const seen = yield* logs.read("other")
+                  return [{ type: "Saw", n: seen.length, at: 1 } as Event]
+                })
+            })
+          ]
+    const h = await createBunHost<Facets>({
+      log: freshPath(),
+      actorFor: (lane) =>
+        lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined
+    })
+    await h.seed("other", [{ type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    await h.wake("watch")
+    expect((await h.read("watch")).map((e) => [e.type, (e as { n?: unknown }).n])).toEqual([["Saw", 1]])
     await h.close()
   })
 })
