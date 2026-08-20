@@ -4,7 +4,7 @@ import { EventLog } from "@clavia/tardigrade-core/event-log"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { workOwed } from "./projections"
-import { annotationsOf, Packages, type PackagesService } from "./packages"
+import { annotationsOf, type Package, type PackageRequirements } from "./packages"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
@@ -36,6 +36,7 @@ const executeRecorded = <R = never>(
   execId: string,
   code: string,
   spill: SpillPolicy,
+  packages: ReadonlyArray<Package<R>>,
   turn?: string,
   dispatchedAt?: number
 ): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore | R> =>
@@ -46,10 +47,6 @@ const executeRecorded = <R = never>(
     // The shadow reading rides the turn's own brief, folded once here: it never changes
     // mid-turn, and every package call below reads the same value.
     const shadow = (turnHead(events) as { shadow?: unknown } | undefined)?.shadow === true
-    // The registry reference is R-erased (packages.ts, Packages). This attempt runs its packages
-    // under `R`, the requirement the reactor declared and the caller provided, so the funnel
-    // reads the registry back at that type.
-    const packages = (yield* Packages) as PackagesService<R>
     const sandbox = yield* Sandbox
     // The proxy runs each call as its own promise, so it carries the attempt's context. The spill
     // store is in it: a call's own hydrate and spill run under the same store the attempt was
@@ -70,9 +67,7 @@ const executeRecorded = <R = never>(
     const blocked: Array<{ readonly callId: string; readonly awaiting?: string }> = []
     const parkGate = yield* Deferred.make<void>()
     const bindings: Record<string, Record<string, (args: unknown) => Promise<unknown>>> = {}
-    for (const card of yield* packages.list()) {
-      const pkg = packages.resolve(card.name)
-      if (pkg === undefined) continue
+    for (const pkg of packages) {
       const methods: Record<string, (args: unknown) => Promise<unknown>> = {}
       for (const [method, fn] of Object.entries(pkg.methods)) {
         methods[method] = (args: unknown) => {
@@ -290,36 +285,51 @@ export interface CodePolicy {
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
 //
-// `R` is what this lane's packages need beyond the spill store: a reactor over a registry of
-// `Package<R>` declares the same R, so the environment that runs it must provide it
-// (packages.ts, Package). The default is the powerless one.
-export const codeReactorFor = <R = never>(
-  policy: Partial<CodePolicy> = {}
-): Reactor<KeyValueStore.KeyValueStore | R> => (events) => {
+// The packages arrive as values, and what they need arrives with them: the reactor's environment
+// is the spill store plus the union of the packages' own requirements, so a lane assembled with a
+// service-needing package cannot be run where that service is missing (execute.test.ts, "a
+// package's requirements ride its type"). Which packages are passed is the capability scope: the
+// code can only name these, and the empty array is the powerless lane (packages.ts, Package).
+// Two packages under one name would make `pkg.name` ambiguous in the body's scope, so a duplicate
+// is a construction-time error, the same reading agentOf takes of two capabilities claiming one
+// tool name (packages/agent/src/capability.ts, agentOf).
+export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>>>(
+  policy: Partial<CodePolicy>,
+  packages: P
+): Reactor<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => {
+  const named = new Set<string>()
+  for (const pkg of packages as ReadonlyArray<Package<unknown>>) {
+    if (named.has(pkg.name)) throw new Error(`package "${pkg.name}" declared twice`)
+    named.add(pkg.name)
+  }
+  type R = PackageRequirements<P[number]>
+  const mounted = packages as unknown as ReadonlyArray<Package<R>>
   const spill = spillPolicyOf(policy.spill)
-  const owed = workOwed(events)
-  if (owed === undefined) return []
-  const dispatch = events.find(
-    (e) => e.type === "CodeDispatched" && (e as { execId?: unknown }).execId === owed.execId
-  )
-  if (dispatch === undefined) return []
-  const d = dispatch as { code?: unknown; at?: unknown }
-  return [
-    transition<
-      { execId: string; code: string; turn: string | undefined; at: number | undefined },
-      KeyValueStore.KeyValueStore | R
-    >({
-      key: `cs:${owed.execId}`,
-      input: {
-        execId: owed.execId,
-        code: String(d.code ?? ""),
-        turn: turnOf(dispatch),
-        at: typeof d.at === "number" ? d.at : undefined
-      },
-      act: (input) => executeRecorded<R>(input.execId, input.code, spill, input.turn, input.at)
-    })
-  ]
+  return (events) => {
+    const owed = workOwed(events)
+    if (owed === undefined) return []
+    const dispatch = events.find(
+      (e) => e.type === "CodeDispatched" && (e as { execId?: unknown }).execId === owed.execId
+    )
+    if (dispatch === undefined) return []
+    const d = dispatch as { code?: unknown; at?: unknown }
+    return [
+      transition<
+        { execId: string; code: string; turn: string | undefined; at: number | undefined },
+        KeyValueStore.KeyValueStore | R
+      >({
+        key: `cs:${owed.execId}`,
+        input: {
+          execId: owed.execId,
+          code: String(d.code ?? ""),
+          turn: turnOf(dispatch),
+          at: typeof d.at === "number" ? d.at : undefined
+        },
+        act: (input) => executeRecorded<R>(input.execId, input.code, spill, mounted, input.turn, input.at)
+      })
+    ]
+  }
 }
 
-// codeReactor is that reactor on the default spill bound.
-export const codeReactor: Reactor<KeyValueStore.KeyValueStore> = codeReactorFor()
+// codeReactor is that reactor on the default spill bound, with no packages: the powerless lane.
+export const codeReactor: Reactor<KeyValueStore.KeyValueStore> = codeReactorFor({}, [])

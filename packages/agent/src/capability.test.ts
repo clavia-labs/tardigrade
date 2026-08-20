@@ -5,6 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
 import { Self } from "@clavia/tardigrade-core/actor"
+import type { Package } from "@clavia/tardigrade-code/packages"
 import { agentOf, budget, CODE_SYSTEM, codeMode, codeModeFor, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
 import { receive, type AgentR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
@@ -142,5 +143,20 @@ describe("agentOf", () => {
     const overridden = renderOf([codeModeFor({}, { system: (events) => `the packages in scope are:\n${events.length}` })], [{ type: "PackageInstalled" }])
     expect(overridden.system).toBe("the packages in scope are:\n1")
     expect(renderOf([codeMode], []).system).toBe(CODE_SYSTEM)
+  })
+
+  test("a mounted package names itself in the system fragment", () => {
+    // The model is told what the code can name, from the same values the code reactor mounts:
+    // one line per package, `name: description` (capability.ts, codeSystemFor).
+    const notes: Package = {
+      name: "notes",
+      description: "the team's notes",
+      methods: { put: () => Effect.succeed(null) }
+    }
+    const { system } = renderOf([codeModeFor({}, {}, [notes])], [])
+    expect(system).toContain("notes: the team's notes")
+    expect(system).not.toContain("none")
+    // An explicit fragment still wins over the derivation.
+    expect(renderOf([codeModeFor({}, { system: "my own scope" }, [notes])], []).system).toBe("my own scope")
   })
 })

@@ -6,14 +6,14 @@ import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/ev
 import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import { checkInput, renderSignature } from "./contract"
-import { Packages, type Package } from "./packages"
+import type { Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
-import { codeReactor } from "./execute"
+import { codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
 
 // The method contract: `renderSignature` folds a declared input schema into one calling line,
 // and the funnel checks the args against the same schema before the method runs. The last block
-// drives the real `codeReactor`, so the refusal is proven at the one door every call crosses.
+// drives the real code reactor, so the refusal is proven at the one door every call crosses.
 
 const putSchema = {
   type: "object",
@@ -166,18 +166,14 @@ const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ reactors: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
           memoryLog(log),
           KeyValueStore.layerMemory,
-          jsSandbox,
-          Layer.succeed(Packages, {
-            resolve: (name: string) => (name === "notes" ? notesLike : undefined),
-            list: () => Effect.succeed([{ name: "notes", description: notesLike.description }])
-          })
+          jsSandbox
         )
       )
     ) as Effect.Effect<ReadonlyArray<Event>>
