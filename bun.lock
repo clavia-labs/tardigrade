@@ -26,14 +26,14 @@
         "effect": "4.0.0-rc.110",
       },
       "devDependencies": {
-        "@clavia/tardigrade": "workspace:*",
+        "tardie": "workspace:*",
       },
     },
     "apps/server": {
       "name": "@clavia/tardigrade-server",
       "version": "0.0.1",
       "dependencies": {
-        "@clavia/tardigrade": "workspace:*",
+        "tardie": "workspace:*",
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
@@ -54,7 +54,7 @@
         "react-dom": "^19.2.7",
       },
       "devDependencies": {
-        "@clavia/tardigrade": "workspace:*",
+        "tardie": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.110",
@@ -66,7 +66,7 @@
       },
     },
     "packages/agent": {
-      "name": "@clavia/tardigrade",
+      "name": "tardie",
       "version": "0.0.1",
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
@@ -130,7 +130,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-        "@clavia/tardigrade": "workspace:*",
+        "tardie": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
@@ -198,7 +198,7 @@
 
     "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
 
-    "@clavia/tardigrade": ["@clavia/tardigrade@workspace:packages/agent"],
+    "tardie": ["tardie@workspace:packages/agent"],
 
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
 

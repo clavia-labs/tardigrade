@@ -5,10 +5,10 @@
 ## Install
 
 ```bash
-bun add -g @clavia/tardigrade
+bun add -g tardie
 ```
 
-Or run it without installing: `bunx @clavia/tardigrade <command>`. Bun 1.4 or later.
+Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 
 ## Quickstart
 

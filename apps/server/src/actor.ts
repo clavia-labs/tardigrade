@@ -11,9 +11,9 @@ import {
   filesPackage,
   reply,
   workspacePackage
-} from "@clavia/tardigrade"
+} from "tardie"
 import { turnEpochOf } from "@clavia/tardigrade-code/turns"
-import { boundaryOf } from "@clavia/tardigrade/boundary"
+import { boundaryOf } from "tardie/boundary"
 import { projection, projectionsOf, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"

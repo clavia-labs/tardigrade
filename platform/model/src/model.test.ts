@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { codeMode, renderOf } from "@clavia/tardigrade/capability"
+import { codeMode, renderOf } from "tardie/capability"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
 const surfaceRender = renderOf([codeMode], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, system: surfaceRender.system, tools: surfaceRender.tools })
-import { Infer } from "@clavia/tardigrade/infer"
+import { Infer } from "tardie/infer"
 import { actionOf, ladderOf, modelAskOf, modelIdOf, infer, retryAfterMsOf, throttleDelayMs } from "./model"
-import type { Action } from "@clavia/tardigrade/events"
+import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply

@@ -22,7 +22,7 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade": "workspace:*",
+    "tardie": "workspace:*",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
