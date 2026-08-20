@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -20,6 +20,14 @@ import {
   DEFAULT_BUN_WORKSPACE_SQL_DOC,
   WORKSPACE_TABLE
 } from "./workspace"
+
+// Every case here opens a real store on disk and drives a real host, so it competes with every
+// other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
+// times out under that load; this is the budget a boot actually needs. It stays tight on purpose: a
+// case that wants longer than this is hanging rather than busy.
+const BOOT_MS = 20_000
+
+setDefaultTimeout(BOOT_MS)
 
 // The bun binding against the reference host's contract, plus the two behaviors only physics
 // can show: a reopened database keeps the log, and recover() settles work a death interrupted.

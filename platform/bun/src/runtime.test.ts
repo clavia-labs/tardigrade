@@ -1,4 +1,11 @@
-import { expect, test } from "bun:test"
+import { expect, setDefaultTimeout, test } from "bun:test"
+
+// This case waits out a ten second response on purpose: the deadline it proves is the one that
+// keeps a slow answer from being cut off, so the wall clock is the assertion. The budget is that
+// floor plus room for a parallel gate run, and no more, so a hang still fails rather than waits.
+const DEADLINE_MS = 25_000
+
+setDefaultTimeout(DEADLINE_MS)
 
 test("a numeric fetch deadline extends Bun's socket idle deadline", async () => {
   const server = Bun.serve({
@@ -27,4 +34,4 @@ test("a numeric fetch deadline extends Bun's socket idle deadline", async () => 
   } finally {
     server.stop(true)
   }
-}, 15_000)
+})

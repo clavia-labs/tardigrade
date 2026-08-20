@@ -30,8 +30,26 @@ const sources = [
   { dir: "packages/host", namespace: "host" },
   { dir: "packages/client", namespace: "client" },
   { dir: "platform/bun", namespace: "bun" },
-  { dir: "platform/model", namespace: "model" }
+  { dir: "platform/model", namespace: "model" },
+  { dir: "apps/server", namespace: "server" },
+  { dir: "apps/cli", namespace: "cli" }
 ] as const
+
+// The command the package installs, and the module it points at. One install gives the library, the
+// server, the UI, and the command (sdk-and-cli-spec.md, "Phase 3").
+const BIN_NAME = "tdg"
+
+const BIN_ENTRY = "./src/cli/main.ts"
+
+// Where the UI's build is staged, and where it comes from. `tdg dev` resolves this directory
+// relative to its own module, so a published command finds the build with no configuration. The
+// name is not the workspace directory's, so the candidate this command tries inside the repository
+// cannot match it (apps/cli/src/assets.ts, INSTALLED_ASSETS).
+const STAGED_ASSETS = "ui"
+
+const VOYAGER_SOURCE = "apps/voyager/dist"
+
+const VOYAGER_BUILD = ["bun", "run", "--cwd", "apps/voyager", "build"]
 
 const npmMin = { maj: 11, min: 5, patch: 1 } as const
 
@@ -147,9 +165,13 @@ const stage = join(destination, "package")
 
 try {
   await mkdir(stage, { recursive: true })
+  // The UI is built here rather than assumed: the tarball carries the assets `tdg dev` serves, and
+  // a stale build shipped as a fresh one is worse than the wait.
+  await run(VOYAGER_BUILD, root)
   await Promise.all([
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
+    cp(join(root, VOYAGER_SOURCE), join(stage, STAGED_ASSETS), { recursive: true }),
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,
@@ -179,9 +201,10 @@ try {
         : repository,
     bugs: publicSource.pkg.bugs,
     publishConfig: publicSource.pkg.publishConfig,
-    files: ["src"],
+    files: ["src", STAGED_ASSETS],
     engines: publicSource.pkg.engines,
     type: "module",
+    bin: { [BIN_NAME]: BIN_ENTRY },
     exports: {
       ".": "./src/agent/index.ts",
       "./package.json": "./package.json",
@@ -192,6 +215,8 @@ try {
       "./client": "./src/client/index.ts",
       "./client/*": "./src/client/*.ts",
       "./bun/*": "./src/bun/*.ts",
+      "./server/*": "./src/server/*.ts",
+      "./cli/*": "./src/cli/*.ts",
       "./model": "./src/model/model.ts",
       "./model/*": "./src/model/*.ts",
       "./*": "./src/agent/*.ts"

@@ -13,7 +13,7 @@ const packages = ["core", "code", "agent", "host", "client"]
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun"]
 const appPkg = (name: string) => `${root}apps/${name}`
-const apps = ["server", "voyager"]
+const apps = ["cli", "server", "voyager"]
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
 // can resolve and emit them.
 const bundled = ["voyager"]

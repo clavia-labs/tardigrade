@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
@@ -12,6 +12,14 @@ import type { EventRow } from "@clavia/tardigrade-client/contract"
 import { layerAgents } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import type { AgentSummary, AgentNode, TurnView } from "./projections"
+
+// Every case here boots a real server on an ephemeral port, so it competes with every other task in
+// a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out
+// under that load; this is the budget a boot actually needs. It stays tight on purpose: a case that
+// wants longer than this is hanging rather than busy.
+const BOOT_MS = 20_000
+
+setDefaultTimeout(BOOT_MS)
 
 // The API over a real Bun server on an ephemeral port, over a real durable host on a volatile
 // database, with the model seam bound to a scripted mind: every assertion here is about what a
