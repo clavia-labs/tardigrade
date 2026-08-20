@@ -95,7 +95,7 @@ export const ActorRail = ({
         <button
           type="button"
           className="actor-api"
-          onClick={() => navigate({ thread: undefined, view: "api", from: undefined, to: undefined })}
+          onClick={() => navigate({ thread: undefined, view: "api", operation: undefined, from: undefined, to: undefined })}
         >
           <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span className="actor-only">API</span>

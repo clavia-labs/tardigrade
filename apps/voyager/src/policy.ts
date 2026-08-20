@@ -18,6 +18,10 @@ export const PANE_HEADER_HEIGHT = 64
 // else, so a reader can always open the list again from where they closed it.
 export const COLLAPSED_ACTOR_RAIL_WIDTH = 48
 
+// How many nested object levels the API explorer renders before naming the remaining schema. The
+// explorer accepts another depth when a larger surface needs to show more of a recursive model.
+export const API_SCHEMA_DEPTH = 3
+
 // The size every icon renders at, in pixels (voyager-design-system.md, the icon policy). One number
 // for the whole set, because a second size would be a second style.
 export const ICON_SIZE = 15

@@ -8,6 +8,7 @@ describe("routeOf", () => {
       actor: "default",
       thread: undefined,
       view: "api",
+      operation: undefined,
       from: undefined,
       to: undefined
     })
@@ -15,5 +16,9 @@ describe("routeOf", () => {
 
   test("an unknown view does not hide the trace", () => {
     expect(routeOf("?thread=root&view=unknown").view).toBeUndefined()
+  })
+
+  test("an API operation survives a refresh", () => {
+    expect(routeOf("?view=api&operation=get%3A%2Fhealthz").operation).toBe("get:/healthz")
   })
 })
