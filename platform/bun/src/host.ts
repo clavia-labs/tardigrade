@@ -217,7 +217,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Layer.succeed(KeyValueStore.KeyValueStore, store),
       Layer.succeed(Self, self(lane)),
       // Every lane's log lives in this one durable store, so the observe privilege is the same
-      // read the host serves itself (packages/core/src/logs.ts, Facets). A binding whose lanes
+      // read the host serves itself (packages/core/src/facets.ts, Facets). A binding whose lanes
       // are remote proxies or refuses instead.
       Layer.succeed(Facets, { read: (name: string) => readEffect(name) })
     )
