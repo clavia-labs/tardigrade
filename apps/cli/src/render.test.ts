@@ -69,14 +69,14 @@ describe("eventsTable", () => {
 
 describe("turnLines", () => {
   test("a completed turn prints its output under its handle", () => {
-    expect(turnLines("root", { turn: "m1", status: "completed", output: "ok" })).toBe("root m1 completed\nok")
+    expect(turnLines("root", { turn: "m1", status: "completed", epoch: 0, output: "ok" })).toBe("root m1 completed\nok")
   })
 
   test("a failed turn prints its error", () => {
-    expect(turnLines("root", { turn: "m1", status: "failed", error: "no model" })).toBe("root m1 failed\nno model")
+    expect(turnLines("root", { turn: "m1", status: "failed", epoch: 0, error: "no model" })).toBe("root m1 failed\nno model")
   })
 
   test("a pending turn is its handle alone", () => {
-    expect(turnLines("root", { turn: "m1", status: "pending" })).toBe("root m1 pending")
+    expect(turnLines("root", { turn: "m1", status: "pending", epoch: 0 })).toBe("root m1 pending")
   })
 })

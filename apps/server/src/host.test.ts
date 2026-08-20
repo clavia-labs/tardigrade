@@ -5,7 +5,7 @@ import { Infer, type InferRequest } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 
 import { layerConfig, readConfig } from "./config"
-import { Threads, layerThreads, ResumeRefused } from "./host"
+import { Threads, layerThreads } from "./host"
 import { DriverGauge } from "./http"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
@@ -53,12 +53,15 @@ const running = <A, E>(
     Effect.runPromise
   ) as Promise<A>
 
+// One brief, as the event it is. The platform requires only `type`; `id` and `text` are the
+// assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/message.ts).
+const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
+
 describe("the threads service", () => {
-  test("a delivered brief drives to a completed turn", async () => {
+  test("an appended brief drives to a completed turn", async () => {
     const types = await running((threads) =>
       Effect.gen(function*() {
-        const accepted = yield* threads.deliver("alpha", { id: "m1", text: "hello" })
-        expect(accepted).toEqual({ thread: "alpha", turn: "m1" })
+        yield* threads.append("alpha", brief("m1"))
         yield* threads.settled
         const gauge = yield* DriverGauge
         expect(yield* gauge.dirty).toBe(0)
@@ -72,8 +75,8 @@ describe("the threads service", () => {
   test("list names every thread lane with its log", async () => {
     const listed = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
-        yield* threads.deliver("beta", { id: "m2", text: "hello" })
+        yield* threads.append("alpha", brief("m1"))
+        yield* threads.append("beta", brief("m2"))
         yield* threads.settled
         return yield* threads.list()
       })
@@ -82,26 +85,28 @@ describe("the threads service", () => {
     expect(listed.every((entry) => entry.events.some((e) => e.type === "TurnCompleted"))).toBe(true)
   })
 
-  test("a turn that did not fail refuses to resume", async () => {
-    const refused = await running((threads) =>
+  // The service appends whatever fact it is handed and reads none of its fields: what an event
+  // means is the actor's knowledge (actor.ts, agentProjections). An append that carries its own
+  // `at` keeps it, so a replayed fact keeps the time it happened.
+  test("an appended event keeps the time it states", async () => {
+    const stamps = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.append("alpha", { type: "MessageReceived", id: "m1", text: "hello", at: 4242 })
         yield* threads.settled
-        return yield* Effect.flip(threads.resume("alpha", "m1"))
+        const log = yield* threads.events("alpha")
+        return log.filter((event) => event.type === "MessageReceived").map((event) => event["at"])
       })
     )
-    expect(refused).toBeInstanceOf(ResumeRefused)
-    expect(refused.turn).toBe("m1")
-    expect(refused.detail).toContain("cannot resume")
+    expect(stamps).toEqual([4242])
   })
 
   test("redelivering one message id is absorbed", async () => {
     const counts = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.append("alpha", brief("m1"))
         yield* threads.settled
         const before = (yield* threads.events("alpha")).length
-        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.append("alpha", brief("m1"))
         yield* threads.settled
         return [before, (yield* threads.events("alpha")).length]
       })

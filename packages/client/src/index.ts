@@ -26,7 +26,7 @@ export type {
   ThreadSummary,
   EventRow,
   Health,
-  Inbound,
+  Append,
   Problem,
   TurnStatus,
   TurnView

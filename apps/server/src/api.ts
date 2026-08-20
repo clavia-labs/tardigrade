@@ -8,16 +8,14 @@ import {
   apiOf,
   invalidRequest,
   RESERVED_ACTOR,
-  ResumeRefused,
   unacceptableField,
   UnknownActor,
   UnknownProjection,
   UnknownThread,
-  UnknownTurn,
   type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
-import { agentProjections, turnViewsOf } from "./actor"
+import { agentProjections } from "./actor"
 import { Threads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -210,13 +208,13 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
     handlers
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
-      // layerRequestProblems), so the handler only ever sees a message.
-      .handle("deliver", ({ params, payload }) =>
+      // layerRequestProblems), so the handler only ever sees an event.
+      .handle("append", ({ params, payload }) =>
         Effect.gen(function*() {
           const actor = yield* actorOf(params.actor)
           const threads = yield* Threads
-          const accepted = yield* threads.deliver(params.id, payload)
-          return { actor, ...accepted }
+          yield* threads.append(params.id, payload)
+          return { actor, thread: params.id }
         }))
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
@@ -237,32 +235,6 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
             .map((event, index) => ({ seq: index + 1, event }))
             .filter((row) => row.seq > (after ?? 0) && (types === undefined || types.includes(row.event.type)))
             .slice(0, page ?? limit)
-        }))
-      .handle("turn", ({ params }) =>
-        Effect.gen(function*() {
-          yield* actorOf(params.actor)
-          const threads = yield* Threads
-          const log = yield* logOf(threads.events, params.id)
-          const view = turnViewsOf(log).find((candidate) => candidate.turn === params.turn)
-          if (view === undefined) {
-            return yield* Effect.fail(
-              UnknownTurn.of(
-                `Thread ${JSON.stringify(params.id)} was never asked to serve a turn named ${
-                  JSON.stringify(params.turn)
-                }.`
-              )
-            )
-          }
-          return view
-        }))
-      .handle("resume", ({ params }) =>
-        Effect.gen(function*() {
-          const actor = yield* actorOf(params.actor)
-          const threads = yield* Threads
-          return yield* threads.resume(params.id, params.turn).pipe(
-            Effect.as({ actor, thread: params.id, turn: params.turn }),
-            Effect.catch((refused) => Effect.fail(ResumeRefused.of(refused.detail)))
-          )
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {

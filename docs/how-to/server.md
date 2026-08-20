@@ -39,22 +39,20 @@ Configuration is the environment and nothing else. Every default is an exported 
 
 ## Running without a model
 
-The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails with `no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID`. The failure is an event in the log like any other, so `GET /v1/actors/agent/threads/:id/turns/:turn` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `POST /v1/actors/agent/threads/:id/turns/:turn/resume` runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
+The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails with `no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID`. The failure is an event in the log like any other, so `GET /v1/actors/agent/threads/:id/turns?turn=<id>` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `client.resume(thread, turn)` appends the `TurnResumed` that runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
 
 ## Endpoints
 
-The first three are the log, which is the whole of what the platform guarantees. `turns` is a projection this build's actor declares, and it appears here by being declared. The last three are the assembly's surface, each pending its own change.
+The first three are the log, which is the whole of what the platform guarantees. `turns` is a projection this build's actor declares, and it appears here by being declared. `tree` is the last of the assembly's surface, pending its own change.
 
 | Endpoint | Contract |
 | --- | --- |
-| `POST /v1/actors/agent/threads/:id/events` | Deliver one message, `{ id, text, input?, data? }`. Answers `202 { actor, thread, turn }`, or `400` when the body states no `id` or no `text`. |
+| `POST /v1/actors/agent/threads/:id/events` | Append one event, `{ type, ... }`. A brief is `{ type: "MessageReceived", id, text }`. Answers `202 { actor, thread }`, or `400` when the body states no `type`. |
 | `GET /v1/actors/agent/threads` | Every thread, parent before child, as a summary: id, parent, event count, last event time, and status (`settled`, `running`, `blocked`, `failed`). |
 | `GET /v1/actors/agent/threads/:id/events` | The log as `{ seq, event }` rows. `after` starts the page past a sequence number, `limit` caps it (default 200, `DEFAULT_EVENT_LIMIT`), `types` filters by a comma list. |
 | `GET /v1/actors/agent/threads/:id/events/stream` | The same log as `text/event-stream`, replayed from the cursor and then followed live. The tail re-reads every 50 milliseconds (`DEFAULT_SSE_POLL`) and writes a comment frame after 15 seconds of silence (`DEFAULT_SSE_HEARTBEAT`). |
-| `GET /v1/actors/agent/threads/:id/turns` | The actor's `turns` projection: every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` is the projection's own parameter, and evaluates it over a prefix of the log. |
+| `GET /v1/actors/agent/threads/:id/turns` | The actor's `turns` projection: every turn boundary as `{ turn, status, epoch, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. Its two declared parameters narrow it: `at` evaluates it over a prefix of the log, and `turn` answers with that one entry, or an empty array when nothing matches. |
 | `GET /v1/actors/agent/threads/:id/{name}` | Any other name is `404 unknown-projection`, whose detail lists the names the actor does declare. |
-| `GET /v1/actors/agent/threads/:id/turns/:turn` | One turn's boundary, the same shape. This is the poll target for whether a run finished. |
-| `POST /v1/actors/agent/threads/:id/turns/:turn/resume` | Resume a failed turn. `202` with the turn handle, `409` when the turn did not fail or belongs to a spent epoch, carrying the library's own reason. |
 | `GET /healthz` | `200` while the host answers, carrying `status` (`resting` or `driving`) and `dirty`, the count of drive passes owed. Open even when a token is set, so a supervisor can tell an outage from a misconfiguration. |
 | `GET /openapi.json` | The OpenAPI document, derived from the same declaration the routes are built from (`OPENAPI_PATH`). Open even when a token is set. |
 | `GET /docs` | That document rendered as a reference page (`DOCS_PATH`). Open even when a token is set. |
@@ -107,7 +105,13 @@ Children born by spawn get derived ids (`<execId>.<n>`) and appear in `GET /v1/a
 
 ## Redelivery is absorbed
 
-The message `id` is the dedup key end to end and becomes the turn id. Posting the same id twice answers `202` both times and starts one turn: the host absorbs the second delivery, and the client never learns it retried. An at-least-once caller, a webhook relay, or a shell script in a retry loop needs no care beyond keeping the id stable.
+Duplicate suppression is the actor's, not the platform's: the assembly the server mounts states a key per event type, and the host absorbs a second append that carries a key it already holds. For a `MessageReceived` that key is the `id`, which is also the turn id, so posting the same id twice answers `202` both times and starts one turn. An at-least-once caller, a webhook relay, or a shell script in a retry loop needs no care beyond keeping the id stable.
+
+## Resuming is an append
+
+There is no resume endpoint. A resume is a `TurnResumed` event, which the actor's reactors already interpret, so it goes through `POST /v1/actors/agent/threads/:id/events` like every other fact. The ergonomics live in the client rather than the platform: `client.resume(thread, turn)` reads the turns projection, refuses a turn whose active epoch is not `failed`, and otherwise appends the event stamped with the next epoch.
+
+That check is advisory. A turn that fails between the read and the append still gets its `TurnResumed`, and a `TurnResumed` for a turn that is not failed derives nothing, so a race costs an inert event rather than a wrong outcome. A duplicate costs nothing either, because the assembly keys the event by turn and epoch.
 
 ## Streams resume where they dropped
 
@@ -115,7 +119,7 @@ Each log event is one SSE event, and its `id:` field is the sequence number. A d
 
 ## Time travel is a query
 
-Any prefix of a log is a valid state, so reading the past is a parameter rather than a mode. `GET /v1/actors/agent/threads/:id/turns?at=<seq>` evaluates the turn projection over the first `<seq>` events, which is what the thread's outcome looked like at that point. Nothing is stored to make this work: the projection is a pure function of the events it is handed.
+Any prefix of a log is a valid state, so reading the past is a parameter rather than a mode. `GET /v1/actors/agent/threads/:id/turns?at=<seq>` evaluates the turns projection over the first `<seq>` events, which is what the thread's outcome looked like at that point. Nothing is stored to make this work: a projection is a pure function of the events it is handed, and `at` is a parameter the actor declares rather than a mode the platform holds.
 
 ## Out of scope
 

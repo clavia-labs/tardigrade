@@ -59,9 +59,9 @@ The server boots without model coordinates and every turn it drives fails with t
 
 ## Waiting, and what a retry costs
 
-`tdg send` returns as soon as the server has accepted the message, because a delivery answers `202` and the turn settles on the server's own loop. `tdg run` waits: it delivers, then reads the turn every `DEFAULT_POLL_MILLIS` until it leaves `pending`, and gives up after `DEFAULT_TIMEOUT_MILLIS` while saying that the turn is still running (`apps/cli/src/commands.ts`). `--poll` and `--timeout` set both. The exit code is zero only when the turn completed.
+`tdg send` returns as soon as the server has accepted the event, because an append answers `202` and the turn settles on the server's own loop. `tdg run` waits: it appends, then reads the actor's `turns` projection with `?turn=` every `DEFAULT_POLL_MILLIS` until that turn leaves `pending`, and gives up after `DEFAULT_TIMEOUT_MILLIS` while saying that the turn is still running (`apps/cli/src/commands.ts`). `--poll` and `--timeout` set both. The exit code is zero only when the turn completed.
 
-Both commands mint a message id per invocation unless `--id` states one. The id is the dedup key end to end and becomes the turn id, so an invocation retried with the same `--id` is absorbed by the server rather than started twice, and an invocation retried without one starts a second turn. `tdg run` also mints the thread when `--thread` states none, which births a new thread, since a thread exists once its log has an event.
+Both commands mint a message id per invocation unless `--id` states one. The id is the dedup key end to end and becomes the turn id, so an invocation retried with the same `--id` is absorbed rather than started twice, and an invocation retried without one starts a second turn. `tdg run` also mints the thread when `--thread` states none, which births a new thread, since a thread exists once its log has an event.
 
 ## Output for people, and for pipes
 
