@@ -4,7 +4,9 @@
 
 ## Documentation
 
-`docs/` is the source of truth for repository behavior. It describes the repository as it is now. When behavior changes, update the docs in the same change.
+`docs/` is the source of truth for repository behavior. It describes the repository as it is now.
+
+Do not write or revise a page in `docs/` unless the change asks for it. A page is read by a person who is deciding something, so it is worth a deliberate pass rather than a paragraph appended beside every change. When a change makes a page wrong, say so in the pull request and leave the page alone.
 
 State each fact in one place. If `docs/` contains a fact, link to it from this file, a README, or a comment.
 
