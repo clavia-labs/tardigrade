@@ -1,5 +1,5 @@
 import type { ActorSummary, ProblemError } from "@clavia/tardigrade-client"
-import { ArrowLeft, ArrowRight } from "@phosphor-icons/react"
+import { ArrowLeft, ArrowRight, BracketsCurly } from "@phosphor-icons/react"
 import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
@@ -15,12 +15,14 @@ const storedCollapsed = (): boolean => {
 
 export const ActorRail = ({
   actors,
+  apiSelected,
   collapsedWidth = COLLAPSED_ACTOR_RAIL_WIDTH,
   headerHeight = PANE_HEADER_HEIGHT,
   problem,
   selected
 }: {
   readonly actors: ReadonlyArray<ActorSummary>
+  readonly apiSelected: boolean
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly problem: ProblemError | undefined
@@ -76,20 +78,31 @@ export const ActorRail = ({
       )}
       <div className="actor-only actor-list">
         {shown.map((actor) => {
-          const chosen = actor.name === selected
+          const chosen = !apiSelected && actor.name === selected
           return (
             <button
               type="button"
               key={actor.name}
               className={`actor-row${chosen ? " actor-row-selected" : ""}`}
               aria-current={chosen ? "true" : undefined}
-              onClick={() => navigate({ actor: actor.name, thread: undefined, from: undefined, to: undefined })}
+              onClick={() => navigate({ actor: actor.name, thread: undefined, view: undefined, from: undefined, to: undefined })}
             >
               <span className="mono actor-name">{actor.name}</span>
               {actor.builtIn ? <span className="mono actor-kind">built-in</span> : null}
             </button>
           )
         })}
+      </div>
+      <div className="actor-footer">
+        <button
+          type="button"
+          className={`actor-api${apiSelected ? " actor-api-selected" : ""}`}
+          aria-current={apiSelected ? "page" : undefined}
+          onClick={() => navigate({ thread: undefined, view: "api", from: undefined, to: undefined })}
+        >
+          <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <span className="actor-only">API</span>
+        </button>
       </div>
     </aside>
   )

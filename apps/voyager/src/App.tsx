@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
+import { ApiSurface } from "./ApiSurface"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { client, clientFor } from "./client"
@@ -105,10 +106,12 @@ export const App = (): ReactElement => {
   }, [actor, route.actor])
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
-      <ActorRail actors={discovered.actors} problem={discovered.problem} selected={actor} />
+      <ActorRail actors={discovered.actors} apiSelected={route.view === "api"} problem={discovered.problem} selected={actor} />
       <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {actor !== undefined && route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
+        {route.view === "api" ? (
+          <ApiSurface />
+        ) : actor !== undefined && route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
           <Quickstart actor={actor} />
         ) : route.thread === undefined ? (
           <div className="mono pane-empty">{discovered.ready ? "select a run" : "loading actors"}</div>
