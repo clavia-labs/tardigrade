@@ -11,7 +11,7 @@
 A durable and modular agent harness built for self-improvement.
 
 ### A harness made for self-improvement
-As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052), [Self-Harness](https://arxiv.org/abs/2606.09498)). A harness that is too rigid and complex is a hindrance to this. We need something more composable, and easy to author.
+As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a hindrance to this. We need something more composable, and easy to author.
 
 We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Similarly, Tardigrade defines the harness as a set of state transitions derived from the event log, an idea with roots in [Harel's statecharts](https://www.wisdom.weizmann.ac.il/~harel/papers/Statecharts.pdf).
 
