@@ -54,7 +54,7 @@ Every failure is `application/problem+json`.
 | | |
 | --- | --- |
 | `PORT` | `4242` |
-| `TARDIGRADE_DB` | `agents.sqlite` |
+| `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_TOKEN` | Unset. When set, every route but `/healthz`, `/openapi.json`, and `/docs` needs `Authorization: Bearer` |
 | `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
 

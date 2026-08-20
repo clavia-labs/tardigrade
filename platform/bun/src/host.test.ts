@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
-import { mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
@@ -61,6 +61,13 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("creates the directory for a nested log path", async () => {
+    const path = join(dir, `nested-${n++}`, "agents.sqlite")
+    const h = await createBunHost(options(path))
+    expect(existsSync(path)).toBe(true)
+    await h.close()
+  })
+
   test("delivers, settles, and a keyed redelivery absorbs", async () => {
     const h = await createBunHost(options(freshPath()))
     await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
