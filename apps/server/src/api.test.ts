@@ -137,13 +137,13 @@ describe("messages", () => {
 })
 
 describe("the listing", () => {
-  test("an agent that has settled lists as resting", async () => {
+  test("an agent that has settled lists as settled", async () => {
     const listed = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       return (await (await fetch(`${base}/agents`)).json()) as ReadonlyArray<AgentSummary>
     })
     expect(listed).toHaveLength(1)
-    expect(listed[0]).toMatchObject({ id: "alpha", status: "resting" })
+    expect(listed[0]).toMatchObject({ id: "alpha", status: "settled" })
     expect(listed[0]!.events).toBeGreaterThan(0)
     expect(listed[0]!.parent).toBeUndefined()
   })

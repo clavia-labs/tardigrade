@@ -1,0 +1,573 @@
+/* Tun, the voyager design system (voyager-design-system.md). Both themes are designed on their own
+   ground, so a component references only a token and never a literal color. Light is the bare
+   :root, dark is the same token set redefined; the resolution order is stated once, below. */
+
+:root {
+  --bg: #fafaf9;
+  --surface: #ffffff;
+  --sunken: #f2f2f0;
+  --hair: #e7e7e4;
+  --ink: #1a1c1b;
+  --ink-2: #565a57;
+  --faint: #9a9e9a;
+
+  --moss: #4f7a5c;
+  --moss-ink: #3d6249;
+  --moss-wash: #eef3ef;
+
+  --run: #a07617;
+  --run-wash: #f7f0dd;
+  --ok: #567a5c;
+  --ok-wash: #edf2ee;
+  --wait: #5b6ea8;
+  --wait-wash: #eceff7;
+  --fail: #b3452e;
+  --fail-wash: #f9ece8;
+
+  --shadow: 0 1px 2px rgb(26 28 27 / 6%), 0 8px 24px rgb(26 28 27 / 8%);
+
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --text-meta: 12px;
+  --text-dense: 13px;
+  --text-read: 15px;
+  --text-pane: 18px;
+  --text-page: 22px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --row-h: 36px;
+  --gutter: 8px;
+  --measure: 65ch;
+  --radius: 6px;
+  --radius-chip: 999px;
+
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+  --fast: 120ms;
+  --base: 180ms;
+  --breath: 2.4s;
+
+  color-scheme: light;
+}
+
+/* The theme resolves system-first: the operating system's preference decides, and the
+   [data-theme] attribute overrides it in either direction. The dark media block therefore excludes
+   an explicit light choice, and the explicit dark attribute restates the same values so it wins
+   under a light system. */
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #131514;
+    --surface: #1b1d1c;
+    --sunken: #0e100f;
+    --hair: #2a2d2b;
+    --ink: #e8eae8;
+    --ink-2: #a3a8a4;
+    --faint: #6b706c;
+
+    --moss: #7fae8c;
+    --moss-ink: #93c2a0;
+    --moss-wash: #22302a;
+
+    --run: #d0a83e;
+    --run-wash: #2e2a1c;
+    --ok: #85ad8d;
+    --ok-wash: #1f2a23;
+    --wait: #8ea0d6;
+    --wait-wash: #232838;
+    --fail: #d97757;
+    --fail-wash: #33231e;
+
+    --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 48%);
+
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #131514;
+  --surface: #1b1d1c;
+  --sunken: #0e100f;
+  --hair: #2a2d2b;
+  --ink: #e8eae8;
+  --ink-2: #a3a8a4;
+  --faint: #6b706c;
+
+  --moss: #7fae8c;
+  --moss-ink: #93c2a0;
+  --moss-wash: #22302a;
+
+  --run: #d0a83e;
+  --run-wash: #2e2a1c;
+  --ok: #85ad8d;
+  --ok-wash: #1f2a23;
+  --wait: #8ea0d6;
+  --wait-wash: #232838;
+  --fail: #d97757;
+  --fail-wash: #33231e;
+
+  --shadow: 0 1px 2px rgb(0 0 0 / 40%), 0 8px 24px rgb(0 0 0 / 48%);
+
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: var(--text-dense);
+  -webkit-font-smoothing: antialiased;
+}
+
+a {
+  color: var(--moss);
+  text-decoration: none;
+}
+
+a:hover {
+  color: var(--moss-ink);
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+:focus-visible {
+  outline: 2px solid var(--moss);
+  outline-offset: 2px;
+}
+
+/* Machine values are mono and their digits align, so a column of seqs reads as a column. */
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* A working agent breathes and nothing else moves at rest (voyager-design-system.md, principle 4). */
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.breathe {
+  animation: breathe var(--breath) ease-in-out infinite;
+}
+
+/* Reduced motion drops the breathing and keeps opacity fades: the dot stays legible at full
+   strength rather than freezing mid-pulse. */
+@media (prefers-reduced-motion: reduce) {
+  .breathe {
+    animation: none;
+    opacity: 1;
+  }
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+
+/* The chip: the state voice. Soft wash fill, state-colored text, one size. A running chip breathes
+   whole rather than through a leading dot, which is the shape the frozen mock draws (mock.html). */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 18px;
+  padding: 0 7px;
+  border-radius: var(--radius-chip);
+  font-family: var(--mono);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+/* One class per word of the status vocabulary the server publishes (apps/server/src/projections.ts,
+   AgentStatus). The app renames nothing on the way in. */
+.chip-running {
+  background: var(--run-wash);
+  color: var(--run);
+}
+
+.chip-settled {
+  background: var(--ok-wash);
+  color: var(--ok);
+}
+
+.chip-blocked {
+  background: var(--wait-wash);
+  color: var(--wait);
+}
+
+.chip-failed {
+  background: var(--fail-wash);
+  color: var(--fail);
+}
+
+.input {
+  height: 32px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--hair);
+  border-radius: var(--radius);
+  background: var(--bg);
+  font-size: var(--text-meta);
+  outline: none;
+}
+
+.input:focus {
+  border-color: var(--moss);
+}
+
+/* The problem banner renders the problem document's title and detail verbatim: the app writes no
+   error prose of its own (apps/server/src/problem.ts). */
+.problem {
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius);
+  background: var(--fail-wash);
+  color: var(--fail);
+}
+
+.problem-title {
+  font-weight: 600;
+}
+
+.problem-detail {
+  margin-top: var(--space-1);
+  font-size: var(--text-meta);
+  color: var(--ink-2);
+}
+
+/* The reading surface: 15px on 1.6 with a 65ch measure (voyager-design-system.md, principle 3). */
+.reading {
+  font-size: var(--text-read);
+  line-height: 1.6;
+  max-width: var(--measure);
+}
+
+/* The rail: the run's roots on --surface, behind the one hairline that divides the screen. Its
+   width is a number the layout measures against and lives with the other policy (src/policy.ts). */
+.rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  min-height: 0;
+  background: var(--surface);
+  border-right: 1px solid var(--hair);
+}
+
+.rail-totals {
+  padding: 0 var(--space-4) 10px;
+  font-size: 11px;
+  color: var(--faint);
+}
+
+.rail-search {
+  width: 100%;
+  height: 30px;
+}
+
+/* A rail row is two lines: the id and its age, then the state chip and the counts. Selected is the
+   moss wash with the 2px moss inset; hover is the sunken wash. */
+.rail-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-2) 14px;
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+
+.rail-row:hover {
+  background: var(--sunken);
+}
+
+.rail-row-selected,
+.rail-row-selected:hover {
+  background: var(--moss-wash);
+  box-shadow: inset 2px 0 0 var(--moss);
+}
+
+.rail-id {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rail-meta {
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* The pane's header: who this agent is, what it is doing, and the theme toggle at the right edge. */
+.agent-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4) var(--space-5) 10px;
+}
+
+/* The borderless icon button, which the theme toggle is the only user of. */
+.icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: color var(--fast) var(--ease);
+}
+
+.icon-button:hover {
+  color: var(--ink-2);
+}
+
+.icon-button:active {
+  transform: scale(0.97);
+}
+
+/* The scrub: a --sunken well holding a hairline track, the moss fill behind the handle, and the
+   mono readout that follows it (voyager-design-system.md, "Scrub"). */
+.scrub-well {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  height: 32px;
+  margin: 0 var(--space-5) var(--space-3);
+  padding: 0 var(--space-3);
+  background: var(--sunken);
+  border-radius: var(--radius);
+}
+
+.scrub-track {
+  position: relative;
+  flex: 1;
+  height: 3px;
+  background: var(--hair);
+  border-radius: 2px;
+}
+
+.scrub-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  height: 3px;
+  background: var(--moss);
+  border-radius: 2px;
+  opacity: 0.4;
+}
+
+/* The range input carries the behavior and nothing else: its track is transparent so the well's own
+   track shows through, and the thumb is the moss dot. */
+.scrub-input {
+  position: absolute;
+  inset: -12px 0;
+  width: 100%;
+  margin: 0;
+  background: none;
+  appearance: none;
+  cursor: pointer;
+}
+
+.scrub-input::-webkit-slider-runnable-track {
+  height: 3px;
+  background: none;
+}
+
+.scrub-input::-webkit-slider-thumb {
+  width: 11px;
+  height: 11px;
+  margin-top: -4px;
+  border: none;
+  border-radius: var(--radius-chip);
+  background: var(--moss);
+  appearance: none;
+}
+
+.scrub-input::-moz-range-track {
+  height: 3px;
+  background: none;
+}
+
+.scrub-input::-moz-range-thumb {
+  width: 11px;
+  height: 11px;
+  border: none;
+  border-radius: var(--radius-chip);
+  background: var(--moss);
+}
+
+.scrub-input:disabled {
+  cursor: default;
+}
+
+.scrub-readout {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+/* The line the pane shows when the stream is gone for good and the log is filling by poll. */
+.stream-note {
+  padding: 0 var(--space-5) var(--space-2);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* The event list: the log in log order, one row per event. */
+.events {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  padding: 0 var(--space-4) var(--space-4);
+}
+
+.event-row {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: 9px var(--space-2);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease);
+}
+
+.event-row:hover {
+  background: var(--sunken);
+}
+
+/* The stamp carries the event type verbatim, so it is mono and it is wide enough for the longest
+   name the log can hold rather than truncating one (mock.html, the event rows). */
+.event-stamp {
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--radius-chip);
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* One row is one line high, whatever the payload holds. The ellipsis is the browser's, at the width
+   src/policy.ts states. */
+.event-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 14.5px;
+  line-height: 1.55;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The clock and the span never crowd the summary: they hold their width and take the space left. */
+.event-time {
+  flex-shrink: 0;
+  margin-top: 4px;
+  margin-left: auto;
+  padding-left: var(--space-4);
+  font-size: 11px;
+  color: var(--faint);
+}
+
+/* An open row stops clamping its summary: the reader asked for the whole line. */
+.event-row-open .event-text {
+  white-space: pre-wrap;
+  overflow: visible;
+  text-overflow: clip;
+}
+
+/* An opened row's fields hang under it on one hairline: names in the left column, values in the
+   right, both on the page's own ground. No card and no fill, so the expansion reads as the row
+   continuing rather than as a second surface (mock.html, .ev-detail). */
+.event-detail {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 5px 20px;
+  margin: 2px 0 10px 10px;
+  padding-left: 18px;
+  border-left: 1px solid var(--hair);
+}
+
+.event-key {
+  font-size: 11.5px;
+  color: var(--faint);
+}
+
+/* A value wraps rather than scrolls, and it keeps the line breaks the payload had. Its measure is
+   a number the layout applies at the call site (src/policy.ts, FIELD_WIDTH). */
+.event-value {
+  font-size: 12.5px;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* A source body is the one payload that reads as a block, so it alone sits in a well. */
+.event-code {
+  padding: 8px 10px;
+  border-radius: 4px;
+  background: var(--sunken);
+  line-height: 1.5;
+}
+
+/* Entrances only, opacity only (voyager-design-system.md, principle 4). */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+.fade-in {
+  animation: fade-in var(--base) var(--ease) both;
+}
+
+/* The quiet line a pane with nothing to show stands on. */
+.pane-empty {
+  padding: var(--space-7) 0;
+  text-align: center;
+  font-size: var(--text-meta);
+  color: var(--faint);
+}

@@ -31,7 +31,7 @@ The process boots without model coordinates. It listens, answers `/healthz`, acc
 | Endpoint | Contract |
 | --- | --- |
 | `POST /agents/:id/messages` | Deliver one message, `{ id, text, input?, data? }`. Answers `202 { agent, turn }`, or `400` when the body states no `id` or no `text`. |
-| `GET /agents` | Every agent, parent before child, as a summary: id, parent, event count, last event time, and status (`resting`, `working`, `blocked`, `failed`). |
+| `GET /agents` | Every agent, parent before child, as a summary: id, parent, event count, last event time, and status (`settled`, `running`, `blocked`, `failed`). |
 | `GET /agents/:id/events` | The log as `{ seq, event }` rows. `after` starts the page past a sequence number, `limit` caps it (default 200, `DEFAULT_EVENT_LIMIT`), `types` filters by a comma list. |
 | `GET /agents/:id/events/stream` | The same log as `text/event-stream`, replayed from the cursor and then followed live. The tail re-reads every 50 milliseconds (`DEFAULT_SSE_POLL`) and writes a comment frame after 15 seconds of silence (`DEFAULT_SSE_HEARTBEAT`). |
 | `GET /agents/:id/turns` | Every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` evaluates the projection over a prefix of the log. |

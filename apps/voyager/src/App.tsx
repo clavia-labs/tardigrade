@@ -1,0 +1,69 @@
+import { useEffect, useState, type ReactElement } from "react"
+
+import { Agent } from "./Agent"
+import { listAgents, VoyagerError, type AgentSummary } from "./api"
+import { useRoute } from "./nav"
+import { ROSTER_POLL_MS } from "./policy"
+import { Rail } from "./Rail"
+import { EMPTY_ROSTER, rosterOf, type Roster } from "./roster"
+
+// The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
+// selected agent's log (mock.html). The reader chooses on the left and reads on the right, and
+// there is nowhere else to go: voyager reads a run and never writes to it.
+
+interface Reading {
+  readonly roster: Roster
+  // When the listing was read, so every age on screen is measured from one instant.
+  readonly at: number
+}
+
+// useRoster polls GET /agents once for the whole screen: the rail's rows and totals, and the
+// header's status chip, are the same listing read twice rather than two calls. The last good
+// reading survives a failure, so a server restart dims the rail rather than blanking it.
+const useRoster = (intervalMs: number) => {
+  const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
+  const [summaries, setSummaries] = useState<ReadonlyArray<AgentSummary>>([])
+  const [problem, setProblem] = useState<VoyagerError | undefined>(undefined)
+
+  useEffect(() => {
+    let live = true
+    const read = async () => {
+      try {
+        const all = await listAgents()
+        if (!live) return
+        setSummaries(all)
+        setReading({ roster: rosterOf(all), at: Date.now() })
+        setProblem(undefined)
+      } catch (error) {
+        if (!live) return
+        setProblem(error instanceof VoyagerError ? error : new VoyagerError({ title: String(error), status: 0 }))
+      }
+    }
+    void read()
+    const timer = setInterval(read, intervalMs)
+    return () => {
+      live = false
+      clearInterval(timer)
+    }
+  }, [intervalMs])
+
+  return { reading, summaries, problem }
+}
+
+export const App = (): ReactElement => {
+  const route = useRoute()
+  const { problem, reading, summaries } = useRoster(ROSTER_POLL_MS)
+  const status = summaries.find((summary) => summary.id === route.agent)?.status
+  return (
+    <div style={{ height: "100%", display: "flex", overflow: "hidden" }}>
+      <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.agent} />
+      <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
+        {route.agent === undefined ? (
+          <div className="mono pane-empty">select a run</div>
+        ) : (
+          <Agent id={route.agent} status={status} />
+        )}
+      </main>
+    </div>
+  )
+}

@@ -39,21 +39,21 @@ const reply = (id: string, text = "done"): Event =>
   ({ type: "MessageReceived", id: replyId(id), text, outcome: "completed", at: at() }) as Event
 
 describe("statusOf", () => {
-  test("an empty log rests", () => {
-    expect(statusOf([])).toBe("resting")
+  test("an empty log is settled", () => {
+    expect(statusOf([])).toBe("settled")
   })
 
-  test("a settled turn rests", () => {
+  test("a turn with a terminal is settled", () => {
     const log = [inbound("m1"), dispatched("t1"), settledCode("t1"), completed("m1", "42")]
-    expect(statusOf(log)).toBe("resting")
+    expect(statusOf(log)).toBe("settled")
   })
 
-  test("a fresh turn is working", () => {
-    expect(statusOf([inbound("m1")])).toBe("working")
+  test("a fresh turn is running", () => {
+    expect(statusOf([inbound("m1")])).toBe("running")
   })
 
-  test("an unsettled execution that can move is working", () => {
-    expect(statusOf([inbound("m1"), dispatched("t1"), called("t1.0")])).toBe("working")
+  test("an unsettled execution that can move is running", () => {
+    expect(statusOf([inbound("m1"), dispatched("t1"), called("t1.0")])).toBe("running")
   })
 
   test("an open BlockedOn with the reply away is blocked", () => {
@@ -69,7 +69,7 @@ describe("statusOf", () => {
       blocked("t1.0", replyId("t1.0")),
       reply("t1.0")
     ]
-    expect(statusOf(log)).toBe("working")
+    expect(statusOf(log)).toBe("running")
   })
 
   test("a failed last turn with nothing owed is failed", () => {
@@ -77,9 +77,9 @@ describe("statusOf", () => {
     expect(statusOf(log)).toBe("failed")
   })
 
-  test("a failed turn followed by a live one is working, not failed", () => {
+  test("a failed turn followed by a live one is running, not failed", () => {
     const log = [inbound("m1"), failed("m1", "boom"), inbound("m2")]
-    expect(statusOf(log)).toBe("working")
+    expect(statusOf(log)).toBe("running")
   })
 })
 
@@ -90,7 +90,7 @@ describe("summaryOf", () => {
     expect(summary.id).toBe("root")
     expect(summary.events).toBe(2)
     expect(summary.lastAt).toBe(log[1]!["at"] as number)
-    expect(summary.status).toBe("resting")
+    expect(summary.status).toBe("settled")
     expect("parent" in summary).toBe(false)
   })
 
@@ -127,7 +127,7 @@ describe("treeOf", () => {
 
   test("every node carries its own summary, and a child names its parent", () => {
     const root = treeOf(forest())[0]!
-    expect(root.status).toBe("working")
+    expect(root.status).toBe("running")
     const child = root.children[0]!
     expect(child.parent).toBe("root")
     expect(child.events).toBe(3)
