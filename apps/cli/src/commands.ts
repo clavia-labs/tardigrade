@@ -9,7 +9,7 @@ import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
-import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
+import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
@@ -390,6 +390,19 @@ export const lsCommand = Command.make("ls", remote, (flags) =>
     Command.withAlias("list")
   )
 
+export const actorsCommand = Command.make("actors", { url, token, json }, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const actors = yield* call(() => client.actors())
+    yield* Console.log(flags.json ? jsonOf(actors) : actorsTable(actors))
+  })).pipe(
+    Command.withDescription("List every actor available on the server."),
+    Command.withExamples([
+      { command: "tdg actors", description: "List actors as a table" },
+      { command: "tdg actors --json", description: "Print the actor summaries as JSON" }
+    ])
+  )
+
 export const eventsCommand = Command.make("events", {
   thread: Argument.string("thread").pipe(Argument.withDescription("The thread whose log to read")),
   after: Flag.integer("after").pipe(
@@ -431,5 +444,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, buildCommand, pushCommand, devCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
 )
