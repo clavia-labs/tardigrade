@@ -83,8 +83,10 @@ export const ANNOTATION_DEFAULTS: Required<MethodAnnotations> = {
   openWorldHint: true
 }
 
-// annotationsOf resolves one method's annotations over the dangerous defaults.
-export const annotationsOf = (pkg: Package, method: string): Required<MethodAnnotations> => ({
+// annotationsOf resolves one method's annotations over the dangerous defaults. It reads the name
+// table only, so a package's requirements are irrelevant to it: `unknown` is the shape every
+// `Package<R>` widens to.
+export const annotationsOf = (pkg: Package<unknown>, method: string): Required<MethodAnnotations> => ({
   ...ANNOTATION_DEFAULTS,
   ...pkg.annotations?.[method]
 })
@@ -104,7 +106,12 @@ export const annotationsOf = (pkg: Package, method: string): Required<MethodAnno
 // Inbound delivery, where a provider's webhooks or polls become `MessageReceived`, is
 // deliberately outside Package: it belongs to the host boundary and gets its own concept once a
 // consumer exists.
-export interface Package {
+//
+// `R` is what a package's methods need from the environment, the dual of `Capability<R>` on the
+// model face. A package that reaches for a service names it in its type, and the reactor that
+// runs the package must declare the same requirement (execute.ts, codeReactorFor); a package
+// that reaches for nothing is `Package<never>` and runs anywhere.
+export interface Package<R = never> {
   readonly name: string
   readonly description: string
   // Method docs, two levels: describe({name}) lists names and one-liners; describe({name,
@@ -119,7 +126,7 @@ export interface Package {
   // `tasks.result`) fail it when a reply has not landed yet, and every other method's `never`
   // error is a subtype of it, so nothing else changes shape.
   readonly methods: Readonly<
-    Record<string, (args: unknown, ctx: { readonly callId: string }) => Effect.Effect<unknown, Park>>
+    Record<string, (args: unknown, ctx: { readonly callId: string }) => Effect.Effect<unknown, Park, R>>
   >
 }
 
@@ -127,11 +134,18 @@ export interface Package {
 // must never send messages is bound to a registry that holds no sending package, and the code
 // cannot name what the registry does not hold. The default registry holds nothing, so the
 // unwired case is the powerless one.
-export interface PackagesService {
-  readonly resolve: (name: string) => Package | undefined
+export interface PackagesService<R = never> {
+  readonly resolve: (name: string) => Package<R> | undefined
   readonly list: () => Effect.Effect<ReadonlyArray<{ readonly name: string; readonly description: string }>>
 }
 
-export const Packages: Context.Reference<PackagesService> = Context.Reference("code/Packages", {
-  defaultValue: (): PackagesService => ({ resolve: () => undefined, list: () => Effect.succeed([]) })
+// The reference stands at `unknown`, the widest registry: a Context.Reference carries one type,
+// and `Package<R>` widens to `Package<unknown>` for every R, so a registry of service-needing
+// packages mounts here without a cast. What the packages need is checked at the two ends that
+// can see it: the package value states its own R, and the reactor that runs the registry
+// declares the environment it will run them in (execute.ts, codeReactorFor; the funnel restores
+// the reactor's R over the erased reference). A registry typed at `never` refuses a package that
+// names a service (execute.test.ts, "a package's requirements ride its type").
+export const Packages: Context.Reference<PackagesService<unknown>> = Context.Reference("code/Packages", {
+  defaultValue: (): PackagesService<unknown> => ({ resolve: () => undefined, list: () => Effect.succeed([]) })
 })
