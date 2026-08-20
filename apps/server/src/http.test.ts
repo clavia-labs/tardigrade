@@ -5,7 +5,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 
 import { DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
 import { Agents } from "./host"
-import { layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
+import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
 // The HTTP surface against a real Bun server on an ephemeral port, so the assertions are about
 // wire behavior rather than about the shape of a layer.
@@ -141,5 +141,27 @@ describe("auth", () => {
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
     expect(health.status).toBe(200)
+  })
+})
+
+describe("cors", () => {
+  test("the preflight allows what the client sends", async () => {
+    // A browser asks before it sends, and it sends what the derived client puts on a request: the
+    // bearer token, the body's content type, and the span the HTTP client propagates
+    // (packages/client/src/client.ts). A header missing from the answer is a call the browser never
+    // makes.
+    const allowed = await serving({}, (client) =>
+      Effect.map(
+        client.execute(
+          HttpClientRequest.setHeaders(HttpClientRequest.options("/agents"), {
+            origin: "http://localhost:5173",
+            "access-control-request-method": "GET",
+            "access-control-request-headers": ALLOWED_HEADERS.join(",")
+          })
+        ),
+        (response) => response.headers["access-control-allow-headers"] ?? ""
+      ))
+    const stated = allowed.toLowerCase()
+    for (const header of ALLOWED_HEADERS) expect(stated).toContain(header)
   })
 })

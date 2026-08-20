@@ -28,7 +28,7 @@
     },
     "apps/voyager": {
       "entry": [
-        "src/api.ts",
+        "src/client.ts",
         "src/nav.ts",
         "src/policy.ts"
       ],

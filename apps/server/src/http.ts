@@ -1,13 +1,18 @@
 import { Context, Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
-import { layerApi } from "./api"
+import { layerAgentsGroup, layerStream, type ApiOptions } from "./api"
 import { ServerConfig } from "./config"
+import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
+import { layerRequestProblems } from "./contract"
 
-// The HTTP surface. Routes are layers over effect's own HttpRouter, so the server is assembled the
-// way the rest of the repository is assembled, and the Bun binding is the only platform-specific
-// piece (main.ts, http.test.ts). This module owns the conventions every later route inherits: the
-// error body, the bearer gate, and the health probe that reads the driver rather than the process.
+// The HTTP surface. The JSON routes are one declaration (contract.ts) implemented through
+// HttpApiBuilder, and everything around them is a layer over effect's own HttpRouter, so the server
+// is assembled the way the rest of the repository is assembled and the Bun binding is the only
+// platform-specific piece (main.ts, http.test.ts). This module owns the conventions every route
+// inherits: the error body, the bearer gate, and the health probe that reads the driver rather than
+// the process.
 
 // The health probe's view of the host driver. The server never asks the driver to run; it asks what
 // the driver is doing, which is the whole of "the server drives continuously" from the client's
@@ -32,8 +37,10 @@ import { problem } from "./problem"
 export { problem, type Problem, PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./problem"
 
 // Paths the bearer gate lets through. /healthz is a liveness probe: a supervisor that has to hold a
-// credential to learn the process is up cannot tell an outage from a misconfiguration.
-export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz"]
+// credential to learn the process is up cannot tell an outage from a misconfiguration. The document
+// and the page that renders it describe the door rather than open it, so they are open too
+// (contract.test.ts, "stays open when a token closes the API").
+export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", OPENAPI_PATH, DOCS_PATH]
 
 const pathOf = (url: string): string => {
   const query = url.indexOf("?")
@@ -97,25 +104,20 @@ export const layerAuth = HttpRouter.middleware(
   { global: true }
 )
 
-export interface Health {
-  readonly status: "resting" | "driving"
-  readonly dirty: number
-}
+// The probe's body is the wire type the declaration states (contract.ts, Health).
+export type { Health }
 
 // 200 whenever the host answers, carrying the driver's state and the count of lanes that still owe
-// work (apps-server-spec.md, "GET /healthz").
-export const layerHealthz = HttpRouter.add(
-  "GET",
-  "/healthz",
-  Effect.gen(function*() {
-    const gauge = yield* DriverGauge
-    const body: Health = {
-      status: (yield* gauge.resting) ? "resting" : "driving",
-      dirty: yield* gauge.dirty
-    }
-    return HttpServerResponse.jsonUnsafe(body)
-  })
-)
+// work (docs/how-to/server.md, "Endpoints").
+export const layerHealthGroup = HttpApiBuilder.group(Api, "health", (handlers) =>
+  handlers.handle("healthz", () =>
+    Effect.gen(function*() {
+      const gauge = yield* DriverGauge
+      return {
+        status: (yield* gauge.resting) ? "resting" as const : "driving" as const,
+        dirty: yield* gauge.dirty
+      }
+    })))
 
 // A route the router did not match is a problem document like any other failure, so a client never
 // has to parse two error shapes.
@@ -132,27 +134,44 @@ export const layerNotFound = HttpRouter.add(
   )
 )
 
+// The headers a browser may send. `traceparent` and `b3` are on the list because the derived client
+// propagates its span into every request (packages/client, HttpClient tracing), and a preflight
+// that refuses them refuses the call: a header this server's own client sends is a header this
+// server accepts (http.test.ts, "the preflight allows what the client sends").
+export const ALLOWED_HEADERS: ReadonlyArray<string> = [
+  "authorization",
+  "content-type",
+  "last-event-id",
+  "traceparent",
+  "b3"
+]
+
 // Permissive on every origin, because the process is meant to bind to localhost and the voyager is
 // served from a Vite dev server on another port during development (apps-server-spec.md,
 // "Conventions"). An operator who exposes the port relies on TARDIGRADE_TOKEN, not on the browser.
 export const layerCors = HttpRouter.cors({
-  allowedHeaders: ["authorization", "content-type", "last-event-id"],
+  allowedHeaders: [...ALLOWED_HEADERS],
   exposedHeaders: ["content-type"]
 })
 
-// The application: every route, plus the conventions that wrap them. Routes added by later modules
-// merge in here, and inherit the gate and the error shape by being part of the same router.
-//
-// The agent routes are suspended because api.ts reads this module's conventions and this module
-// reads its routes: whichever of the two a consumer imports first, the merge names `layerApi` after
-// both module bodies have run (api.test.ts imports api.ts first).
-export const layerApp = Layer.mergeAll(
-  layerApi(),
-  layerHealthz,
-  layerNotFound,
-  layerCors,
-  layerAuth
-)
+// The application: the declared API, the stream beside it, the document and the page derived from
+// the same declaration, plus the conventions that wrap them all. A route inherits the gate and the
+// error shape by being part of the same router.
+export const layerApp = (options: ApiOptions = {}) =>
+  Layer.mergeAll(
+    Layer.provide(
+      Layer.provide(HttpApiBuilder.layer(Api, { openapiPath: OPENAPI_PATH }), [
+        layerAgentsGroup(options),
+        layerHealthGroup
+      ]),
+      layerRequestProblems
+    ),
+    HttpApiScalar.layer(Api, { path: DOCS_PATH }),
+    layerStream(options),
+    layerNotFound,
+    layerCors,
+    layerAuth
+  )
 
 // serve starts the application on whichever HttpServer is provided, which is the only seam a
 // platform binding needs: Bun in main.ts, an ephemeral test server in http.test.ts. The request log
@@ -161,4 +180,5 @@ export const layerApp = Layer.mergeAll(
 export const serve = (options?: {
   readonly disableLogger?: boolean | undefined
   readonly disableListenLog?: boolean
-}) => HttpRouter.serve(layerApp, options)
+  readonly api?: ApiOptions
+}) => HttpRouter.serve(layerApp(options?.api), options)

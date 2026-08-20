@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { Event, EventRow } from "./api"
+import type { Event, EventRow } from "@clavia/tardigrade-client"
 import {
   clockOf,
   fieldsOf,

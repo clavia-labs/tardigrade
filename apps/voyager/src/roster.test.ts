@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import type { AgentSummary } from "./api"
+import type { AgentSummary } from "@clavia/tardigrade-client"
 import { agoOf, countsOf, matches, rosterOf } from "./roster"
 
 // The rail's decisions: which agents are rows, how big each root's family is, what a row's counts

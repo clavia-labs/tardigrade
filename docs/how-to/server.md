@@ -38,8 +38,26 @@ The process boots without model coordinates. It listens, answers `/healthz`, acc
 | `GET /agents/:id/turns/:turn` | One turn's boundary, the same shape. This is the poll target for whether a run finished. |
 | `POST /agents/:id/turns/:turn/resume` | Resume a failed turn. `202` with the turn handle, `409` when the turn did not fail or belongs to a spent epoch, carrying the library's own reason. |
 | `GET /healthz` | `200` while the host answers, carrying `status` (`resting` or `driving`) and `dirty`, the count of drive passes owed. Open even when a token is set, so a supervisor can tell an outage from a misconfiguration. |
+| `GET /openapi.json` | The OpenAPI document, derived from the same declaration the routes are built from (`OPENAPI_PATH`). Open even when a token is set. |
+| `GET /docs` | That document rendered as a reference page (`DOCS_PATH`). Open even when a token is set. |
 
-Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` on a read means the agent has never existed; an existing agent whose filter matches nothing answers `200 []`.
+Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` on a read means the agent has never existed; an existing agent whose filter matches nothing answers `200 []`. A request that does not match what the endpoint accepts is `400 invalid-request`, whose `detail` names the part that was refused and the fields at fault, as in ``The request body is not what this endpoint accepts. `text` is missing.``
+
+## The routes are one declaration
+
+Every JSON route is an `HttpApiEndpoint` with a Schema for its path parameters, its query, its success body, and each failure it can answer with. The endpoints are grouped and the groups make one `HttpApi`. That declaration is a package of its own, because it has three readers and only one of them is the server: the server implements it through `HttpApiBuilder`, the OpenAPI document is generated from it, and the client is derived from it. The Schemas are the one definition of the wire types: the projections keep hand-written types for the read side, and a compile-time assertion holds the two together, so neither can drift alone.
+
+Because the declaration decides what a request may hold, it is also what refuses one. A sequence number is declared as a whole number at or above zero and a message is declared as a non-empty `id` with a `text`, so nothing hand-parses either. API-wide middleware turns any such refusal into the same problem document, which is why a refused request reads like every other failure and why a route added later inherits the behavior without stating it.
+
+The event stream is the one route outside the declaration. `HttpApi` is request-and-response shaped, and the tail hands back a connection that outlives its handler and carries its own cursor, so it stays a plain router route beside the declared app and inherits the same bearer gate by being part of the same router.
+
+## One client, derived
+
+A caller does not hand-write requests against this API. `makeClient({ baseUrl, token })` reads the same declaration and answers with one method per endpoint, so a call that compiles is a call the server declared. The token rides an `authorization` header on every request. A failed call rejects with the problem document's own four fields, including on a status the declaration never named, because every route answers `problem+json` and the body is read before the status line is fallen back on.
+
+The tail is the one call the client hand-writes, because the stream is the one route outside the declaration. It takes the connection as an argument, defaulting to the runtime's `EventSource`, so a consumer outside a browser supplies its own. It cannot carry the token, since `EventSource` sends no headers; against a server started with a token the tail is refused and a caller falls back to polling the events endpoint, which is an ordinary request.
+
+The client carries Schema into whatever loads it, a browser included. That is the accepted price of one definition of the wire, and the escape hatch, if it ever stops being worth paying, is a zero-dependency client generated from the OpenAPI document the declaration already produces.
 
 ## Creation is delivery
 

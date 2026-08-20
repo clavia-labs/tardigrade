@@ -20,7 +20,7 @@ export const ICON_SIZE = 15
 export const ROSTER_POLL_MS = 2000
 
 // How often the event list re-reads the log after the stream is gone for good. The stream is the
-// live path and this is the fallback, so the interval matches the rail's (src/api.ts, stream).
+// live path and this is the fallback, so the interval matches the rail's (packages/client/src/stream.ts).
 export const LOG_POLL_MS = 2000
 
 // How many bars the window's density strip holds. Each bar counts the events whose time falls in

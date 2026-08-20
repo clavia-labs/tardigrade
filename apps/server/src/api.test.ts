@@ -6,8 +6,9 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { Infer, type InferRequest } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 
-import { openStreams, type EventRow } from "./api"
+import { openStreams } from "./api"
 import { layerConfig, readConfig } from "./config"
+import type { EventRow } from "@clavia/tardigrade-client/contract"
 import { layerAgents } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import type { AgentSummary, AgentNode, TurnView } from "./projections"
@@ -114,11 +115,15 @@ describe("messages", () => {
         { status: missingId.status, type: missingId.headers.get("content-type"), body: await missingId.json() }
       ]
     })
+    // The declaration refuses the body, and the refusal is a problem document naming the field
+    // that is missing (contract.ts, layerRequestProblems).
     for (const refused of problems) {
       expect(refused.status).toBe(400)
       expect(refused.type).toContain(PROBLEM_CONTENT_TYPE)
-      expect(refused.body).toMatchObject({ status: 400, title: "Invalid Message" })
+      expect(refused.body).toMatchObject({ status: 400, title: "Invalid Request" })
     }
+    expect((problems[0]!.body as { detail: string }).detail).toContain("`text` is missing")
+    expect((problems[1]!.body as { detail: string }).detail).toContain("`id` is missing")
   })
 
   test("a redelivered message id answers the same and writes nothing", async () => {

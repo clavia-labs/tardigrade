@@ -1,17 +1,18 @@
 import { HttpServerResponse } from "effect/unstable/http"
+import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, type Problem } from "@clavia/tardigrade-client/contract"
 
-export const PROBLEM_CONTENT_TYPE = "application/problem+json"
+// Rendering a problem document as a response. The document's own vocabulary is the declaration's
+// (packages/client/src/contract.ts), because a client matches on the same `type` URI this server
+// writes; what belongs here is only how the bytes leave.
+export { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, type Problem }
 
-// The base of the `type` URI in a problem document. RFC 9457 wants a URI that identifies the error
-// kind; a client matches on it rather than on the human title.
-export const PROBLEM_TYPE_BASE = "https://tardigrade.dev/problems/"
-
-export interface Problem {
-  readonly type: string
-  readonly title: string
-  readonly status: number
-  readonly detail?: string
-}
+// problemResponse renders a problem document as the response that carries it. A route that already
+// holds the document uses this; a route that states one inline uses `problem` below.
+export const problemResponse = (document: Problem): HttpServerResponse.HttpServerResponse =>
+  HttpServerResponse.jsonUnsafe(document, {
+    status: document.status,
+    contentType: PROBLEM_CONTENT_TYPE
+  })
 
 // problem renders an error as application/problem+json (apps-server-spec.md, "Conventions"). Every
 // failing route answers in this one shape, so a client parses errors once.
@@ -20,15 +21,10 @@ export const problem = (options: {
   readonly title: string
   readonly kind: string
   readonly detail?: string | undefined
-}): HttpServerResponse.HttpServerResponse => {
-  const body: Problem = {
+}): HttpServerResponse.HttpServerResponse =>
+  problemResponse({
     type: `${PROBLEM_TYPE_BASE}${options.kind}`,
     title: options.title,
     status: options.status,
     ...(options.detail === undefined ? {} : { detail: options.detail })
-  }
-  return HttpServerResponse.jsonUnsafe(body, {
-    status: options.status,
-    contentType: PROBLEM_CONTENT_TYPE
   })
-}

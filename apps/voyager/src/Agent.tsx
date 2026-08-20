@@ -1,7 +1,9 @@
 import { Moon, Sun } from "@phosphor-icons/react"
 import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
-import { events, stream, VoyagerError, type AgentStatus, type EventRow } from "./api"
+import { NO_ANSWER, ProblemError, type AgentStatus, type EventRow } from "@clavia/tardigrade-client"
+
+import { client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
 import { BOTTOM_SLACK_PX, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
@@ -11,19 +13,19 @@ import { WindowBrush } from "./WindowBrush"
 
 // The center pane: one agent's log as a flat chronological list under its own header and the window
 // brush (mock.html, the main element). The pane holds cursors only: which agent, which range the
-// window holds, which row is open. Every fact on it is the server's, read through src/api.ts.
+// window holds, which row is open. Every fact on it is the server's, read through src/client.ts.
 
-const errorOf = (error: unknown): VoyagerError =>
-  error instanceof VoyagerError ? error : new VoyagerError({ title: String(error), status: 0 })
+const errorOf = (error: unknown): ProblemError =>
+  error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER })
 
 const lastSeq = (rows: ReadonlyArray<EventRow>): number => rows[rows.length - 1]?.seq ?? 0
 
 // useLog holds the pane's rows. The first read is the whole log and the stream carries it forward
 // from that seq; when the browser gives up reconnecting, the same rows keep filling from `events`,
-// which is an ordinary fetch and survives what EventSource cannot (src/api.ts, stream).
+// which is an ordinary fetch and survives what EventSource cannot (packages/client/src/stream.ts).
 const useLog = (id: string, pollMs: number) => {
   const [rows, setRows] = useState<ReadonlyArray<EventRow>>([])
-  const [problem, setProblem] = useState<VoyagerError | undefined>(undefined)
+  const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
   const [dropped, setDropped] = useState(false)
   const [loaded, setLoaded] = useState(false)
   // The stream's resume point and the poll's cursor are the same number, read outside render so a
@@ -37,14 +39,14 @@ const useLog = (id: string, pollMs: number) => {
     setLoaded(false)
     const read = async () => {
       try {
-        const first = await events(id)
+        const first = await client.events(id)
         if (!attached) return
         seen.current = lastSeq(first)
         setRows(first)
         setProblem(undefined)
         setLoaded(true)
         setDropped(false)
-        unsubscribe = stream(id, {
+        unsubscribe = client.follow(id, {
           after: seen.current,
           onEvent: (row) => {
             seen.current = Math.max(seen.current, row.seq)
@@ -68,7 +70,7 @@ const useLog = (id: string, pollMs: number) => {
   useEffect(() => {
     if (!dropped) return
     const timer = setInterval(() => {
-      void events(id, { after: seen.current })
+      void client.events(id, { after: seen.current })
         .then((batch) => {
           seen.current = Math.max(seen.current, lastSeq(batch))
           setRows((held) => merged(held, batch))
@@ -171,7 +173,7 @@ const Row = ({
   )
 }
 
-const Problem = ({ problem }: { readonly problem: VoyagerError }): ReactElement => (
+const Problem = ({ problem }: { readonly problem: ProblemError }): ReactElement => (
   <div className="problem" style={{ margin: "0 var(--space-5) var(--space-3)" }}>
     <div className="problem-title">{problem.title}</div>
     {problem.detail === undefined ? null : <div className="problem-detail">{problem.detail}</div>}

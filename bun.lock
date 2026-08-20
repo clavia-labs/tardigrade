@@ -21,6 +21,7 @@
       "dependencies": {
         "@clavia/tardigrade": "workspace:*",
         "@clavia/tardigrade-bun": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
@@ -33,6 +34,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@base-ui-components/react": "1.0.0-rc.0",
+        "@clavia/tardigrade-client": "workspace:*",
         "@phosphor-icons/react": "^2.1.10",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
@@ -57,6 +59,14 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+    },
+    "packages/client": {
+      "name": "@clavia/tardigrade-client",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-core": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
     },
@@ -176,6 +186,8 @@
     "@clavia/tardigrade": ["@clavia/tardigrade@workspace:packages/agent"],
 
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
+
+    "@clavia/tardigrade-client": ["@clavia/tardigrade-client@workspace:packages/client"],
 
     "@clavia/tardigrade-code": ["@clavia/tardigrade-code@workspace:packages/code"],
 
