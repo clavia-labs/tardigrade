@@ -19,7 +19,7 @@ export const MessageReceived = Schema.Struct({
   from: Schema.optional(Schema.String),
   replyTo: Schema.optional(Schema.String),
   output: Schema.optional(Schema.Unknown), // the expected output's JSON schema; structured turns end via the answer tool
-
+  outcome: Schema.optional(Schema.Literals(["completed", "failed"])), // a reply's terminal, typed (replyEvent below)
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
   at: Schema.Number
@@ -41,3 +41,28 @@ export const messageReceived = (fields: {
   readonly at: number
   readonly [extra: string]: unknown
 }): Event => ({ type: "MessageReceived", ...fields }) as Event
+
+// REPLY_SUFFIX is the reply convention: a reply answers id with id.reply, so a redelivery
+// dedups against the same id at the receiver.
+export const REPLY_SUFFIX = ".reply"
+export const replyId = (id: string): string => `${id}${REPLY_SUFFIX}`
+
+// replyEvent is the shape agents and task runs send home when the caller named a replyTo.
+// The receiver folds a plain MessageReceived with a typed outcome: no reader sniffs text for
+// failure. The id is <id>.reply (REPLY_SUFFIX), stable across redelivery, and the receiver's
+// msg: key absorbs a duplicate, so a second reply for the same call cannot land
+// (tla/Delivery.tla, ReplyIntegrity).
+export const replyEvent = (args: {
+  readonly id: string
+  readonly text: string
+  readonly outcome: "completed" | "failed"
+  readonly from: string
+  readonly at: number
+}): Event => ({
+  type: "MessageReceived",
+  id: replyId(args.id),
+  text: args.text,
+  outcome: args.outcome,
+  from: args.from,
+  at: args.at
+})
