@@ -2,8 +2,11 @@ import { Clock, Console, Effect, Layer, Option } from "effect"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
 import { NO_ANSWER, ProblemError, type Client, type TurnView } from "@clavia/tardigrade-client"
 
-import { resolveRemote, resolveServer } from "./config"
+import { modelIsConfigured } from "@clavia/tardigrade-server/host"
+
+import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { dev } from "./dev"
+import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
 
@@ -79,8 +82,10 @@ const clientOf = (flags: {
   readonly url: Option.Option<string>
   readonly token: Option.Option<string>
 }) =>
-  Effect.map(Cli, (cli) => {
-    const resolved = resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env)
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const file = yield* readFileConfig(cli.env)
+    const resolved = resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env, file)
     return cli.openClient({ baseUrl: resolved.baseUrl, token: resolved.token })
   })
 
@@ -113,6 +118,29 @@ const settle = (
     }
   })
 
+// What `tdg dev` says when no source named a model. It names the command that fixes it and stops
+// there: the process still boots, still answers every read, and every turn it is asked to run
+// fails with the server's own sentence.
+export const NO_MODEL_NOTICE =
+  "no model is configured, so reads work and turns fail. Run `tdg setup` to write one, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID."
+
+export const setupCommand = Command.make("setup", { json }, (flags) =>
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const home = homeOf(cli.env)
+    if (home === undefined) return yield* Effect.fail(userErrorOf(HOME_MISSING))
+    const answers = yield* Effect.mapError(setupPrompt, userErrorOf)
+    const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
+    yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
+  })).pipe(
+    Command.withDescription(
+      "Ask for a provider, a model id, and an API key, and write them to ~/.tardigrade/config.json at 0600. The key is stored and never printed back."
+    ),
+    Command.withExamples([
+      { command: "tdg setup", description: "Answer four prompts and write the file" }
+    ])
+  )
+
 export const devCommand = Command.make("dev", {
   port: Flag.integer("port").pipe(
     Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
@@ -127,21 +155,24 @@ export const devCommand = Command.make("dev", {
     Flag.optional
   )
 }, (flags) =>
-  Effect.flatMap(Cli, (cli) =>
-    Effect.flatMap(
-      Effect.try({
-        try: () =>
-          dev({
-            config: resolveServer(
-              { port: Option.getOrUndefined(flags.port), db: stated(flags.db) },
-              cli.env
-            ),
-            assets: stated(flags.ui)
-          }),
-        catch: userErrorOf
-      }),
-      (layer) => Effect.mapError(Layer.launch(layer), userErrorOf)
-    ))).pipe(
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const file = yield* readFileConfig(cli.env)
+    const config = yield* Effect.try({
+      try: () => resolveServer({ port: Option.getOrUndefined(flags.port), db: stated(flags.db) }, cli.env, file),
+      catch: userErrorOf
+    })
+    // The notice is one line on boot, and the process serves anyway: every read is a projection of
+    // a log and none of them needs a model, so a server with no model is a useful server that
+    // cannot run a turn (apps/server/src/host.ts, MISSING_MODEL). Nothing is prompted here; asking
+    // is `tdg setup`, and a boot that stopped to ask would be a boot a script could not do.
+    if (!modelIsConfigured(config)) yield* Console.log(NO_MODEL_NOTICE)
+    const layer = yield* Effect.try({
+      try: () => dev({ config, assets: stated(flags.ui) }),
+      catch: userErrorOf
+    })
+    yield* Effect.mapError(Layer.launch(layer), userErrorOf)
+  })).pipe(
       Command.withDescription(
         "Boot the API and serve the built UI at one URL, ungated on loopback. One process, one port: the API paths are the server's own and everything else is the UI."
       ),
@@ -260,5 +291,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([devCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, devCommand, runCommand, sendCommand, lsCommand, eventsCommand])
 )

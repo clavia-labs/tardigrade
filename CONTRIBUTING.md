@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-Install the [supported Bun runtime](docs/explanations/runtime-and-recovery.md#runtime). Bun is the runtime, package manager, and test runner, so it is the only tool you need to install.
+Install Bun 1.4 or later. Bun is the runtime, package manager, and test runner, so it is the only tool you need to install.
 
 ## Setup
 

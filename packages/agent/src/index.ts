@@ -34,6 +34,28 @@ export { agentsPackage, type SpawnOptions } from "./spawn"
 // platform lights its third verb up with.
 export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@clavia/tardigrade-code/workspace"
 
+// The two packages that let an assembly reach past its own log: the files under one root, and HTTP
+// to any host. Both are built on Effect's platform services, so the host that mounts them binds a
+// FileSystem, a Path, and an HttpClient and nothing else changes (packages/code/src/files.ts,
+// packages/code/src/fetch.ts).
+export {
+  filesPackage,
+  filesPolicyOf,
+  defaultFilesRoot,
+  DEFAULT_FILES_READ_CHARS,
+  DEFAULT_FILES_MAX_ENTRIES,
+  DEFAULT_FILES_MAX_MATCHES,
+  DEFAULT_FILES_SKIP,
+  type FilesPolicy
+} from "@clavia/tardigrade-code/files"
+export {
+  fetchPackage,
+  fetchPolicyOf,
+  DEFAULT_FETCH_POLICY,
+  DEFAULT_FETCH_BODY_CHARS,
+  type FetchPolicy
+} from "@clavia/tardigrade-code/fetch"
+
 // The capability assembly: code mode is the default, and an agent measured against a fixed
 // tool list mounts its own (capability.ts).
 export { agentOf, renderOf, codeMode, codeModeFor, CODE_SYSTEM, codeSystemFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"

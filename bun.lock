@@ -92,6 +92,7 @@
         "effect": "4.0.0-rc.110",
       },
       "devDependencies": {
+        "@effect/platform-bun": "4.0.0-rc.110",
         "fast-check": "^4.9.0",
       },
     },

@@ -80,7 +80,13 @@ type RequirementsOf<C> = C extends Capability<infer R> ? R : never
 // and a prefix collision is composeKeys' construction-time error. Two capabilities deriving the
 // same tool name collide at construction too, checked over the empty log (a log-gated duplicate
 // still routes to the first capability that recognizes it).
-export const agentOf = <const Caps extends ReadonlyArray<Capability<never> | Capability<AgentR>>>(
+// The constraint is `Capability<unknown>` rather than `Capability<AgentR>`: a capability may need a
+// service the runtime knows nothing about (a file system, an HTTP client), and the union of those
+// needs is what the returned actor's type carries to the host that must bind them
+// (apps/server/src/host.ts). Narrowing is still refused, because R is covariant: a capability that
+// needs more cannot pass as one that needs less (capability.test.ts, "a mounted package's
+// requirements ride the capability's type").
+export const agentOf = <const Caps extends ReadonlyArray<Capability<never> | Capability<unknown>>>(
   caps: Caps,
   policy: Partial<InferPolicy> = {}
 ): Actor<AgentR | RequirementsOf<Caps[number]>> => {
