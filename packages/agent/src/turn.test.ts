@@ -17,7 +17,7 @@ import { agentOf, budget, codeModeFor, compaction, reply, toolList } from "./cap
 // packages are values the assembly passes, so a test that needs one names it here
 // (capability.ts, codeModeFor).
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  agentOf([codeModeFor({}, {}, packages), reply, budget, compaction])
+  agentOf([codeModeFor({ packages }), reply, budget, compaction])
 const rlmAgent = agentWith([])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!

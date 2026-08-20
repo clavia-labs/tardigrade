@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
@@ -7,12 +7,16 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import { agentOf, budget, CODE_SYSTEM, codeMode, codeModeFor, compaction, compactionFor, renderOf, reply, toolList } from "./capability"
+import { agentOf, budget, CODE_SYSTEM, codeMode, codeModeFor, compaction, compactionFor, renderOf, reply, toolList, type Capability } from "./capability"
 import { receive, type AgentR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 
 // The capability assembly end to end: the render the model sees is the composed derivation of
 // the mounted capabilities, and a call routes to the capability that declared its tool.
+
+// Ticker is a service no assembled agent provides, so a capability that requires it is
+// distinguishable at compile time from one that does not.
+class Ticker extends Context.Service<Ticker, string>()("agent/test/Ticker") {}
 
 const memoryLog = (initial: ReadonlyArray<Event> = []) =>
   Layer.effect(
@@ -142,7 +146,7 @@ describe("agentOf", () => {
   })
 
   test("codeModeFor takes a system fragment, and the bare capability renders the exported default", () => {
-    const overridden = renderOf([codeModeFor({}, { system: (events) => `the packages in scope are:\n${events.length}` })], [{ type: "PackageInstalled" }])
+    const overridden = renderOf([codeModeFor({ system: (events) => `the packages in scope are:\n${events.length}` })], [{ type: "PackageInstalled" }])
     expect(overridden.system).toBe("the packages in scope are:\n1")
     expect(renderOf([codeMode], []).system).toBe(CODE_SYSTEM)
   })
@@ -155,10 +159,35 @@ describe("agentOf", () => {
       description: "the team's notes",
       methods: { put: () => Effect.succeed(null) }
     }
-    const { system } = renderOf([codeModeFor({}, {}, [notes])], [])
+    const { system } = renderOf([codeModeFor({ packages: [notes] })], [])
     expect(system).toContain("notes: the team's notes")
     expect(system).not.toContain("none")
     // An explicit fragment still wins over the derivation.
-    expect(renderOf([codeModeFor({}, { system: "my own scope" }, [notes])], []).system).toBe("my own scope")
+    expect(renderOf([codeModeFor({ system: "my own scope", packages: [notes] })], []).system).toBe("my own scope")
+  })
+
+  test("a mounted package's requirements ride the capability's type", () => {
+    // Compile-time only: `packages` arrives as an option property, and the const type parameter
+    // still infers the tuple, so R is the spill store plus exactly what the listed packages
+    // require. A widened `ReadonlyArray<Package<Ticker>>` would fail the empty-scope assertions
+    // below (capability.ts, codeModeFor).
+    const ticker: Package<Ticker> = {
+      name: "ticker",
+      description: "the clock",
+      methods: {
+        now: () =>
+          Effect.gen(function* () {
+            return { tick: yield* Ticker }
+          })
+      }
+    }
+    const scoped: Capability<KeyValueStore.KeyValueStore | Ticker> = codeModeFor({ packages: [ticker] })
+    // The union is exactly that: too wide (P falling back to Package<unknown>) fails the line
+    // above, and too narrow (P collapsing to the empty tuple) fails the line below.
+    // @ts-expect-error a capability that requires Ticker cannot pass as one that does not
+    const narrowed: Capability<KeyValueStore.KeyValueStore> = codeModeFor({ packages: [ticker] })
+    const empty: Capability<KeyValueStore.KeyValueStore> = codeModeFor({})
+    const bare: Capability<KeyValueStore.KeyValueStore> = codeModeFor()
+    expect([scoped.name, narrowed.name, empty.name, bare.name]).toEqual(["code", "code", "code", "code"])
   })
 })

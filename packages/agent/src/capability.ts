@@ -181,31 +181,38 @@ const codeServe: Serve = (call, log, answer) => {
 }
 
 // codeModeFor is the code-execution capability: one `execute` tool, served by dispatching to
-// the code reactor and answered from its settle. The policy is the code lane's own
-// (packages/code/src/execute.ts, CodePolicy). `packages` are the values the code may name; the
+// the code reactor and answered from its settle. Every option has a default, so the bare call
+// is the whole capability on defaults. `packages` are the values the code may name; the
 // capability's R is the spill store plus what those packages need, and the model's fragment is
 // derived from the same values, so what the code can call and what the model is told cannot
-// drift. `render.system` replaces that derivation, as a string or as a projection of the log,
-// for a host that names its scope from its own events (capability.test.ts, "codeModeFor takes a
-// system fragment").
+// drift. `policy` is the code lane's own (packages/code/src/execute.ts, CodePolicy). `system`
+// replaces the derived fragment, as a string or as a projection of the log, for a host that
+// names its scope from its own events (capability.test.ts, "codeModeFor takes a system
+// fragment"). `packages` infers as a tuple, so a mixed list gives the union of what its members
+// require (capability.test.ts, "a mounted package's requirements ride the capability's type").
 export const codeModeFor = <
   const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>> = readonly []
 >(
-  policy: Partial<CodePolicy>,
-  render: { readonly system?: Capability["system"] } = {},
-  packages: P = [] as unknown as P
-): Capability<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => ({
-  name: "code",
-  keys: codeKeys,
-  reactors: [codeReactorFor(policy, packages)],
-  tools: () => [EXECUTE_TOOL],
-  system: render.system ?? codeSystemFor(packages as ReadonlyArray<Package<unknown>>),
-  serve: codeServe
-})
+  options: {
+    readonly policy?: Partial<CodePolicy>
+    readonly system?: Capability["system"]
+    readonly packages?: P
+  } = {}
+): Capability<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => {
+  const packages = (options.packages ?? []) as unknown as P
+  return {
+    name: "code",
+    keys: codeKeys,
+    reactors: [codeReactorFor(options.policy ?? {}, packages)],
+    tools: () => [EXECUTE_TOOL],
+    system: options.system ?? codeSystemFor(packages as ReadonlyArray<Package<unknown>>),
+    serve: codeServe
+  }
+}
 
 // codeMode is that capability on defaults, with nothing in scope: the library default work
 // surface.
-export const codeMode: Capability<KeyValueStore.KeyValueStore> = codeModeFor({})
+export const codeMode: Capability<KeyValueStore.KeyValueStore> = codeModeFor()
 
 // A NativeTool is one named tool the model calls directly: its wire shape, and the effect that
 // runs it. The effect's failures are the tool's own answer, so a tool that throws returns an
