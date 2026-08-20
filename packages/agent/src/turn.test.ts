@@ -349,6 +349,41 @@ describe("the agent with execute as the only tool", () => {
       usage: spent
     })
   })
+
+  test("provider retry exhaustion records a resumable failure with its policy", async () => {
+    const retry = { throttleRetryDelaysMs: [100], stream: { firstChunkMs: 1, idleMs: 2, totalMs: 3 } }
+    const layers = Layer.mergeAll(
+      KeyValueStore.layerMemory,
+      memoryLog(),
+      Layer.succeed(Infer, {
+        react: () =>
+          Effect.succeed({
+            kind: "fail" as const,
+            error: "model inference retries exhausted after 2 attempts: timeout",
+            failure: { cause: "inference_attempts_exhausted" as const, attempts: 2, policy: retry }
+          })
+      }),
+      registry([]),
+      jsSandbox,
+      noRouter
+    )
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(rlmAgent, { id: "m1", text: "hi" })
+        return yield* readLog
+      }),
+      layers
+    )
+
+    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
+      turn: "m1",
+      cause: "inference_attempts_exhausted",
+      attempts: 2,
+      attemptKey: "m1/infer/0",
+      policy: retry,
+      usage: {}
+    })
+  })
 })
 
 // The scout schema from a research task, and the two answers a model gives: the double-encoded

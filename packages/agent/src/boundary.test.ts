@@ -52,4 +52,16 @@ describe("boundaryOf", () => {
     ]
     expect(boundaryOf(log, "m1")).toEqual({ kind: "requesting", callId: "rb2", reason: "second", amount: 3 })
   })
+
+  test("a resume request clears the failed boundary until the next terminal", () => {
+    const resumed = [
+      ...base,
+      { type: "TurnFailed", error: "timeout", turn: "m1", at: 1 } as Event,
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 2 } as Event
+    ]
+    expect(boundaryOf(resumed, "m1")).toBeUndefined()
+    expect(
+      boundaryOf([...resumed, { type: "TurnCompleted", output: "done", turn: "m1", epoch: 1, at: 3 } as Event], "m1")
+    ).toEqual({ kind: "completed", output: "done" })
+  })
 })

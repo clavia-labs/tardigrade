@@ -23,7 +23,7 @@ Build durable agents by composing small, inspectable capabilities.
 
 ## Quickstart
 
-Use Bun 1.3 or later and an OpenAI-compatible or Bedrock model endpoint.
+Use a [supported Bun runtime](docs/explanations/runtime-and-recovery.md#runtime) and an OpenAI-compatible or Bedrock model endpoint.
 
 ```bash
 bun add @clavia/tardigrade
@@ -152,6 +152,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 ## Learn more
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent capabilities from first principles.
+- [Runtime and turn recovery](docs/explanations/runtime-and-recovery.md): understand runtime requirements, retry scopes, and failed-turn recovery.
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.
 
 ## Contributing

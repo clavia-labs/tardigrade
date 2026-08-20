@@ -4,7 +4,7 @@ import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { replyDelivered } from "./events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyEvent } from "@clavia/tardigrade-core/reply"
-import { replyView } from "@clavia/tardigrade-code/turns"
+import { turnTerminalOf, replyView } from "@clavia/tardigrade-code/turns"
 
 // The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
 // terminal goes back to that actor as a plain `MessageReceived`, and the caller folds it as a
@@ -21,14 +21,15 @@ const owedTurn = (
 ): { readonly id: string; readonly replyTo?: string; readonly text: string; readonly outcome: "completed" | "failed" } => {
   const view = replyView(log)
   const inbound = view[0] as { id?: unknown; replyTo?: unknown } | undefined
-  const terminal = view.find((e) => e.type === "TurnCompleted" || e.type === "TurnFailed") as
+  const id = String(inbound?.id)
+  const terminal = turnTerminalOf(log, id) as
     | { output?: unknown; error?: unknown }
     | undefined
   if (inbound === undefined || terminal === undefined) {
     throw new Error("replying with no finished turn: the derivation and the serve disagree")
   }
   return {
-    id: String(inbound.id),
+    id,
     ...(inbound.replyTo === undefined ? {} : { replyTo: String(inbound.replyTo) }),
     text: terminal.error === undefined ? String(terminal.output) : `error: ${String(terminal.error)}`,
     // The outcome rides as a typed field, so a reader never sniffs the text for failure.

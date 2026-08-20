@@ -1,4 +1,5 @@
 # tardigrade docs
 
 - [quickstart.md](quickstart.md): all the core concepts you need to get started.
+- [explanations/runtime-and-recovery.md](explanations/runtime-and-recovery.md): runtime requirements, retry scopes, and failed-turn recovery.
 - [explanations/why.md](explanations/why.md): why tardigrade exists. {transitions} = f(log), and what the log-as-state shape enables.

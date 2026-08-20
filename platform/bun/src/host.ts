@@ -4,6 +4,7 @@ import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
+import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { Router, type CallResult } from "@clavia/tardigrade-core/router"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
@@ -82,6 +83,7 @@ const laneOf = (address: string): string => {
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
+  assertSupportedBun()
   const principal = options.principal ?? "bun"
   // The workspace is built with the runtime and over the same client, so its table is created once
   // and every lane spills through the connection the log already holds.
