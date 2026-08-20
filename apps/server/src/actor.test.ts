@@ -40,9 +40,9 @@ describe("the turns projection", () => {
       inbound("m3")
     ]
     expect(turns.run(log, {})).toEqual([
-      { turn: "m1", status: "completed", output: "42" },
-      { turn: "m2", status: "failed", error: "boom" },
-      { turn: "m3", status: "pending" }
+      { turn: "m1", status: "completed", epoch: 0, output: "42" },
+      { turn: "m2", status: "failed", epoch: 0, error: "boom" },
+      { turn: "m3", status: "pending", epoch: 0 }
     ])
   })
 
@@ -53,7 +53,7 @@ describe("the turns projection", () => {
 
   test("an unanswered budget ask is parked", () => {
     const log = [inbound("m1"), requested("m1", "c1")]
-    expect(turns.run(log, {})).toEqual([{ turn: "m1", status: "parked" }])
+    expect(turns.run(log, {})).toEqual([{ turn: "m1", status: "parked", epoch: 0 }])
   })
 
   // `at` is the projection's own declared parameter, so time travel is a query this actor accepts
@@ -61,8 +61,38 @@ describe("the turns projection", () => {
   test("a prefix takes a turn back to pending", () => {
     const log = [inbound("m1"), completed("m1", "42")]
     expect(turns.run(log, {})[0]!.status).toBe("completed")
-    expect(turns.run(log, { at: 1 })).toEqual([{ turn: "m1", status: "pending" }])
+    expect(turns.run(log, { at: 1 })).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
     expect(turns.run(log, { at: 0 })).toEqual([])
+  })
+})
+
+// The single lookup is a query on this projection rather than a route of its own, which is what
+// lets the platform keep no turn-shaped handler at all (apps/server/src/api.ts).
+describe("reading one turn", () => {
+  test("`turn` narrows the answer to that entry", () => {
+    const log = [inbound("m1"), completed("m1", "42"), inbound("m2"), failed("m2", "boom")]
+    expect(turns.run(log, { turn: "m2" })).toEqual([{ turn: "m2", status: "failed", epoch: 0, error: "boom" }])
+  })
+
+  test("a turn nobody was asked to serve matches nothing", () => {
+    const log = [inbound("m1"), completed("m1", "42")]
+    expect(turns.run(log, { turn: "m9" })).toEqual([])
+  })
+
+  test("`turn` and `at` narrow together", () => {
+    const log = [inbound("m1"), completed("m1", "42")]
+    expect(turns.run(log, { turn: "m1", at: 1 })).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
+  })
+
+  // The epoch is on the wire because resuming stamps the next one, and a resumed turn reads the
+  // epoch its active attempt belongs to (packages/agent/src/resume.ts, resumeTurn).
+  test("a resumed turn reads the epoch its active attempt belongs to", () => {
+    const log = [
+      inbound("m1"),
+      failed("m1", "boom"),
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: at() } as Event
+    ]
+    expect(turns.run(log, { turn: "m1" })).toEqual([{ turn: "m1", status: "pending", epoch: 1 }])
   })
 })
 

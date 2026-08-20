@@ -12,9 +12,19 @@ import { ProblemError } from "./problem"
 interface Call {
   readonly url: string
   readonly headers: Record<string, string>
+  readonly body: string | undefined
 }
 
 const calls: Array<Call> = []
+
+// The transport encodes a JSON payload before it reaches fetch, so the recorded body is bytes as
+// often as it is a string.
+const bodyOf = (body: unknown): string | undefined => {
+  if (typeof body === "string") return body
+  if (body instanceof Uint8Array) return new TextDecoder().decode(body)
+  if (body instanceof ArrayBuffer) return new TextDecoder().decode(new Uint8Array(body))
+  return undefined
+}
 
 const emptyList = () => new Response("[]", { status: 200, headers: { "content-type": "application/json" } })
 
@@ -25,7 +35,11 @@ let answer: () => Response = emptyList
 // never be consulted and these calls would reach whatever owns the port.
 const stub = ((input: string | URL | Request, init?: RequestInit) => {
   const headers = new Headers(init?.headers ?? {})
-  calls.push({ url: String(input), headers: Object.fromEntries(headers.entries()) })
+  calls.push({
+    url: String(input),
+    headers: Object.fromEntries(headers.entries()),
+    body: bodyOf(init?.body)
+  })
   return Promise.resolve(answer())
 }) as typeof globalThis.fetch
 
@@ -163,5 +177,102 @@ describe("a declared projection", () => {
       "turns"
     )
     expect(views).toEqual([{ turn: "m1", status: "completed" }])
+  })
+})
+
+// A resume is an appended TurnResumed and nothing else. The platform has no resume route, so the
+// guard and the epoch arithmetic are the SDK's, and both read the actor's turns projection.
+describe("resuming a turn", () => {
+  // A resume is two exchanges: the projection it reads, then the append it makes. The stand-in
+  // answers by method, because both go to the same server.
+  const accepting = (view: unknown) => {
+    let read = false
+    return () => {
+      if (read) {
+        return new Response(JSON.stringify({ actor: "agent", thread: "root" }), {
+          status: 202,
+          headers: { "content-type": "application/json" }
+        })
+      }
+      read = true
+      return new Response(JSON.stringify(view === undefined ? [] : [view]), {
+        status: 200,
+        headers: { "content-type": "application/json" }
+      })
+    }
+  }
+
+  const projections = projectionsOf({
+    turns: projection({
+      params: { at: Schema.optionalKey(Schema.Int), turn: Schema.optionalKey(Schema.String) },
+      result: Schema.Array(
+        Schema.Struct({
+          turn: Schema.String,
+          status: Schema.Literals(["pending", "completed", "failed", "parked"]),
+          epoch: Schema.Number,
+          output: Schema.optionalKey(Schema.String),
+          error: Schema.optionalKey(Schema.String)
+        })
+      ),
+      run: () => []
+    })
+  })
+
+  const client = () => makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+
+  test("a failed turn appends the TurnResumed its reactors interpret", async () => {
+    answer = accepting({ turn: "m1", status: "failed", epoch: 0, error: "boom" })
+    const accepted = await client().resume("root", "m1")
+    expect(accepted).toEqual({ actor: "agent", thread: "root" })
+    // Two calls: the projection it read, then the append it made.
+    expect(calls).toHaveLength(2)
+    const read = new URL(calls[0]!.url)
+    expect(read.pathname).toBe("/v1/actors/agent/threads/root/turns")
+    expect(read.searchParams.get("turn")).toBe("m1")
+    const appended = new URL(calls[1]!.url)
+    expect(appended.pathname).toBe("/v1/actors/agent/threads/root/events")
+    expect(JSON.parse(calls[1]!.body ?? "")).toEqual({
+      type: "TurnResumed",
+      turn: "m1",
+      failedEpoch: 0,
+      epoch: 1
+    })
+  })
+
+  // The epoch is read rather than assumed, so resuming an already-resumed turn starts the next one
+  // rather than restating the last (packages/agent/src/resume.ts, resumeTurn).
+  test("the appended epoch is the one after the turn's active attempt", async () => {
+    answer = accepting({ turn: "m1", status: "failed", epoch: 2, error: "boom" })
+    await client().resume("root", "m1")
+    expect(JSON.parse(calls[1]!.body ?? "")).toMatchObject({ failedEpoch: 2, epoch: 3 })
+  })
+
+  test("a turn that did not fail is refused, and nothing is appended", async () => {
+    answer = accepting({ turn: "m1", status: "completed", epoch: 0, output: "done" })
+    const failure = await client().resume("root", "m1").then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(ProblemError)
+    expect((failure as ProblemError).title).toBe("Resume Refused")
+    expect((failure as ProblemError).status).toBe(409)
+    expect((failure as ProblemError).detail).toContain("its active epoch is completed")
+    expect(calls).toHaveLength(1)
+  })
+
+  test("a turn nobody was asked to serve is refused too", async () => {
+    answer = accepting(undefined)
+    const failure = await client().resume("root", "m9").then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(ProblemError)
+    expect((failure as ProblemError).detail).toContain('No turn named "m9"')
+    expect(calls).toHaveLength(1)
+  })
+
+  // `resume` is on every client, and the declaration it needs is not, so a client that reads the
+  // log alone says why rather than failing on an undefined call.
+  test("a client built with no turns projection says so", async () => {
+    const failure = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub })
+      .resume("root", "m1")
+      .then(() => undefined, (error: unknown) => error)
+    expect(failure).toBeInstanceOf(ProblemError)
+    expect((failure as ProblemError).detail).toContain("without a `turns` projection")
+    expect(calls).toHaveLength(0)
   })
 })

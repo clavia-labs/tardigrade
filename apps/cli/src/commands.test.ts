@@ -5,7 +5,7 @@ import { BunServices } from "@effect/platform-bun"
 import { ProblemError, RESERVED_ACTOR, type Accepted, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
 
 import { problemLine, tdg } from "./commands"
-import { Cli, type CliServices } from "./services"
+import { Cli, type CliProjections, type CliServices } from "./services"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
@@ -20,7 +20,7 @@ const events: ReadonlyArray<EventRow> = [
 ]
 
 interface Recorded {
-  readonly delivered: Array<{ thread: string; id: string; text: string }>
+  readonly appended: Array<{ thread: string; id: string; text: string }>
   readonly asked: Array<{ thread: string; options: unknown }>
 }
 
@@ -36,7 +36,7 @@ const clientOf = (
     readonly turns?: ReadonlyArray<TurnView>
     readonly fail?: ProblemError
   }
-): Client => {
+): Client<CliProjections> => {
   let read = 0
   return {
     baseUrl: "http://localhost:0",
@@ -46,19 +46,26 @@ const clientOf = (
       recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
     },
-    turn: (_thread, _turn) => {
+    // The single turn lookup is a query on the actor's declared projection, so the stand-in answers
+    // it the way the server does: the entries that match, narrowed by `turn` when one is stated.
+    projection: ((_thread: string, _name: string, query?: { readonly turn?: string }) => {
       const views = answers.turns ?? []
       const view = views[Math.min(read++, views.length - 1)]
-      return view === undefined ? refuse() : Promise.resolve(view)
-    },
-    deliver: (thread, message) => {
-      recorded.delivered.push({ thread, id: message.id, text: message.text })
+      if (view === undefined) return refuse()
+      const wanted = query?.turn
+      return Promise.resolve(wanted === undefined || view.turn === wanted ? [view] : [])
+    }) as Client<CliProjections>["projection"],
+    append: (thread, event) => {
+      recorded.appended.push({
+        thread,
+        id: String(event["id"] ?? ""),
+        text: String(event["text"] ?? "")
+      })
       return answers.fail === undefined
-        ? Promise.resolve({ actor: RESERVED_ACTOR, thread, turn: message.id } satisfies Accepted)
+        ? Promise.resolve({ actor: RESERVED_ACTOR, thread } satisfies Accepted)
         : Promise.reject(answers.fail)
     },
     tree: refuse,
-    projection: refuse,
     resume: refuse,
     health: refuse,
     follow: () => () => {}
@@ -84,7 +91,7 @@ const drive = async (
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
-  const recorded: Recorded = { delivered: [], asked: [] }
+  const recorded: Recorded = { appended: [], asked: [] }
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
@@ -203,12 +210,12 @@ describe("send", () => {
   test("the turn handle is printed and nothing is waited on", async () => {
     const ran = await drive(["send", "root", "do the thing"])
     expect(ran.lines[0]).toBe("root minted-1")
-    expect(ran.recorded.delivered).toEqual([{ thread: "root", id: "minted-1", text: "do the thing" }])
+    expect(ran.recorded.appended).toEqual([{ thread: "root", id: "minted-1", text: "do the thing" }])
   })
 
   test("a stated id is the id, so a retry is absorbed", async () => {
     const ran = await drive(["send", "root", "again", "--id", "m1"])
-    expect(ran.recorded.delivered[0]?.id).toBe("m1")
+    expect(ran.recorded.appended[0]?.id).toBe("m1")
   })
 
   test("--json prints the handle verbatim", async () => {
@@ -224,8 +231,8 @@ describe("run", () => {
       {
         answers: {
           turns: [
-            { turn: "m1", status: "pending" },
-            { turn: "m1", status: "completed", output: "the summary" }
+            { turn: "m1", status: "pending", epoch: 0 },
+            { turn: "m1", status: "completed", epoch: 0, output: "the summary" }
           ]
         }
       }
@@ -236,14 +243,14 @@ describe("run", () => {
 
   test("a thread nobody named is minted, so a run births its own thread", async () => {
     const ran = await drive(["run", "hello", "--poll", "1"], {
-      answers: { turns: [{ turn: "minted-2", status: "completed", output: "hi" }] }
+      answers: { turns: [{ turn: "minted-2", status: "completed", epoch: 0, output: "hi" }] }
     })
-    expect(ran.recorded.delivered).toEqual([{ thread: "minted-1", id: "minted-2", text: "hello" }])
+    expect(ran.recorded.appended).toEqual([{ thread: "minted-1", id: "minted-2", text: "hello" }])
   })
 
   test("a failed turn prints its error and exits non-zero", async () => {
     const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1"], {
-      answers: { turns: [{ turn: "m1", status: "failed", error: "no model is configured" }] }
+      answers: { turns: [{ turn: "m1", status: "failed", epoch: 0, error: "no model is configured" }] }
     })
     expect(ran.lines[0]).toBe("root m1 failed\nno model is configured")
     expect(ran.failed).toBe(true)
@@ -251,7 +258,7 @@ describe("run", () => {
 
   test("a turn that never settles gives up rather than hanging", async () => {
     const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1", "--timeout", "0"], {
-      answers: { turns: [{ turn: "m1", status: "pending" }] }
+      answers: { turns: [{ turn: "m1", status: "pending", epoch: 0 }] }
     })
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("still pending")

@@ -92,15 +92,14 @@ export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404
 // things to a caller: one names code that is not here, the other a log that has never been written.
 export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
 
-export const UnknownTurn = problemKind("unknown-turn", "Unknown Turn", 404)
-
 // A name the actor never declared. The platform mounts what an actor declares and nothing else, so
 // this is the answer for any other name under a thread, and its detail lists the names that do
 // exist (apps/server/src/api.ts, layerProjections).
 export const UnknownProjection = problemKind("unknown-projection", "Unknown Projection", 404)
 
-// The library's guard is the API's 409: a turn resumes only from a failed active epoch, and its
-// refusal carries the reason a caller acts on (apps/server/src/host.ts, ResumeRefused).
+// A resume refused before it was sent. The platform has no resume route: a resume is an appended
+// TurnResumed like any other event, and the guard that a turn's active epoch must be failed is the
+// SDK's convenience rather than the server's rule (client.ts, resume).
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
 // The parts of a request a declaration can refuse, named the way the framework names them
@@ -156,9 +155,14 @@ export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "pa
 
 export type TurnStatus = typeof TurnStatus.Type
 
+// `epoch` is the execution epoch the turn's active attempt belongs to, zero until an operator has
+// resumed it. It is on the wire because resuming stamps the next one, and a caller that cannot read
+// the current epoch cannot name the next (client.ts, resume; packages/code/src/turns.ts,
+// turnEpochOf).
 export const TurnView = Schema.Struct({
   turn: Schema.String,
   status: TurnStatus,
+  epoch: Schema.Number,
   output: Schema.optionalKey(Schema.String),
   error: Schema.optionalKey(Schema.String)
 }).annotate({ identifier: "TurnView" })
@@ -176,14 +180,13 @@ export const EventRow = Schema.Struct({
 
 export type EventRow = typeof EventRow.Type
 
-// The turn handle a delivery and a resume both answer with. 202 either way: the host dedups by
-// message id, so a retrying client gets the same answer and never learns it retried. All three
-// levels the request named are echoed, so a caller holds the whole address of the work it started
-// without reassembling it from the URL.
+// What an append answers: the two levels the request named. 202 because the event is committed and
+// the settle loop takes it from there, and because the actor's own key absorbs a duplicate, so a
+// retrying caller gets this same answer and never learns it retried. Nothing turn-shaped is echoed:
+// a turn is the actor's reading of the log, and the caller already holds whatever id it sent.
 export const Accepted = Schema.Struct({
   actor: Schema.String,
-  thread: Schema.String,
-  turn: Schema.String
+  thread: Schema.String
 }).annotate({ identifier: "Accepted" }).pipe(HttpApiSchema.status(202))
 
 export type Accepted = typeof Accepted.Type
@@ -195,18 +198,20 @@ export const Health = Schema.Struct({
 
 export type Health = typeof Health.Type
 
-// The message a client delivers. `id` is the dedup key end to end and becomes the turn id, so it is
-// stated rather than defaulted: inventing one would turn a retry into a second turn
-// (docs/how-to/server.md, "Redelivery is absorbed"). `input` and `data` are the canonical inbound's
-// optional fields (packages/core/src/message.ts, MessageReceived).
-export const Inbound = Schema.Struct({
-  id: Schema.NonEmptyString,
-  text: Schema.String,
-  input: Schema.optionalKey(Schema.Unknown),
-  data: Schema.optionalKey(Schema.Unknown)
-}).annotate({ identifier: "Inbound" })
+// One event to append. `type` is the only field the platform requires, because an event is one fact
+// and what its other fields mean is the actor's own knowledge: a brief is
+// `{ type: "MessageReceived", id, text }`, and a resume is a `TurnResumed`. The platform stamps `at`
+// when the caller states none and otherwise passes the fact through untouched.
+//
+// Duplicate suppression is the actor's too, keyed by its own `keyOf`: a MessageReceived dedups on
+// `id`, so a retried brief is absorbed rather than started twice (packages/core/src/message.ts,
+// messageKeys; docs/how-to/server.md, "Redelivery is absorbed").
+export const Append = Schema.StructWithRest(
+  Schema.Struct({ type: Schema.NonEmptyString }),
+  [Schema.Record(Schema.String, Schema.Unknown)]
+).annotate({ identifier: "Append" })
 
-export type Inbound = typeof Inbound.Type
+export type Append = typeof Append.Type
 
 // A sequence number names a position in a log, so it is a whole number at or above zero. The query
 // carries it as text and the declaration is what turns it into a number: a value that is not one is
@@ -225,17 +230,15 @@ const ActorParams = { actor: Schema.String }
 
 const ThreadParams = { actor: Schema.String, id: Schema.String }
 
-const TurnParams = { actor: Schema.String, id: Schema.String, turn: Schema.String }
-
 // The log, which is the whole of what the platform guarantees: list the threads an actor holds,
 // append an event, read the events back. A tail follows beside this group (stream.ts). Everything
 // else a thread can be asked is a projection its actor declares, mounted by name below.
 export const threadsGroup = HttpApiGroup.make("threads").add(
   // Delivery is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
-  HttpApiEndpoint.post("deliver", "/v1/actors/:actor/threads/:id/events", {
+  HttpApiEndpoint.post("append", "/v1/actors/:actor/threads/:id/events", {
     params: ThreadParams,
-    payload: Inbound,
+    payload: Append,
     success: Accepted,
     error: [UnknownActor.schema]
   }),
@@ -249,20 +252,6 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
-  }),
-  // The assembly's surface, pending its own change: one turn's boundary, read by id rather than
-  // over the whole log, so its path is not the `{name}` a projection mounts at.
-  HttpApiEndpoint.get("turn", "/v1/actors/:actor/threads/:id/turns/:turn", {
-    params: TurnParams,
-    success: TurnView,
-    error: [UnknownActor.schema, UnknownThread.schema, UnknownTurn.schema]
-  }),
-  // The assembly's surface, pending its own change: a resume is a guard over an appended
-  // TurnResumed, so folding it in means deciding how a reactor records a refusal.
-  HttpApiEndpoint.post("resume", "/v1/actors/:actor/threads/:id/turns/:turn/resume", {
-    params: TurnParams,
-    success: Accepted,
-    error: [UnknownActor.schema, ResumeRefused.schema]
   }),
   // The assembly's surface, pending its own change: the tree reads the whole family rather than one
   // thread's events, and its parentage rule comes from PackageCalled claims in a parent's log.

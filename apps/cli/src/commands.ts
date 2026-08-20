@@ -5,7 +5,7 @@ import { NO_ANSWER, ProblemError, type Client, type TurnView } from "@clavia/tar
 import { resolveRemote, resolveServer } from "./config"
 import { dev } from "./dev"
 import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
-import { Cli } from "./services"
+import { Cli, type CliProjections } from "./services"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
 // are values, so the help a person reads and the completions a shell installs are generated from
@@ -87,7 +87,7 @@ const clientOf = (flags: {
 const stated = (option: Option.Option<string>): string | undefined => Option.getOrUndefined(option)
 
 const settle = (
-  client: Client,
+  client: Client<CliProjections>,
   thread: string,
   turn: string,
   pollMillis: number,
@@ -96,8 +96,12 @@ const settle = (
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      const view = yield* call(() => client.turn(thread, turn))
-      if (view.status !== "pending") return view
+      // The single lookup is a query on the actor's declared projection rather than a route of its
+      // own: `turn` narrows it to one entry, and a turn nobody was asked to serve matches nothing
+      // (apps/server/src/actor.ts, agentProjections).
+      const views = yield* call(() => client.projection(thread, "turns", { turn }))
+      const view = views.find((candidate) => candidate.turn === turn)
+      if (view !== undefined && view.status !== "pending") return view
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* Effect.fail(
           userErrorOf(
@@ -169,8 +173,8 @@ export const runCommand = Command.make("run", {
     const client = yield* clientOf(flags)
     const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.deliver(thread, { id, text: flags.brief }))
-    const view = yield* settle(client, accepted.thread, accepted.turn, flags.poll, flags.timeout)
+    const accepted = yield* call(() => client.append(thread, { type: "MessageReceived", id, text: flags.brief }))
+    const view = yield* settle(client, accepted.thread, id, flags.poll, flags.timeout)
     yield* Console.log(flags.json ? jsonOf(view) : turnLines(accepted.thread, view))
     if (view.status !== SETTLED) {
       return yield* Effect.fail(userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`))
@@ -195,8 +199,10 @@ export const sendCommand = Command.make("send", {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.deliver(flags.thread, { id, text: flags.brief }))
-    yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.turn}`)
+    const accepted = yield* call(() => client.append(flags.thread, { type: "MessageReceived", id, text: flags.brief }))
+    // The turn is the id this invocation minted: the platform echoes the two levels it knows and
+    // nothing turn-shaped, because a turn is the actor's reading of the log (contract.ts, Accepted).
+    yield* Console.log(flags.json ? jsonOf({ ...accepted, turn: id }) : `${accepted.thread} ${id}`)
   })).pipe(
     Command.withDescription(
       "Deliver a brief and print the turn handle without waiting. The turn settles on the server's own loop."

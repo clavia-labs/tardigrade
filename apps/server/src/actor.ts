@@ -9,6 +9,7 @@ import {
   reply,
   workspacePackage
 } from "@clavia/tardigrade"
+import { turnEpochOf } from "@clavia/tardigrade-code/turns"
 import { boundaryOf } from "@clavia/tardigrade/boundary"
 import { projection, projectionsOf, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
@@ -37,6 +38,9 @@ export type TurnStatus = "pending" | "completed" | "failed" | "parked"
 export interface TurnViewShape {
   readonly turn: string
   readonly status: TurnStatus
+  // The execution epoch the active attempt belongs to, zero until an operator has resumed the turn.
+  // It is on the wire because resuming stamps the next one (packages/agent/src/resume.ts).
+  readonly epoch: number
   readonly output?: string
   readonly error?: string
 }
@@ -44,19 +48,31 @@ export interface TurnViewShape {
 // turnsOf projects one turn per inbound message, in the order the messages arrived. `at` cuts the
 // log to a prefix first: any prefix of a log is a valid state, so time travel is this one argument
 // and never a stored mode (apps-server-spec.md, "Principles"). A prefix taken before a turn's
-// terminal reads that turn pending again (projections.test.ts, "a prefix takes a turn back to
-// pending"), and a prefix taken before a message drops its turn from the list entirely.
-const turnsOf = (events: ReadonlyArray<Event>, at?: number): ReadonlyArray<TurnViewShape> => {
-  const prefix = events.slice(0, at ?? events.length)
-  return inboundOf(prefix).map((turn): TurnViewShape => {
-    const boundary = boundaryOf(prefix, turn)
-    if (boundary === undefined) return { turn, status: "pending" }
-    if (boundary.kind === "completed") return { turn, status: "completed", output: boundary.output }
-    if (boundary.kind === "failed") return { turn, status: "failed", error: boundary.error }
-    // A park is neither an output nor an error: the turn is alive and waiting on an answer the API
-    // has no door for, so the status carries the whole of what a client can act on.
-    return { turn, status: "parked" }
-  })
+// terminal reads that turn pending again (actor.test.ts, "a prefix takes a turn back to pending"),
+// and a prefix taken before a message drops its turn from the list entirely.
+//
+// `turn` narrows the answer to one entry, which is what makes the single lookup a query on this
+// projection rather than a route of its own: a turn nobody was asked to serve simply matches
+// nothing, so the answer is an empty array and not a failure (actor.test.ts, "a turn nobody was
+// asked to serve matches nothing").
+const turnsOf = (
+  events: ReadonlyArray<Event>,
+  params: { readonly at?: number; readonly turn?: string }
+): ReadonlyArray<TurnViewShape> => {
+  const prefix = events.slice(0, params.at ?? events.length)
+  const wanted = params.turn
+  return inboundOf(prefix)
+    .filter((turn) => wanted === undefined || turn === wanted)
+    .map((turn): TurnViewShape => {
+      const epoch = turnEpochOf(prefix, turn)
+      const boundary = boundaryOf(prefix, turn)
+      if (boundary === undefined) return { turn, status: "pending", epoch }
+      if (boundary.kind === "completed") return { turn, status: "completed", epoch, output: boundary.output }
+      if (boundary.kind === "failed") return { turn, status: "failed", epoch, error: boundary.error }
+      // A park is neither an output nor an error: the turn is alive and waiting on an answer the API
+      // has no door for, so the status carries the whole of what a client can act on.
+      return { turn, status: "parked", epoch }
+    })
 }
 
 // What this actor answers about a thread beyond its log. A turn is not a fact the platform knows:
@@ -65,14 +81,8 @@ const turnsOf = (events: ReadonlyArray<Event>, at?: number): ReadonlyArray<TurnV
 // what the actor computes").
 export const agentProjections = projectionsOf({
   turns: projection({
-    params: { at: Schema.optionalKey(Seq) },
+    params: { at: Schema.optionalKey(Seq), turn: Schema.optionalKey(Schema.String) },
     result: Schema.Array(TurnView),
-    run: (events, params) => turnsOf(events, params.at)
+    run: turnsOf
   })
 })
-
-// turnViewsOf is the same reading, for the one route that reads a turn by id rather than over the
-// whole log (api.ts, "turn"). It goes through the declaration so the projection and the lookup can
-// never drift.
-export const turnViewsOf = (events: ReadonlyArray<Event>): ReadonlyArray<TurnViewShape> =>
-  agentProjections.turns.run(events, {})

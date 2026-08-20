@@ -7,20 +7,18 @@ import { BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, readConfig } from "./config"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
-import { Threads, ResumeRefused } from "./host"
+import { Threads } from "./host"
 import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 
 // The declaration, from the outside. These assertions are about what the declaration produces: the
 // document a client generates from, and the failure shape that document promises. The routes
 // themselves are exercised against a real host in api.test.ts.
 
-// An Threads that owns nothing, so every read is the empty log a 404 is made of and every resume is
-// refused.
+// A Threads that owns nothing, so every read is the empty log a 404 is made of.
 const layerThreadsEmpty = Layer.succeed(Threads)({
-  deliver: (id, message) => Effect.succeed({ thread: id, turn: message.id }),
+  append: () => Effect.void,
   events: () => Effect.succeed([]),
   list: () => Effect.succeed([]),
-  resume: (id, turn) => Effect.fail(new ResumeRefused({ id, turn, detail: "cannot resume a turn that did not fail" })),
   settled: Effect.void
 })
 
@@ -61,8 +59,6 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/actors/{actor}/threads"],
   ["get", "/v1/actors/{actor}/threads/{id}/events"],
   ["get", "/v1/actors/{actor}/threads/{id}/turns"],
-  ["get", "/v1/actors/{actor}/threads/{id}/turns/{turn}"],
-  ["post", "/v1/actors/{actor}/threads/{id}/turns/{turn}/resume"],
   ["get", "/v1/actors/{actor}/threads/{id}/tree"],
   ["get", "/healthz"]
 ]
@@ -129,11 +125,15 @@ describe("problem documents", () => {
     const failures = await serving({}, (client) =>
       Effect.gen(function*() {
         const unknownThread = yield* client.get("/v1/actors/agent/threads/ghost/events")
-        const refused = yield* client.post("/v1/actors/agent/threads/ghost/turns/t1/resume")
+        const unknownProjection = yield* client.get("/v1/actors/agent/threads/ghost/facts")
         const unknownTurn = yield* client.get("/v1/actors/agent/threads/ghost/turns?at=1")
         return [
           { status: unknownThread.status, type: unknownThread.headers["content-type"], body: yield* unknownThread.json },
-          { status: refused.status, type: refused.headers["content-type"], body: yield* refused.json },
+          {
+            status: unknownProjection.status,
+            type: unknownProjection.headers["content-type"],
+            body: yield* unknownProjection.json
+          },
           { status: unknownTurn.status, type: unknownTurn.headers["content-type"], body: yield* unknownTurn.json }
         ]
       }))
@@ -147,7 +147,7 @@ describe("problem documents", () => {
       expect(String(body["title"]).length).toBeGreaterThan(0)
       expect(String(body["detail"]).length).toBeGreaterThan(0)
     }
-    expect(failures.map((failure) => failure.status)).toEqual([404, 409, 404])
+    expect(failures.map((failure) => failure.status)).toEqual([404, 404, 404])
     // An endpoint declaring two failures encodes the one the value names, so the 404 does not
     // render as the 400 beside it (contract.ts, problemKind).
     expect(failures[2]!.body).toMatchObject({ title: "Unknown Thread" })
@@ -165,10 +165,10 @@ describe("problem documents", () => {
         const notANumber = yield* client.get("/v1/actors/agent/threads/ghost/events?after=soon")
         const negative = yield* client.get("/v1/actors/agent/threads/ghost/events?limit=-1")
         const missingField = yield* post("/v1/actors/agent/threads/ghost/events", { id: "m1" })
-        const emptyId = yield* post("/v1/actors/agent/threads/ghost/events", { id: "", text: "hello" })
+        const emptyType = yield* post("/v1/actors/agent/threads/ghost/events", { type: "", id: "m1" })
         const notAnObject = yield* post("/v1/actors/agent/threads/ghost/events", "hello")
         return yield* Effect.forEach(
-          [repeated, notANumber, negative, missingField, emptyId, notAnObject],
+          [repeated, notANumber, negative, missingField, emptyType, notAnObject],
           (response) =>
             Effect.map(response.json, (body) => ({
               status: response.status,
@@ -192,8 +192,8 @@ describe("problem documents", () => {
     expect(details[0]).toBe("The query is not what this endpoint accepts. `at` is not a value it accepts.")
     expect(details[1]).toContain("`after` is not a value it accepts")
     expect(details[2]).toContain("`limit` is not a value it accepts")
-    expect(details[3]).toBe("The request body is not what this endpoint accepts. `text` is missing.")
-    expect(details[4]).toContain("`id` is not a value it accepts")
+    expect(details[3]).toBe("The request body is not what this endpoint accepts. `type` is missing.")
+    expect(details[4]).toContain("`type` is not a value it accepts")
     // A body that is not an object at all names no field, so the sentence stops at the part.
     expect(details[5]).toBe("The request body is not what this endpoint accepts.")
   })

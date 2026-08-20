@@ -1,7 +1,6 @@
-import { Clock, Context, Data, Effect, Layer } from "effect"
+import { Clock, Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { messageReceived } from "@clavia/tardigrade-core/message"
-import { Infer, resumeTurn, type RlmR } from "@clavia/tardigrade"
+import { Infer, type RlmR } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { infer } from "@clavia/tardigrade-model/model"
@@ -27,35 +26,15 @@ export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
 export const idOf = (lane: string): string | undefined =>
   lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
 
-// Inbound is one delivered message: the canonical inbound's fields a client may state
-// (packages/core/src/message.ts, MessageReceived). `id` is the dedup key end to end and becomes
-// the turn id.
-export interface Inbound {
-  readonly id: string
-  readonly text: string
-  readonly input?: unknown
-  readonly data?: unknown
-}
-
-// ResumeRefused is the library's guard, typed: a turn resumes only from a failed active epoch
-// (packages/agent/src/resume.ts). `detail` is the library's own message, which the route renders
-// as the 409's detail (host.test.ts, "a turn that did not fail refuses to resume").
-export class ResumeRefused extends Data.TaggedError("ResumeRefused")<{
-  readonly id: string
-  readonly turn: string
-  readonly detail: string
-}> {}
-
-// The operations the HTTP surface has: deliver a message, read a log, list what exists, resume a
-// failed turn. Every one speaks a thread id. Reads return raw events because the projections are
-// pure functions of a log (projections.ts); a route joins the two.
+// The operations the HTTP surface has: append an event, read a log, list what exists. Every one
+// speaks a thread id and none of them reads an event's fields, because what an event means is the
+// actor's knowledge and this service holds the log (actor.ts, agentProjections).
 export class Threads extends Context.Service<
   Threads,
   {
-    readonly deliver: (id: string, message: Inbound) => Effect.Effect<{ thread: string; turn: string }>
+    readonly append: (id: string, event: Event) => Effect.Effect<void>
     readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
     readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
-    readonly resume: (id: string, turn: string) => Effect.Effect<void, ResumeRefused>
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
     // client never waits on it (a delivery answers 202 and the client polls the turn); a test and
     // a shutdown do (host.test.ts).
@@ -151,23 +130,15 @@ const make = (options: ThreadsOptions) =>
     const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
 
     const service: Context.Service.Shape<typeof Threads> = {
-      deliver: (id, message) =>
+      // An append stamps `at` only when the caller stated none, so a replayed event keeps the time
+      // it happened. Everything else about the fact is passed through: duplicate suppression is the
+      // assembly's own key function, which the host was built with (actor.ts, assemblyOf).
+      append: (id, event) =>
         Effect.gen(function*() {
           const at = yield* Clock.currentTimeMillis
-          yield* Effect.promise(() =>
-            host.deliver(
-              host.self(laneOf(id)),
-              messageReceived({
-                id: message.id,
-                text: message.text,
-                ...(message.input === undefined ? {} : { input: message.input }),
-                ...(message.data === undefined ? {} : { data: message.data }),
-                at
-              })
-            )
-          )
+          const stamped = event.at === undefined ? { ...event, at } : event
+          yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
           request()
-          return { thread: id, turn: message.id }
         }),
       events: read,
       list: () =>
@@ -179,19 +150,6 @@ const make = (options: ThreadsOptions) =>
           })
           return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
         }),
-      // resumeTurn drives through this loop rather than the host, so a resume is serialized with
-      // every other drive (packages/agent/src/resume.ts, TurnDriver).
-      resume: (id, turn) =>
-        Effect.tryPromise({
-          try: () =>
-            resumeTurn(
-              { read: host.read, deliver: host.deliver, drive: request, self: host.self },
-              laneOf(id),
-              turn
-            ),
-          catch: (e) =>
-            new ResumeRefused({ id, turn, detail: e instanceof Error ? e.message : String(e) })
-        }).pipe(Effect.asVoid),
       settled
     }
 

@@ -5,12 +5,13 @@ import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 import {
   apiOf,
   RESERVED_ACTOR,
+  ResumeRefused,
   type Accepted,
+  type Append,
   type ThreadNode,
   type ThreadSummary,
   type EventRow,
   type Health,
-  type Inbound,
   type Projections,
   type TurnView
 } from "./contract"
@@ -100,8 +101,12 @@ export interface Client<P extends Projections = {}> {
   readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
   readonly tree: (thread: string) => Promise<ThreadNode>
   readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
-  readonly turn: (thread: string, turn: string) => Promise<TurnView>
-  readonly deliver: (thread: string, message: Inbound) => Promise<Accepted>
+  // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
+  // platform requires nothing but `type` (contract.ts, Append).
+  readonly append: (thread: string, event: Append) => Promise<Accepted>
+  // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
+  // SDK's convenience rather than a route: the platform has no resume, because a resume is an
+  // append like any other (resume, below).
   readonly resume: (thread: string, turn: string) => Promise<Accepted>
   readonly health: () => Promise<Health>
   // Reads one projection the actor declared. The name is one this client was built with, and the
@@ -190,6 +195,25 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
   // and reserves that name for it (contract.ts, RESERVED_ACTOR); it is an option rather than a
   // literal at each call so a deploy that serves more than one is a client option, not a rewrite.
   const actor = options.actor ?? RESERVED_ACTOR
+  const append = (thread: string, event: Append): Promise<Accepted> =>
+    run(api.threads.append({ params: { actor, id: thread }, payload: event }))
+
+  // turnsOf reads the `turns` projection through the derivation, which is where the resume
+  // convenience gets the epoch it has to stamp. It is spelled by name rather than through
+  // `projection` because `resume` is on every client while the declaration is not: a client built
+  // for an actor that declares no `turns` says so instead of failing on an undefined call.
+  const turnsOf = async (thread: string, turn: string): Promise<ReadonlyArray<TurnView>> => {
+    const call = (api.projections as Record<string, ProjectionCall | undefined>)["turns"]
+    if (call === undefined) {
+      throw new ProblemError({
+        ...ResumeRefused.of(
+          "This client was built without a `turns` projection, so it cannot tell whether a turn failed."
+        )
+      })
+    }
+    return await run(call({ params: { actor, id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
+  }
+
   return {
     baseUrl,
     actor,
@@ -197,9 +221,38 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
     tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
     events: (thread, events = {}) =>
       run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
-    turn: (thread, turn) => run(api.threads.turn({ params: { actor, id: thread, turn } })),
-    deliver: (thread, message) => run(api.threads.deliver({ params: { actor, id: thread }, payload: message })),
-    resume: (thread, turn) => run(api.threads.resume({ params: { actor, id: thread, turn } })),
+    append,
+    // A resume is an append, so the platform has no route for it and no guard over it. The check
+    // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
+    // learn the epoch to stamp. A turn that fails between the read and the append still gets a
+    // TurnResumed, and a TurnResumed for a turn that is not failed derives nothing, so a race costs
+    // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
+    // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/events.ts,
+    // agentKeys).
+    resume: async (thread, turn) => {
+      const views = await turnsOf(thread, turn)
+      const view = views.find((candidate) => candidate.turn === turn)
+      if (view === undefined) {
+        throw new ProblemError({
+          ...ResumeRefused.of(`No turn named ${JSON.stringify(turn)} has been served on this thread.`)
+        })
+      }
+      if (view.status !== "failed") {
+        throw new ProblemError({
+          ...ResumeRefused.of(
+            `turn ${JSON.stringify(turn)} cannot resume because its active epoch is ${view.status}`
+          )
+        })
+      }
+      // The next execution epoch, stamped the way the library stamps it
+      // (packages/agent/src/resume.ts, resumeTurn).
+      return append(thread, {
+        type: "TurnResumed",
+        turn,
+        failedEpoch: view.epoch,
+        epoch: view.epoch + 1
+      })
+    },
     health: () => run(api.health.healthz({})),
     // The derivation keys the projections group by name, and the name a caller passes is one of
     // those keys, so the lookup cannot miss. The types are recovered on the way out because an

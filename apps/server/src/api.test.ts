@@ -99,49 +99,68 @@ const post = (base: string, path: string, body?: unknown) =>
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   })
 
+// turnOf reads one turn through the actor's declared projection, narrowed by its `turn` query.
+// There is no route that reads a turn by id: the single lookup is this query (actor.ts,
+// agentProjections).
+const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
+  const views = (await (await fetch(
+    `${base}/v1/actors/agent/threads/${thread}/turns?turn=${encodeURIComponent(turn)}`
+  )).json()) as ReadonlyArray<TurnView>
+  return views[0]
+}
+
 const birth = async (base: string, id: string, message: { id: string; text: string }) => {
-  const response = await post(base, `/v1/actors/agent/threads/${id}/events`, message)
+  const response = await post(base, `/v1/actors/agent/threads/${id}/events`, {
+    type: "MessageReceived",
+    ...message
+  })
   expect(response.status).toBe(202)
-  expect(await response.json()).toEqual({ actor: RESERVED_ACTOR, thread: id, turn: message.id })
+  expect(await response.json()).toEqual({ actor: RESERVED_ACTOR, thread: id })
   return until(`turn ${message.id} of ${id}`, async () => {
-    const view = (await (await fetch(`${base}/v1/actors/agent/threads/${id}/turns/${message.id}`)).json()) as TurnView
-    return view.status === "pending" ? undefined : view
+    const view = await turnOf(base, id, message.id)
+    return view === undefined || view.status === "pending" ? undefined : view
   })
 }
 
-describe("messages", () => {
-  test("a message births a thread and the server drives its turn to completed", async () => {
+describe("appending", () => {
+  test("an appended message births a thread and the server drives its turn to completed", async () => {
     const view = await serving((base) => birth(base, "alpha", { id: "m1", text: "hello" }))
-    expect(view).toEqual({ turn: "m1", status: "completed", output: "ok: hello" })
+    expect(view).toEqual({ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" })
   })
 
-  test("a body with no id or no text is refused", async () => {
+  // `type` is the only field the platform requires, because an event is one fact and what its
+  // other fields mean is the actor's knowledge (contract.ts, Append).
+  test("a body with no type is refused", async () => {
     const problems = await serving(async (base) => {
-      const missingText = await post(base, "/v1/actors/agent/threads/alpha/events", { id: "m1" })
-      const missingId = await post(base, "/v1/actors/agent/threads/alpha/events", { text: "hello" })
+      const noType = await post(base, "/v1/actors/agent/threads/alpha/events", { id: "m1", text: "hello" })
+      const emptyType = await post(base, "/v1/actors/agent/threads/alpha/events", { type: "" })
       return [
-        { status: missingText.status, type: missingText.headers.get("content-type"), body: await missingText.json() },
-        { status: missingId.status, type: missingId.headers.get("content-type"), body: await missingId.json() }
+        { status: noType.status, type: noType.headers.get("content-type"), body: await noType.json() },
+        { status: emptyType.status, type: emptyType.headers.get("content-type"), body: await emptyType.json() }
       ]
     })
-    // The declaration refuses the body, and the refusal is a problem document naming the field
-    // that is missing (contract.ts, layerRequestProblems).
     for (const refused of problems) {
       expect(refused.status).toBe(400)
       expect(refused.type).toContain(PROBLEM_CONTENT_TYPE)
       expect(refused.body).toMatchObject({ status: 400, title: "Invalid Request" })
     }
-    expect((problems[0]!.body as { detail: string }).detail).toContain("`text` is missing")
-    expect((problems[1]!.body as { detail: string }).detail).toContain("`id` is missing")
+    expect((problems[0]!.body as { detail: string }).detail).toContain("`type` is missing")
+    expect((problems[1]!.body as { detail: string }).detail).toContain("`type` is not a value it accepts")
   })
 
+  // Duplicate suppression is the actor's, keyed by its own `keyOf` (packages/core/src/message.ts,
+  // messageKeys), so the platform appends and the assembly decides what a repeat means.
   test("a redelivered message id answers the same and writes nothing", async () => {
     const counts = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const before = ((await (await fetch(`${base}/v1/actors/agent/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
-      const again = await post(base, "/v1/actors/agent/threads/alpha/events", { id: "m1", text: "hello" })
+      const again = await post(base, "/v1/actors/agent/threads/alpha/events", {
+        type: "MessageReceived",
+        id: "m1",
+        text: "hello"
+      })
       expect(again.status).toBe(202)
-      expect(await again.json()).toEqual({ actor: RESERVED_ACTOR, thread: "alpha", turn: "m1" })
+      expect(await again.json()).toEqual({ actor: RESERVED_ACTOR, thread: "alpha" })
       await sleep(50)
       const after = ((await (await fetch(`${base}/v1/actors/agent/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
       return [before, after]
@@ -288,7 +307,7 @@ describe("the event stream", () => {
       expect(openStreams()).toBe(1)
 
       // Then a message delivered while the stream is open arrives on it.
-      await post(base, "/v1/actors/agent/threads/alpha/events", { id: "m2", text: "again" })
+      await post(base, "/v1/actors/agent/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
       await until("the live frames", async () => (framesOf(text).length > replayed.length ? true : undefined))
       const live = framesOf(text)
 
@@ -324,7 +343,7 @@ describe("projections", () => {
       return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
     })
     expect(read.status).toBe(200)
-    expect(read.body).toEqual([{ turn: "m1", status: "completed", output: "ok: hello" }])
+    expect(read.body).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
   })
 
   test("a name the actor never declared says what does exist", async () => {
@@ -375,32 +394,27 @@ describe("projections", () => {
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return { now: await json("/v1/actors/agent/threads/alpha/turns"), atOne: await json("/v1/actors/agent/threads/alpha/turns?at=1") }
     })
-    expect(read.now).toEqual([{ turn: "m1", status: "completed", output: "ok: hello" }])
+    expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
     // One event stands before the cut: the message that asked for the turn, and nothing that
     // answered it.
-    expect(read.atOne).toEqual([{ turn: "m1", status: "pending" }])
+    expect(read.atOne).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
   })
 
-  test("a turn nobody was asked to serve is a 404", async () => {
-    const answer = await serving(async (base) => {
+  // The single lookup is the same projection with its `turn` query, which is why the platform keeps
+  // no turn-shaped route at all (actor.ts, agentProjections).
+  test("`turn` narrows the projection to one entry, and an unknown turn is an empty array", async () => {
+    const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const missing = await fetch(`${base}/v1/actors/agent/threads/alpha/turns/m9`)
-      return { status: missing.status, body: await missing.json() }
+      const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
+      return {
+        one: await json("/v1/actors/agent/threads/alpha/turns?turn=m1"),
+        ghost: await json("/v1/actors/agent/threads/alpha/turns?turn=m9")
+      }
     })
-    expect(answer.status).toBe(404)
-    expect(answer.body).toMatchObject({ status: 404, title: "Unknown Turn" })
-  })
-
-  test("a turn that did not fail refuses to resume", async () => {
-    const answer = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const refused = await post(base, "/v1/actors/agent/threads/alpha/turns/m1/resume")
-      return { status: refused.status, type: refused.headers.get("content-type"), body: await refused.json() }
-    })
-    expect(answer.status).toBe(409)
-    expect(answer.type).toContain(PROBLEM_CONTENT_TYPE)
-    expect(answer.body).toMatchObject({ status: 409, title: "Resume Refused" })
-    expect(String((answer.body as { detail?: unknown }).detail)).toContain("cannot resume")
+    expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
+    // A turn nobody was asked to serve matches nothing. It is not a failure: asking a projection
+    // about an id it has never seen is a question with an empty answer.
+    expect(read.ghost).toEqual([])
   })
 })
 
