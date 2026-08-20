@@ -1,10 +1,19 @@
 ------------------------------ MODULE Guard ------------------------------
 (* The serve give-up guard's one premise: a counted attempt is an ENDED
-   attempt. The guard reads "log unchanged across an attempt" as evidence
+   attempt. The guard reads "no progress across an attempt" as evidence
    that a body cannot progress. The reading is sound only when no attempt
    is in flight at the moment the guard counts or gives up; the
    single-writer chain is what makes it so (withActor and the awaited
    wake path, src/platform/host.ts; the decisions, src/platform/giveup.ts).
+
+   The implementation counts in the log itself: Count is the append of a
+   RecoveryAttempted mark before a re-drive, and GiveUp is the CodeSettled
+   error verdict. The marks belong to the bookkeeping class, which the
+   progress measure excludes, so this module's `len` and Append model the
+   NON-bookkeeping appends only: a mark is a Count step here, never an
+   Append. The theorem is storage-agnostic on purpose; it held for a meta
+   counter and holds for the marks, because the race lives in timing, not
+   in the store.
 
    This module makes the premise a theorem. One lane, one body, one
    guard. The body starts an attempt, appends progress (a replay that
@@ -19,8 +28,9 @@
      mid-attempt. A slow body's silence is indistinguishable from death,
      the verdict lands while the body runs, and the body's later result
      makes two terminal stories for one execution (the keyed store then
-     absorbs the real result as a duplicate: the outcome the system
-     shows is the verdict's lie).
+     absorbs the real result as a duplicate on cs:<execId>: the outcome
+     the system shows is the verdict's lie, and with the marks in the
+     log the mistake is also a permanent record).
 
    NODOUBLEOUTCOME is the debt: a verdict and a result never both stand.
    GuardRace.cfg expects TLC to refute it under Racy; Guard.cfg proves
