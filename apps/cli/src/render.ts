@@ -38,7 +38,7 @@ const truncate = (value: string, width: number): string =>
 const timeOf = (at: number | undefined): string =>
   at === undefined ? ABSENT : new Date(at).toISOString()
 
-// The runs a store holds. `events` is the count of events in the log, which is the size of the
+// Every agent a store holds, parent before child. `events` is the count of events in the log, which is the size of the
 // thing every other read projects from, and `last` is when the log last grew.
 export const agentsTable = (agents: ReadonlyArray<AgentSummary>): string =>
   agents.length === 0

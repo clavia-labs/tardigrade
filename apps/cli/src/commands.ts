@@ -209,7 +209,7 @@ export const lsCommand = Command.make("ls", remote, (flags) =>
     const agents = yield* call(() => client.list())
     yield* Console.log(flags.json ? jsonOf(agents) : agentsTable(agents))
   })).pipe(
-    Command.withDescription("List the runs a store holds, parent before child."),
+    Command.withDescription("List every agent a store holds, parent before child. A spawned child is an agent like any other, so a run that spawned nine lists ten rows."),
     Command.withAlias("list")
   )
 

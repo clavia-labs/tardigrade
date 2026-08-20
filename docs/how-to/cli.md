@@ -22,7 +22,7 @@ bun run --cwd apps/cli start -- --help
 | `tdg dev` | Boot the API and serve the built UI at one URL. One process, one port, one thing to stop. |
 | `tdg run "<brief>"` | Deliver a brief, wait for the turn to settle, and print what it answered. |
 | `tdg send <agent> "<brief>"` | Deliver a brief and print the turn handle without waiting. |
-| `tdg ls` | The runs a store holds, parent before child, as a table. |
+| `tdg ls` | Every agent a store holds, parent before child, as a table. |
 | `tdg events <agent>` | The log, one line per event. |
 
 `tdg --help` prints the tree and `tdg <command> --help` prints one command. A command nobody declared exits non-zero and says which command it looked like.
