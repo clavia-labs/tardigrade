@@ -27,7 +27,7 @@ type Settled = { readonly turn: string; readonly output?: string; readonly error
 
 // work is the default work surface these tests assemble against: code mode with the spawn and
 // workspace packages in scope. The packages are values, so the same list mounts on any host.
-const work = () => codeModeFor({}, {}, [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })])
+const work = () => codeModeFor({ packages: [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })] })
 
 // hosted binds one assembled actor to an in-process host and drives the root lane. It is the
 // test's own driver: deliver a brief, drive to quiescence, read the boundary the settle left.
