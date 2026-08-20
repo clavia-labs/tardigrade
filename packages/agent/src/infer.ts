@@ -1,10 +1,10 @@
-import { Clock, Context, Effect } from "effect"
+import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { modelCalled, textReturned, turnFailed } from "./events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "./events"
-import { trajectoryOf, turnView } from "@clavia/tardigrade-code/turns"
+import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/turns"
 import type { ContextPolicy } from "./compaction"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
@@ -13,8 +13,8 @@ import type { ContextPolicy } from "./compaction"
 // is unanswered the turn owes nothing here: the tools and code reactors carry it. The pieces
 // compose over one log through event names alone.
 //
-// InferPolicy is the give-up and repair ceilings. The defaults match the old constants; a
-// caller who wants a longer crash loop or more schema repairs lists inferReactorFor.
+// InferPolicy is the process-crash and schema-repair ceilings. A caller who wants more recovery
+// attempts or schema repairs passes an override to inferReactorFor.
 export interface InferPolicy {
   readonly giveUpAfter: number
   readonly repairAtMost: number
@@ -34,6 +34,9 @@ export interface InferRequest {
   readonly context?: Partial<ContextPolicy>
 }
 
+const epochStamp = (epoch: number): { readonly epoch?: number } =>
+  epoch === 0 ? {} : { epoch }
+
 // Infer is the model seam: one inference over the request, one action out. The platform binds
 // this to a provider. Tests bind it to a stub. `key` is the attempt's identity, the same string
 // the `ModelCalled` mark carries: a binding forwards it as the provider's idempotency key where
@@ -52,22 +55,43 @@ export class Infer extends Context.Service<
 // consequence carries the turn it serves and the attempt's spend: `usage` is always stamped,
 // and an attempt whose binding reported nothing stamps an empty object, so usageIn reads the
 // spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
-const consequenceOf = (action: Action, turn: string, at: number): Event => {
+const consequenceOf = (action: Action, turn: string, epoch: number, attempt: string, at: number): Event => {
   const usage = action.usage ?? {}
   return action.kind === "call"
     ? { type: "ToolCalled", callId: action.callId, name: action.name, arguments: action.arguments, usage, turn, at }
     : action.kind === "complete"
-      ? { type: "TurnCompleted", output: action.output, usage, turn, at }
-      : { type: "TurnFailed", error: action.error, usage, turn, at }
+      ? { type: "TurnCompleted", output: action.output, usage, turn, ...epochStamp(epoch), at }
+      : {
+          type: "TurnFailed",
+          error: action.error,
+          usage,
+          turn,
+          ...epochStamp(epoch),
+          cause: action.failure?.cause ?? "model",
+          ...(action.failure === undefined
+            ? {}
+            : {
+                attempts: action.failure.attempts,
+                attemptKey: attempt,
+                ...(action.failure.policy === undefined ? {} : { policy: action.failure.policy })
+              }),
+          at
+        }
+}
+
+const failureMessage = (cause: Cause.Cause<never>): string => {
+  const error = Cause.squash(cause)
+  return error instanceof Error ? error.message : String(error)
 }
 
 // diedAttempts counts the `ModelCalled` marks at the end of the turn's slice, with nothing after
 // them. Any committed event after a mark is progress and resets the count. Counting inside the
 // slice keeps a queued message on the log from masking a crash loop.
-const diedAttempts = (turn: ReadonlyArray<Event>): number => {
+const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
   let n = 0
   for (let i = turn.length - 1; i >= 0; i--) {
-    if (turn[i]!.type === "ModelCalled") n += 1
+    const event = turn[i]!
+    if (event.type === "ModelCalled" && Number((event as { epoch?: unknown }).epoch ?? 0) === epoch) n += 1
     else break
   }
   return n
@@ -84,6 +108,9 @@ const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
   slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
 
+const terminalKey = (turn: string, epoch: number): string =>
+  epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
+
 // Render derives what the model is shown over this log: the assembly owns it (capability.ts,
 // renderOf).
 export type Render = (log: ReadonlyArray<Event>) => {
@@ -99,45 +126,89 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
   const head = slice[0] as { id?: unknown }
   const turn = String(head.id)
+  const epoch = turnEpochOf(log, turn)
+  const died = diedAttempts(slice, epoch)
+  const marks = slice.filter((e) => e.type === "ModelCalled").length
+  const modelFailures = log.filter(
+    (event) =>
+      event.type === "TurnFailed" &&
+      String((event as { turn?: unknown }).turn) === turn &&
+      String((event as { cause?: unknown }).cause) === "model"
+  ).length
+  const logicalAttempt = slice.filter((e) => e.type === "ToolCalled").length + modelFailures
+  const attempt = `${turn}/infer/${logicalAttempt}`
+  const effectivePolicy = { giveUpAfter, repairAtMost }
   // The give-up and repair bounds are derivations, so each derives its own terminal
-  // transition: one terminal per turn (tn:<turn>), and a duplicate of either kind absorbs.
-  if (diedAttempts(slice) >= giveUpAfter) {
+  // transition: one terminal per turn epoch, and a duplicate of either kind absorbs.
+  if (died >= giveUpAfter) {
     return [
       transition({
-        key: `tn:${turn}`,
-        input: { turn, error: `the model attempt died ${giveUpAfter} times in a row` },
+        key: terminalKey(turn, epoch),
+        input: { turn, epoch, attempt, attempts: died, policy: effectivePolicy, error: `the model attempt died ${giveUpAfter} times in a row` },
         act: (input) =>
           Effect.gen(function* () {
             const at = yield* Clock.currentTimeMillis
-            return [turnFailed({ error: input.error, turn: input.turn, at })]
+            return [
+              turnFailed({
+                error: input.error,
+                cause: "inference_attempts_exhausted",
+                attempts: input.attempts,
+                attemptKey: input.attempt,
+                policy: input.policy,
+                turn: input.turn,
+                ...epochStamp(input.epoch),
+                at
+              })
+            ]
           })
       })
     ]
   }
-  const rejections = slice.filter((e) => e.type === "ToolCalled" && String((e as { name?: unknown }).name) === "answer").length
+  const epochStart = slice.findLastIndex(
+    (event) => event.type === "TurnResumed" && Number((event as { epoch?: unknown }).epoch) === epoch
+  )
+  const epochEvents = epochStart === -1 ? slice : slice.slice(epochStart + 1)
+  const rejections = epochEvents.filter(
+    (event) => event.type === "ToolCalled" && String((event as { name?: unknown }).name) === "answer"
+  ).length
   if (rejections > repairAtMost) {
     return [
       transition({
-        key: `tn:${turn}`,
-        input: { turn, error: `the model's answer did not satisfy the declared schema after ${repairAtMost} corrections` },
+        key: terminalKey(turn, epoch),
+        input: {
+          turn,
+          epoch,
+          attempt,
+          attempts: rejections,
+          policy: effectivePolicy,
+          error: `the model's answer did not satisfy the declared schema after ${repairAtMost} corrections`
+        },
         act: (input) =>
           Effect.gen(function* () {
             const at = yield* Clock.currentTimeMillis
-            return [turnFailed({ error: input.error, turn: input.turn, at })]
+            return [
+              turnFailed({
+                error: input.error,
+                cause: "schema_repairs_exhausted",
+                attempts: input.attempts,
+                attemptKey: input.attempt,
+                policy: input.policy,
+                turn: input.turn,
+                ...epochStamp(input.epoch),
+                at
+              })
+            ]
           })
       })
     ]
   }
-  const marks = slice.filter((e) => e.type === "ModelCalled").length
   // The attempt's identity, the same string its ModelCalled mark carries. A died attempt leaves
-  // its mark, so the retry subtracts the trailing died marks: retries of one logical attempt
-  // share one provider idempotency key, while the marks stay one per run (their repetition is
-  // the give-up evidence; the mark's ordinal keys it, so evidence is preserved, not absorbed).
-  const attempt = `${turn}/infer/${marks - diedAttempts(slice)}`
+  // its mark. The completed tool calls count logical attempts, so an operator resume keeps the
+  // failed inference's provider idempotency key. The mark ordinal remains unique per physical run.
   return [
     transition({
       key: `mc:${turn}/${marks}`,
-      input: { turn, attempt, ordinal: marks, trajectory: trajectoryOf(log), render: render(log) },
+      input: { turn, epoch, attempt, ordinal: marks, trajectory: trajectoryOf(log), render: render(log), policy: effectivePolicy },
       act: (input) =>
         Effect.gen(function* () {
           const events = yield* EventLog
@@ -146,14 +217,28 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
           // died attempt leaves its mark, the next derivation counts it, the bound holds.
           // callId is the provider idempotency key (shared across retries of one logical
           // attempt); ordinal is the occurrence the dedup key reads.
-          yield* events.append([modelCalled({ callId: input.attempt, ordinal: input.ordinal, turn: input.turn, at })])
-          const action = yield* (yield* Infer).react({ trajectory: input.trajectory, ...input.render }, input.attempt)
+          yield* events.append([
+            modelCalled({ callId: input.attempt, ordinal: input.ordinal, turn: input.turn, ...epochStamp(input.epoch), at })
+          ])
+          const action = yield* (yield* Infer)
+            .react({ trajectory: input.trajectory, ...input.render }, input.attempt)
+            .pipe(
+              Effect.catchCause((cause) =>
+                Cause.hasInterruptsOnly(cause)
+                  ? Effect.failCause(cause)
+                  : Effect.succeed<Action>({
+                      kind: "fail",
+                      error: failureMessage(cause),
+                      failure: { cause: "inference_error", attempts: 1 }
+                    })
+              )
+            )
           const after = yield* Clock.currentTimeMillis
           return [
             ...(action.kind === "call" && action.text !== undefined && action.text !== ""
               ? [textReturned({ text: action.text, turn: input.turn, at: after })]
               : []),
-            consequenceOf(action, input.turn, after)
+            consequenceOf(action, input.turn, input.epoch, input.attempt, after)
           ]
         })
     })

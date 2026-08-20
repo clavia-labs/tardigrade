@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-[bun](https://bun.sh) 1.3 or newer. It is the runtime, the package manager, and the test runner, so it is the only tool you need to install.
+Install the [supported Bun runtime](docs/explanations/runtime-and-recovery.md#runtime). Bun is the runtime, package manager, and test runner, so it is the only tool you need to install.
 
 ## Setup
 

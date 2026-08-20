@@ -22,7 +22,7 @@
     "!src/**/*.test.ts"
   ],
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.4.0"
   },
   "type": "module",
   "exports": {
@@ -33,6 +33,7 @@
     "@clavia/tardigrade": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@smithy/fetch-http-handler": "^5.6.3",
+    "@smithy/node-http-handler": "^4.11.2",
     "@tanstack/ai": "0.46.0",
     "@tanstack/ai-bedrock": "0.2.3",
     "@tanstack/ai-openai": "0.20.0",

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { turnHead } from "./turns"
+import { replyView, trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
 
 // `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every
 // `MessageReceived`, except a reply a package call was still parked on when it landed. That
@@ -45,5 +45,42 @@ describe("turnHead: a reply claimed by a still-open package call", () => {
     ]
     const head = turnHead(log)
     expect(head).toMatchObject({ id: "run-c1.reply" })
+  })
+})
+
+describe("a resumed turn", () => {
+  const failed: ReadonlyArray<Event> = [
+    { type: "MessageReceived", id: "m1", text: "read", at: 1 },
+    { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", at: 2 },
+    { type: "ToolCalled", callId: "c1", name: "read", arguments: {}, turn: "m1", at: 3 },
+    { type: "ToolReturned", callId: "c1", result: "contents", turn: "m1", at: 4 },
+    { type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", at: 5 },
+    { type: "TurnFailed", error: "timeout", turn: "m1", at: 6 },
+    { type: "ReplyDelivered", turn: "m1", at: 7 }
+  ]
+
+  test("the retry request opens the next epoch over the committed history", () => {
+    const log: ReadonlyArray<Event> = [
+      ...failed,
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 8 }
+    ]
+
+    expect(turnEpochOf(log, "m1")).toBe(1)
+    expect(turnHead(log)).toMatchObject({ id: "m1" })
+    expect(turnTerminalOf(log, "m1")).toBeUndefined()
+    expect(turnView(log).filter((event) => event.type === "ToolReturned")).toHaveLength(1)
+    expect(trajectoryOf(log).some((event) => event.type === "TurnFailed")).toBe(false)
+  })
+
+  test("the new epoch owns its terminal without redelivering the turn", () => {
+    const completed: ReadonlyArray<Event> = [
+      ...failed,
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 8 },
+      { type: "TurnCompleted", output: "done", turn: "m1", epoch: 1, at: 9 }
+    ]
+
+    expect(turnHead(completed)).toBeUndefined()
+    expect(turnTerminalOf(completed, "m1")).toMatchObject({ type: "TurnCompleted", output: "done" })
+    expect(replyView(completed)).toEqual([])
   })
 })

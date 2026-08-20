@@ -22,7 +22,7 @@
     "!src/**/*.test.ts"
   ],
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.4.0"
   },
   "type": "module",
   "exports": {

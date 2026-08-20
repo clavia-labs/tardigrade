@@ -16,8 +16,31 @@ export const turnOf = (e: Event): string | undefined => {
 const stamped = (log: ReadonlyArray<Event>, id: string): ReadonlyArray<Event> =>
   log.filter((e) => turnOf(e) === id)
 
-const hasStamped = (log: ReadonlyArray<Event>, id: string, types: ReadonlyArray<string>): boolean =>
-  log.some((e) => types.includes(e.type) && turnOf(e) === id)
+// eventEpochOf returns the execution epoch stamped on an event. Historical events belong to epoch zero.
+export const eventEpochOf = (event: Event): number => {
+  const epoch = (event as { epoch?: unknown }).epoch
+  return typeof epoch === "number" && Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0
+}
+
+// turnEpochOf returns the latest execution epoch that an operator started for one turn.
+export const turnEpochOf = (log: ReadonlyArray<Event>, turn: string): number =>
+  log.reduce((epoch, event) => {
+    if (event.type !== "TurnResumed" || turnOf(event) !== turn) return epoch
+    return Math.max(epoch, eventEpochOf(event))
+  }, 0)
+
+const isTerminal = (event: Event): boolean => event.type === "TurnCompleted" || event.type === "TurnFailed"
+
+// turnTerminalOf returns the terminal in the active execution epoch.
+export const turnTerminalOf = (log: ReadonlyArray<Event>, turn: string): Event | undefined => {
+  const epoch = turnEpochOf(log, turn)
+  return log.find((event) => isTerminal(event) && turnOf(event) === turn && eventEpochOf(event) === epoch)
+}
+
+const activeStamped = (log: ReadonlyArray<Event>, turn: string): ReadonlyArray<Event> => {
+  const epoch = turnEpochOf(log, turn)
+  return stamped(log, turn).filter((event) => !isTerminal(event) || eventEpochOf(event) === epoch)
+}
 
 // claimedByPark: a reply an open package call was awaiting when it landed belongs to that call,
 // never to a fresh turn of its own; the awaiting body harvests it, and nothing else may react
@@ -45,21 +68,25 @@ const heads = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
 
 // turnHead returns the current turn's head: the earliest message with no stamped terminal.
 export const turnHead = (log: ReadonlyArray<Event>): Event | undefined =>
-  heads(log).find((h) => !hasStamped(log, idOf(h), ["TurnCompleted", "TurnFailed"]))
+  heads(log).find((head) => turnTerminalOf(log, idOf(head)) === undefined)
 
 // turnView returns the current turn's slice: its head plus its stamped events, in log order.
 export const turnView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const head = turnHead(log)
-  return head === undefined ? [] : [head, ...stamped(log, idOf(head))]
+  return head === undefined ? [] : [head, ...activeStamped(log, idOf(head))]
 }
 
 // replyView returns the turn owed a reply: terminal stamped, reply not.
 export const replyView = (log: ReadonlyArray<Event>): ReadonlyArray<Event> => {
   const head = heads(log).find(
-    (h) =>
-      hasStamped(log, idOf(h), ["TurnCompleted", "TurnFailed"]) && !hasStamped(log, idOf(h), ["ReplyDelivered"])
+    (candidate) => {
+      const turn = idOf(candidate)
+      const terminal = turnTerminalOf(log, turn)
+      if (terminal === undefined) return false
+      return !log.some((event) => event.type === "ReplyDelivered" && turnOf(event) === turn)
+    }
   )
-  return head === undefined ? [] : [head, ...stamped(log, idOf(head))]
+  return head === undefined ? [] : [head, ...activeStamped(log, idOf(head))]
 }
 
 // trajectoryOf is the model's projection: turns in service order, each head just before its
@@ -73,6 +100,7 @@ export const trajectoryOf = (log: ReadonlyArray<Event>): ReadonlyArray<Event> =>
   for (const e of log) {
     if (e.type === "MessageReceived") continue
     const turn = turnOf(e)
+    if (turn !== undefined && isTerminal(e) && eventEpochOf(e) !== turnEpochOf(log, turn)) continue
     if (turn !== undefined && !emitted.has(turn)) {
       const head = byId.get(turn)
       if (head !== undefined) out.push(head)

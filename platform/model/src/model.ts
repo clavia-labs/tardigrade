@@ -7,15 +7,16 @@ import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanst
 import { Infer, type InferRequest } from "@clavia/tardigrade/infer"
 import type { Action } from "@clavia/tardigrade/events"
 import type { Event } from "@clavia/tardigrade-core/event"
+import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { answerErrors, outputSchemaOf } from "@clavia/tardigrade/contract"
 import { modelRequest, type AgentMessage, type ToolSpec } from "@clavia/tardigrade/request"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "@clavia/tardigrade/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
-// layered: the stream bounds below catch a hung provider inside the call, the platform's 30s
-// liveness alarm catches a hung binding, and the marks-and-give-up fold bounds the retries. A
-// thrown attempt here is an attempt that died, and the next settle retries it.
+// layered: the stream bounds below catch a hung provider inside the call, and the retry ladder
+// bounds transient provider failures. Exhaustion returns a failed action with its policy and
+// attempt count, so the turn records one resumable `TurnFailed` terminal.
 
 export interface ModelEnv {
   readonly MODEL_BASE_URL?: string // OpenAI-compat endpoint, or the gateway's bedrock-runtime URL
@@ -55,7 +56,7 @@ export const modelAskOf = (trajectory: ReadonlyArray<Event>): string | undefined
 }
 
 // StreamBounds is time to first chunk, idle between chunks, and the whole stream. Each timeout
-// throws; the attempt dies and the marks count it (v5's stream-idle lesson).
+// enters the bounded provider retry policy (model.test.ts, "throttle-shaped retry").
 export interface StreamBounds {
   readonly firstChunkMs: number
   readonly idleMs: number
@@ -124,7 +125,7 @@ const toTool = (t: ToolSpec): Tool => ({
 })
 
 // The decode: the processed stream becomes one Action. A tool call acts; plain text completes;
-// nothing at all is a failed attempt (thrown, so the marks count it and the settle retries).
+// an empty response enters the provider failure path.
 export const actionOf = (result: ProcessorResult, schema?: unknown): Action => {
   const calls = result.toolCalls ?? []
   const text = (result.content ?? "").trim()
@@ -198,17 +199,10 @@ export interface ModelConfig {
   readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
 }
 
-// Throttle-shaped failures die fast under fan-out: many agents firing at once trip the gateway's
-// rate limit, and three back-to-back attempts with no wait between them exhaust
-// infer's give-up ceiling (`inferReactorFor`) before the throttle even clears. `inferMachine`'s
-// attempt/give-up fold has no notion of time: settleActor (src/core/actor.ts) re-serves owed
-// work on the very next event, and a delayed re-serve would need the lane to rest until an
-// alarm keyed off the attempt count wakes it — a real change to the reactor
-// framework's vocabulary, not a local one. The seam that IS local and honest: retry the
-// throttle-shaped failure inside this one act, before it ever becomes a died mark, so the
-// attempt counter only counts failures that were not a gateway saying "slow down". Retries stay
-// bounded (the configured delay list's length) so a genuinely wedged provider still
-// dies and gives up in time.
+// Throttle-shaped failures need delayed retries because fan-out can trip a gateway's rate limit.
+// The reactor has no timer vocabulary, so the model binding owns these waits inside one act.
+// The configured delay list bounds the retries. Exhaustion returns a failed action with the
+// effective policy, which lets the turn record a resumable terminal.
 //
 // The openai SDK client `chatStream` runs on (`@tanstack/openai-base`) throws its `APIError`
 // subclasses with a numeric `.status`: 429 is the gateway's rate limit, 5xx is its own upstream
@@ -221,7 +215,7 @@ const isThrottleShaped = (e: unknown): boolean => {
   const status = typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined
   if (status === 429 || (status !== undefined && status >= 500)) return true
   const message = String(err.message ?? e)
-  return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|idle beyond bound|exceeded its total bound|no first chunk within bound|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
+  return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|timed?\s*out|idle beyond bound|exceeded its total bound|no first chunk within bound|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
     message
   )
 }
@@ -259,8 +253,7 @@ export const retryAfterMsOf = (e: unknown, now: number): number | undefined => {
 // throttleDelayMs decides one in-flight wait: the provider's stated Retry-After when it fits
 // the ladder's own ceiling (plus up to a second of jitter, so a herd released together does not
 // re-trip the limit), the jittered ladder otherwise, and undefined for a stated wait past the
-// ceiling: holding a turn open longer than the ladder ever would is worse than dying, and a
-// died attempt's mark lets the platform alarm re-drive after the queue clears.
+// ceiling. A stated wait past the ceiling ends the bounded retry set.
 export const throttleDelayMs = (
   e: unknown,
   attempt: number,
@@ -310,14 +303,44 @@ const isTruncated = (e: unknown): e is TruncatedError =>
 // authorization header is stripped; `cf-aig-authorization` carries our token, the gateway holds
 // the AWS credential), and the dynamic SDK import is resolved statically because wrangler's
 // esbuild cannot follow the adapter's indirection on workerd.
-const bedrockAdapter = (config: ModelConfig, maxTokens: number) => {
-  const handler = new (class extends FetchHttpHandler {
-    override async handle(request: Parameters<FetchHttpHandler["handle"]>[0], handlerOptions?: Parameters<FetchHttpHandler["handle"]>[1]) {
-      request.headers = Object.fromEntries(Object.entries(request.headers).filter(([k]) => k.toLowerCase() !== "authorization"))
+type SmithyHandler = Pick<FetchHttpHandler, "handle" | "destroy">
+
+// bedrockHandler selects a transport that can enforce the configured stream bounds. Bun's
+// fetch transport cannot carry a numeric deadline through Smithy's Request object, while
+// workerd cannot use the Node transport.
+const bedrockHandler = (config: ModelConfig, bounds: StreamBounds): SmithyHandler => {
+  const transport: Promise<SmithyHandler> =
+    (globalThis as { Bun?: unknown }).Bun === undefined
+      ? Promise.resolve(new FetchHttpHandler({ requestTimeout: bounds.totalMs }))
+      : (() => {
+          const moduleName = "@smithy/node-http-handler"
+          return (import(/* @vite-ignore */ moduleName) as Promise<typeof import("@smithy/node-http-handler")>).then(
+            ({ NodeHttpHandler: Handler }) =>
+              new Handler({
+                connectionTimeout: bounds.firstChunkMs,
+                socketTimeout: bounds.idleMs,
+                requestTimeout: bounds.totalMs,
+                throwOnRequestTimeout: true
+              })
+          )
+        })()
+
+  return {
+    handle: async (request, handlerOptions) => {
+      request.headers = Object.fromEntries(
+        Object.entries(request.headers).filter(([key]) => key.toLowerCase() !== "authorization")
+      )
       request.headers["cf-aig-authorization"] = `Bearer ${config.apiKey}`
-      return super.handle(request, handlerOptions)
+      return (await transport).handle(request, handlerOptions)
+    },
+    destroy: () => {
+      void transport.then((handler) => handler.destroy()).catch(() => undefined)
     }
-  })()
+  }
+}
+
+const bedrockAdapter = (config: ModelConfig, maxTokens: number, bounds: StreamBounds) => {
+  const handler = bedrockHandler(config, bounds)
   const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
   return new (class extends BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]> {
     protected override importBedrockRuntime(): Promise<typeof BedrockRuntime> {
@@ -430,11 +453,13 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
 const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
+  timeoutMs: number,
   sink: { promise: Promise<Wire | undefined>; reader?: BodyReader }
 ): FetchImpl => {
   const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
   return async (input, init) => {
-    const res = await inner(input, init)
+    const timed = { ...init, timeout: timeoutMs } as NonNullable<Parameters<FetchImpl>[1]>
+    const res = await inner(input, timed)
     if (res.body === null) return res
     const [live, copy] = res.body.tee()
     const reader = copy.getReader()
@@ -481,6 +506,7 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
 }
 
 export const infer = (config: ModelConfig) => {
+  assertSupportedBun()
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
     firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
@@ -488,21 +514,21 @@ export const infer = (config: ModelConfig) => {
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
+  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, stream: bounds }
   const attemptOnce = async (request: InferRequest, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
-     // response, and the ladder would climb nowhere (the removed driver learned this).
-     // Rung zero keeps the bare key, so crash-retries of the same request still
-    // collapse.
+    // response, and the ladder would climb nowhere (the removed driver learned this). Rung zero
+    // keeps the bare key, so crash-retries of the same request still collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
     const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
       promise: Promise.resolve(undefined)
     }
     const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
-    const fetcher = withCapture(config.fetch, keyForRung, sink)
+    const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
     const adapter =
       config.provider === "bedrock"
-        ? bedrockAdapter(config, maxTokens)
+        ? bedrockAdapter(config, maxTokens, bounds)
         : openaiCompatibleText(config.model, {
             name: "tardigrade",
             baseURL: config.baseUrl,
@@ -557,7 +583,11 @@ export const infer = (config: ModelConfig) => {
     react: (request: InferRequest, key?: string) =>
       Effect.gen(function* () {
         const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
-        const stats: { finish?: string; rung: number; waits: number } = { rung: 0, waits: 0 }
+        const stats: { finish?: string; rung: number; waits: number; attempts: number } = {
+          rung: 0,
+          waits: 0,
+          attempts: 0
+        }
         const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         const parts: Usage[] = []
@@ -569,6 +599,7 @@ export const infer = (config: ModelConfig) => {
         for (let attempt = 0; ; attempt++) {
           try {
             stats.rung = rung
+            stats.attempts += 1
             const action = await attemptOnce(request, key, ladder[rung]!, rung, stats)
             remember(action.usage, true)
             return withSpend(action, spentOf(parts, missed))
@@ -590,9 +621,33 @@ export const infer = (config: ModelConfig) => {
                 spentOf(parts, missed)
               )
             }
-            if (!isThrottleShaped(e)) throw e
+            if (!isThrottleShaped(e)) {
+              const message = e instanceof Error ? e.message : String(e)
+              return withSpend(
+                {
+                  kind: "fail",
+                  error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                  failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
+                },
+                spentOf(parts, missed)
+              )
+            }
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
-            if (delay === undefined) throw e
+            if (delay === undefined) {
+              const message = e instanceof Error ? e.message : String(e)
+              return withSpend(
+                {
+                  kind: "fail",
+                  error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                  failure: {
+                    cause: "inference_attempts_exhausted",
+                    attempts: stats.attempts,
+                    policy: failurePolicy
+                  }
+                },
+                spentOf(parts, missed)
+              )
+            }
             stats.waits += 1
             await sleep(delay)
           }
@@ -603,6 +658,7 @@ export const infer = (config: ModelConfig) => {
         yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
         yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
         yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+        yield* Effect.annotateCurrentSpan("retry.attempts", stats.attempts)
         if (action.usage !== undefined) {
           // The usage stamp may carry wire-reported provenance; the span follows the same rule.
           if (action.usage.provider !== undefined) {
