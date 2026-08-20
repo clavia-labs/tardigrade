@@ -71,7 +71,7 @@ export const Quickstart = (): ReactElement => {
       <div className="quickstart">
         <div className="quickstart-intro">
           <h1>Start your first run</h1>
-          <p>Send a brief. Voyager will pick it up here.</p>
+          <p>Agent traces will appear here once a run starts.</p>
         </div>
         <div className="quickstart-grid">
           <CommandCard label="CLI" command={commands.cli} />
