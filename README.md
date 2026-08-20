@@ -153,7 +153,6 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent capabilities from first principles.
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.
-- [Publishing](docs/how-to/publish.md): publish release candidates and stable releases to npm.
 
 ## Contributing
 
