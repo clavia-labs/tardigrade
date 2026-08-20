@@ -1,6 +1,6 @@
 {
   "name": "@clavia/tardigrade-model",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "Infer binding for tardigrade over TanStack AI.",

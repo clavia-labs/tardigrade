@@ -1,8 +1,8 @@
 {
-  "packages/core": "0.0.1",
-  "packages/code": "0.0.1",
-  "packages/host": "0.0.1",
-  "packages/agent": "0.0.1",
-  "platform/bun": "0.0.1",
-  "platform/model": "0.0.1"
+  "packages/core": "0.1.0",
+  "packages/code": "0.1.0",
+  "packages/host": "0.1.0",
+  "packages/agent": "0.1.0",
+  "platform/bun": "0.1.0",
+  "platform/model": "0.1.0"
 }

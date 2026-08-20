@@ -1,6 +1,6 @@
 {
   "name": "@clavia/tardigrade-bun",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "Durable SQLite host binding for tardigrade on Bun.",
