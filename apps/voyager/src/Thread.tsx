@@ -129,8 +129,19 @@ const FieldValue = ({ collapsedHeight, field }: { readonly collapsedHeight: numb
 // its values on the page's own ground on the right. There is no card, because the expansion is the
 // row saying more rather than a second surface (mock.html, .ev-detail). The keys and values are
 // src/narrative.ts's answer, so what a type shows is a tested fact rather than a render decision.
-const Detail = ({ collapsedHeight, moment }: { readonly collapsedHeight: number; readonly moment: Moment }): ReactElement => (
-  <div className="event-detail fade-in">
+const Detail = ({
+  collapsedHeight,
+  moment,
+  stampWidth
+}: {
+  readonly collapsedHeight: number
+  readonly moment: Moment
+  readonly stampWidth: number
+}): ReactElement => (
+  <div
+    className="event-detail fade-in"
+    style={{ marginLeft: `calc(${stampWidth}px + var(--space-2) + var(--space-3))` }}
+  >
     {fieldsOf(moment.event).map((field) => (
       <Fragment key={field.key}>
         <span className="mono event-key">{field.key}</span>
@@ -181,7 +192,7 @@ const Row = ({
           {moment.duration === undefined ? "" : ` · ${moment.duration}`}
         </span>
       </div>
-      {!open ? null : <Detail moment={moment} collapsedHeight={fieldCollapsedHeight} />}
+      {!open ? null : <Detail moment={moment} collapsedHeight={fieldCollapsedHeight} stampWidth={stampWidth} />}
     </div>
   )
 }
