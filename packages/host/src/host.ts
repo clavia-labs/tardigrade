@@ -3,6 +3,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router, type CallResult } from "@clavia/tardigrade-core/router"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 
 // A host runs the emergent graph: many lanes, one router, one driver.
@@ -12,9 +13,9 @@ import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 // conformance contract is packages/core/tla (Driver, Delivery).
 
 // HostPorts are the services every host binds per lane: the log, the
-// router, and this lane's address. layersFor may require them and must
-// not provide them.
-export type HostPorts = EventLog | Router | Self
+// router, this lane's address, and the read over its siblings' logs.
+// layersFor may require them and must not provide them.
+export type HostPorts = EventLog | Router | Self | Facets
 
 // LaneEnv is the rest of an actor's R: what the host does not bind.
 // Construction may require HostPorts; Layer.provideMerge discharges them.
@@ -144,6 +145,8 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
 
+  const logs = Layer.succeed(Facets, { read: (name: string) => Effect.sync(() => read(name)) })
+
   const self = (lane: string): string => `${principal}:${lane}`
 
   const portsOf = (lane: string) =>
@@ -156,7 +159,11 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         })
       ),
       router,
-      Layer.succeed(Self, self(lane))
+      Layer.succeed(Self, self(lane)),
+      // All lanes share one store here, so the observe privilege is the host's own read
+      // (packages/core/src/logs.ts, Facets). A lane's own log still arrives as EventLog: this
+      // one reads a sibling and cannot append.
+      logs
     )
 
   // Exclude is not distributive over a generic R, so the merge is named

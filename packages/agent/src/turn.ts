@@ -4,6 +4,7 @@ import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { send, type Actor } from "@clavia/tardigrade-core/actor"
 import type { Router } from "@clavia/tardigrade-core/router"
 import type { Self } from "@clavia/tardigrade-core/actor"
+import type { Facets } from "@clavia/tardigrade-core/facets"
 import type { Infer, InferPolicy } from "./infer"
 import type { BudgetPolicy } from "./budget"
 import type { ContextPolicy } from "./compaction"
@@ -12,11 +13,12 @@ import type { WorkspacePolicy } from "@clavia/tardigrade-code/workspace"
 
 export { Infer } from "./infer"
 
-// AgentR is the runtime's needs: Infer for the model, EventLog for settle, Router and Self for
-// reply, and KeyValueStore for the spill store code mode writes bounded results to
+// AgentR is the runtime's needs: Infer for the model, EventLog for settle, Router, Self, and
+// Facets for reply and spawn (the deliver, identity, and observe privileges; core/facets.ts), and
+// KeyValueStore for the spill store code mode writes bounded results to
 // (packages/code/src/spill.ts). Capabilities add their own on top (capability.ts,
 // RequirementsOf).
-export type AgentR = Infer | EventLog | Router | Self | KeyValueStore.KeyValueStore
+export type AgentR = Infer | EventLog | Router | Self | Facets | KeyValueStore.KeyValueStore
 export type RlmR = AgentR
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies

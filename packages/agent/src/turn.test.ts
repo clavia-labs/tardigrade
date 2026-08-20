@@ -7,6 +7,7 @@ import { settleActor } from "@clavia/tardigrade-core/actor"
 import type { Package } from "@clavia/tardigrade-code/packages"
 import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Infer, receive } from "./turn"
 import { agentOf, budget, codeModeFor, compaction, reply, toolList } from "./capability"
@@ -70,6 +71,7 @@ const zoho = (spies: { insert: number; search: number }): Package => ({
 
 // No other actors exist in these tests: delivery is a no-op and a sync call answers with an error.
 const noRouter = Layer.mergeAll(
+  Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
   Layer.succeed(Router, {
     deliver: () => Effect.void,
     call: () => Effect.succeed({ error: "no router bound" }),

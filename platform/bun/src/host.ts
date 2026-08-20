@@ -7,6 +7,7 @@ import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { Router, type CallResult } from "@clavia/tardigrade-core/router"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
@@ -24,7 +25,7 @@ import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 // creates through workspace.sql live in a second file beside it, out of the log's reach
 // (workspace.ts).
 
-// BunPorts are the services this binding leaves an actor no work to bind: packages/host's three,
+// BunPorts are the services this binding leaves an actor no work to bind: packages/host's four,
 // plus the workspace store, which on bun is durable and therefore the platform's to give
 // (packages/code/src/store.ts). BunLaneEnv is the rest of an actor's R, the same shape the
 // reference host asks for.
@@ -214,7 +215,11 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, self(lane))
+      Layer.succeed(Self, self(lane)),
+      // Every lane's log lives in this one durable store, so the observe privilege is the same
+      // read the host serves itself (packages/core/src/logs.ts, Facets). A binding whose lanes
+      // are remote proxies or refuses instead.
+      Layer.succeed(Facets, { read: (name: string) => readEffect(name) })
     )
 
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {

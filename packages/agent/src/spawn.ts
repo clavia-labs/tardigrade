@@ -1,10 +1,11 @@
-import { Clock, Context, Effect } from "effect"
+import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/router"
+import { Self } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import type { Event } from "@clavia/tardigrade-core/event"
 import { budgetPolicyOf, type BudgetPolicy } from "./budget"
 import { Park } from "@clavia/tardigrade-code/errors"
-import { readAddress } from "@clavia/tardigrade-core/router"
+import { address as addressOf, readAddress } from "@clavia/tardigrade-core/router"
 import { replyId } from "@clavia/tardigrade-core/reply"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
@@ -20,9 +21,15 @@ import { replyId } from "@clavia/tardigrade-core/reply"
 // committed run and re-delivers a crashed dispatch. The call id is the child's identity AND the
 // message id, so a replayed dispatch reaches the same child and is absorbed as a duplicate.
 //
-// `place` is the placement policy: the call's id in, the child's address out. The caller never
-// learns where the child lives; the platform's default colocates children as sibling facets of
-// the parent's host, and a remote child is one different returned string.
+// The package is a value any consumer mounts: its host privileges are services, not constructor
+// arguments. `Router` delivers and calls, `Self` names the calling lane, and `Facets` reads that
+// lane's committed replies (`@clavia/tardigrade-core/facets`), so `Package<Router | Self | Facets>`
+// states what a host must bind for these methods to run.
+//
+// `place` is the placement policy: the call's id and the parent's own address in, the child's
+// address out. The caller never learns where the child lives; the default colocates children as
+// sibling facets of the parent's principal, `ag.<callId>` beside the parent's own lane, and a
+// remote child is one different returned string.
 //
 // A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
 // deliver the brief with `replyTo` this lane, then await the reply row on this lane, host-side
@@ -54,13 +61,16 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
+// sibling is the default placement: the child is a facet of the parent's own principal, named
+// `ag.<callId>`. It parses the parent's address with core's one parser, so a placement can never
+// disagree with the router about what an address is (spawn.test.ts, "the default placement is
+// the host's own sibling address").
+const sibling = (callId: string, self: string): string => addressOf(readAddress(self).home, `ag.${callId}`)
+
 export const agentsPackage = (
-  router: Context.Service.Shape<typeof Router>,
-  self: string,
-  place: (callId: string) => string,
-  reader: AgentReader,
-  options: SpawnOptions = {}
-): Package => {
+  options: SpawnOptions & { readonly place?: (callId: string, self: string) => string } = {}
+): Package<Router | Self | Facets> => {
+  const place = options.place ?? sibling
   const agentOf = options.agentOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
@@ -116,6 +126,10 @@ export const agentsPackage = (
     methods: {
       run: (args, ctx) =>
         Effect.gen(function* () {
+          // The three cross-lane privileges, read where the work happens: deliver, identity,
+          // observe. A host that binds them serves this method; nothing here closes over one.
+          const router = yield* Router
+          const self = yield* Self
           const a = args as
             | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
             | undefined
@@ -148,7 +162,7 @@ export const agentsPackage = (
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          const address = place(ctx.callId)
+          const address = place(ctx.callId, self)
           if (a?.background === true) {
             // A background run has no synchronous parent to decide an escalation, so it never asks:
             // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
@@ -190,7 +204,7 @@ export const agentsPackage = (
           // (a replayed attempt) answers at once, with no re-delivery; otherwise the brief goes
           // out with `replyTo` this lane, exactly the background delivery above, and the host
           // parks this call until the reply lands.
-          const already = yield* awaitedReply(reader, self, ctx.callId)
+          const already = yield* awaitedReply(self, ctx.callId)
           if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output !== undefined)
           const at = yield* Clock.currentTimeMillis
           yield* router.deliver(address, {
@@ -214,10 +228,11 @@ export const agentsPackage = (
       // run answered.
       result: (args, ctx) =>
         Effect.gen(function* () {
+          const self = yield* Self
           const a = args as { id?: unknown; output?: unknown } | undefined
           const id = String(a?.id ?? "")
           if (id === "") return { error: "agents.result needs { id }" }
-          const reply = yield* awaitedReply(reader, self, id)
+          const reply = yield* awaitedReply(self, id)
           if (reply !== undefined) return shape(answerOf(reply), "", id, a?.output !== undefined)
           return yield* Effect.fail(new Park({ callId: ctx.callId, awaiting: replyId(id) }))
         }),
@@ -227,6 +242,7 @@ export const agentsPackage = (
       // boundary, another request or its final answer, in the same shape `run` returns.
       continue: (args, ctx) =>
         Effect.gen(function* () {
+          const router = yield* Router
           const a = args as { handle?: unknown; grant?: unknown } | undefined
           const handle = a?.handle as { address?: unknown; turn?: unknown; structured?: unknown } | undefined
           const address = String(handle?.address ?? "")
@@ -242,27 +258,21 @@ export const agentsPackage = (
   }
 }
 
-// AgentReader reads one facet's committed events. `run` (awaiting) and `result` use it to check
-// whether a spawned child's reply has already landed, before ever parking: the same shape
-// `tasks.ts` (`TaskReader`) reads its own lane with.
-export interface AgentReader {
-  readonly events: (facet: string) => Promise<ReadonlyArray<Event>>
-}
-
 // SpawnTerminal is a spawned child's terminal, once its reply has landed on the calling lane.
 interface SpawnTerminal {
   readonly outcome: "completed" | "failed"
   readonly text: string
 }
 
-// awaitedReply returns the reply row for one spawn, if it has landed on the calling lane. `id`
-// is `replyEvent`'s own convention (`src/core/reply.ts`): `<id>.reply` (`replyId`,
-// `src/grammar/grammar.ts`), so a redelivered brief dedups at the sender and a redelivered reply
-// dedups at the receiver.
-const awaitedReply = (reader: AgentReader, self: string, id: string): Effect.Effect<SpawnTerminal | undefined> =>
-  Effect.promise(async () => {
-    const facet = readAddress(self).facet
-    const events = await reader.events(facet)
+// awaitedReply returns the reply row for one spawn, if it has landed on the calling lane. The
+// read is the observe privilege (`Facets`), over this lane's own facet: `run` (awaiting) and
+// `result` ask it whether a spawned child's reply is already home before ever parking. `id` is
+// `replyEvent`'s own convention (`packages/core/src/reply.ts`): `<id>.reply` (`replyId`), so a
+// redelivered brief dedups at the sender and a redelivered reply dedups at the receiver.
+const awaitedReply = (self: string, id: string): Effect.Effect<SpawnTerminal | undefined, never, Facets> =>
+  Effect.gen(function* () {
+    const logs = yield* Facets
+    const events = yield* logs.read(readAddress(self).facet)
     const reply = events.find(
       (e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === replyId(id)
     ) as { outcome?: unknown; text?: unknown } | undefined

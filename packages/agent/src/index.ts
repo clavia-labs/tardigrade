@@ -1,8 +1,7 @@
-import { Context, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import type { Router } from "@clavia/tardigrade-core/router"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import type { Package } from "@clavia/tardigrade-code/packages"
 import { jsSandboxFor } from "@clavia/tardigrade-code/defaults"
@@ -107,49 +106,30 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
 
   const policy = options.policy ?? {}
   // This host takes no synchronous calls, so an escalatable spawn's ask and agents.continue
-  // refuse here. One value is both the host's own doors and the doors the spawn package's router
-  // offers, so the two cannot disagree (packages/agent/src/spawn.ts, agentsPackage).
+  // refuse here. The spawn package reaches the same Router the host binds per lane, so its
+  // doors and the host's cannot disagree (packages/host/src/host.ts, createHost).
   const refused = () => Effect.succeed({ error: "this host takes no synchronous calls" })
-  // The router as a value: a delivery goes through this host, exactly as the router layer the
-  // host binds delivers (packages/host/src/host.ts, createHost).
-  const router: Context.Service.Shape<typeof Router> = {
-    deliver: (address: string, event: Event) => Effect.sync(() => host.deliver(address, event)),
-    call: refused,
-    resume: refused
-  }
 
-  // Every ag. lane runs the RLM default; anything else is a sink. A lane's actor is built on its
-  // first visit, because the spawn package closes over this lane's own address and the host that
-  // routes for it: both are values by then, so the packages reach code mode as values and the
-  // assembly's requirements are what those values state (capability.ts, codeModeFor).
-  const actors = new Map<string, Actor<RlmR>>()
-  const actorFor = (lane: string): Actor<RlmR> | undefined => {
-    if (!lane.startsWith("ag.")) return undefined
-    const built = actors.get(lane)
-    if (built !== undefined) return built
-    const spawn = agentsPackage(
-      router,
-      host.self(lane),
-      (callId) => host.self(`ag.${callId}`),
-      { events: (facet: string) => Promise.resolve(host.read(facet)) },
-      // A child with no stated budget takes the same ceiling this agent's own wall reads.
-      { budget: policy.budget ?? {} }
-    )
-    // The workspace reads the same store the spill path writes. This host binds no SQL surface,
-    // so it is the two-verb workspace (packages/code/src/workspace.ts, workspacePackage).
-    const workspace = workspacePackage({ policy: policy.workspace ?? {} })
-    const assembled = agentOf(
-      [
-        ...(options.capabilities ?? [codeModeFor(policy.code ?? {}, {}, [...user, spawn, workspace])]),
-        reply,
-        budgetFor(policy.budget ?? {}),
-        compactionFor(policy.context ?? {})
-      ],
-      policy.infer ?? {}
-    )
-    actors.set(lane, assembled)
-    return assembled
-  }
+  // The spawn package is a value with no lane in it: Router, Self, and Facets serve its methods
+  // from the environment the host binds per lane (spawn.ts, agentsPackage). A child with no
+  // stated budget takes the same ceiling this agent's own wall reads.
+  const spawn = agentsPackage({ budget: policy.budget ?? {} })
+  // The workspace reads the same store the spill path writes. This host binds no SQL surface,
+  // so it is the two-verb workspace (packages/code/src/workspace.ts, workspacePackage).
+  const workspace = workspacePackage({ policy: policy.workspace ?? {} })
+  // Every ag. lane runs the RLM default; anything else is a sink. Nothing in the assembly names
+  // a lane, so one actor serves them all: the lane arrives as Self, and the packages are values
+  // the whole host shares (capability.ts, codeModeFor).
+  const assembled = agentOf(
+    [
+      ...(options.capabilities ?? [codeModeFor(policy.code ?? {}, {}, [...user, spawn, workspace])]),
+      reply,
+      budgetFor(policy.budget ?? {}),
+      compactionFor(policy.context ?? {})
+    ],
+    policy.infer ?? {}
+  )
+  const actorFor = (lane: string): Actor<RlmR> | undefined => (lane.startsWith("ag.") ? assembled : undefined)
   const host: Host = createHost<RlmR>({
     principal: "mem",
     actorFor,
