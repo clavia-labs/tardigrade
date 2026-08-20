@@ -8,7 +8,7 @@
 
 # Tardigrade
 
-A durable, modular, and serverless agent harness built for self-improvement.
+A durable and modular agent harness built for self-improvement.
 
 ### A harness made for self-improvement
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a hindrance to this. We need something more composable, and easy to author.
