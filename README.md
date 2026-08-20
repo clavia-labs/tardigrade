@@ -8,18 +8,21 @@
 
 # Tardigrade
 
-Build durable agents by composing small, inspectable capabilities.
+A durable and modular agent harness built for self-improvement.
 
-[React derives interfaces from components that interpret state](https://react.dev/learn#creating-and-nesting-components). Tardigrade derives model context from capabilities that interpret the event log. Those capabilities also handle model calls and derive durable state transitions.
+### A harness made for self-improvement
+As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. A harness that is too rigid and complex is a hindrance to this. We need something more composable, and easy to author.
+
+We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Similarly, Tardigrade defines the harness as a set of state transitions derived from the event log, an idea with roots in [Harel's statecharts](https://www.wisdom.weizmann.ac.il/~harel/papers/Statecharts.pdf).
+
+$$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Why Tardigrade
 
-- **Compose the harness.** Add tools, code execution, budgets, compaction, and replies as independent capabilities.
-- **Keep composition strongly typed.** TypeScript carries each capability's service requirements into the host. Missing services fail during typechecking.
-- **Build on Effect.** Typed services and Layers make dependencies explicit. Managed lifecycles, structured concurrency, and tracing share one runtime.
-- **Resume after a crash.** A durable host derives unfinished work from the stored log.
-- **Run beyond one context window.** Compaction bounds model context while the workspace keeps larger values available.
-- **Inspect every run.** The complete log supports debugging, replay, and experiments with copied logs.
+- **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent capabilities.
+- **Strongly typed, built on Effect.** Typed services and Layers make each capability's dependencies explicit. A missing service fails during compile.
+- **Crash proof.** A durable host derives unfinished work from the stored log.
+- **Inspect and improve every run.** Log as core supports natively debugging, replay, and experiments with forked logs.
 
 ## Quickstart
 
@@ -33,38 +36,34 @@ You can use `npm install @clavia/tardigrade` instead. Install `@clavia/tardigrad
 
 ### Create a capability
 
-An agent is made of capabilities. This capability gives the model one native tool and its handler:
+An agent is made of capabilities. A capability is one value with two halves: what the model is shown (`tools`, `system`), and how the calls that come back are handled (`serve`). This one gives the model a single tool:
 
 ```ts
-import { Effect } from "effect"
-import { toolList } from "@clavia/tardigrade"
+import type { Capability } from "@clavia/tardigrade"
 
-const deploys = toolList([
-  {
-    spec: {
+const deploys: Capability = {
+  name: "deploys",
+  tools: () => [
+    {
       name: "recent_deploys",
       description: "List recent production deploys",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false
-      }
-    },
-    run: () =>
-      Effect.succeed([
-        { service: "api", revision: "a17c", summary: "Add rate limiting" }
-      ])
+      inputSchema: { type: "object", properties: {}, additionalProperties: false }
+    }
+  ],
+  serve: (call, log, answer) => {
+    if (call.name !== "recent_deploys") return undefined
+    return [answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])]
   }
-])
+}
 ```
 
-`spec` tells the model when and how to call the tool. `run` handles the call. Replace the sample result with an Effect that calls your deployment API.
+`tools` derives what the model is offered from the log; a constant capability ignores it. `serve` handles a call that comes back: `answer` mints the transition that records the result, and returning `undefined` passes the call to the next capability. Replace the sample result with a call to your deployment API.
 
 The call follows one route:
 
-1. `toolList` adds `recent_deploys` to the next model request.
+1. `tools` adds `recent_deploys` to the next model request.
 2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The shared router asks each mounted capability to handle the call. `toolList` matches the name and runs `run`.
+3. The shared router asks each mounted capability's `serve` to handle the call. `deploys` matches the name and answers.
 4. Tardigrade records `ToolReturned`. The next model request includes the result.
 
 ### Compose an agent
