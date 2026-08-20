@@ -126,6 +126,86 @@ describe("createRlmAgent", () => {
     expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(1)
   })
 
+  test("a failed turn resumes from its last committed inference", async () => {
+    const reads: string[] = []
+    const keys: string[] = []
+    const failureInRequest: boolean[] = []
+    let postToolCalls = 0
+    const mind = createRlmAgent({
+      capabilities: [
+        toolList([
+          {
+            spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: {} } },
+            run: () => {
+              reads.push("contract")
+              return Effect.succeed("contents")
+            }
+          }
+        ])
+      ],
+      infer: async ({ trajectory }, key) => {
+        keys.push(String(key))
+        failureInRequest.push(trajectory.some((event) => event.type === "TurnFailed"))
+        const returned = trajectory.find((event) => event.type === "ToolReturned")
+        if (returned === undefined) return { kind: "call", callId: "read-1", name: "read", arguments: {} }
+        postToolCalls += 1
+        if (postToolCalls === 1) throw new Error("provider connection ended")
+        return { kind: "complete", output: String((returned as { result?: unknown }).result) }
+      }
+    })
+
+    const failed = await mind.run("read the contract")
+    expect(failed).toMatchObject({ turn: "run-0", error: "provider connection ended" })
+
+    const completed = await mind.resume(failed.turn)
+    expect(completed).toEqual({ turn: "run-0", output: "contents" })
+    expect(reads).toEqual(["contract"])
+    expect(keys).toEqual(["run-0/infer/0", "run-0/infer/1", "run-0/infer/1"])
+    expect(failureInRequest).toEqual([false, false, false])
+
+    const log = mind.host.read(ROOT_LANE)
+    expect(log.filter((event) => event.type === "TurnFailed")).toEqual([
+      expect.objectContaining({
+        turn: "run-0",
+        error: "provider connection ended",
+        cause: "inference_error",
+        attempts: 1,
+        attemptKey: "run-0/infer/1"
+      })
+    ])
+    expect(log.filter((event) => event.type === "TurnResumed")).toEqual([
+      expect.objectContaining({ turn: "run-0", failedEpoch: 0, epoch: 1 })
+    ])
+    expect(log.filter((event) => event.type === "TurnCompleted")).toEqual([
+      expect.objectContaining({ turn: "run-0", epoch: 1, output: "contents" })
+    ])
+    expect(log.filter((event) => event.type === "ReplyDelivered")).toHaveLength(1)
+  })
+
+  test("only a failed active epoch can resume", async () => {
+    const mind = createRlmAgent({ infer: async () => ({ kind: "complete", output: "done" }) })
+    const completed = await mind.run("finish")
+
+    await expect(mind.resume(completed.turn)).rejects.toThrow("active epoch is not failed")
+    await expect(mind.resume("missing")).rejects.toThrow("active epoch is not failed")
+  })
+
+  test("a model-declared failure advances the inference key on resume", async () => {
+    const keys: string[] = []
+    const mind = createRlmAgent({
+      infer: async (_request, key) => {
+        keys.push(String(key))
+        return keys.length === 1
+          ? { kind: "fail", error: "the task is invalid" }
+          : { kind: "complete", output: "reconsidered" }
+      }
+    })
+
+    const failed = await mind.run("try")
+    expect(await mind.resume(failed.turn)).toMatchObject({ output: "reconsidered" })
+    expect(keys).toEqual(["run-0/infer/0", "run-0/infer/1"])
+  })
+
   test("a call outside the surface comes back as an unknown tool, never a dead turn", async () => {
     const capabilities = [toolList([
       { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }

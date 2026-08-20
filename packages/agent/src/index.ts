@@ -1,6 +1,7 @@
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
+import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { Router } from "@clavia/tardigrade-core/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Packages, type Package } from "@clavia/tardigrade-code/packages"
@@ -12,6 +13,7 @@ import { type AgentPolicy, type RlmR } from "./turn"
 import { Infer, type InferRequest } from "./infer"
 import type { Action } from "./events"
 import { boundaryOf } from "./boundary"
+import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
 import { agentOf, budgetFor, codeModeFor, compactionFor, reply, type Capability } from "./capability"
 
@@ -25,6 +27,7 @@ export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./t
 export { replyReactor } from "./reply"
 export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./compaction"
 export { agentKeys } from "./events"
+export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./resume"
 export {
   usageIn,
   usageOf,
@@ -70,8 +73,15 @@ export interface CreateAgentOptions {
   readonly sandbox?: Partial<SandboxPolicy>
 }
 
+export interface TurnResult {
+  readonly turn: string
+  readonly output?: string
+  readonly error?: string
+}
+
 export interface RlmAgent {
-  readonly run: (brief: string) => Promise<{ readonly output?: string; readonly error?: string }>
+  readonly run: (brief: string) => Promise<TurnResult>
+  readonly resume: (turn: string) => Promise<TurnResult>
   readonly host: Host
 }
 
@@ -82,6 +92,7 @@ const ROOT = "ag.root"
 // reply, budget, and compaction, and adds the host and the agents package. A caller who wants a
 // thinner assembly uses agentOf and their own host.
 export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
+  assertSupportedBun()
   const user = options.packages ?? []
   const infer = Layer.succeed(Infer, {
     react: (request: InferRequest, key?: string) => Effect.promise(() => options.infer(request, key))
@@ -140,16 +151,25 @@ export const createRlmAgent = (options: CreateAgentOptions): RlmAgent => {
   // Run ids continue past the seeded history, so a resumed agent's new run never wears an id
   // the log already dedups.
   let n = options.log?.length ?? 0
-  const run = async (brief: string): Promise<{ readonly output?: string; readonly error?: string }> => {
+  const resultOf = (turn: string): TurnResult => {
+    const boundary = boundaryOf(host.read(ROOT), turn)
+    if (boundary === undefined) return { turn, error: "the root never settled" }
+    if (boundary.kind === "completed") return { turn, output: boundary.output }
+    if (boundary.kind === "failed") return { turn, error: boundary.error }
+    return { turn, error: "the root parked on a budget ask with nobody to answer" }
+  }
+
+  const run = async (brief: string): Promise<TurnResult> => {
     const id = `run-${n++}`
     host.deliver(host.self(ROOT), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
-    const boundary = boundaryOf(host.read(ROOT), id)
-    if (boundary === undefined) return { error: "the root never settled" }
-    if (boundary.kind === "completed") return { output: boundary.output }
-    if (boundary.kind === "failed") return { error: boundary.error }
-    return { error: "the root parked on a budget ask with nobody to answer" }
+    return resultOf(id)
   }
 
-  return { run, host }
+  const resume = async (turn: string): Promise<TurnResult> => {
+    await resumeTurn(host, ROOT, turn)
+    return resultOf(turn)
+  }
+
+  return { run, resume, host }
 }

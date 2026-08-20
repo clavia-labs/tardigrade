@@ -23,6 +23,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
       # --frozen-lockfile: a PR that changes deps without committing bun.lock fails here instead of
       # silently resolving something different from what everyone else installed.
       - run: bun install --frozen-lockfile

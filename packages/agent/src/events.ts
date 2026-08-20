@@ -49,6 +49,7 @@ export const ModelCalled = Schema.Struct({
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
   ordinal: Schema.optional(Schema.Number),
+  epoch: Schema.optional(Schema.Number),
   turn: Schema.optional(Schema.String),
   at: Schema.Number
 })
@@ -66,15 +67,32 @@ export const TurnCompleted = Schema.Struct({
   type: Schema.Literal("TurnCompleted"),
   output: Schema.String,
   usage: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Number),
   at: Schema.Number
 })
 
-// TurnFailed is the failure terminal: the turn died and recovery gave up.
+// TurnFailed is the failure terminal for one execution epoch.
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
   error: Schema.String,
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Number),
+  cause: Schema.optional(
+    Schema.Literals(["model", "inference_error", "inference_attempts_exhausted", "schema_repairs_exhausted"])
+  ),
+  attempts: Schema.optional(Schema.Number),
+  attemptKey: Schema.optional(Schema.String),
+  policy: Schema.optional(Schema.Unknown),
+  at: Schema.Number
+})
+
+// TurnResumed records the operator request that starts the next execution epoch.
+export const TurnResumed = Schema.Struct({
+  type: Schema.Literal("TurnResumed"),
+  turn: Schema.String,
+  failedEpoch: Schema.Number,
+  epoch: Schema.Number,
   at: Schema.Number
 })
 
@@ -137,6 +155,7 @@ export const AgentEvent = Schema.Union([
   ToolReturned,
   TurnCompleted,
   TurnFailed,
+  TurnResumed,
   ReplyDelivered,
   BudgetExhausted,
   BudgetRequested,
@@ -150,14 +169,25 @@ export type AgentEvent = typeof AgentEvent.Type
 export type Action =
   | { readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string; readonly usage?: Usage }
   | { readonly kind: "complete"; readonly output: string; readonly usage?: Usage }
-  | { readonly kind: "fail"; readonly error: string; readonly usage?: Usage }
+  | {
+      readonly kind: "fail"
+      readonly error: string
+      readonly usage?: Usage
+      readonly failure?: {
+        readonly cause: "inference_error" | "inference_attempts_exhausted"
+        readonly attempts: number
+        readonly policy?: unknown
+      }
+    }
 
 // agentKeys is the agent lane's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
 // pair; bg/bd name the budget request a decision answers (a grant is SUMMED into the ceiling,
 // src/budget.ts, so a redelivered decision landing twice would double it). A decision that
 // carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
+const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
+
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "mc:", "bw:", "br:", "cc:"],
+  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -168,12 +198,14 @@ export const agentKeys: KeyFragment = {
       case "BudgetDenied":
         return v.callId === undefined ? undefined : `bd:${String(v.callId)}`
       case "ReplyDelivered":
-        // One reply per turn.
+        // One reply per logical turn. A resumed boundary returns to its operator.
         return `rd:${String(v.turn)}`
       case "TurnCompleted":
       case "TurnFailed":
-        // One terminal per turn, whichever kind: a duplicate of either absorbs.
-        return `tn:${String(v.turn)}`
+        // One terminal per turn epoch, whichever kind: a duplicate of either absorbs.
+        return `tn:${String(v.turn)}${epochSuffix(v.epoch)}`
+      case "TurnResumed":
+        return `rs:${String(v.turn)}/${String(v.epoch)}`
       case "ModelCalled":
         // Occurrence-keyed marks: the ordinal is distinct per physical attempt, so the
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
@@ -198,6 +230,7 @@ export const agentKeys: KeyFragment = {
 // packages/code/src/events.ts's; the gate is on the way in, never a new representation).
 
 type Stamp = { readonly turn?: string; readonly at: number }
+type EpochStamp = Stamp & { readonly epoch?: number }
 
 export const toolCalled = (
   fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown } & Stamp
@@ -207,17 +240,28 @@ export const toolReturned = (fields: { readonly callId: string; readonly result:
   ({ type: "ToolReturned", ...fields }) as Event
 
 export const modelCalled = (
-  fields: { readonly callId: string; readonly ordinal?: number } & Stamp
+  fields: { readonly callId: string; readonly ordinal?: number } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event
 
-export const turnCompleted = (fields: { readonly output: string } & Stamp): Event =>
+export const turnCompleted = (fields: { readonly output: string } & EpochStamp): Event =>
   ({ type: "TurnCompleted", ...fields }) as Event
 
-export const turnFailed = (fields: { readonly error: string } & Stamp): Event =>
+export const turnFailed = (
+  fields: {
+    readonly error: string
+    readonly cause?: "model" | "inference_error" | "inference_attempts_exhausted" | "schema_repairs_exhausted"
+    readonly attempts?: number
+    readonly attemptKey?: string
+    readonly policy?: unknown
+  } & EpochStamp
+): Event =>
   ({ type: "TurnFailed", ...fields }) as Event
+
+export const turnResumed = (fields: { readonly turn: string; readonly failedEpoch: number; readonly epoch: number; readonly at: number }): Event =>
+  ({ type: "TurnResumed", ...fields }) as Event
 
 export const replyDelivered = (fields: { readonly turn: string; readonly to?: string; readonly at: number }): Event =>
   ({ type: "ReplyDelivered", ...fields }) as Event

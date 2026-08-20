@@ -1,7 +1,6 @@
 {
   "name": "@clavia/tardigrade",
   "version": "0.0.1",
-  "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "A durable agent harness. State is a pure function of the log.",
@@ -22,7 +21,7 @@
     "!src/**/*.test.ts"
   ],
   "engines": {
-    "bun": ">=1.3.0"
+    "bun": ">=1.4.0"
   },
   "type": "module",
   "exports": {

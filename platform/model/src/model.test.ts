@@ -179,7 +179,7 @@ describe("infer: cost provenance", () => {
             apiKey: "k",
             model: "test-model",
             provider: "openai",
-                  pricing: table,
+            pricing: table,
             fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4, cost: 0 })])) as unknown as typeof globalThis.fetch
           })
         )
@@ -206,7 +206,7 @@ describe("infer: cost provenance", () => {
             apiKey: "k",
             model: "test-model",
             provider: "openai",
-                  pricing: table,
+            pricing: table,
             fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4 })])) as unknown as typeof globalThis.fetch
           })
         )
@@ -228,7 +228,7 @@ describe("infer: cost provenance", () => {
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
-                  fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
+            fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
           })
         )
       ) as Effect.Effect<Action>
@@ -237,10 +237,9 @@ describe("infer: cost provenance", () => {
   })
 })
 
-// A throttle-shaped failure (429, 5xx, a stream timeout) retries inside the one act, so the
-// give-up fold in src/agent/infer.ts only ever counts a died attempt when the retries themselves
-// are exhausted. `sleep` is the test seam that swaps the real backoff wait for an instant one, so
-// these run in milliseconds instead of tens of seconds.
+// A throttle-shaped failure (429, 5xx, a stream timeout) retries inside the one act. Exhaustion
+// returns a failed action that the agent records as a resumable terminal. `sleep` is the test seam
+// that swaps the real backoff wait for an instant one, so these run in milliseconds.
 describe("infer: throttle-shaped retry", () => {
   const okStream = () =>
     sse([
@@ -277,7 +276,7 @@ describe("infer: throttle-shaped retry", () => {
     expect(slept[0]).toBeLessThan(2_000)
   })
 
-  test("retries exhaust after the bounded set (three), and the fourth failure still surfaces", async () => {
+  test("retries exhaust after the bounded set and report the effective policy", async () => {
     let calls = 0
     const fetchImpl = (async () => {
       calls += 1
@@ -294,13 +293,23 @@ describe("infer: throttle-shaped retry", () => {
         return Promise.resolve()
       }
     })
-    await expect(
-      Effect.runPromise(
-        Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-          Effect.provide(layer)
-        ) as Effect.Effect<unknown>
-      )
-    ).rejects.toBeTruthy()
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({
+      kind: "fail",
+      error: expect.stringContaining("retries exhausted after 4 attempts"),
+      failure: {
+        cause: "inference_attempts_exhausted",
+        attempts: 4,
+        policy: {
+          throttleRetryDelaysMs: [2_000, 8_000, 30_000],
+          stream: { firstChunkMs: 90_000, idleMs: 90_000, totalMs: 300_000 }
+        }
+      }
+    })
     // Four tries total: the first, plus one retry per configured backoff base.
     expect(calls).toBe(4)
     expect(slept).toHaveLength(3)
@@ -323,15 +332,44 @@ describe("infer: throttle-shaped retry", () => {
         return Promise.resolve()
       }
     })
-    await expect(
-      Effect.runPromise(
-        Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-          Effect.provide(layer)
-        ) as Effect.Effect<unknown>
-      )
-    ).rejects.toBeTruthy()
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({
+      kind: "fail",
+      error: expect.stringContaining("failed after 1 attempt"),
+      failure: { cause: "inference_error", attempts: 1 }
+    })
     expect(calls).toBe(1)
     expect(slept).toHaveLength(0)
+  })
+
+  test("Bun's timed-out wording enters the bounded retry policy", async () => {
+    let calls = 0
+    const layer = infer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "test-model",
+      fetch: (() => {
+        calls += 1
+        return Promise.reject(new Error("AbortError: The operation timed out"))
+      }) as unknown as typeof globalThis.fetch,
+      throttleRetryDelaysMs: [0],
+      sleep: () => Promise.resolve()
+    })
+
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({
+      kind: "fail",
+      failure: { cause: "inference_attempts_exhausted", attempts: 2 }
+    })
+    expect(calls).toBe(2)
   })
 })
 
@@ -374,7 +412,7 @@ describe("retry-after", () => {
     expect(retryAfterMsOf({}, NOW)).toBeUndefined()
   })
 
-  test("a stated wait within the ceiling is honored; past it, the attempt dies", () => {
+  test("a stated wait within the ceiling is honored; past it, retries stop", () => {
     const stated = throttleDelayMs({ headers: { "retry-after": "7" } }, 0, NOW)
     expect(stated).toBeGreaterThanOrEqual(7_000)
     expect(stated).toBeLessThan(8_000)
@@ -488,7 +526,7 @@ describe("truncation", () => {
             apiKey: "k",
             model: "meta-llama/llama-3.1-70b",
             provider: "openrouter",
-                  fetch: (async () =>
+            fetch: (async () =>
               sse([
                 { id: "r", provider: "DeepInfra", model: "meta-llama/llama-3.1-70b-instruct", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
                 { id: "r", provider: "DeepInfra", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] },
@@ -528,17 +566,19 @@ describe("truncation", () => {
         model: "m",
         baseUrl: "https://x",
         apiKey: "k",
-          fetch: fetchImpl as never,
+        fetch: fetchImpl as never,
         throttleRetryDelaysMs: [0],
         sleep: () => Promise.resolve()
       })
-      await expect(
-        Effect.runPromise(
-          Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-            Effect.provide(layer)
-          ) as Effect.Effect<unknown>
-        )
-      ).rejects.toBeTruthy()
+      const action = await Effect.runPromise(
+        Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+          Effect.provide(layer)
+        ) as Effect.Effect<Action>
+      )
+      expect(action).toMatchObject({
+        kind: "fail",
+        failure: { cause: "inference_attempts_exhausted", attempts: 2 }
+      })
       await Promise.resolve()
       expect(leaked).toEqual([])
     } finally {
@@ -556,20 +596,31 @@ describe("declared limits", () => {
     expect(ladderOf(16_384)).toEqual([16_384])
   })
 
-  test("the compatible leg states its ceiling on the wire", async () => {
+  test("the compatible leg states its ceiling and request timeout on the wire", async () => {
     let body: { max_tokens?: number } | undefined
+    let timeout: unknown
     const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
       body = JSON.parse(await request.text()) as { max_tokens?: number }
+      timeout = (init as (RequestInit & { timeout?: number }) | undefined)?.timeout
       return new Response('data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" }
       })
     }) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", maxOutputTokens: 16_384, fetch: fetchImpl as never })
+    const layer = infer({
+      provider: "openai",
+      model: "m",
+      baseUrl: "https://x",
+      apiKey: "k",
+      maxOutputTokens: 16_384,
+      stream: { totalMs: 600_000 },
+      fetch: fetchImpl as never
+    })
     await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(body?.max_tokens).toBe(16_384)
+    expect(timeout).toBe(600_000)
   })
 })

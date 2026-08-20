@@ -1,4 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/event"
+import { turnTerminalOf } from "@clavia/tardigrade-code/turns"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
 // platform's call and resume read it to answer the spawning code. Pure over the log, so a
@@ -13,9 +14,7 @@ export type Boundary =
 // over a park: a resumed turn that finished reads completed even though it once asked. A park
 // is the last BudgetRequested no grant or denial has answered.
 export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | undefined => {
-  const terminal = log.find(
-    (e) => (e.type === "TurnCompleted" || e.type === "TurnFailed") && String((e as { turn?: unknown }).turn) === turn
-  )
+  const terminal = turnTerminalOf(log, turn)
   if (terminal !== undefined) {
     return terminal.type === "TurnCompleted"
       ? { kind: "completed", output: String((terminal as { output?: unknown }).output) }
