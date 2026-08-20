@@ -27,7 +27,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Use Bun 1.4 or later.
+Run and observe the default agent. Use Bun 1.4 or later.
 
 ```bash
 bunx @clavia/tardigrade dev
