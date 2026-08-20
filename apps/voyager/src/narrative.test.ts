@@ -79,7 +79,7 @@ describe("truncate", () => {
 
 describe("stampOf", () => {
   test("the four the mock names keep their voices", () => {
-    expect(stampOf("MessageReceived")).toEqual({ fg: "var(--ink-2)", bg: "var(--sunken)" })
+    expect(stampOf("MessageReceived")).toEqual({ fg: "var(--neutral)", bg: "var(--neutral-wash)" })
     expect(stampOf("CodeDispatched")).toEqual({ fg: "var(--run)", bg: "var(--run-wash)" })
     expect(stampOf("PackageCalled")).toEqual({ fg: "var(--wait)", bg: "var(--wait-wash)" })
     expect(stampOf("TurnCompleted")).toEqual({ fg: "var(--ok)", bg: "var(--ok-wash)" })

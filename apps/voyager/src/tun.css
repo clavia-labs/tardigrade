@@ -11,6 +11,9 @@
   --ink-2: #565a57;
   --faint: #9a9e9a;
 
+  --neutral: #59605b;
+  --neutral-wash: #eceeeb;
+
   --moss: #4f7a5c;
   --moss-ink: #3d6249;
   --moss-wash: #eef3ef;
@@ -72,6 +75,9 @@
     --ink-2: #a3a8a4;
     --faint: #6b706c;
 
+    --neutral: #b8bdb9;
+    --neutral-wash: #272a28;
+
     --moss: #7fae8c;
     --moss-ink: #93c2a0;
     --moss-wash: #22302a;
@@ -99,6 +105,9 @@
   --ink: #e8eae8;
   --ink-2: #a3a8a4;
   --faint: #6b706c;
+
+  --neutral: #b8bdb9;
+  --neutral-wash: #272a28;
 
   --moss: #7fae8c;
   --moss-ink: #93c2a0;

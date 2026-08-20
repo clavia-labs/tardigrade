@@ -12,7 +12,7 @@ export interface Stamp {
   readonly bg: string
 }
 
-const NEUTRAL: Stamp = { fg: "var(--ink-2)", bg: "var(--sunken)" }
+const NEUTRAL: Stamp = { fg: "var(--neutral)", bg: "var(--neutral-wash)" }
 const DISPATCH: Stamp = { fg: "var(--run)", bg: "var(--run-wash)" }
 const AWAIT: Stamp = { fg: "var(--wait)", bg: "var(--wait-wash)" }
 const DONE: Stamp = { fg: "var(--ok)", bg: "var(--ok-wash)" }
