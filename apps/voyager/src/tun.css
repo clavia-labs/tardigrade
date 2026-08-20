@@ -285,12 +285,33 @@ textarea {
   min-height: 0;
   background: var(--surface);
   border-right: 1px solid var(--hair);
+  transition: width var(--base) var(--ease);
 }
 
-.rail-totals {
-  padding: 0 var(--space-4) 10px;
-  font-size: 11px;
-  color: var(--faint);
+/* The rail's header: the wordmark and the toggle that closes the list. Collapsed, the toggle is all
+   that is left, and it centers on the narrow column. */
+.rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4) var(--space-3) 10px var(--space-4);
+}
+
+.rail-wordmark {
+  font-weight: 600;
+  font-size: 14px;
+  letter-spacing: -0.01em;
+}
+
+/* Everything a collapsed rail hides. The toggle is outside the class, so the rail can always be
+   opened again from where it was closed. */
+.rail-collapsed .rail-only {
+  display: none;
+}
+
+.rail-collapsed .rail-head {
+  justify-content: center;
+  padding-left: var(--space-3);
 }
 
 .rail-search {
@@ -299,7 +320,7 @@ textarea {
 }
 
 /* A rail row is two lines: the id and its age, then the state chip and the counts. Selected is the
-   moss wash with the 2px moss inset; hover is the sunken wash. */
+   moss wash; hover is the sunken wash. */
 .rail-row {
   display: flex;
   flex-direction: column;
@@ -313,10 +334,10 @@ textarea {
   background: var(--sunken);
 }
 
+/* Selection is the wash alone: the moss says chosen, and a second mark would say it twice. */
 .rail-row-selected,
 .rail-row-selected:hover {
   background: var(--moss-wash);
-  box-shadow: inset 2px 0 0 var(--moss);
 }
 
 .rail-id {
@@ -341,8 +362,10 @@ textarea {
   padding: var(--space-4) var(--space-5) 10px;
 }
 
-/* The borderless icon button, which the theme toggle is the only user of. */
-.icon-button {
+/* The borderless icon button every icon in the app sits on: 15px of Phosphor at the light weight,
+   tinted faint, brightening to ink-2 on hover, with the press scale
+   (voyager-design-system.md, the icon policy). */
+.icon-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -357,91 +380,114 @@ textarea {
   transition: color var(--fast) var(--ease);
 }
 
-.icon-button:hover {
+.icon-btn:hover {
   color: var(--ink-2);
 }
 
-.icon-button:active {
+.icon-btn:active {
   transform: scale(0.97);
 }
 
-/* The scrub: a --sunken well holding a hairline track, the moss fill behind the handle, and the
-   mono readout that follows it (voyager-design-system.md, "Scrub"). */
-.scrub-well {
+/* The copy control while it confirms. The glyph itself is swapped in React rather than by a rule,
+   because a display an element carries inline outranks any class that would hide it. */
+.icon-btn-done {
+  color: var(--ok);
+}
+
+/* The window brush: the eyebrow and the readout, then the density strip the handles cut, then the
+   clock marks (mock.html, #window). */
+.window {
+  margin: 0 var(--space-5) 10px;
+  user-select: none;
+}
+
+.window-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.window-eyebrow {
+  font-size: 11px;
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.window-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  height: 32px;
-  margin: 0 var(--space-5) var(--space-3);
-  padding: 0 var(--space-3);
-  background: var(--sunken);
-  border-radius: var(--radius);
+  gap: var(--space-2);
 }
 
-.scrub-track {
-  position: relative;
-  flex: 1;
-  height: 3px;
-  background: var(--hair);
-  border-radius: 2px;
-}
-
-.scrub-fill {
-  position: absolute;
-  inset: 0 auto 0 0;
-  height: 3px;
-  background: var(--moss);
-  border-radius: 2px;
-  opacity: 0.4;
-}
-
-/* The range input carries the behavior and nothing else: its track is transparent so the well's own
-   track shows through, and the thumb is the moss dot. */
-.scrub-input {
-  position: absolute;
-  inset: -12px 0;
-  width: 100%;
-  margin: 0;
-  background: none;
-  appearance: none;
-  cursor: pointer;
-}
-
-.scrub-input::-webkit-slider-runnable-track {
-  height: 3px;
-  background: none;
-}
-
-.scrub-input::-webkit-slider-thumb {
-  width: 11px;
-  height: 11px;
-  margin-top: -4px;
-  border: none;
-  border-radius: var(--radius-chip);
-  background: var(--moss);
-  appearance: none;
-}
-
-.scrub-input::-moz-range-track {
-  height: 3px;
-  background: none;
-}
-
-.scrub-input::-moz-range-thumb {
-  width: 11px;
-  height: 11px;
-  border: none;
-  border-radius: var(--radius-chip);
-  background: var(--moss);
-}
-
-.scrub-input:disabled {
-  cursor: default;
-}
-
-.scrub-readout {
-  font-size: 11px;
+.window-readout {
+  font-size: 11.5px;
   color: var(--ink-2);
+}
+
+.window-count {
+  color: var(--faint);
+}
+
+.window-track {
+  position: relative;
+}
+
+/* One bar per bucket, each as tall as that slice of the log is busy. The strip is the log's own
+   density and not decoration, so an empty bucket keeps a floor and says so (src/window.ts). */
+.window-bars {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: flex-end;
+  gap: 1px;
+}
+
+.window-bar {
+  flex: 1;
+  border-radius: 1px 1px 0 0;
+  background: var(--hair);
+  transition: background var(--fast) var(--ease);
+}
+
+.window-bar-inside {
+  background: var(--moss);
+  opacity: 0.55;
+}
+
+.window-selection {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: color-mix(in oklab, var(--moss) 12%, transparent);
+  border-left: 2px solid var(--moss);
+  border-right: 2px solid var(--moss);
+  pointer-events: none;
+}
+
+.window-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 12px;
+  margin-left: -6px;
+  cursor: ew-resize;
+}
+
+.window-grip {
+  width: 2px;
+  height: 100%;
+  margin: 0 auto;
+  background: var(--moss);
+}
+
+.window-marks {
+  display: flex;
+  justify-content: space-between;
+  margin-top: var(--space-1);
+  font-size: 10px;
+  color: var(--faint);
 }
 
 /* The line the pane shows when the stream is gone for good and the log is filling by poll. */
@@ -508,7 +554,8 @@ textarea {
   color: var(--faint);
 }
 
-/* An open row stops clamping its summary: the reader asked for the whole line. */
+/* An open row stops clamping its summary and wraps it instead: the reader asked for the whole line,
+   and it alone keeps a measure (src/policy.ts, SUMMARY_WIDTH). */
 .event-row-open .event-text {
   white-space: pre-wrap;
   overflow: visible;

@@ -1,14 +1,17 @@
+import { Moon, Sun } from "@phosphor-icons/react"
 import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
 import { events, stream, VoyagerError, type AgentStatus, type EventRow } from "./api"
 import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
-import { navigate, useRoute } from "./nav"
-import { BOTTOM_SLACK_PX, FIELD_WIDTH, LOG_POLL_MS, SCRUB_DIM, SUMMARY_WIDTH } from "./policy"
+import { navigate, useRoute, type Route } from "./nav"
+import { BOTTOM_SLACK_PX, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, SUMMARY_WIDTH } from "./policy"
 import { useTheme } from "./theme"
+import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
+import { WindowBrush } from "./WindowBrush"
 
-// The center pane: one agent's log as a flat chronological list under its own header and the seq
-// scrubber (mock.html, the main element). The pane holds cursors only: which agent, where the scrub
-// sits, which row is open. Every fact on it is the server's, read through src/api.ts.
+// The center pane: one agent's log as a flat chronological list under its own header and the window
+// brush (mock.html, the main element). The pane holds cursors only: which agent, which range the
+// window holds, which row is open. Every fact on it is the server's, read through src/api.ts.
 
 const errorOf = (error: unknown): VoyagerError =>
   error instanceof VoyagerError ? error : new VoyagerError({ title: String(error), status: 0 })
@@ -78,68 +81,33 @@ const useLog = (id: string, pollMs: number) => {
   return { rows, problem, dropped, loaded }
 }
 
-// The theme toggle is the one icon in the app. Type, dots, and hairlines do everything else, and an
-// icon earns its way in only by a recorded decision; this is that decision, because the sun and the
-// moon name the two themes in one glyph and no word does (voyager-design-system.md, "No icons").
+// The theme toggle. An icon earns its place only by a recorded decision, and this is one of the two
+// the system records: the sun and the moon name the two themes in one glyph and no word does
+// (voyager-design-system.md, the icon policy). The glyph is Phosphor's at the light weight, which
+// every icon in the app shares.
 const ThemeToggle = (): ReactElement => {
   const { theme, toggle } = useTheme()
   return (
     <button
       type="button"
-      className="icon-button"
+      className="icon-btn"
       onClick={toggle}
       aria-label={theme === "dark" ? "Switch to the light theme" : "Switch to the dark theme"}
       title="Toggle theme"
     >
       {theme === "dark" ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" />
-        </svg>
+        <Moon size={ICON_SIZE} weight="light" aria-hidden="true" />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="4" />
-          <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" />
-        </svg>
+        <Sun size={ICON_SIZE} weight="light" aria-hidden="true" />
       )}
     </button>
   )
 }
 
-// The scrub is the log's seq axis: the track is a well, the handle is the moss dot, and the readout
-// follows it. Dragging navigates with `replace`, so a drag leaves one history entry rather than
-// forty (src/nav.ts, navigate).
-const Scrub = ({
-  max,
-  onScrub,
-  position
-}: {
-  readonly max: number
-  readonly onScrub: (seq: number) => void
-  readonly position: number
-}): ReactElement => {
-  const fraction = max === 0 ? 1 : position / max
-  return (
-    <div className="scrub-well">
-      <div className="scrub-track">
-        <div className="scrub-fill" style={{ width: `${fraction * 100}%` }} />
-        <input
-          className="scrub-input"
-          type="range"
-          min={0}
-          max={max}
-          step={1}
-          value={position}
-          aria-label="scrub the log by seq"
-          disabled={max === 0}
-          onChange={(changed) => onScrub(Number(changed.target.value))}
-        />
-      </div>
-      <span className="mono scrub-readout">
-        seq {position} / {max}
-      </span>
-    </div>
-  )
-}
+// windowOf reads the window a URL states. An edge the link omits is that end of the log, so a
+// half-written link still opens a window rather than nothing.
+const windowOf = (route: Route): Window | undefined =>
+  route.from === undefined && route.to === undefined ? undefined : { from: route.from ?? 0, to: route.to ?? 1 }
 
 // An opened row's fields, hanging off the row on one hairline: the event's own names on the left,
 // its values on the page's own ground on the right. There is no card, because the expansion is the
@@ -162,19 +130,17 @@ const Detail = ({ moment }: { readonly moment: Moment }): ReactElement => (
 )
 
 const Row = ({
-  dimmed,
   moment,
   onToggle,
   open
 }: {
-  readonly dimmed: boolean
   readonly moment: Moment
   readonly onToggle: () => void
   readonly open: boolean
 }): ReactElement => {
   const stamp = stampOf(moment.event.type)
   return (
-    <div style={{ opacity: dimmed ? SCRUB_DIM : 1 }}>
+    <div>
       <div
         role="button"
         tabIndex={0}
@@ -190,7 +156,11 @@ const Row = ({
         <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg }}>
           {moment.event.type}
         </span>
-        <span className="event-text" style={{ maxWidth: SUMMARY_WIDTH }}>{moment.summary}</span>
+        {/* A collapsed line takes the pane's whole width; only the wrapped line an open row shows
+            keeps a measure (src/policy.ts, SUMMARY_WIDTH). */}
+        <span className="event-text" style={open ? { maxWidth: SUMMARY_WIDTH } : undefined}>
+          {moment.summary}
+        </span>
         <span className="mono event-time">
           {moment.time}
           {moment.duration === undefined ? "" : ` · ${moment.duration}`}
@@ -221,10 +191,10 @@ const Head = ({ id, status }: { readonly id: string; readonly status: AgentStatu
 
 export const Agent = ({ id, status }: { readonly id: string; readonly status: AgentStatus | undefined }): ReactElement => {
   const route = useRoute()
-  // The scrub's own cursor. The URL carries it so a view is shareable, and the pane holds it so a
-  // drag renders from one place: `navigate` publishes the URL synchronously, and a control that read
-  // its value back out of that publication would render one step behind the handle (src/nav.ts).
-  const [at, setAt] = useState<number | undefined>(route.at)
+  // The window's own edges. The URL carries them so a view is shareable, and the pane holds them so
+  // a drag renders from one place: `navigate` publishes the URL synchronously, and a control that
+  // read its value back out of that publication would render one step behind the handle (src/nav.ts).
+  const [window, setWindow] = useState<Window | undefined>(windowOf(route))
   const [opened, setOpened] = useState<number | undefined>(undefined)
   const { dropped, loaded, problem, rows } = useLog(id, LOG_POLL_MS)
 
@@ -232,17 +202,21 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
   // Whether the reader is at the log's end. Auto-scroll follows a live log only from there; a reader
   // who has scrolled up is reading, and the log must not pull the page away from them.
   const atEnd = useRef(true)
+  // Whether this agent's log has been given its opening window. The default is read once, from the
+  // first full reading; recomputing it as events arrive would move the window under the reader.
+  const seeded = useRef(false)
 
   useEffect(() => {
     setOpened(undefined)
     atEnd.current = true
+    seeded.current = false
   }, [id])
 
   // A route the pane did not write is one it must follow: a shared link, or a back button
-  // (src/nav.ts, useRoute). A scrub of its own lands here already equal and changes nothing.
+  // (src/nav.ts, useRoute). A drag of its own lands here already equal and changes nothing.
   useEffect(() => {
-    setAt(route.at)
-  }, [route.at])
+    setWindow(windowOf(route))
+  }, [route.from, route.to])
 
   useEffect(() => {
     const element = pane.current
@@ -250,19 +224,31 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
     element.scrollTop = element.scrollHeight
   }, [rows])
 
-  const max = lastSeq(rows)
-  const position = at === undefined ? max : Math.min(at, max)
   const moments = momentsOf(rows)
+  const axis = axisOf(moments)
 
-  // Scrubbing states a past moment, and the log keeps arriving behind it: the rows past the position
-  // dim rather than disappear. A drag replaces rather than pushes, so forty steps do not cost forty
-  // back presses.
-  const onScrub = (seq: number) => {
-    setAt(seq === max ? undefined : seq)
-    navigate({ at: seq === max ? undefined : seq }, { replace: true })
+  // The opening window, written into the URL so the view a reader arrives at is the view they can
+  // share. A link that already states a window keeps it.
+  useEffect(() => {
+    if (seeded.current || !loaded || rows.length === 0) return
+    seeded.current = true
+    if (window !== undefined) return
+    const next = shared(defaultWindowOf(momentsOf(rows)))
+    setWindow(next)
+    navigate({ from: next.from, to: next.to }, { replace: true })
+  }, [loaded, rows, window])
+
+  const held = window ?? FULL_WINDOW
+  const shown = shownIn(moments, axis, held)
+
+  // A drag replaces rather than pushes, so forty steps do not cost forty back presses.
+  const onWindow = (next: Window) => {
+    setWindow(next)
+    const link = shared(next)
+    navigate({ from: link.from, to: link.to }, { replace: true })
   }
 
-  // An agent the server has never heard of has no log to scrub, so the pane is its header and the
+  // An agent the server has never heard of has no log to read, so the pane is its header and the
   // problem document verbatim (apps/server/src/problem.ts).
   if (problem !== undefined && problem.status === 404) {
     return (
@@ -276,7 +262,7 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
   return (
     <>
       <Head id={id} status={status} />
-      <Scrub max={max} position={position} onScrub={onScrub} />
+      <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
       {problem === undefined ? null : <Problem problem={problem} />}
       {!dropped ? null : <div className="mono stream-note">stream dropped; polling</div>}
       <div
@@ -288,15 +274,14 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
           atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_SLACK_PX
         }}
       >
-        {moments.length === 0
+        {shown.length === 0
           ? loaded && problem === undefined
-            ? <div className="mono pane-empty">no events yet</div>
+            ? <div className="mono pane-empty">{moments.length === 0 ? "no events yet" : "no events in the window"}</div>
             : null
-          : moments.map((moment) => (
+          : shown.map((moment) => (
               <Row
                 key={moment.seq}
                 moment={moment}
-                dimmed={moment.seq > position}
                 open={opened === moment.seq}
                 onToggle={() => setOpened(opened === moment.seq ? undefined : moment.seq)}
               />

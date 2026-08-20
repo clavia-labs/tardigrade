@@ -20,6 +20,7 @@
   "type": "module",
   "dependencies": {
     "@base-ui-components/react": "1.0.0-rc.0",
+    "@phosphor-icons/react": "^2.1.10",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },

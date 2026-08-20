@@ -263,6 +263,9 @@ export interface Moment {
   readonly event: Event
   readonly summary: string
   readonly time: string
+  // The instant the row is placed at on the window's axis, in epoch milliseconds. Absent for an
+  // event the host stamped no clock on, which the window then holds outside every bucket.
+  readonly at: number | undefined
   // Absent when the pair has no end yet, which is the honest answer while the work is still
   // running: an open dispatch shows a time and no span.
   readonly duration: string | undefined
@@ -330,6 +333,7 @@ export const momentsOf = (rows: ReadonlyArray<EventRow>): ReadonlyArray<Moment> 
       return {
         seq,
         event,
+        at: when,
         summary: summaryOf(event),
         time: when === undefined ? "" : clockOf(when),
         duration: span === undefined ? undefined : spanOf(span)

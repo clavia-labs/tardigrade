@@ -6,25 +6,69 @@
 // measures against it.
 export const RAIL_WIDTH = 320
 
-// How often the rail re-reads GET /agents for the roster: the roots, their counts, and the totals.
-// The server publishes no change feed for the listing, so the rail polls, and this is both the
-// delay between a run changing and the rail saying so and the resolution of the age column.
+// The width the rail keeps when it is collapsed, in pixels. It holds the toggle and nothing else,
+// so a reader can always open the list again from where they closed it.
+export const COLLAPSED_RAIL_WIDTH = 48
+
+// The size every icon renders at, in pixels (voyager-design-system.md, the icon policy). One number
+// for the whole set, because a second size would be a second style.
+export const ICON_SIZE = 15
+
+// How often the rail re-reads GET /agents for the roster: the roots and their counts. The server
+// publishes no change feed for the listing, so the rail polls, and this is both the delay between a
+// run changing and the rail saying so and the resolution of the age column.
 export const ROSTER_POLL_MS = 2000
 
 // How often the event list re-reads the log after the stream is gone for good. The stream is the
 // live path and this is the fallback, so the interval matches the rail's (src/api.ts, stream).
 export const LOG_POLL_MS = 2000
 
-// The opacity a row drops to when the scrub sits before it. The row stays legible, so a reader sees
-// what the agent did not know yet rather than losing it.
-export const SCRUB_DIM = 0.4
+// How many bars the window's density strip holds. Each bar counts the events whose time falls in
+// its slice of the log's span, so the strip's resolution is this number and nothing else.
+export const WINDOW_BUCKETS = 56
 
-// The widest a summary line grows before the ellipsis takes over, in pixels (mock.html, .ev-text).
-// The cut is the browser's, so it lands on the glyph rather than on a character count.
+// The closest the two window handles come, as a fraction of the track. The handles cannot cross,
+// and a window narrower than this shows no events while still being draggable back open.
+export const WINDOW_MIN_GAP = 0.02
+
+// How many events the window opens on when the log is longer than that. A reader arrives at the
+// log's end, which is where a live run is, and drags left for the history.
+export const DEFAULT_WINDOW_EVENTS = 50
+
+// How many decimal places a window edge keeps in the URL. A drag reads the pointer to the pixel and
+// a shared link needs only the position, so the fraction is rounded before it is written.
+export const WINDOW_URL_DECIMALS = 4
+
+// How far an arrow key moves a window handle, as a fraction of the track. A drag is the pointer's
+// resolution and this is the keyboard's.
+export const WINDOW_KEY_STEP = 0.02
+
+// The density strip's height in pixels (mock.html, #track).
+export const WINDOW_TRACK_HEIGHT = 34
+
+// How many clock marks stand under the track. They divide the span evenly, first and last included.
+export const WINDOW_MARKS = 4
+
+// The height a bar takes as a percentage of the track: an empty bucket keeps WINDOW_BAR_MIN so the
+// strip reads as a strip, and a bucket holding anything starts at WINDOW_BAR_BASE and grows with
+// its share of the busiest bucket.
+export const WINDOW_BAR_MIN = 6
+export const WINDOW_BAR_BASE = 12
+
+// How long the copy control shows the check before returning to the copy glyph, in milliseconds.
+export const COPY_CONFIRM_MS = 1200
+
+// The column the event type is padded to in copied text. The times, types, and summaries then line
+// up in a plain-text editor, which is where the copied window is read.
+export const COPY_TYPE_WIDTH = 16
+
+// The widest an opened row's wrapped summary grows, in pixels (mock.html, .ev-row.open .ev-text). A
+// collapsed row takes the pane's whole width, so collapsing the rail buys visible text; only the
+// wrapped line keeps a measure.
 export const SUMMARY_WIDTH = 680
 
-// The longest summary string the app puts in the DOM. The visible ellipsis is SUMMARY_WIDTH's, and
-// this cap only keeps a megabyte-long code body out of a text node that shows one line of it.
+// The longest summary string the app puts in the DOM. The visible ellipsis is the pane's, and this
+// cap only keeps a megabyte-long code body out of a text node that shows one line of it.
 export const SUMMARY_CHARS = 400
 
 // The widest a field value grows in an opened row, in pixels (mock.html, .ev-val). The wrap is the

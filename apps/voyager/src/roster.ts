@@ -1,8 +1,8 @@
 import type { AgentStatus, AgentSummary } from "./api"
 
 // The rail's projections. GET /agents answers with every agent and its parent, and the rail shows
-// roots alone, so these functions turn one flat listing into the rows and the totals the rail
-// renders. They are pure, so the screen holds no arithmetic of its own.
+// roots alone, so these functions turn one flat listing into the rows the rail renders. They are
+// pure, so the screen holds no arithmetic of its own.
 
 // RootRow is one rail row: the root's own facts plus the size of the family it started.
 export interface RootRow {
@@ -15,14 +15,14 @@ export interface RootRow {
   readonly family: number
 }
 
-// Roster is the whole rail: the rows and the three numbers above them.
+// Roster is the whole rail: the rows, and nothing above them. The rail states a run's counts on the
+// run's own row and states no total, because a sum of unrelated runs answers no question a reader
+// has (mock.html, the aside).
 export interface Roster {
   readonly roots: ReadonlyArray<RootRow>
-  readonly agents: number
-  readonly events: number
 }
 
-export const EMPTY_ROSTER: Roster = { roots: [], agents: 0, events: 0 }
+export const EMPTY_ROSTER: Roster = { roots: [] }
 
 // rootOf walks an agent's parents to the root of its family. Parentage is the server's fact: only
 // the forest can see it, and a summary states it (apps/server/src/projections.ts, treeOf). The
@@ -57,9 +57,7 @@ export const rosterOf = (summaries: ReadonlyArray<AgentSummary>): Roster => {
         events: summary.events,
         lastAt: summary.lastAt,
         family: family.get(summary.id) ?? 0
-      })),
-    agents: summaries.length,
-    events: summaries.reduce((sum, summary) => sum + summary.events, 0)
+      }))
   }
 }
 
@@ -83,8 +81,3 @@ export const agoOf = (at: number, now: number): string => {
 // its family is. A root that spawned nothing says nothing about agents (mock.html, the rail row).
 export const countsOf = (row: RootRow): string =>
   row.family === 0 ? `${row.events} ev` : `${row.events} ev · ${row.family} agents`
-
-// totalsOf is the mono line under the wordmark: the run in three numbers, runs first because a run
-// is what a root is (mock.html, "6 runs · 24 agents · 987 events").
-export const totalsOf = (roster: Roster): string =>
-  `${roster.roots.length} runs · ${roster.agents} agents · ${roster.events} events`

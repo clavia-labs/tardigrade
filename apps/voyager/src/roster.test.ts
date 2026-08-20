@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
 
 import type { AgentSummary } from "./api"
-import { agoOf, countsOf, matches, rosterOf, totalsOf } from "./roster"
+import { agoOf, countsOf, matches, rosterOf } from "./roster"
 
-// The rail's decisions: which agents are rows, how big each root's family is, what the two mono
-// lines say, and how an age reads. All pure, so none of them needs a server or a DOM.
+// The rail's decisions: which agents are rows, how big each root's family is, what a row's counts
+// say, and how an age reads. All pure, so none of them needs a server or a DOM.
 
 const summary = (id: string, parent?: string, events = 1): AgentSummary => ({
   id,
@@ -32,15 +32,12 @@ describe("rosterOf", () => {
     expect(roots[1]?.family).toBe(0)
   })
 
-  test("the totals count every agent and every event, not just the roots", () => {
-    const roster = rosterOf(listing)
-    expect(roster.agents).toBe(5)
-    expect(roster.events).toBe(103)
-    expect(totalsOf(roster)).toBe("2 runs · 5 agents · 103 events")
+  test("a root keeps its own event count, which is the only count the rail states", () => {
+    expect(rosterOf(listing).roots.map((row) => row.events)).toEqual([34, 29])
   })
 
   test("an empty listing is an empty rail", () => {
-    expect(totalsOf(rosterOf([]))).toBe("0 runs · 0 agents · 0 events")
+    expect(rosterOf([]).roots).toEqual([])
   })
 
   test("a parent that claims its own ancestor still resolves to one root", () => {
