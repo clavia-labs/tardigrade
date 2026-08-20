@@ -301,9 +301,10 @@ textarea {
    that is left, and it centers on the narrow column. */
 .rail-head {
   display: flex;
-  align-items: center;
+  height: 100%;
+  align-items: flex-end;
   justify-content: space-between;
-  padding: var(--space-4) var(--space-3) 10px var(--space-4);
+  padding: var(--space-3) var(--space-4);
 }
 
 .rail-wordmark {
@@ -337,14 +338,17 @@ textarea {
 
 .actor-head {
   display: flex;
+  height: 100%;
   align-items: flex-start;
   justify-content: space-between;
-  padding: var(--space-4);
+  padding: var(--space-3) var(--space-4);
 }
 
 .actor-identity {
-  display: grid;
-  gap: 3px;
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .actor-search-wrap {
