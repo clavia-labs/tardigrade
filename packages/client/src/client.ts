@@ -36,6 +36,11 @@ export const UNREACHABLE_TITLE = "Server Unreachable"
 
 export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
 
+export const SERVER_ERROR_TITLE = "Server Error"
+
+export const SERVER_ERROR_DETAIL =
+  "The server returned no error details. Check the `tdg dev` terminal and restart the server if needed."
+
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 
 // One derived projection call, as much of its shape as the lookup below needs. The declaration's
@@ -143,6 +148,12 @@ const problemErrorOf = (failure: unknown): Effect.Effect<ProblemError> => {
       (body) =>
         isProblem(body)
           ? problemOf(response.status, body, UNEXPECTED_RESPONSE_TITLE)
+          : response.status >= 500
+          ? new ProblemError({
+            title: SERVER_ERROR_TITLE,
+            status: response.status,
+            detail: SERVER_ERROR_DETAIL
+          })
           : new ProblemError({
             title: UNEXPECTED_RESPONSE_TITLE,
             status: response.status,
