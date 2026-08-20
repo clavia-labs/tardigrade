@@ -39,6 +39,11 @@ The first run asks for a provider, a model id, and a key, then serves the API an
 tdg run "read this repo and tell me what it does"
 ```
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">
+  <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
+</picture>
+
 ## Build one
 
 ```bash
