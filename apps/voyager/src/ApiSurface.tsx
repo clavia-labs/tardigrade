@@ -181,7 +181,7 @@ const OperationDetail = ({
             </section>
           )}
           {operation.request.length === 0 ? null : (
-            <section className="api-section">
+            <section className="api-section api-request-section">
               <h3>Request body</h3>
               <Content content={operation.request} schemas={document.schemas} depth={depth} />
             </section>

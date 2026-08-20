@@ -879,6 +879,19 @@ textarea {
   background: transparent;
 }
 
+.api-operation-docs .api-request-section .api-content {
+  padding: var(--space-3) 0;
+  border: 0;
+  border-top: 1px solid var(--hair);
+  border-bottom: 1px solid var(--hair);
+  border-radius: 0;
+  background: transparent;
+}
+
+.api-operation-docs .api-request-section .api-media-type {
+  margin-bottom: var(--space-3);
+}
+
 .api-headers-section {
   padding-top: 0;
 }
