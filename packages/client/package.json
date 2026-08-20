@@ -1,7 +1,7 @@
 {
   "name": "@clavia/tardigrade-client",
   "version": "0.0.1",
-  "private": false,
+  "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
   "description": "The declared HTTP API of the tardigrade server, and the client derived from it.",
