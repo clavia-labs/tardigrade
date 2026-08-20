@@ -10,10 +10,10 @@ The API has four levels, and a route names the first three.
 | --- | --- |
 | Actor | The deployed code, addressed by name. This build compiles one assembly in and serves it as `agent` (`RESERVED_ACTOR`); every other name is a `404 unknown-actor`. |
 | Thread | One log, resumable forever. It is the resource every read projects from, and it exists once its log has an event. |
-| Turn | One inbound message and the work it caused, named by the message id. |
+| Turn | One inbound message and the work it caused, named by the message id. It is the actor's reading of its own log rather than a fact the platform holds. |
 | Event | One fact, recorded once, numbered by its position in the log. |
 
-The platform's guarantee stops at the thread: a durable log, one writer, and a settle loop. Whether the reactors over that log constitute an agent is the assembly's business, which is why the actor is the level a deploy will vary and the thread is the level a route reads.
+The platform's guarantee stops at the thread: a durable log, one writer, and a settle loop. Turns are the actor's own reading of that log, served as a declared projection. Whether the reactors over that log constitute an agent is the assembly's business, which is why the actor is the level a deploy will vary and the thread is the level a route reads.
 
 Every versioned route lives under `/v1`. `/healthz`, `/openapi.json`, and `/docs` describe the process rather than its resources, so they stay unversioned.
 
@@ -43,20 +43,45 @@ The process boots without model coordinates. It listens, answers `/healthz`, acc
 
 ## Endpoints
 
+The first three are the log, which is the whole of what the platform guarantees. `turns` is a projection this build's actor declares, and it appears here by being declared. The last three are the assembly's surface, each pending its own change.
+
 | Endpoint | Contract |
 | --- | --- |
 | `POST /v1/actors/agent/threads/:id/events` | Deliver one message, `{ id, text, input?, data? }`. Answers `202 { actor, thread, turn }`, or `400` when the body states no `id` or no `text`. |
 | `GET /v1/actors/agent/threads` | Every thread, parent before child, as a summary: id, parent, event count, last event time, and status (`settled`, `running`, `blocked`, `failed`). |
 | `GET /v1/actors/agent/threads/:id/events` | The log as `{ seq, event }` rows. `after` starts the page past a sequence number, `limit` caps it (default 200, `DEFAULT_EVENT_LIMIT`), `types` filters by a comma list. |
 | `GET /v1/actors/agent/threads/:id/events/stream` | The same log as `text/event-stream`, replayed from the cursor and then followed live. The tail re-reads every 50 milliseconds (`DEFAULT_SSE_POLL`) and writes a comment frame after 15 seconds of silence (`DEFAULT_SSE_HEARTBEAT`). |
-| `GET /v1/actors/agent/threads/:id/turns` | Every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` evaluates the projection over a prefix of the log. |
+| `GET /v1/actors/agent/threads/:id/turns` | The actor's `turns` projection: every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` is the projection's own parameter, and evaluates it over a prefix of the log. |
+| `GET /v1/actors/agent/threads/:id/{name}` | Any other name is `404 unknown-projection`, whose detail lists the names the actor does declare. |
 | `GET /v1/actors/agent/threads/:id/turns/:turn` | One turn's boundary, the same shape. This is the poll target for whether a run finished. |
 | `POST /v1/actors/agent/threads/:id/turns/:turn/resume` | Resume a failed turn. `202` with the turn handle, `409` when the turn did not fail or belongs to a spent epoch, carrying the library's own reason. |
 | `GET /healthz` | `200` while the host answers, carrying `status` (`resting` or `driving`) and `dirty`, the count of drive passes owed. Open even when a token is set, so a supervisor can tell an outage from a misconfiguration. |
 | `GET /openapi.json` | The OpenAPI document, derived from the same declaration the routes are built from (`OPENAPI_PATH`). Open even when a token is set. |
 | `GET /docs` | That document rendered as a reference page (`DOCS_PATH`). Open even when a token is set. |
 
-Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` is one of two facts and the `type` says which: `unknown-actor` names code this build does not serve, and `unknown-thread` names a log that has never been written. The actor is answered first, so a real thread under an actor nobody deployed reports `unknown-actor`. An existing thread whose filter matches nothing answers `200 []`. A request that does not match what the endpoint accepts is `400 invalid-request`, whose `detail` names the part that was refused and the fields at fault, as in ``The request body is not what this endpoint accepts. `text` is missing.``
+Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` is one of three facts and the `type` says which: `unknown-actor` names code this build does not serve, `unknown-thread` names a log that has never been written, and `unknown-projection` names a reading its actor never declared. The actor is answered first, so a real thread under an actor nobody deployed reports `unknown-actor`. An existing thread whose filter matches nothing answers `200 []`. A request that does not match what the endpoint accepts is `400 invalid-request`, whose `detail` names the part that was refused and the fields at fault, as in ``The request body is not what this endpoint accepts. `text` is missing.``
+
+## The log is the platform, and the rest is the actor's
+
+Listing threads, appending an event, reading the log back, and following it are what the platform guarantees, and they are the same for every actor. Everything else a thread can be asked is a projection: a pure function of that thread's events, declared by the actor whose reactors wrote them, and mounted by the platform at `GET /v1/actors/{actor}/threads/{id}/{name}`.
+
+A declaration is a record, and it lives beside the reactors in `apps/server/src/actor.ts`:
+
+```ts
+export const agentProjections = projectionsOf({
+  turns: projection({
+    params: { at: Schema.optionalKey(Seq) },
+    result: Schema.Array(TurnView),
+    run: (events, params) => turnsOf(events, params.at)
+  })
+})
+```
+
+`params` is the query the URL carries, `result` is what the answer looks like on the wire, and `run` computes it. The endpoints, the OpenAPI document, and the derived client are generated from that record, so a projection has a typed call and a documented schema by being declared and nothing else.
+
+`run` is a projection in the framework's sense: pure over the event set, recomputed per request, never stored. A prefix of a log is a valid argument, which is why time travel is a parameter the actor accepts rather than a mode the platform holds.
+
+`events` and `stream` are reserved. The log is not a projection of itself: one is the log read back and the other is the same log followed, and both are the platform's own guarantee. A declaration that claims either name fails at construction rather than at a request, the way `agentOf` refuses a duplicate tool.
 
 ## The routes are one declaration
 

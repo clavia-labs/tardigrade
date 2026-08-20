@@ -8,10 +8,11 @@ import type { Action } from "@clavia/tardigrade/events"
 
 import { openStreams } from "./api"
 import { layerConfig, readConfig } from "./config"
-import { RESERVED_ACTOR, type EventRow } from "@clavia/tardigrade-client/contract"
+import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow } from "@clavia/tardigrade-client/contract"
 import { layerThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
-import type { ThreadSummary, ThreadNode, TurnView } from "./projections"
+import type { TurnViewShape as TurnView } from "./actor"
+import type { ThreadSummary, ThreadNode } from "./projections"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
 // a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out
@@ -311,7 +312,63 @@ describe("the event stream", () => {
   })
 })
 
-describe("turns", () => {
+// The projections the actor declares are mounted by name under a thread, and this build's actor
+// declares `turns` (actor.ts, agentProjections). The cases below are about the mounting: that a
+// declared name serves what the actor computes, that its own query reaches `run`, and that any
+// other name says what does exist.
+describe("projections", () => {
+  test("a declared projection serves what the actor computes", async () => {
+    const read = await serving(async (base) => {
+      await birth(base, "alpha", { id: "m1", text: "hello" })
+      const response = await fetch(`${base}/v1/actors/agent/threads/alpha/turns`)
+      return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
+    })
+    expect(read.status).toBe(200)
+    expect(read.body).toEqual([{ turn: "m1", status: "completed", output: "ok: hello" }])
+  })
+
+  test("a name the actor never declared says what does exist", async () => {
+    const answers = await serving(async (base) => {
+      await birth(base, "alpha", { id: "m1", text: "hello" })
+      const read = async (path: string) => {
+        const response = await fetch(`${base}${path}`)
+        return {
+          status: response.status,
+          type: response.headers.get("content-type"),
+          body: await response.json() as Record<string, unknown>
+        }
+      }
+      return { ghost: await read("/v1/actors/agent/threads/alpha/facts"), actor: await read("/v1/actors/ghost/threads/alpha/facts") }
+    })
+    expect(answers.ghost.status).toBe(404)
+    expect(answers.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
+    expect(answers.ghost.body).toMatchObject({
+      type: `${PROBLEM_TYPE_BASE}unknown-projection`,
+      title: "Unknown Projection"
+    })
+    // The detail lists what the actor does declare, so a caller who guessed a name learns the ones
+    // that exist rather than only that this one does not.
+    expect(String(answers.ghost.body["detail"])).toContain('"turns"')
+    // The actor is answered before the projection: a name nobody deployed is not a place where
+    // asking what it declares means anything.
+    expect(answers.actor.body).toMatchObject({ title: "Unknown Actor" })
+  })
+
+  // `events` is the log read back, and the log is not a projection of itself, so a reserved name
+  // keeps serving the platform's own route rather than reaching the projection mount. `stream` is
+  // the same rule for the tail, proven where the tail is exercised ("the event stream", below;
+  // contract.ts, RESERVED_PROJECTIONS).
+  test("a reserved name still serves the log", async () => {
+    const answers = await serving(async (base) => {
+      await birth(base, "alpha", { id: "m1", text: "hello" })
+      const events = await fetch(`${base}/v1/actors/agent/threads/alpha/events`)
+      return { status: events.status, type: events.headers.get("content-type") }
+    })
+    expect(answers.status).toBe(200)
+    // Not a problem document, which is what reaching the projection mount would have produced.
+    expect(answers.type).toContain("application/json")
+  })
+
   test("`at` reads the log's prefix, which takes a completed turn back to pending", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })

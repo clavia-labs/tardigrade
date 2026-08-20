@@ -1,22 +1,26 @@
 import { Duration, Effect, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { HttpApiBuilder } from "effect/unstable/httpapi"
+import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/event"
 
 import {
   Api,
+  apiOf,
   invalidRequest,
   RESERVED_ACTOR,
   ResumeRefused,
   unacceptableField,
   UnknownActor,
+  UnknownProjection,
   UnknownThread,
   UnknownTurn,
+  type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
+import { agentProjections, turnViewsOf } from "./actor"
 import { Threads } from "./host"
 import { problemResponse } from "./problem"
-import { treeOf, turnsOf, type ThreadSummary } from "./projections"
+import { treeOf, type ThreadSummary } from "./projections"
 
 // The thread endpoints. A route is a lookup on the Threads service plus one projection, because the
 // read side is a pure function of a log (projections.ts) and the write side is one delivery
@@ -234,22 +238,12 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
             .filter((row) => row.seq > (after ?? 0) && (types === undefined || types.includes(row.event.type)))
             .slice(0, page ?? limit)
         }))
-      .handle("turns", ({ params, query }) =>
-        Effect.gen(function*() {
-          yield* actorOf(params.actor)
-          const threads = yield* Threads
-          const log = yield* logOf(threads.events, params.id)
-          const { at } = query
-          // `at` is a seq, and a seq is a 1-based position, so `at` events stand before the cut and
-          // the prefix length is the seq itself (projections.ts, turnsOf).
-          return turnsOf(log, at)
-        }))
       .handle("turn", ({ params }) =>
         Effect.gen(function*() {
           yield* actorOf(params.actor)
           const threads = yield* Threads
           const log = yield* logOf(threads.events, params.id)
-          const view = turnsOf(log).find((candidate) => candidate.turn === params.turn)
+          const view = turnViewsOf(log).find((candidate) => candidate.turn === params.turn)
           if (view === undefined) {
             return yield* Effect.fail(
               UnknownTurn.of(
@@ -282,4 +276,72 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
           }
           return node
         })))
+}
+
+// ServerApi is the surface this process serves: the platform's log routes plus the projections the
+// actor it mounts declares (actor.ts, agentProjections). The OpenAPI document and the reference
+// page are derived from this value, so a projection appears in both by being declared.
+export const ServerApi = apiOf(agentProjections)
+
+// layerProjectionsGroup implements every declared projection the same way, because there is only
+// one way: read the thread's log, hand it to `run` with the decoded query, and answer what comes
+// back. Nothing about a projection's meaning reaches this module; the actor holds all of it.
+// readOf is the whole of what serving a projection is: refuse an actor this build does not serve,
+// read the thread's log, and hand it to `run` with the decoded query. Nothing about what a
+// projection means reaches this module; the actor holds all of it (actor.ts, agentProjections).
+const readOf = (declaration: ProjectionDeclaration) =>
+(request: {
+  readonly params: { readonly actor: string; readonly id: string }
+  readonly query: never
+}) =>
+  Effect.gen(function*() {
+    yield* actorOf(request.params.actor)
+    const threads = yield* Threads
+    const log = yield* logOf(threads.events, request.params.id)
+    return declaration.run(log, request.query)
+  })
+
+export const layerProjectionsGroup = () =>
+  HttpApiBuilder.group(ServerApi, "projections", (handlers) => {
+    // Every declared name gets the same handler, built from the same record the endpoints were
+    // generated from, so the two cannot disagree about which names exist. The type is the group's
+    // own endpoint map with every key required: `handleAll` accepts a partial record, and a partial
+    // one would leave the group short a handler at run time (api.test.ts, "a declared projection
+    // serves what the actor computes").
+    type Endpoints = (typeof handlers)["~EndpointsByIdentifier"]
+    type Complete = {
+      readonly [Name in keyof Endpoints]: HttpApiEndpoint.Handler<
+        Endpoints[Name],
+        HttpApiEndpoint.MiddlewareError<Endpoints[Name]>,
+        Threads
+      >
+    }
+    const served = Object.fromEntries(
+      Object.entries(agentProjections).map(([name, declaration]) => [name, readOf(declaration)])
+    ) as unknown as Complete
+    return handlers.handleAll(served)
+  })
+
+// The name a request asked for, when the actor never declared it. The declared names are literal
+// paths, and a literal segment beats a parameter in this router, so this route is reached only by a
+// name that matched nothing (api.test.ts, "a name the actor never declared says what does exist").
+// `events` and `stream` never reach here either, for the same reason: they are the log's own routes.
+export const layerUnknownProjection = () => {
+  const declared = Object.keys(agentProjections)
+  const detail = declared.length === 0
+    ? "This actor declares no projections."
+    : `This actor declares ${declared.map((name) => JSON.stringify(name)).join(", ")}.`
+  return HttpRouter.add(
+    "GET",
+    "/v1/actors/:actor/threads/:id/:name",
+    Effect.gen(function*() {
+      const params = yield* HttpRouter.params
+      const actor = paramOf(params, "actor")
+      if (actor !== RESERVED_ACTOR) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
+      const name = paramOf(params, "name")
+      return problemResponse(
+        UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${detail}`)
+      )
+    })
+  )
 }

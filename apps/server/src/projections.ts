@@ -29,7 +29,7 @@ const idOf = (event: Event): string => String((event as { id?: unknown }).id ?? 
 // inbound event and never an inbound turn: it answers an id this thread sent out, under that id's
 // own `<id>.reply` name (@clavia/tardigrade-core/message, REPLY_SUFFIX), so listing it would report
 // a child's answer as a turn of the parent (projections.test.ts, "a reply message is not a turn").
-const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
+export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
   const ids: string[] = []
   const seen = new Set<string>()
   for (const event of events) {
@@ -145,33 +145,4 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
     return { ...summaryOf(id, events, parent), children: children.map((child) => node(child, id)) }
   }
   return [...logs.keys()].filter((id) => !parents.has(id)).sort(order).map((id) => node(id))
-}
-
-// TurnStatus is the turn vocabulary of GET /v1/actors/:actor/threads/:id/turns. `parked` is the budget ask nobody can
-// answer over HTTP (apps-server-spec.md, "Explicitly out of scope": budget escalation).
-export type TurnStatus = "pending" | "completed" | "failed" | "parked"
-
-export interface TurnView {
-  readonly turn: string
-  readonly status: TurnStatus
-  readonly output?: string
-  readonly error?: string
-}
-
-// turnsOf projects one turn per inbound message, in the order the messages arrived. `at` cuts the
-// log to a prefix first: any prefix of a log is a valid state, so time travel is this one argument
-// and never a stored mode (apps-server-spec.md, "Principles"). A prefix taken before a turn's
-// terminal reads that turn pending again (projections.test.ts, "a prefix takes a turn back to
-// pending"), and a prefix taken before a message drops its turn from the list entirely.
-export const turnsOf = (events: ReadonlyArray<Event>, at?: number): ReadonlyArray<TurnView> => {
-  const prefix = events.slice(0, at ?? events.length)
-  return inboundOf(prefix).map((turn): TurnView => {
-    const boundary = boundaryOf(prefix, turn)
-    if (boundary === undefined) return { turn, status: "pending" }
-    if (boundary.kind === "completed") return { turn, status: "completed", output: boundary.output }
-    if (boundary.kind === "failed") return { turn, status: "failed", error: boundary.error }
-    // A park is neither an output nor an error: the turn is alive and waiting on an answer the API
-    // has no door for, so the status carries the whole of what a client can act on.
-    return { turn, status: "parked" }
-  })
 }

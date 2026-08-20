@@ -1,9 +1,9 @@
-import { Effect } from "effect"
+import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
-import { HttpApiClient } from "effect/unstable/httpapi"
+import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 
 import {
-  Api,
+  apiOf,
   RESERVED_ACTOR,
   type Accepted,
   type ThreadNode,
@@ -11,6 +11,7 @@ import {
   type EventRow,
   type Health,
   type Inbound,
+  type Projections,
   type TurnView
 } from "./contract"
 import { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
@@ -36,7 +37,20 @@ export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
 
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 
-export interface ClientOptions {
+// One derived projection call, as much of its shape as the lookup below needs. The declaration's
+// own types are what a caller sees (Client.projection); this is the untyped middle.
+// The client HttpApiClient derives for one actor's API: the log's methods, the actor's projections
+// keyed by name, and the health probe.
+type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never
+
+type DerivedApi<P extends Projections> = HttpApiClient.Client<GroupsOf<ReturnType<typeof apiOf<P>>>>
+
+type ProjectionCall = (request: {
+  readonly params: { readonly actor: string; readonly id: string }
+  readonly query: unknown
+}) => Effect.Effect<unknown, unknown>
+
+export interface ClientOptions<P extends Projections = {}> {
   // The server's address. A path on it is kept, so a server mounted under a prefix works.
   readonly baseUrl?: string | undefined
   // The bearer token, sent as an `authorization` header on every request (apps/server/src/http.ts,
@@ -53,6 +67,10 @@ export interface ClientOptions {
   // does not work, because the reference resolves its default once per process
   // (client.test.ts, "sends every request through the stated fetch").
   readonly fetch?: typeof globalThis.fetch | undefined
+  // The projections the actor this client addresses declares. The platform's API is the log, so a
+  // client that reads the log alone states none; one that calls a projection states the same
+  // declaration the server mounts (contract.ts, apiOf).
+  readonly projections?: P | undefined
 }
 
 export interface EventsOptions {
@@ -66,18 +84,34 @@ export interface EventsOptions {
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
 export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "actor" | "eventSource">
 
-export interface Client {
+// The query one projection accepts, and what it answers: both read from the actor's own
+// declaration, so a caller states what that projection states and gets back what it promises
+// (contract.ts, projection).
+export type ProjectionQuery<P extends Projections, Name extends keyof P> = SchemaStructType<P[Name]["params"]>
+
+export type ProjectionResult<P extends Projections, Name extends keyof P> = P[Name]["result"]["Type"]
+
+type SchemaStructType<Fields> = Fields extends Schema.Struct.Fields ? Schema.Struct<Fields>["Type"] : never
+
+export interface Client<P extends Projections = {}> {
   readonly baseUrl: string
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
   readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
   readonly tree: (thread: string) => Promise<ThreadNode>
   readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
-  readonly turns: (thread: string, at?: number) => Promise<ReadonlyArray<TurnView>>
   readonly turn: (thread: string, turn: string) => Promise<TurnView>
   readonly deliver: (thread: string, message: Inbound) => Promise<Accepted>
   readonly resume: (thread: string, turn: string) => Promise<Accepted>
   readonly health: () => Promise<Health>
+  // Reads one projection the actor declared. The name is one this client was built with, and the
+  // query and the answer are that declaration's own types (client.test.ts, "a declared projection
+  // serves and types").
+  readonly projection: <const Name extends keyof P & string>(
+    thread: string,
+    name: Name,
+    query?: ProjectionQuery<P, Name>
+  ) => Promise<ProjectionResult<P, Name>>
   // Follows one thread's log and answers with the unsubscribe.
   readonly follow: (thread: string, options: FollowOptions) => (() => void)
 }
@@ -132,11 +166,15 @@ const eventsQuery = (options: EventsOptions) => {
 
 // makeClient builds the client once. The derivation reads the declaration and compiles an encoder
 // and a decoder per endpoint, so it happens at construction rather than per call.
-export const makeClient = (options: ClientOptions = {}): Client => {
+export const makeClient = <const P extends Projections = {}>(options: ClientOptions<P> = {}): Client<P> => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
   const token = options.token
+  // The derivation's own requirement is `HttpClient`, which the layer below provides, plus whatever
+  // the API's middleware asks a client for. RequestProblems asks for nothing, so nothing is left to
+  // provide; the compiler proves that for a stated declaration and cannot for a generic one, which
+  // is what the annotation states here rather than at every call site.
   const api = Effect.runSync(
-    HttpApiClient.make(Api, {
+    (HttpApiClient.make(apiOf(options.projections ?? ({} as P)), {
       baseUrl,
       ...(token === undefined
         ? {}
@@ -146,7 +184,7 @@ export const makeClient = (options: ClientOptions = {}): Client => {
       options.fetch === undefined
         ? (self) => self
         : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-    )
+    ) as Effect.Effect<DerivedApi<P>>)
   )
   // The actor this client addresses. One name today, because the server compiles one assembly in
   // and reserves that name for it (contract.ts, RESERVED_ACTOR); it is an option rather than a
@@ -159,12 +197,18 @@ export const makeClient = (options: ClientOptions = {}): Client => {
     tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
     events: (thread, events = {}) =>
       run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
-    turns: (thread, at) =>
-      run(api.threads.turns({ params: { actor, id: thread }, query: at === undefined ? {} : { at } })),
     turn: (thread, turn) => run(api.threads.turn({ params: { actor, id: thread, turn } })),
     deliver: (thread, message) => run(api.threads.deliver({ params: { actor, id: thread }, payload: message })),
     resume: (thread, turn) => run(api.threads.resume({ params: { actor, id: thread, turn } })),
     health: () => run(api.health.healthz({})),
+    // The derivation keys the projections group by name, and the name a caller passes is one of
+    // those keys, so the lookup cannot miss. The types are recovered on the way out because an
+    // index into a mapped record of endpoint methods is not one the compiler can narrow per call.
+    projection: (thread, name, query) =>
+      run((api.projections as Record<string, ProjectionCall>)[name]!({
+        params: { actor, id: thread },
+        query: query ?? {}
+      })) as never,
     follow: (thread, follow) =>
       stream({
         ...follow,

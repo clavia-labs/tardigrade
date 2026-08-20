@@ -5,7 +5,8 @@ import { OpenApi } from "effect/unstable/httpapi"
 import { BunHttpServer } from "@effect/platform-bun"
 
 import { layerConfig, readConfig } from "./config"
-import { Api, DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
+import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
+import { ServerApi } from "./api"
 import { Threads, ResumeRefused } from "./host"
 import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 
@@ -52,7 +53,9 @@ const BOOT_MS = 20_000
 setDefaultTimeout(BOOT_MS)
 
 // Every route the server answers, as method and OpenAPI path. The stream is absent because it is
-// not a declared endpoint (api.ts, layerStream).
+// not a declared endpoint (api.ts, layerStream). The first three are the log, which is the whole of
+// what the platform declares; `turns` is there because the actor this build mounts declares it
+// (actor.ts, agentProjections), and it appears in the document by being declared.
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
   ["get", "/v1/actors/{actor}/threads"],
@@ -71,12 +74,12 @@ const operationsOf = (spec: { readonly paths: Record<string, Record<string, unkn
 
 describe("the OpenAPI document", () => {
   test("lists every endpoint the declaration holds", () => {
-    const listed = operationsOf(OpenApi.fromApi(Api) as never)
+    const listed = operationsOf(OpenApi.fromApi(ServerApi) as never)
     expect(listed.sort()).toEqual(ROUTES.map(([method, path]) => `${method} ${path}`).sort())
   })
 
   test("describes a failure as problem+json", () => {
-    const spec = OpenApi.fromApi(Api) as never as {
+    const spec = OpenApi.fromApi(ServerApi) as never as {
       readonly paths: Record<string, Record<string, { readonly responses: Record<string, {
         readonly content?: Record<string, unknown>
       }> }>>

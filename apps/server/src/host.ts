@@ -1,22 +1,12 @@
 import { Clock, Context, Data, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { messageReceived } from "@clavia/tardigrade-core/message"
-import {
-  agentOf,
-  agentsPackage,
-  budget,
-  codeModeFor,
-  compaction,
-  Infer,
-  reply,
-  resumeTurn,
-  workspacePackage,
-  type RlmR
-} from "@clavia/tardigrade"
+import { Infer, resumeTurn, type RlmR } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { infer } from "@clavia/tardigrade-model/model"
 
+import { assemblyOf } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
 import { DriverGauge } from "./http"
 
@@ -72,17 +62,6 @@ export class Threads extends Context.Service<
     readonly settled: Effect.Effect<void>
   }
 >()("tardigrade/server/Threads") {}
-
-// The assembly this server runs, one for every lane: code mode with the spawn and workspace
-// packages in scope, plus the three policy capabilities. v1 runs this one assembly and forking is
-// the customization path (apps-server-spec.md, "Explicitly out of scope for v1").
-const assemblyOf = () =>
-  agentOf([
-    codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
-    reply,
-    budget,
-    compaction
-  ])
 
 // The model binding the configured coordinates name. Absent coordinates are not an endpoint this
 // server invents: every attempt fails with what is missing, so the process still boots, still

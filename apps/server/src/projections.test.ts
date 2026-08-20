@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyId } from "@clavia/tardigrade-core/message"
 
-import { statusOf, summaryOf, treeOf, turnsOf } from "./projections"
+import { statusOf, summaryOf, treeOf } from "./projections"
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
 // below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
@@ -31,9 +31,6 @@ const completed = (turn: string, output: string): Event =>
 
 const failed = (turn: string, error: string): Event =>
   ({ type: "TurnFailed", turn, error, at: at() }) as Event
-
-const requested = (turn: string, callId: string): Event =>
-  ({ type: "BudgetRequested", turn, callId, reason: "more calls", amount: 5, at: at() }) as Event
 
 const reply = (id: string, text = "done"): Event =>
   ({ type: "MessageReceived", id: replyId(id), text, outcome: "completed", at: at() }) as Event
@@ -147,39 +144,5 @@ describe("treeOf", () => {
     const late = [inbound("b")]
     const logs = new Map<string, ReadonlyArray<Event>>([["late", late], ["early", early]])
     expect(treeOf(logs).map((node) => node.id)).toEqual(["early", "late"])
-  })
-})
-
-describe("turnsOf", () => {
-  test("one entry per inbound message, with its boundary", () => {
-    const log = [
-      inbound("m1"),
-      completed("m1", "42"),
-      inbound("m2"),
-      failed("m2", "boom"),
-      inbound("m3")
-    ]
-    expect(turnsOf(log)).toEqual([
-      { turn: "m1", status: "completed", output: "42" },
-      { turn: "m2", status: "failed", error: "boom" },
-      { turn: "m3", status: "pending" }
-    ])
-  })
-
-  test("a reply message is not a turn", () => {
-    const log = [inbound("m1"), reply("t1.0"), completed("m1", "42")]
-    expect(turnsOf(log).map((view) => view.turn)).toEqual(["m1"])
-  })
-
-  test("an unanswered budget ask is parked", () => {
-    const log = [inbound("m1"), requested("m1", "c1")]
-    expect(turnsOf(log)).toEqual([{ turn: "m1", status: "parked" }])
-  })
-
-  test("a prefix takes a turn back to pending", () => {
-    const log = [inbound("m1"), completed("m1", "42")]
-    expect(turnsOf(log)[0]!.status).toBe("completed")
-    expect(turnsOf(log, 1)).toEqual([{ turn: "m1", status: "pending" }])
-    expect(turnsOf(log, 0)).toEqual([])
   })
 })
