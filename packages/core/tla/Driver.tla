@@ -18,6 +18,13 @@
    SERVICE: every owed lane is eventually served, whatever the other
      lanes do: crashes bounded, arrivals adversarial, passes recurring.
 
+   REST (unpaid): a lane whose visits always crash eventually settles
+     as failed and goes quiet. No action discharges it today: the
+     give-up guard died with the room machine, so a deterministic
+     crasher retries on the watchdog forever. DriverPoisoned.cfg is
+     the ledger entry: EventuallyServed over a poisoned lane, expected
+     to FAIL until a GiveUp action pays the debt.
+
    THE MODEL. Lanes' owed work is a boolean derivation (the abstraction
    of Reactor.tla's WorkOwed). Arrive raises it and arms the alarm (the
    deliver contract: every append arms). Fire consumes the alarm and
@@ -36,7 +43,14 @@
 
 EXTENDS Naturals, FiniteSets, TLC
 
-CONSTANTS Lanes, MaxCrashes
+(* Poisoned lanes model the deterministic crasher: a visit that can
+   never serve (the Uniconnect run facet, 2026-08-18). Their crashes
+   are free: the MaxCrashes budget bounds only transient failures, so
+   the budget cannot smuggle convergence past a lane that never
+   converges. *)
+CONSTANTS Lanes, MaxCrashes, Poisoned
+
+ASSUME Poisoned \subseteq Lanes
 
 VARIABLES owed, armed, inPass, queue, answers, crashes
 
@@ -80,6 +94,7 @@ Fire ==
 VisitOk(l) ==
   /\ inPass
   /\ l \in queue
+  /\ l \notin Poisoned
   /\ owed' = [owed EXCEPT ![l] = FALSE]
   /\ answers' = [answers EXCEPT ![l] = FALSE]
   /\ queue' = queue \ {l}
@@ -91,10 +106,10 @@ VisitOk(l) ==
 VisitCrash(l) ==
   /\ inPass
   /\ l \in queue
-  /\ crashes < MaxCrashes
+  /\ (l \in Poisoned \/ crashes < MaxCrashes)
   /\ answers' = [answers EXCEPT ![l] = FALSE]
   /\ queue' = queue \ {l}
-  /\ crashes' = crashes + 1
+  /\ crashes' = IF l \in Poisoned THEN crashes ELSE crashes + 1
   /\ UNCHANGED <<owed, armed, inPass>>
 
 (* The contract re-arm: live derivations folded in, mid-pass arms kept. *)
@@ -130,6 +145,11 @@ LiveSpec ==
   /\ WF_vars(Fire)
   /\ WF_vars(ReArm)
   /\ \A l \in Lanes: SF_vars(VisitOk(l))
+  (* Every queued lane is eventually visited: a visit completes, by
+     serve or by crash. This is the fail-fast assumption. A visit
+     that HANGS holds the pass open past this module's model; the
+     runtime's alarm time limit owns that door, unmodeled here. *)
+  /\ \A l \in Lanes: WF_vars(VisitOk(l) \/ VisitCrash(l))
 
 -----------------------------------------------------------------------
 (* The debts. *)
@@ -137,7 +157,17 @@ LiveSpec ==
 (* ACCOUNTING: owed work always has a wake coming. *)
 Accounting == (\E l \in Lanes: owed[l]) => (armed \/ inPass)
 
-(* SERVICE (under LiveSpec): every owed lane is eventually served. *)
+(* SERVICE (under LiveSpec, Poisoned empty): every owed lane is
+   eventually served. Over a nonempty Poisoned this same formula is
+   the REST debt, and DriverPoisoned.cfg expects TLC to refute it:
+   the counterexample is the eternal watchdog retry. *)
 EventuallyServed == \A l \in Lanes: [](owed[l] => <>(~owed[l]))
+
+(* ISOLATION (under LiveSpec): every healthy lane is eventually
+   served, whatever the poisoned lanes do. The implementation half is
+   the per-visit catch in HostSupervisor.alarm: before it, one
+   poisoned facet failed the whole pass and starved every lane (the
+   2026-08-18 Uniconnect wedge). *)
+HealthyServed == \A l \in (Lanes \ Poisoned): [](owed[l] => <>(~owed[l]))
 
 =======================================================================
