@@ -214,7 +214,7 @@ describe("ls", () => {
 
 describe("actors", () => {
   const actors: ReadonlyArray<ActorSummary> = [
-    { name: "agent", builtIn: true },
+    { name: "default", builtIn: true },
     { name: "reviewer", builtIn: false, digest: "sha256:abc" }
   ]
 

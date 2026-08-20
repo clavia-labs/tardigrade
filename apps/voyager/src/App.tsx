@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
-import { NO_ANSWER, ProblemError, type ActorSummary, type ThreadSummary } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { client, clientFor } from "./client"
 import { navigate, useRoute } from "./nav"
@@ -113,7 +113,7 @@ export const App = (): ReactElement => {
         ) : route.thread === undefined ? (
           <div className="mono pane-empty">{discovered.ready ? "select a run" : "loading actors"}</div>
         ) : (
-          <Thread actor={actor ?? "agent"} id={route.thread} status={status} />
+          <Thread actor={actor ?? RESERVED_ACTOR} id={route.thread} status={status} />
         )}
       </main>
       <ThemeToggle />

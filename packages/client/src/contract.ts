@@ -29,7 +29,7 @@ export const V1_PREFIX = "/v1"
 // level is declared as a path parameter and answered for exactly this name: the shape is honest
 // about what a deploy will vary, and no URL has to be taught twice when it does
 // (apps/server/src/api.ts, actorOf).
-export const RESERVED_ACTOR = "agent"
+export const RESERVED_ACTOR = "default"
 
 // Where the derived OpenAPI document is served, and where the reference page renders it. Both are
 // open even when a token is set (apps/server/src/http.ts, UNAUTHENTICATED_PATHS), because a

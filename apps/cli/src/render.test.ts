@@ -37,10 +37,10 @@ describe("threadsTable", () => {
 describe("actorsTable", () => {
   test("shows built-in and pushed actors", () => {
     const rendered = actorsTable([
-      { name: "agent", builtIn: true },
+      { name: "default", builtIn: true },
       { name: "reviewer", builtIn: false, digest: "sha256:abc" }
     ])
-    expect(rendered).toContain("agent")
+    expect(rendered).toContain("default")
     expect(rendered).toContain("built-in")
     expect(rendered).toContain("reviewer")
     expect(rendered).toContain("sha256:abc")

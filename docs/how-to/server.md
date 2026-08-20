@@ -12,7 +12,7 @@ Bun 1.4 or later. `GET /healthz` answers once it is up.
 
 ## Endpoints
 
-Base path `/v1`. One actor is served today, named `agent`.
+Base path `/v1`. The built-in actor is named `default`.
 
 | | |
 | --- | --- |
@@ -25,11 +25,11 @@ Base path `/v1`. One actor is served today, named `agent`.
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
 ```bash
-curl -X POST localhost:4242/v1/actors/agent/threads/inv-81/events \
+curl -X POST localhost:4242/v1/actors/default/threads/inv-81/events \
   -d '{"id":"m1","type":"MessageReceived","text":"audit the deploy"}'
 # {"actor":"agent","thread":"inv-81"}
 
-curl localhost:4242/v1/actors/agent/threads/inv-81/turns
+curl localhost:4242/v1/actors/default/threads/inv-81/turns
 # [{"turn":"m1","status":"completed","output":"…","epoch":0}]
 ```
 

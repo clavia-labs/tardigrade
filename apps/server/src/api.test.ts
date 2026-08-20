@@ -118,13 +118,13 @@ const put = (base: string, path: string, body: unknown) =>
 // agentProjections).
 const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
   const views = (await (await fetch(
-    `${base}/v1/actors/agent/threads/${thread}/turns?turn=${encodeURIComponent(turn)}`
+    `${base}/v1/actors/default/threads/${thread}/turns?turn=${encodeURIComponent(turn)}`
   )).json()) as ReadonlyArray<TurnView>
   return views[0]
 }
 
 const birth = async (base: string, id: string, message: { id: string; text: string }) => {
-  const response = await post(base, `/v1/actors/agent/threads/${id}/events`, {
+  const response = await post(base, `/v1/actors/default/threads/${id}/events`, {
     type: "MessageReceived",
     ...message
   })
@@ -146,8 +146,8 @@ describe("appending", () => {
   // other fields mean is the actor's knowledge (contract.ts, Append).
   test("a body with no type is refused", async () => {
     const problems = await serving(async (base) => {
-      const noType = await post(base, "/v1/actors/agent/threads/alpha/events", { id: "m1", text: "hello" })
-      const emptyType = await post(base, "/v1/actors/agent/threads/alpha/events", { type: "" })
+      const noType = await post(base, "/v1/actors/default/threads/alpha/events", { id: "m1", text: "hello" })
+      const emptyType = await post(base, "/v1/actors/default/threads/alpha/events", { type: "" })
       return [
         { status: noType.status, type: noType.headers.get("content-type"), body: await noType.json() },
         { status: emptyType.status, type: emptyType.headers.get("content-type"), body: await emptyType.json() }
@@ -167,8 +167,8 @@ describe("appending", () => {
   test("a redelivered message id answers the same and writes nothing", async () => {
     const counts = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = ((await (await fetch(`${base}/v1/actors/agent/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
-      const again = await post(base, "/v1/actors/agent/threads/alpha/events", {
+      const before = ((await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const again = await post(base, "/v1/actors/default/threads/alpha/events", {
         type: "MessageReceived",
         id: "m1",
         text: "hello"
@@ -176,7 +176,7 @@ describe("appending", () => {
       expect(again.status).toBe(202)
       expect(await again.json()).toEqual({ actor: RESERVED_ACTOR, thread: "alpha" })
       await sleep(50)
-      const after = ((await (await fetch(`${base}/v1/actors/agent/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const after = ((await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
       return [before, after]
     })
     expect(counts[1]).toBe(counts[0]!)
@@ -237,7 +237,7 @@ describe("the listing", () => {
   test("a thread that has settled lists as settled", async () => {
     const listed = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      return (await (await fetch(`${base}/v1/actors/agent/threads`)).json()) as ReadonlyArray<ThreadSummary>
+      return (await (await fetch(`${base}/v1/actors/default/threads`)).json()) as ReadonlyArray<ThreadSummary>
     })
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({ id: "alpha", status: "settled" })
@@ -251,13 +251,13 @@ describe("events", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<EventRow>
-      const all = await json("/v1/actors/agent/threads/alpha/events")
+      const all = await json("/v1/actors/default/threads/alpha/events")
       return {
         all,
-        page: await json("/v1/actors/agent/threads/alpha/events?after=1&limit=2"),
-        completed: await json("/v1/actors/agent/threads/alpha/events?types=TurnCompleted"),
-        both: await json(`/v1/actors/agent/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
-        empty: await json("/v1/actors/agent/threads/alpha/events?types=NothingLikeThis")
+        page: await json("/v1/actors/default/threads/alpha/events?after=1&limit=2"),
+        completed: await json("/v1/actors/default/threads/alpha/events?types=TurnCompleted"),
+        both: await json(`/v1/actors/default/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
+        empty: await json("/v1/actors/default/threads/alpha/events?types=NothingLikeThis")
       }
     })
     expect(read.all.map((row) => row.seq)).toEqual(read.all.map((_, i) => i + 1))
@@ -276,7 +276,7 @@ describe("events", () => {
   test("a log that never existed is the only 404", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const missing = await fetch(`${base}/v1/actors/agent/threads/ghost/events`)
+      const missing = await fetch(`${base}/v1/actors/default/threads/ghost/events`)
       return { status: missing.status, type: missing.headers.get("content-type"), body: await missing.json() }
     })
     expect(answers.status).toBe(404)
@@ -344,9 +344,9 @@ describe("the event stream", () => {
   test("a reconnect replays from Last-Event-ID and then runs live, once each", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = (await (await fetch(`${base}/v1/actors/agent/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
+      const before = (await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
       const abort = new AbortController()
-      const response = await fetch(`${base}/v1/actors/agent/threads/alpha/events/stream?after=0`, {
+      const response = await fetch(`${base}/v1/actors/default/threads/alpha/events/stream?after=0`, {
         // The header wins over the query, which is the whole of what a resuming EventSource can
         // state: it replays the URL it was opened with and carries the id in the header.
         headers: { "last-event-id": "2" },
@@ -371,7 +371,7 @@ describe("the event stream", () => {
       expect(openStreams()).toBe(1)
 
       // Then a message delivered while the stream is open arrives on it.
-      await post(base, "/v1/actors/agent/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
+      await post(base, "/v1/actors/default/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
       await until("the live frames", async () => (framesOf(text).length > replayed.length ? true : undefined))
       const live = framesOf(text)
 
@@ -403,7 +403,7 @@ describe("projections", () => {
   test("a declared projection serves what the actor computes", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/actors/agent/threads/alpha/turns`)
+      const response = await fetch(`${base}/v1/actors/default/threads/alpha/turns`)
       return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
     })
     expect(read.status).toBe(200)
@@ -421,7 +421,7 @@ describe("projections", () => {
           body: await response.json() as Record<string, unknown>
         }
       }
-      return { ghost: await read("/v1/actors/agent/threads/alpha/facts"), actor: await read("/v1/actors/ghost/threads/alpha/facts") }
+      return { ghost: await read("/v1/actors/default/threads/alpha/facts"), actor: await read("/v1/actors/ghost/threads/alpha/facts") }
     })
     expect(answers.ghost.status).toBe(404)
     expect(answers.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
@@ -444,7 +444,7 @@ describe("projections", () => {
   test("a reserved name still serves the log", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const events = await fetch(`${base}/v1/actors/agent/threads/alpha/events`)
+      const events = await fetch(`${base}/v1/actors/default/threads/alpha/events`)
       return { status: events.status, type: events.headers.get("content-type") }
     })
     expect(answers.status).toBe(200)
@@ -456,7 +456,7 @@ describe("projections", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
-      return { now: await json("/v1/actors/agent/threads/alpha/turns"), atOne: await json("/v1/actors/agent/threads/alpha/turns?at=1") }
+      return { now: await json("/v1/actors/default/threads/alpha/turns"), atOne: await json("/v1/actors/default/threads/alpha/turns?at=1") }
     })
     expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
     // One event stands before the cut: the message that asked for the turn, and nothing that
@@ -471,8 +471,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        one: await json("/v1/actors/agent/threads/alpha/turns?turn=m1"),
-        ghost: await json("/v1/actors/agent/threads/alpha/turns?turn=m9")
+        one: await json("/v1/actors/default/threads/alpha/turns?turn=m1"),
+        ghost: await json("/v1/actors/default/threads/alpha/turns?turn=m9")
       }
     })
     expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
@@ -493,9 +493,9 @@ describe("the tree", () => {
         return health.status === "resting" ? health : undefined
       })
       return {
-        tree: (await (await fetch(`${base}/v1/actors/agent/threads/root/tree`)).json()) as ThreadNode,
-        listed: (await (await fetch(`${base}/v1/actors/agent/threads`)).json()) as ReadonlyArray<ThreadSummary>,
-        ghost: (await fetch(`${base}/v1/actors/agent/threads/ghost/tree`)).status
+        tree: (await (await fetch(`${base}/v1/actors/default/threads/root/tree`)).json()) as ThreadNode,
+        listed: (await (await fetch(`${base}/v1/actors/default/threads`)).json()) as ReadonlyArray<ThreadSummary>,
+        ghost: (await fetch(`${base}/v1/actors/default/threads/ghost/tree`)).status
       }
     })
     expect(read.tree.id).toBe("root")
