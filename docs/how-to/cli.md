@@ -23,13 +23,16 @@ tdg run "read this repo and tell me what it does"
 | Command | |
 | --- | --- |
 | `tdg setup` | Save a provider, a model id, and a key |
+| `tdg build <entry>` | Build and validate an actor artifact |
+| `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
 | `tdg dev` | Serve the API and the UI on one port |
+| `tdg actors` | List actors available on the server |
 | `tdg run <brief>` | Start a thread and wait for its answer |
 | `tdg send <thread> <brief>` | Send to a thread, do not wait |
 | `tdg ls` | List threads |
 | `tdg events <thread>` | Print a thread's log |
 
-Every command takes `--json`. Remote commands take `--url` and `--token`. `tdg <command> --help` prints the rest.
+Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. `tdg <command> --help` prints the rest.
 
 ## Configuration
 
@@ -60,6 +63,9 @@ No shell: a directory or a host list can be scoped and a shell cannot.
 
 ```bash
 tdg run "summarize the open PRs" --json
+tdg actors
+tdg build ./actors/reviewer.ts
+tdg push ./actors/reviewer.ts --target local
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"
 tdg events root --types TurnFailed
 tdg dev --port 8080 --db runs.sqlite
