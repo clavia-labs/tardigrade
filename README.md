@@ -8,7 +8,7 @@
 
 # Tardigrade
 
-A durable and modular agent harness built for self-improvement.
+A durable, modular, and serverless agent harness built for self-improvement.
 
 ### A harness made for self-improvement
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a hindrance to this. We need something more composable, and easy to author.
@@ -22,7 +22,8 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 - **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent capabilities.
 - **Strongly typed, built on Effect.** Typed services and Layers make each capability's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
-- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with forked logs.
+- **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
+- **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with forked states.
 
 ## Quickstart
 
