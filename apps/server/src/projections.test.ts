@@ -5,7 +5,7 @@ import { replyId } from "@clavia/tardigrade-core/message"
 import { statusOf, summaryOf, treeOf, turnsOf } from "./projections"
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
-// below are the ones an assembled agent writes (packages/agent/src/index.test.ts and
+// below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
 // packages/code/src/events.ts), trimmed to the fields a projection reads.
 
 let clock = 0
@@ -17,7 +17,7 @@ const inbound = (id: string, text = "do the thing"): Event =>
 const dispatched = (execId: string): Event =>
   ({ type: "CodeDispatched", execId, code: "return 1", at: at() }) as Event
 
-const called = (callId: string, name = "agents"): Event =>
+const called = (callId: string, name = "threads"): Event =>
   ({ type: "PackageCalled", callId, name, arguments: {}, at: at() }) as Event
 
 const blocked = (callId: string, awaiting: string): Event =>
@@ -135,7 +135,7 @@ describe("treeOf", () => {
     expect("parent" in root).toBe(false)
   })
 
-  test("a package call to a non-agent claims nothing", () => {
+  test("a package call to a non-thread claims nothing", () => {
     const logs = new Map<string, ReadonlyArray<Event>>([
       ["root", [inbound("m1"), dispatched("t1"), called("t1.0", "workspace")]]
     ])

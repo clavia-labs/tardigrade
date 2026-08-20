@@ -2,7 +2,7 @@ import { DEFAULT_BASE_URL, makeClient, type Client } from "@clavia/tardigrade-cl
 
 // Where the app reads the server. The calls and the wire types are the client package's, derived
 // from the server's own declaration (packages/client/src/contract.ts), so the app holds no second
-// idea of what an agent is. What is decided here is only what a browser decides: which server this
+// idea of what a thread is. What is decided here is only what a browser decides: which server this
 // tab talks to, and which token it holds.
 
 // Where the server listens when VITE_API_URL is absent, which is the client's own default

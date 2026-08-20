@@ -4,7 +4,7 @@ import { NO_ANSWER, ProblemError, type Client, type TurnView } from "@clavia/tar
 
 import { resolveRemote, resolveServer } from "./config"
 import { dev } from "./dev"
-import { agentsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
+import { threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli } from "./services"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
@@ -23,7 +23,7 @@ export const DEFAULT_POLL_MILLIS = 200
 export const DEFAULT_TIMEOUT_MILLIS = 300_000
 
 // The turn status a run is asked for. Everything else, `failed` and `parked` alike, leaves the
-// command with a non-zero exit: a script that ran an agent and got no answer should not read as
+// command with a non-zero exit: a script that ran a turn and got no answer should not read as
 // success (commands.test.ts, "a failed turn prints its error and exits non-zero").
 export const SETTLED: TurnView["status"] = "completed"
 
@@ -88,7 +88,7 @@ const stated = (option: Option.Option<string>): string | undefined => Option.get
 
 const settle = (
   client: Client,
-  agent: string,
+  thread: string,
   turn: string,
   pollMillis: number,
   timeoutMillis: number
@@ -96,12 +96,12 @@ const settle = (
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      const view = yield* call(() => client.turn(agent, turn))
+      const view = yield* call(() => client.turn(thread, turn))
       if (view.status !== "pending") return view
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* Effect.fail(
           userErrorOf(
-            `turn ${turn} on agent ${agent} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${agent}\`.`
+            `turn ${turn} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
           )
         )
       }
@@ -148,9 +148,9 @@ export const devCommand = Command.make("dev", {
     )
 
 export const runCommand = Command.make("run", {
-  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the agent to do")),
-  agent: Flag.string("agent").pipe(
-    Flag.withDescription("The agent to deliver to. A fresh id is minted per invocation, which births a new agent."),
+  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the actor to do")),
+  thread: Flag.string("thread").pipe(
+    Flag.withDescription("The thread to deliver to. A fresh id is minted per invocation, which births a new thread."),
     Flag.optional
   ),
   id: messageId,
@@ -167,27 +167,27 @@ export const runCommand = Command.make("run", {
   Effect.gen(function*() {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
-    const agent = stated(flags.agent) ?? cli.mintId()
+    const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.deliver(agent, { id, text: flags.brief }))
-    const view = yield* settle(client, accepted.agent, accepted.turn, flags.poll, flags.timeout)
-    yield* Console.log(flags.json ? jsonOf(view) : turnLines(accepted.agent, view))
+    const accepted = yield* call(() => client.deliver(thread, { id, text: flags.brief }))
+    const view = yield* settle(client, accepted.thread, accepted.turn, flags.poll, flags.timeout)
+    yield* Console.log(flags.json ? jsonOf(view) : turnLines(accepted.thread, view))
     if (view.status !== SETTLED) {
-      return yield* Effect.fail(userErrorOf(`turn ${view.turn} on agent ${accepted.agent} is ${view.status}`))
+      return yield* Effect.fail(userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`))
     }
   })).pipe(
     Command.withDescription(
-      "Deliver a brief, wait for the turn to settle, and print what it answered. Exits non-zero unless the turn completed."
+      "Start a thread, wait for its turn to settle, and print what it answered. Exits non-zero unless the turn completed."
     ),
     Command.withExamples([
-      { command: "tdg run \"summarize the log\"", description: "Brief a new agent and wait for its answer" },
-      { command: "tdg run \"and again\" --agent surveyor", description: "Brief an agent that already exists" }
+      { command: "tdg run \"summarize the log\"", description: "Brief a new thread and wait for its answer" },
+      { command: "tdg run \"and again\" --thread surveyor", description: "Brief a thread that already exists" }
     ])
   )
 
 export const sendCommand = Command.make("send", {
-  agent: Argument.string("agent").pipe(Argument.withDescription("The agent to deliver to")),
-  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the agent to do")),
+  thread: Argument.string("thread").pipe(Argument.withDescription("The thread to deliver to")),
+  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the actor to do")),
   id: messageId,
   ...remote
 }, (flags) =>
@@ -195,8 +195,8 @@ export const sendCommand = Command.make("send", {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.deliver(flags.agent, { id, text: flags.brief }))
-    yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.agent} ${accepted.turn}`)
+    const accepted = yield* call(() => client.deliver(flags.thread, { id, text: flags.brief }))
+    yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.turn}`)
   })).pipe(
     Command.withDescription(
       "Deliver a brief and print the turn handle without waiting. The turn settles on the server's own loop."
@@ -206,15 +206,15 @@ export const sendCommand = Command.make("send", {
 export const lsCommand = Command.make("ls", remote, (flags) =>
   Effect.gen(function*() {
     const client = yield* clientOf(flags)
-    const agents = yield* call(() => client.list())
-    yield* Console.log(flags.json ? jsonOf(agents) : agentsTable(agents))
+    const threads = yield* call(() => client.list())
+    yield* Console.log(flags.json ? jsonOf(threads) : threadsTable(threads))
   })).pipe(
-    Command.withDescription("List every agent a store holds, parent before child. A spawned child is an agent like any other, so a run that spawned nine lists ten rows."),
+    Command.withDescription("List every thread a store holds, parent before child. A spawned child is a thread like any other, so a run that spawned nine lists ten rows."),
     Command.withAlias("list")
   )
 
 export const eventsCommand = Command.make("events", {
-  agent: Argument.string("agent").pipe(Argument.withDescription("The agent whose log to read")),
+  thread: Argument.string("thread").pipe(Argument.withDescription("The thread whose log to read")),
   after: Flag.integer("after").pipe(
     Flag.withDescription("Start past this sequence number. The server numbers events from 1."),
     Flag.optional
@@ -237,7 +237,7 @@ export const eventsCommand = Command.make("events", {
     const client = yield* clientOf(flags)
     const types = stated(flags.types)?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
     const rows = yield* call(() =>
-      client.events(flags.agent, {
+      client.events(flags.thread, {
         after: Option.getOrUndefined(flags.after),
         limit: Option.getOrUndefined(flags.limit),
         types
@@ -245,7 +245,7 @@ export const eventsCommand = Command.make("events", {
     )
     yield* Console.log(flags.json ? jsonOf(rows) : eventsTable(rows, flags.width))
   })).pipe(
-    Command.withDescription("Print an agent's log, one line per event.")
+    Command.withDescription("Print a thread's log, one line per event.")
   )
 
 // The root. It has no handler, so `tdg` with no subcommand renders the help the declaration

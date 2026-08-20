@@ -5,7 +5,7 @@ import { Infer, type InferRequest } from "@clavia/tardigrade"
 import type { Action } from "@clavia/tardigrade/events"
 
 import { layerConfig, readConfig } from "./config"
-import { Agents, layerAgents, ResumeRefused } from "./host"
+import { Threads, layerThreads, ResumeRefused } from "./host"
 import { DriverGauge } from "./http"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
@@ -39,43 +39,43 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // The database is ":memory:", so each test opens its own store and closes it with the scope.
 const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:" }))
 
-// The body runs with both services the layer provides: the agents it drives, and the gauge
+// The body runs with both services the layer provides: the threads it drives, and the gauge
 // /healthz reads over the same driver (http.ts, DriverGauge).
 const running = <A, E>(
-  body: (agents: Context.Service.Shape<typeof Agents>) => Effect.Effect<A, E, DriverGauge>
+  body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge>
 ): Promise<A> =>
   Effect.gen(function*() {
-    const agents = yield* Agents
-    return yield* body(agents)
+    const threads = yield* Threads
+    return yield* body(threads)
   }).pipe(
-    Effect.provide(Layer.provide(layerAgents({ infer: layerScripted }), config)),
+    Effect.provide(Layer.provide(layerThreads({ infer: layerScripted }), config)),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
 
-describe("the agents service", () => {
+describe("the threads service", () => {
   test("a delivered brief drives to a completed turn", async () => {
-    const types = await running((agents) =>
+    const types = await running((threads) =>
       Effect.gen(function*() {
-        const accepted = yield* agents.deliver("alpha", { id: "m1", text: "hello" })
-        expect(accepted).toEqual({ agent: "alpha", turn: "m1" })
-        yield* agents.settled
+        const accepted = yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        expect(accepted).toEqual({ thread: "alpha", turn: "m1" })
+        yield* threads.settled
         const gauge = yield* DriverGauge
         expect(yield* gauge.dirty).toBe(0)
         expect(yield* gauge.resting).toBe(true)
-        return (yield* agents.events("alpha")).map((e) => e.type)
+        return (yield* threads.events("alpha")).map((e) => e.type)
       })
     )
     expect(types).toContain("TurnCompleted")
   })
 
-  test("list names every agent lane with its log", async () => {
-    const listed = await running((agents) =>
+  test("list names every thread lane with its log", async () => {
+    const listed = await running((threads) =>
       Effect.gen(function*() {
-        yield* agents.deliver("alpha", { id: "m1", text: "hello" })
-        yield* agents.deliver("beta", { id: "m2", text: "hello" })
-        yield* agents.settled
-        return yield* agents.list()
+        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.deliver("beta", { id: "m2", text: "hello" })
+        yield* threads.settled
+        return yield* threads.list()
       })
     )
     expect(listed.map((entry) => entry.id)).toEqual(["alpha", "beta"])
@@ -83,11 +83,11 @@ describe("the agents service", () => {
   })
 
   test("a turn that did not fail refuses to resume", async () => {
-    const refused = await running((agents) =>
+    const refused = await running((threads) =>
       Effect.gen(function*() {
-        yield* agents.deliver("alpha", { id: "m1", text: "hello" })
-        yield* agents.settled
-        return yield* Effect.flip(agents.resume("alpha", "m1"))
+        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.settled
+        return yield* Effect.flip(threads.resume("alpha", "m1"))
       })
     )
     expect(refused).toBeInstanceOf(ResumeRefused)
@@ -96,14 +96,14 @@ describe("the agents service", () => {
   })
 
   test("redelivering one message id is absorbed", async () => {
-    const counts = await running((agents) =>
+    const counts = await running((threads) =>
       Effect.gen(function*() {
-        yield* agents.deliver("alpha", { id: "m1", text: "hello" })
-        yield* agents.settled
-        const before = (yield* agents.events("alpha")).length
-        yield* agents.deliver("alpha", { id: "m1", text: "hello" })
-        yield* agents.settled
-        return [before, (yield* agents.events("alpha")).length]
+        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.settled
+        const before = (yield* threads.events("alpha")).length
+        yield* threads.deliver("alpha", { id: "m1", text: "hello" })
+        yield* threads.settled
+        return [before, (yield* threads.events("alpha")).length]
       })
     )
     expect(counts[1]).toBe(counts[0]!)

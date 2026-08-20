@@ -45,12 +45,12 @@ describe("the address a call goes to", () => {
   test("sends every request through the stated fetch", async () => {
     await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
     expect(calls).toHaveLength(1)
-    expect(lastUrl().pathname).toBe("/agents")
+    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads")
   })
 
-  test("an agent id is encoded into the path", async () => {
+  test("a thread id is encoded into the path", async () => {
     await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
-    expect(lastUrl().pathname).toBe("/agents/ag%2Fone%20two/events")
+    expect(lastUrl().pathname).toBe("/v1/actors/agent/threads/ag%2Fone%20two/events")
   })
 
   test("a stated option is a query param and an absent one is absent", async () => {
@@ -63,7 +63,7 @@ describe("the address a call goes to", () => {
 
   test("a base with a trailing slash does not double it", async () => {
     await makeClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
-    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/agents")
+    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/agent/threads")
   })
 })
 
@@ -84,10 +84,10 @@ describe("the token", () => {
 describe("a failed call", () => {
   test("a declared problem+json failure keeps all four fields", async () => {
     const document = {
-      type: `${PROBLEM_TYPE_BASE}unknown-agent`,
-      title: "Unknown Agent",
+      type: `${PROBLEM_TYPE_BASE}unknown-thread`,
+      title: "Unknown Thread",
       status: 404,
-      detail: 'No agent named "ghost" has ever existed.'
+      detail: 'No thread named "ghost" has ever existed.'
     }
     answer = problemAnswer(404, document)
     const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ghost").catch((error: unknown) => error)

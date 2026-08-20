@@ -4,9 +4,10 @@ import { HttpApiClient } from "effect/unstable/httpapi"
 
 import {
   Api,
+  RESERVED_ACTOR,
   type Accepted,
-  type AgentNode,
-  type AgentSummary,
+  type ThreadNode,
+  type ThreadSummary,
   type EventRow,
   type Health,
   type Inbound,
@@ -41,6 +42,9 @@ export interface ClientOptions {
   // The bearer token, sent as an `authorization` header on every request (apps/server/src/http.ts,
   // layerAuth). The tail cannot carry it (stream.ts).
   readonly token?: string | undefined
+  // Which actor's threads this client addresses. The default is the one name a v1 server reserves
+  // for the assembly it compiled in (contract.ts, RESERVED_ACTOR).
+  readonly actor?: string | undefined
   // How the tail opens a connection. The default is `globalThis.EventSource`.
   readonly eventSource?: OpenEventSource | undefined
   // How a request reaches the network. The default is the platform's own fetch, read through
@@ -59,21 +63,23 @@ export interface EventsOptions {
   readonly types?: ReadonlyArray<string> | undefined
 }
 
-// What a caller states to follow a log: the tail's options, less the two the client already holds.
-export type FollowOptions = Omit<StreamOptions, "baseUrl" | "agent" | "eventSource">
+// What a caller states to follow a log: the tail's options, less the ones the client already holds.
+export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "actor" | "eventSource">
 
 export interface Client {
   readonly baseUrl: string
-  readonly list: () => Promise<ReadonlyArray<AgentSummary>>
-  readonly tree: (agent: string) => Promise<AgentNode>
-  readonly events: (agent: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
-  readonly turns: (agent: string, at?: number) => Promise<ReadonlyArray<TurnView>>
-  readonly turn: (agent: string, turn: string) => Promise<TurnView>
-  readonly deliver: (agent: string, message: Inbound) => Promise<Accepted>
-  readonly resume: (agent: string, turn: string) => Promise<Accepted>
+  // The actor every call addresses, resolved once at construction (ClientOptions, actor).
+  readonly actor: string
+  readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
+  readonly tree: (thread: string) => Promise<ThreadNode>
+  readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
+  readonly turns: (thread: string, at?: number) => Promise<ReadonlyArray<TurnView>>
+  readonly turn: (thread: string, turn: string) => Promise<TurnView>
+  readonly deliver: (thread: string, message: Inbound) => Promise<Accepted>
+  readonly resume: (thread: string, turn: string) => Promise<Accepted>
   readonly health: () => Promise<Health>
-  // Follows one agent's log and answers with the unsubscribe.
-  readonly follow: (agent: string, options: FollowOptions) => (() => void)
+  // Follows one thread's log and answers with the unsubscribe.
+  readonly follow: (thread: string, options: FollowOptions) => (() => void)
 }
 
 const messageOf = (failure: unknown): string =>
@@ -142,21 +148,29 @@ export const makeClient = (options: ClientOptions = {}): Client => {
         : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
     )
   )
+  // The actor this client addresses. One name today, because the server compiles one assembly in
+  // and reserves that name for it (contract.ts, RESERVED_ACTOR); it is an option rather than a
+  // literal at each call so a deploy that serves more than one is a client option, not a rewrite.
+  const actor = options.actor ?? RESERVED_ACTOR
   return {
     baseUrl,
-    list: () => run(api.agents.list({})),
-    tree: (agent) => run(api.agents.tree({ params: { id: agent } })),
-    events: (agent, events = {}) => run(api.agents.events({ params: { id: agent }, query: eventsQuery(events) })),
-    turns: (agent, at) => run(api.agents.turns({ params: { id: agent }, query: at === undefined ? {} : { at } })),
-    turn: (agent, turn) => run(api.agents.turn({ params: { id: agent, turn } })),
-    deliver: (agent, message) => run(api.agents.deliver({ params: { id: agent }, payload: message })),
-    resume: (agent, turn) => run(api.agents.resume({ params: { id: agent, turn } })),
+    actor,
+    list: () => run(api.threads.list({ params: { actor } })),
+    tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
+    events: (thread, events = {}) =>
+      run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
+    turns: (thread, at) =>
+      run(api.threads.turns({ params: { actor, id: thread }, query: at === undefined ? {} : { at } })),
+    turn: (thread, turn) => run(api.threads.turn({ params: { actor, id: thread, turn } })),
+    deliver: (thread, message) => run(api.threads.deliver({ params: { actor, id: thread }, payload: message })),
+    resume: (thread, turn) => run(api.threads.resume({ params: { actor, id: thread, turn } })),
     health: () => run(api.health.healthz({})),
-    follow: (agent, follow) =>
+    follow: (thread, follow) =>
       stream({
         ...follow,
         baseUrl,
-        agent,
+        thread,
+        actor,
         ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
       })
   }

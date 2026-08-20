@@ -6,24 +6,26 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import {
   Api,
   invalidRequest,
+  RESERVED_ACTOR,
   ResumeRefused,
   unacceptableField,
-  UnknownAgent,
+  UnknownActor,
+  UnknownThread,
   UnknownTurn,
-  type AgentNode
+  type ThreadNode
 } from "@clavia/tardigrade-client/contract"
-import { Agents } from "./host"
+import { Threads } from "./host"
 import { problemResponse } from "./problem"
-import { treeOf, turnsOf, type AgentSummary } from "./projections"
+import { treeOf, turnsOf, type ThreadSummary } from "./projections"
 
-// The agent endpoints. A route is a lookup on the Agents service plus one projection, because the
+// The thread endpoints. A route is a lookup on the Threads service plus one projection, because the
 // read side is a pure function of a log (projections.ts) and the write side is one delivery
 // (host.ts). What each route accepts and answers is declared in contract.ts; this module is the
 // implementation of that declaration. Nothing here holds state between requests: the SSE tail keeps
 // a cursor for the connection it serves and nothing else, so two processes reading the same log
 // answer the same way.
 
-// The page size of GET /agents/:id/events when the caller states no `limit`
+// The page size of GET /v1/actors/:actor/threads/:id/events when the caller states no `limit`
 // (docs/how-to/server.md, "Endpoints").
 export const DEFAULT_EVENT_LIMIT = 200
 
@@ -55,22 +57,32 @@ const integerOf = (raw: string | undefined): number | undefined => {
   return /^\d+$/.test(trimmed) ? Number(trimmed) : undefined
 }
 
-const unknownAgentDetail = (id: string) => `No agent named ${JSON.stringify(id)} has ever existed.`
+const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id)} has ever existed.`
 
-// logOf reads an agent's events, failing the route when the log is empty. An agent exists once its
+const unknownActorDetail = (actor: string) =>
+  `This server serves one actor, ${JSON.stringify(RESERVED_ACTOR)}, and nothing named ${JSON.stringify(actor)}.`
+
+// actorOf is the guard every declared route runs first. The actor level is a path parameter so the
+// declaration states the shape a deploy will vary (contract.ts, RESERVED_ACTOR), and this build
+// serves exactly the reserved name: any other is code nobody deployed here, which is its own 404
+// rather than an empty listing (api.test.ts, "an actor nobody deployed is its own 404").
+const actorOf = (actor: string): Effect.Effect<string, ReturnType<typeof UnknownActor.of>> =>
+  actor === RESERVED_ACTOR ? Effect.succeed(actor) : Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
+
+// logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
-// unknown agent there is.
+// unknown thread there is.
 const logOf = (read: (id: string) => Effect.Effect<ReadonlyArray<Event>>, id: string) =>
   Effect.flatMap(read(id), (log) =>
-    log.length === 0 ? Effect.fail(UnknownAgent.of(unknownAgentDetail(id))) : Effect.succeed(log))
+    log.length === 0 ? Effect.fail(UnknownThread.of(unknownThreadDetail(id))) : Effect.succeed(log))
 
-// flatten lists a forest depth-first, parent before child. GET /agents is this listing rather than
+// flatten lists a forest depth-first, parent before child. The threads listing is this rather than
 // the raw lane list because `parent` is a fact of the forest and only treeOf can see it
 // (projections.ts, summaryOf).
-const flatten = (nodes: ReadonlyArray<AgentNode>): ReadonlyArray<AgentSummary> =>
+const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
   nodes.flatMap(({ children, ...summary }) => [summary, ...flatten(children)])
 
-const findNode = (nodes: ReadonlyArray<AgentNode>, id: string): AgentNode | undefined => {
+const findNode = (nodes: ReadonlyArray<ThreadNode>, id: string): ThreadNode | undefined => {
   for (const node of nodes) {
     if (node.id === id) return node
     const found = findNode(node.children, id)
@@ -153,12 +165,18 @@ export const layerStream = (options: ApiOptions = {}) => {
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
   return HttpRouter.add(
     "GET",
-    "/agents/:id/events/stream",
+    "/v1/actors/:actor/threads/:id/events/stream",
     Effect.gen(function*() {
-      const id = paramOf(yield* HttpRouter.params, "id")
-      const agents = yield* Agents
-      const log = yield* agents.events(id)
-      if (log.length === 0) return problemResponse(UnknownAgent.of(unknownAgentDetail(id)))
+      const params = yield* HttpRouter.params
+      const actor = paramOf(params, "actor")
+      // The tail answers the same actor guard the declared routes do. It is spelled out rather than
+      // shared with them because this route decodes its own request: it is not a declared endpoint
+      // (contract.ts, the SSE note; api.test.ts, "the tail refuses an actor nobody deployed").
+      if (actor !== RESERVED_ACTOR) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
+      const id = paramOf(params, "id")
+      const threads = yield* Threads
+      const log = yield* threads.events(id)
+      if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
       const query = yield* HttpServerRequest.ParsedSearchParams
       const rawAfter = singleOf(query["after"])
       const after = integerOf(rawAfter)
@@ -170,7 +188,7 @@ export const layerStream = (options: ApiOptions = {}) => {
       // first connection began.
       const request = yield* HttpServerRequest.HttpServerRequest
       const from = integerOf(request.headers["last-event-id"]) ?? after ?? 0
-      return HttpServerResponse.stream(tail(agents.events, id, from, poll, heartbeat), {
+      return HttpServerResponse.stream(tail(threads.events, id, from, poll, heartbeat), {
         contentType: "text/event-stream",
         headers: { "cache-control": "no-cache" }
       })
@@ -178,31 +196,35 @@ export const layerStream = (options: ApiOptions = {}) => {
   )
 }
 
-// layerAgentsGroup implements every declared agent endpoint over the Agents service and the
+// layerThreadsGroup implements every declared thread endpoint over the Threads service and the
 // projections. It carries no gate of its own: the bearer middleware is global to the router, so a
 // route is inside it by being part of the same application (http.ts, layerAuth; http.test.ts, "a
 // token closes the API and leaves healthz open").
-export const layerAgentsGroup = (options: ApiOptions = {}) => {
+export const layerThreadsGroup = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
-  return HttpApiBuilder.group(Api, "agents", (handlers) =>
+  return HttpApiBuilder.group(Api, "threads", (handlers) =>
     handlers
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
       // layerRequestProblems), so the handler only ever sees a message.
       .handle("deliver", ({ params, payload }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          return yield* agents.deliver(params.id, payload)
+          const actor = yield* actorOf(params.actor)
+          const threads = yield* Threads
+          const accepted = yield* threads.deliver(params.id, payload)
+          return { actor, ...accepted }
         }))
-      .handle("list", () =>
+      .handle("list", ({ params }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          return flatten(treeOf(logsOf(yield* agents.list())))
+          yield* actorOf(params.actor)
+          const threads = yield* Threads
+          return flatten(treeOf(logsOf(yield* threads.list())))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          const log = yield* logOf(agents.events, params.id)
+          yield* actorOf(params.actor)
+          const threads = yield* Threads
+          const log = yield* logOf(threads.events, params.id)
           const { after, limit: page } = query
           // The comma list is the one rule the query Schema does not state: every value it could
           // hold is a valid event type, including ones this build has never seen.
@@ -214,8 +236,9 @@ export const layerAgentsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("turns", ({ params, query }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          const log = yield* logOf(agents.events, params.id)
+          yield* actorOf(params.actor)
+          const threads = yield* Threads
+          const log = yield* logOf(threads.events, params.id)
           const { at } = query
           // `at` is a seq, and a seq is a 1-based position, so `at` events stand before the cut and
           // the prefix length is the seq itself (projections.ts, turnsOf).
@@ -223,13 +246,14 @@ export const layerAgentsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("turn", ({ params }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          const log = yield* logOf(agents.events, params.id)
+          yield* actorOf(params.actor)
+          const threads = yield* Threads
+          const log = yield* logOf(threads.events, params.id)
           const view = turnsOf(log).find((candidate) => candidate.turn === params.turn)
           if (view === undefined) {
             return yield* Effect.fail(
               UnknownTurn.of(
-                `Agent ${JSON.stringify(params.id)} was never asked to serve a turn named ${
+                `Thread ${JSON.stringify(params.id)} was never asked to serve a turn named ${
                   JSON.stringify(params.turn)
                 }.`
               )
@@ -239,20 +263,22 @@ export const layerAgentsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("resume", ({ params }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
-          return yield* agents.resume(params.id, params.turn).pipe(
-            Effect.as({ agent: params.id, turn: params.turn }),
+          const actor = yield* actorOf(params.actor)
+          const threads = yield* Threads
+          return yield* threads.resume(params.id, params.turn).pipe(
+            Effect.as({ actor, thread: params.id, turn: params.turn }),
             Effect.catch((refused) => Effect.fail(ResumeRefused.of(refused.detail)))
           )
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {
-          const agents = yield* Agents
+          yield* actorOf(params.actor)
+          const threads = yield* Threads
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
-          const node = findNode(treeOf(logsOf(yield* agents.list())), params.id)
+          const node = findNode(treeOf(logsOf(yield* threads.list())), params.id)
           if (node === undefined) {
-            return yield* Effect.fail(UnknownAgent.of(unknownAgentDetail(params.id)))
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.id)))
           }
           return node
         })))

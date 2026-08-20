@@ -3,7 +3,7 @@ import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 
 import { layerFromEnv, readConfig } from "./config"
-import { layerAgents } from "./host"
+import { layerThreads } from "./host"
 import { serve } from "./http"
 
 // The entry point: environment to configuration to a listening Bun process. It holds no logic of
@@ -19,9 +19,9 @@ const config = readConfig(process.env)
 const configLayer = layerFromEnv(process.env)
 
 // The host is built from the same configuration the routes read, and closed with the scope the
-// server runs in, so the process that stops listening stops writing (host.ts, layerAgents).
-const agents = Layer.provide(layerAgents(), configLayer)
+// server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
+const threads = Layer.provide(layerThreads(), configLayer)
 
-const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, agents])
+const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, threads])
 
 BunRuntime.runMain(Layer.launch(main))

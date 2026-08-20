@@ -40,7 +40,7 @@ const following = (options: { readonly after?: number } = {}) => {
   let source: FakeSource | undefined
   const unsubscribe = stream({
     baseUrl: "http://localhost:4111",
-    agent: "root",
+    thread: "root",
     ...(options.after === undefined ? {} : { after: options.after }),
     onEvent: (row) => rows.push(row),
     onError: (error) => failures.push(error),
@@ -53,13 +53,13 @@ const following = (options: { readonly after?: number } = {}) => {
 }
 
 describe("streamUrl", () => {
-  test("the first connection carries after, and an agent id is encoded", () => {
+  test("the first connection carries after, and a thread id is encoded", () => {
     expect(streamUrl("http://localhost:4111/", "ag/one", 40))
-      .toBe("http://localhost:4111/agents/ag%2Fone/events/stream?after=40")
+      .toBe("http://localhost:4111/v1/actors/agent/threads/ag%2Fone/events/stream?after=40")
   })
 
   test("no after means the whole log", () => {
-    expect(streamUrl("http://localhost:4111", "root")).toBe("http://localhost:4111/agents/root/events/stream")
+    expect(streamUrl("http://localhost:4111", "root")).toBe("http://localhost:4111/v1/actors/agent/threads/root/events/stream")
   })
 })
 

@@ -3,20 +3,20 @@ import { REPLY_SUFFIX } from "@clavia/tardigrade-core/message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/projections"
 import { boundaryOf } from "@clavia/tardigrade/boundary"
 
-// The read side of the API. Every endpoint that answers a question about an agent answers it here,
-// as a pure function of that agent's events (apps-server-spec.md, "Principles": every read is a
+// The read side of the API. Every endpoint that answers a question about a thread answers it here,
+// as a pure function of that thread's events (apps-server-spec.md, "Principles": every read is a
 // projection of the log). Nothing in this module touches a store, a host, or a clock, so a route is
 // a lookup plus one of these calls, and a test is an array of events.
 //
 // The projections read the framework's own projections wherever one already answers the question:
 // the lane's owed work comes from the code lane (@clavia/tardigrade-code/projections), and a turn's
-// outcome comes from the agent's boundary (@clavia/tardigrade/boundary). The vocabulary the wire
+// outcome comes from the thread's boundary (@clavia/tardigrade/boundary). The vocabulary the wire
 // speaks is the only thing added here.
 
-// AgentStatus is the summary vocabulary of GET /agents. Four answers, in the order they are
-// decided: an agent whose work cannot move is blocked, an agent that owes a transition is running,
-// an agent whose last turn died owing nothing is failed, and anything else has settled.
-export type AgentStatus = "settled" | "running" | "blocked" | "failed"
+// ThreadStatus is the summary vocabulary of GET /v1/actors/:actor/threads. Four answers, in the order they are
+// decided: a thread whose work cannot move is blocked, a thread that owes a transition is running,
+// a thread whose last turn died owing nothing is failed, and anything else has settled.
+export type ThreadStatus = "settled" | "running" | "blocked" | "failed"
 
 const numberAt = (event: Event): number | undefined => {
   const at = (event as { at?: unknown }).at
@@ -26,7 +26,7 @@ const numberAt = (event: Event): number | undefined => {
 const idOf = (event: Event): string => String((event as { id?: unknown }).id ?? "")
 
 // inboundOf returns the ids of the turns a log was asked to serve, in log order. A reply is an
-// inbound event and never an inbound turn: it answers an id this agent sent out, under that id's
+// inbound event and never an inbound turn: it answers an id this thread sent out, under that id's
 // own `<id>.reply` name (@clavia/tardigrade-core/message, REPLY_SUFFIX), so listing it would report
 // a child's answer as a turn of the parent (projections.test.ts, "a reply message is not a turn").
 const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
@@ -42,9 +42,9 @@ const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
   return ids
 }
 
-// statusOf reports what the agent is doing, decided in one order because the states overlap in the
+// statusOf reports what the thread is doing, decided in one order because the states overlap in the
 // log: a blocked lane also has a turn without a terminal, and a failed turn is only failed once
-// nothing is owed (apps-server-spec.md, "GET /agents").
+// nothing is owed (apps-server-spec.md, "GET /v1/actors/:actor/threads").
 //
 // The first two answers are the code lane's own head-of-queue reading, not a second derivation of
 // it: `workOwed` is this head plus `canProgress`, so blocked is exactly the case that leaves
@@ -54,7 +54,7 @@ const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
 //
 // A turn with no terminal and no owed execution is running as well: the model owes the next
 // transition, and no code has been dispatched yet (projections.test.ts, "a fresh turn is running").
-export const statusOf = (events: ReadonlyArray<Event>): AgentStatus => {
+export const statusOf = (events: ReadonlyArray<Event>): ThreadStatus => {
   const head = factsOf(events).find((facts) => !facts.settled)
   if (head !== undefined) return canProgress(head) ? "running" : "blocked"
   const turns = inboundOf(events)
@@ -65,21 +65,21 @@ export const statusOf = (events: ReadonlyArray<Event>): AgentStatus => {
   return boundary.kind === "failed" ? "failed" : "settled"
 }
 
-// AgentSummary is one row of GET /agents: what an agent is, without its events. `parent` is absent
-// for a root, and `lastAt` for an agent whose events carry no timestamp.
-export interface AgentSummary {
+// ThreadSummary is one row of GET /v1/actors/:actor/threads: what a thread is, without its events. `parent` is absent
+// for a root, and `lastAt` for a thread whose events carry no timestamp.
+export interface ThreadSummary {
   readonly id: string
   readonly parent?: string
   readonly events: number
   readonly lastAt?: number
-  readonly status: AgentStatus
+  readonly status: ThreadStatus
 }
 
 // summaryOf projects one log into its row. `parent` is a parameter because a child's own log holds
 // no evidence of its parent: the claim is a `PackageCalled` in the PARENT's log, so parentage is a
 // fact of the forest and only `treeOf` can see it (projections.test.ts, "a summary carries the
 // parent the caller supplies").
-export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: string): AgentSummary => {
+export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: string): ThreadSummary => {
   let lastAt: number | undefined
   for (const event of events) {
     const at = numberAt(event)
@@ -94,13 +94,13 @@ export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: str
   }
 }
 
-// AgentNode is a summary with the agents it spawned, the shape GET /agents/:id/tree serves.
-export interface AgentNode extends AgentSummary {
-  readonly children: ReadonlyArray<AgentNode>
+// ThreadNode is a summary with the threads it spawned, the shape GET /v1/actors/:actor/threads/:id/tree serves.
+export interface ThreadNode extends ThreadSummary {
+  readonly children: ReadonlyArray<ThreadNode>
 }
 
 // firstAt is the log's own start, the order the forest is listed in. A log with no timestamp sorts
-// last rather than first, so an untimed agent never displaces a real one.
+// last rather than first, so an untimed thread never displaces a real one.
 const firstAt = (events: ReadonlyArray<Event>): number => {
   for (const event of events) {
     const at = numberAt(event)
@@ -113,11 +113,11 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
 // `callId` is Y's id: a spawn names its child by the call's own id and places it at `ag.<callId>`
 // (packages/agent/src/spawn.ts, `sibling`), so the recorded call IS the claim, and no id parsing is
 // needed to find it. Ids the map does not hold are calls to other packages and claim nothing
-// (projections.test.ts, "a package call to a non-agent claims nothing").
+// (projections.test.ts, "a package call to a non-thread claims nothing").
 //
-// Roots are the agents no log claims, sorted by first event time; children sort the same way, so
+// Roots are the threads no log claims, sorted by first event time; children sort the same way, so
 // two runs of the same forest render identically (projections.test.ts, "three levels, two roots").
-export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): ReadonlyArray<AgentNode> => {
+export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): ReadonlyArray<ThreadNode> => {
   const parents = new Map<string, string>()
   for (const [id, events] of logs) {
     for (const event of events) {
@@ -138,7 +138,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
   // A claim cycle is not reachable through minted call ids, but the map is an argument, so the walk
   // carries the guard rather than trusting its caller.
   const walked = new Set<string>()
-  const node = (id: string, parent?: string): AgentNode => {
+  const node = (id: string, parent?: string): ThreadNode => {
     walked.add(id)
     const events = logs.get(id) ?? []
     const children = (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)
@@ -147,7 +147,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
   return [...logs.keys()].filter((id) => !parents.has(id)).sort(order).map((id) => node(id))
 }
 
-// TurnStatus is the turn vocabulary of GET /agents/:id/turns. `parked` is the budget ask nobody can
+// TurnStatus is the turn vocabulary of GET /v1/actors/:actor/threads/:id/turns. `parked` is the budget ask nobody can
 // answer over HTTP (apps-server-spec.md, "Explicitly out of scope": budget escalation).
 export type TurnStatus = "pending" | "completed" | "failed" | "parked"
 

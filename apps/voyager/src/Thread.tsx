@@ -1,7 +1,7 @@
 import { Moon, Sun } from "@phosphor-icons/react"
 import { Fragment, useEffect, useRef, useState, type ReactElement } from "react"
 
-import { NO_ANSWER, ProblemError, type AgentStatus, type EventRow } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
 import { client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Moment } from "./narrative"
@@ -11,8 +11,8 @@ import { useTheme } from "./theme"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
-// The center pane: one agent's log as a flat chronological list under its own header and the window
-// brush (mock.html, the main element). The pane holds cursors only: which agent, which range the
+// The center pane: one thread's log as a flat chronological list under its own header and the window
+// brush (mock.html, the main element). The pane holds cursors only: which thread, which range the
 // window holds, which row is open. Every fact on it is the server's, read through src/client.ts.
 
 const errorOf = (error: unknown): ProblemError =>
@@ -180,8 +180,8 @@ const Problem = ({ problem }: { readonly problem: ProblemError }): ReactElement 
   </div>
 )
 
-const Head = ({ id, status }: { readonly id: string; readonly status: AgentStatus | undefined }): ReactElement => (
-  <div className="agent-head">
+const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => (
+  <div className="thread-head">
     <span className="mono" style={{ fontSize: "var(--text-dense)", fontWeight: 500 }}>{id}</span>
     {status === undefined ? null : (
       <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>
@@ -191,7 +191,7 @@ const Head = ({ id, status }: { readonly id: string; readonly status: AgentStatu
   </div>
 )
 
-export const Agent = ({ id, status }: { readonly id: string; readonly status: AgentStatus | undefined }): ReactElement => {
+export const Thread = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => {
   const route = useRoute()
   // The window's own edges. The URL carries them so a view is shareable, and the pane holds them so
   // a drag renders from one place: `navigate` publishes the URL synchronously, and a control that
@@ -204,7 +204,7 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
   // Whether the reader is at the log's end. Auto-scroll follows a live log only from there; a reader
   // who has scrolled up is reading, and the log must not pull the page away from them.
   const atEnd = useRef(true)
-  // Whether this agent's log has been given its opening window. The default is read once, from the
+  // Whether this thread's log has been given its opening window. The default is read once, from the
   // first full reading; recomputing it as events arrive would move the window under the reader.
   const seeded = useRef(false)
 
@@ -250,7 +250,7 @@ export const Agent = ({ id, status }: { readonly id: string; readonly status: Ag
     navigate({ from: link.from, to: link.to }, { replace: true })
   }
 
-  // An agent the server has never heard of has no log to read, so the pane is its header and the
+  // A thread the server has never heard of has no log to read, so the pane is its header and the
   // problem document verbatim (apps/server/src/problem.ts).
   if (problem !== undefined && problem.status === 404) {
     return (

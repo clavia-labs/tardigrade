@@ -1,16 +1,16 @@
-import type { AgentStatus, AgentSummary } from "@clavia/tardigrade-client"
+import type { ThreadStatus, ThreadSummary } from "@clavia/tardigrade-client"
 
-// The rail's projections. GET /agents answers with every agent and its parent, and the rail shows
+// The rail's projections. GET /v1/actors/:actor/threads answers with every thread and its parent, and the rail shows
 // roots alone, so these functions turn one flat listing into the rows the rail renders. They are
 // pure, so the screen holds no arithmetic of its own.
 
 // RootRow is one rail row: the root's own facts plus the size of the family it started.
 export interface RootRow {
   readonly id: string
-  readonly status: AgentStatus
+  readonly status: ThreadStatus
   readonly events: number
   readonly lastAt: number | undefined
-  // The agents this root spawned, at any depth, not counting the root. Zero for a root that ran
+  // The threads this root spawned, at any depth, not counting the root. Zero for a root that ran
   // alone, and the rail then omits the segment.
   readonly family: number
 }
@@ -24,7 +24,7 @@ export interface Roster {
 
 export const EMPTY_ROSTER: Roster = { roots: [] }
 
-// rootOf walks an agent's parents to the root of its family. Parentage is the server's fact: only
+// rootOf walks a thread's parents to the root of its family. Parentage is the server's fact: only
 // the forest can see it, and a summary states it (apps/server/src/projections.ts, treeOf). The
 // guard stops a claim cycle, which minted call ids cannot produce but an argument can.
 const rootOf = (id: string, parents: ReadonlyMap<string, string | undefined>): string => {
@@ -38,9 +38,9 @@ const rootOf = (id: string, parents: ReadonlyMap<string, string | undefined>): s
   }
 }
 
-// rosterOf projects the listing into the rail. The roots keep the order GET /agents published, which
+// rosterOf projects the listing into the rail. The roots keep the order GET /v1/actors/:actor/threads published, which
 // is first event time, so two polls of one run render identically.
-export const rosterOf = (summaries: ReadonlyArray<AgentSummary>): Roster => {
+export const rosterOf = (summaries: ReadonlyArray<ThreadSummary>): Roster => {
   const parents = new Map(summaries.map((summary) => [summary.id, summary.parent]))
   const family = new Map<string, number>()
   for (const summary of summaries) {
@@ -78,6 +78,6 @@ export const agoOf = (at: number, now: number): string => {
 }
 
 // countsOf is a rail row's second line, after the chip: how many events the root holds and how big
-// its family is. A root that spawned nothing says nothing about agents (mock.html, the rail row).
+// its family is. A root that spawned nothing says nothing about threads (mock.html, the rail row).
 export const countsOf = (row: RootRow): string =>
-  row.family === 0 ? `${row.events} ev` : `${row.events} ev · ${row.family} agents`
+  row.family === 0 ? `${row.events} ev` : `${row.events} ev · ${row.family} threads`

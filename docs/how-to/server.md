@@ -2,6 +2,21 @@
 
 The server is the self-hostable deployable: one Bun process that holds a durable SQLite log, runs the default agent assembly over it, and exposes HTTP. The assembly is code mode with the spawn and workspace packages in scope, plus reply, budget, and compaction. Everything the API answers is derived from the log, so the process keeps no state a restart could lose.
 
+## What the API names
+
+The API has four levels, and a route names the first three.
+
+| Level | What it is |
+| --- | --- |
+| Actor | The deployed code, addressed by name. This build compiles one assembly in and serves it as `agent` (`RESERVED_ACTOR`); every other name is a `404 unknown-actor`. |
+| Thread | One log, resumable forever. It is the resource every read projects from, and it exists once its log has an event. |
+| Turn | One inbound message and the work it caused, named by the message id. |
+| Event | One fact, recorded once, numbered by its position in the log. |
+
+The platform's guarantee stops at the thread: a durable log, one writer, and a settle loop. Whether the reactors over that log constitute an agent is the assembly's business, which is why the actor is the level a deploy will vary and the thread is the level a route reads.
+
+Every versioned route lives under `/v1`. `/healthz`, `/openapi.json`, and `/docs` describe the process rather than its resources, so they stay unversioned.
+
 ## Run it
 
 ```bash
@@ -24,24 +39,24 @@ Configuration is the environment and nothing else. Every default is an exported 
 
 ## Running without a model
 
-The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails with `no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID`. The failure is an event in the log like any other, so `GET /agents/:id/turns/:turn` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `POST /agents/:id/turns/:turn/resume` runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
+The process boots without model coordinates. It listens, answers `/healthz`, accepts messages, and every turn it drives fails with `no model is configured: set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID`. The failure is an event in the log like any other, so `GET /v1/actors/agent/threads/:id/turns/:turn` reports the turn as `failed` and carries that sentence as its error. Set the three variables and `POST /v1/actors/agent/threads/:id/turns/:turn/resume` runs the same turn again from where it stopped. A server that refused to start without a model would hide the log an operator can already read.
 
 ## Endpoints
 
 | Endpoint | Contract |
 | --- | --- |
-| `POST /agents/:id/messages` | Deliver one message, `{ id, text, input?, data? }`. Answers `202 { agent, turn }`, or `400` when the body states no `id` or no `text`. |
-| `GET /agents` | Every agent, parent before child, as a summary: id, parent, event count, last event time, and status (`settled`, `running`, `blocked`, `failed`). |
-| `GET /agents/:id/events` | The log as `{ seq, event }` rows. `after` starts the page past a sequence number, `limit` caps it (default 200, `DEFAULT_EVENT_LIMIT`), `types` filters by a comma list. |
-| `GET /agents/:id/events/stream` | The same log as `text/event-stream`, replayed from the cursor and then followed live. The tail re-reads every 50 milliseconds (`DEFAULT_SSE_POLL`) and writes a comment frame after 15 seconds of silence (`DEFAULT_SSE_HEARTBEAT`). |
-| `GET /agents/:id/turns` | Every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` evaluates the projection over a prefix of the log. |
-| `GET /agents/:id/turns/:turn` | One turn's boundary, the same shape. This is the poll target for whether a run finished. |
-| `POST /agents/:id/turns/:turn/resume` | Resume a failed turn. `202` with the turn handle, `409` when the turn did not fail or belongs to a spent epoch, carrying the library's own reason. |
+| `POST /v1/actors/agent/threads/:id/events` | Deliver one message, `{ id, text, input?, data? }`. Answers `202 { actor, thread, turn }`, or `400` when the body states no `id` or no `text`. |
+| `GET /v1/actors/agent/threads` | Every thread, parent before child, as a summary: id, parent, event count, last event time, and status (`settled`, `running`, `blocked`, `failed`). |
+| `GET /v1/actors/agent/threads/:id/events` | The log as `{ seq, event }` rows. `after` starts the page past a sequence number, `limit` caps it (default 200, `DEFAULT_EVENT_LIMIT`), `types` filters by a comma list. |
+| `GET /v1/actors/agent/threads/:id/events/stream` | The same log as `text/event-stream`, replayed from the cursor and then followed live. The tail re-reads every 50 milliseconds (`DEFAULT_SSE_POLL`) and writes a comment frame after 15 seconds of silence (`DEFAULT_SSE_HEARTBEAT`). |
+| `GET /v1/actors/agent/threads/:id/turns` | Every turn boundary as `{ turn, status, output?, error? }`, where status is `pending`, `completed`, `failed`, or `parked`. `at` evaluates the projection over a prefix of the log. |
+| `GET /v1/actors/agent/threads/:id/turns/:turn` | One turn's boundary, the same shape. This is the poll target for whether a run finished. |
+| `POST /v1/actors/agent/threads/:id/turns/:turn/resume` | Resume a failed turn. `202` with the turn handle, `409` when the turn did not fail or belongs to a spent epoch, carrying the library's own reason. |
 | `GET /healthz` | `200` while the host answers, carrying `status` (`resting` or `driving`) and `dirty`, the count of drive passes owed. Open even when a token is set, so a supervisor can tell an outage from a misconfiguration. |
 | `GET /openapi.json` | The OpenAPI document, derived from the same declaration the routes are built from (`OPENAPI_PATH`). Open even when a token is set. |
 | `GET /docs` | That document rendered as a reference page (`DOCS_PATH`). Open even when a token is set. |
 
-Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` on a read means the agent has never existed; an existing agent whose filter matches nothing answers `200 []`. A request that does not match what the endpoint accepts is `400 invalid-request`, whose `detail` names the part that was refused and the fields at fault, as in ``The request body is not what this endpoint accepts. `text` is missing.``
+Every failure is `application/problem+json`: `{ type, title, status, detail }`, where `type` is a URI under `https://tardigrade.dev/problems/` that a client matches on. A `404` is one of two facts and the `type` says which: `unknown-actor` names code this build does not serve, and `unknown-thread` names a log that has never been written. The actor is answered first, so a real thread under an actor nobody deployed reports `unknown-actor`. An existing thread whose filter matches nothing answers `200 []`. A request that does not match what the endpoint accepts is `400 invalid-request`, whose `detail` names the part that was refused and the fields at fault, as in ``The request body is not what this endpoint accepts. `text` is missing.``
 
 ## The routes are one declaration
 
@@ -61,9 +76,9 @@ The client carries Schema into whatever loads it, a browser included. That is th
 
 ## Creation is delivery
 
-There is no create endpoint, no registration, and no lifecycle. An agent exists once its log has an event, so `POST /agents/:id/messages` with an id nobody has used births that agent and starts its first turn. The same rule reads backwards: the only unknown agent is one with an empty log, which is what a `404` on any read reports.
+There is no create endpoint, no registration, and no lifecycle. A thread exists once its log has an event, so `POST /v1/actors/agent/threads/:id/events` with an id nobody has used births that thread and starts its first turn. The same rule reads backwards: the only unknown thread is one with an empty log, which is what a `404 unknown-thread` on any read reports.
 
-Children born by spawn get derived ids (`<execId>.<n>`) and appear in `GET /agents` and `GET /agents/:id/tree` like any other agent. Parentage is a claim in the parent's log, which is why the tree is derived across every log rather than from the subtree alone.
+Children born by spawn get derived ids (`<execId>.<n>`) and appear in `GET /v1/actors/agent/threads` and `GET /v1/actors/agent/threads/:id/tree` like any other thread. Parentage is a claim in the parent's log, which is why the tree is derived across every log rather than from the subtree alone.
 
 ## Redelivery is absorbed
 
@@ -75,7 +90,7 @@ Each log event is one SSE event, and its `id:` field is the sequence number. A d
 
 ## Time travel is a query
 
-Any prefix of a log is a valid state, so reading the past is a parameter rather than a mode. `GET /agents/:id/turns?at=<seq>` evaluates the turn projection over the first `<seq>` events, which is what the agent's outcome looked like at that point. Nothing is stored to make this work: the projection is a pure function of the events it is handed.
+Any prefix of a log is a valid state, so reading the past is a parameter rather than a mode. `GET /v1/actors/agent/threads/:id/turns?at=<seq>` evaluates the turn projection over the first `<seq>` events, which is what the thread's outcome looked like at that point. Nothing is stored to make this work: the projection is a pure function of the events it is handed.
 
 ## Out of scope
 
@@ -83,7 +98,7 @@ The server runs one assembly, chosen in code, and forking is the customization p
 
 - **Inbound sources.** Provider webhooks becoming messages arrive with the `Package.source` spec that defines them.
 - **Connections and credential storage.** The door's values arrive with that same spec.
-- **Per-agent assembly configuration.** Capabilities and packages as a wire format reopen every composition question, so the assembly stays a code decision in `apps/server/src/host.ts`.
+- **Per-thread assembly configuration.** Capabilities and packages as a wire format reopen every composition question, so the assembly stays a code decision in `apps/server/src/host.ts`.
 - **Budget answers over HTTP.** A parked turn reports `parked`; answering the ask needs the synchronous call doors the in-process host refuses, and waits on a consumer shape that needs them.
 
 Multi-tenancy, quotas, and users are outside the frame entirely: one store, one operator.

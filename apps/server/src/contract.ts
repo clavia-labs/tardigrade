@@ -1,9 +1,9 @@
 import { Effect, Layer, type SchemaIssue } from "effect"
 import { HttpApiMiddleware } from "effect/unstable/httpapi"
 import {
-  AgentNode,
-  AgentStatus,
-  AgentSummary,
+  ThreadNode,
+  ThreadStatus,
+  ThreadSummary,
   InvalidRequest,
   invalidRequest,
   missingField,
@@ -11,7 +11,7 @@ import {
   TurnStatus,
   TurnView,
   unacceptableField,
-  UnknownAgent,
+  UnknownThread,
   type Problem
 } from "@clavia/tardigrade-client/contract"
 
@@ -66,10 +66,10 @@ type Extends<A, B> = [A] extends [B] ? true : never
 
 const asserts = <_ extends true>(): void => {}
 
-asserts<Same<Projections.AgentStatus, typeof AgentStatus.Type>>()
-asserts<Same<Projections.AgentSummary, typeof AgentSummary.Type>>()
-asserts<Same<Projections.AgentNode, typeof AgentNode.Type>>()
+asserts<Same<Projections.ThreadStatus, typeof ThreadStatus.Type>>()
+asserts<Same<Projections.ThreadSummary, typeof ThreadSummary.Type>>()
+asserts<Same<Projections.ThreadNode, typeof ThreadNode.Type>>()
 asserts<Same<Projections.TurnStatus, typeof TurnStatus.Type>>()
 asserts<Same<Projections.TurnView, typeof TurnView.Type>>()
-asserts<Extends<typeof UnknownAgent.schema.Type, Problem>>()
+asserts<Extends<typeof UnknownThread.schema.Type, Problem>>()
 asserts<Extends<typeof InvalidRequest.schema.Type, Problem>>()

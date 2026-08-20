@@ -4,7 +4,7 @@
   "private": true,
   "license": "MIT",
   "author": "Clavia, Inc.",
-  "description": "The tdg command: run an agent, watch its log, and serve the API and the UI at one URL.",
+  "description": "The tdg command: run a thread, watch its log, and serve the API and the UI at one URL.",
   "homepage": "https://github.com/clavia-labs/tardigrade#readme",
   "repository": {
     "type": "git",

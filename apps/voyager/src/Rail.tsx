@@ -8,7 +8,7 @@ import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
 
 // The rail: the run's roots and nothing else (mock.html, the aside). A root is a run, and the tree
 // under it is the run's own business, so the rail lists the six things a reader chooses between
-// rather than the twenty-four agents behind them.
+// rather than the twenty-four threads behind them.
 
 // Where the collapsed state is kept. It is the reader's shape of the screen, not the run's, so it
 // lives in the browser and never on the wire (src/theme.ts, THEME_KEY).
@@ -30,7 +30,7 @@ const Row = ({
 }): ReactElement => {
   // Choosing a run clears the window: the edges are fractions of the log a reader was looking at,
   // and they name nothing in the log they are moving to (src/nav.ts, Route).
-  const open = () => navigate({ agent: row.id, from: undefined, to: undefined })
+  const open = () => navigate({ thread: row.id, from: undefined, to: undefined })
   return (
     <div
       role="button"
