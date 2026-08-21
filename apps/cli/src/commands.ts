@@ -6,7 +6,7 @@ import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
 import { readFileConfig, resolveRemote, resolveServer } from "./config"
-import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
@@ -278,6 +278,10 @@ export const devCommand = Command.make("dev", {
     Flag.withDescription("The directory holding pushed actor databases. Defaults to TARDIGRADE_ACTOR_DATA."),
     Flag.optional
   ),
+  actorRefreshMillis: Flag.integer("actor-refresh-ms").pipe(
+    Flag.withDescription("Milliseconds to wait after a local actor change before refreshing the registry."),
+    Flag.withDefault(DEFAULT_ACTOR_REFRESH_MILLIS)
+  ),
   ui: Flag.string("ui").pipe(
     Flag.withDescription("The directory holding the built UI. Defaults to the build shipped beside this command."),
     Flag.optional
@@ -339,6 +343,7 @@ export const devCommand = Command.make("dev", {
       try: () => dev({
         config: config2,
         assets: stated(flags.ui),
+        actorRefreshMillis: flags.actorRefreshMillis,
         ...(flags.open ? { onListen: openBrowser } : {})
       }),
       catch: userErrorOf

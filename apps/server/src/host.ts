@@ -2,6 +2,7 @@ import { Clock, Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { createHash } from "node:crypto"
+import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
@@ -102,6 +103,12 @@ export interface ThreadsOptions {
   // derivation whole, which is how a test runs a scripted mind with no credentials
   // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
   readonly infer?: Layer.Layer<Infer>
+  // actorRefresh watches the actor root and reconciles its artifacts after the stated debounce.
+  // Absent keeps a hosted server's registry fixed except for PUT /v1/actors; tdg dev supplies it.
+  readonly actorRefresh?: {
+    readonly debounceMillis: number
+    readonly onError?: ((error: Error) => void) | undefined
+  } | undefined
 }
 
 interface ActorRuntime {
@@ -240,41 +247,91 @@ const make = (options: ThreadsOptions) =>
     const lane = layerLane(config, options)
     const runtimes = new Map<string, ActorRuntime>()
     const builtIn = assemblyOf()
+    const root = resolve(config.actors)
+    let mutations: Promise<void> = Promise.resolve()
+    const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {
+      const result = mutations.then(operation, operation)
+      mutations = result.then(() => undefined, () => undefined)
+      return result
+    }
     const open = async (summary: ActorSummary, actor: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
       const runtime = await runtimeOf(summary, actor, log, lane)
       runtimes.set(summary.name, runtime)
       return runtime
     }
+    const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly actor: Actor<ServerR> }> => {
+      const artifact = await manifestOf(directory)
+      if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
+      const definition = await definitionOf(join(directory, artifact.manifest.module), artifact.manifest)
+      return {
+        summary: { name: definition.name, builtIn: false, digest: artifact.manifest.digest },
+        actor: definition.actor
+      }
+    }
+    const replace = async (summary: ActorSummary, actor: Actor<ServerR>): Promise<void> => {
+      const current = runtimes.get(summary.name)
+      if (current?.summary.digest === summary.digest) return
+      if (current !== undefined) {
+        await current.close()
+        runtimes.delete(summary.name)
+      }
+      await open(summary, actor, join(resolve(config.actorData), `${summary.name}.sqlite`))
+    }
+    const synchronize = async (): Promise<void> => {
+      const entries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return []
+        throw error
+      })
+      const found = new Set<string>()
+      for (const entry of entries) {
+        if (!entry.isDirectory() || !ACTOR_NAME_PATTERN.test(entry.name)) continue
+        const loaded = await load(join(root, entry.name))
+        if (loaded.summary.name !== entry.name) throw new Error(`actor artifact name does not match directory ${JSON.stringify(entry.name)}`)
+        found.add(loaded.summary.name)
+        await replace(loaded.summary, loaded.actor)
+      }
+      for (const [name, runtime] of runtimes) {
+        if (name === RESERVED_ACTOR || found.has(name)) continue
+        await runtime.close()
+        runtimes.delete(name)
+      }
+    }
+    let watcher: FSWatcher | undefined
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined
     yield* Effect.acquireRelease(
       Effect.promise(async () => {
         await open({ name: RESERVED_ACTOR, builtIn: true }, builtIn, config.db)
-        const root = resolve(config.actors)
-        const entries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
-          if (error.code === "ENOENT") return []
-          throw error
-        })
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue
-          const directory = join(root, entry.name)
-          const artifact = await manifestOf(directory)
-          if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
-          const definition = await definitionOf(join(directory, artifact.manifest.module), artifact.manifest)
-          await open(
-            { name: definition.name, builtIn: false, digest: artifact.manifest.digest },
-            definition.actor,
-            join(resolve(config.actorData), `${definition.name}.sqlite`)
-          )
+        await synchronize()
+        if (options.actorRefresh !== undefined) {
+          const { debounceMillis } = options.actorRefresh
+          if (!Number.isInteger(debounceMillis) || debounceMillis < 0) {
+            throw new Error(`actor refresh debounce must be a non-negative integer, got ${debounceMillis}`)
+          }
+          await mkdir(root, { recursive: true })
+          const report = options.actorRefresh.onError ?? ((error: Error) => console.error(`actor refresh failed: ${error.message}`))
+          watcher = watch(root, () => {
+            if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+            refreshTimer = setTimeout(() => {
+              refreshTimer = undefined
+              void exclusive(synchronize).catch((error: unknown) => report(error instanceof Error ? error : new Error(String(error))))
+            }, debounceMillis)
+          })
         }
         return runtimes
       }),
-      (opened) => Effect.promise(() => Promise.all([...opened.values()].map((runtime) => runtime.close())).then(() => undefined))
+      (opened) => Effect.promise(async () => {
+        watcher?.close()
+        if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+        await mutations
+        await Promise.all([...opened.values()].map((runtime) => runtime.close()))
+      })
     )
 
     const selected = (name: string): ActorThreads | undefined => runtimes.get(name)?.threads
     const primary = selected(RESERVED_ACTOR)!
     const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, Error> =>
       Effect.tryPromise({
-        try: async () => {
+        try: () => exclusive(async () => {
           const manifest = artifact.manifest as ActorArtifactManifest
           if (manifest.schema !== ACTOR_ARTIFACT_VERSION) throw new Error(`unsupported actor artifact schema ${manifest.schema}`)
           if (!ACTOR_NAME_PATTERN.test(manifest.name)) throw new Error(`actor name must match ${String(ACTOR_NAME_PATTERN)}`)
@@ -282,7 +339,6 @@ const make = (options: ThreadsOptions) =>
           if (manifest.module !== "actor.mjs") throw new Error(`actor module must be ${JSON.stringify("actor.mjs")}`)
           const actual = digestOf(artifact.module)
           if (actual !== manifest.digest) throw new Error(`actor artifact digest mismatch: expected ${manifest.digest}, got ${actual}`)
-          const root = resolve(config.actors)
           const destination = join(root, manifest.name)
           const temporary = `${destination}.incoming`
           const previous = `${destination}.previous`
@@ -313,7 +369,7 @@ const make = (options: ThreadsOptions) =>
             await rm(temporary, { recursive: true, force: true })
             throw error
           }
-        },
+        }),
         catch: (error) => error instanceof Error ? error : new Error(String(error))
       })
 

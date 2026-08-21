@@ -26,6 +26,10 @@ export const DEV_URL_HOST = "localhost"
 // occupied. The `--min-port` flag lets a caller narrow this range.
 export const DEFAULT_MIN_PORT = 1024
 
+// DEFAULT_ACTOR_REFRESH_MILLIS lets an atomic local push finish its directory swaps before tdg dev
+// reconciles the actor root. DevOptions and --actor-refresh-ms can replace it.
+export const DEFAULT_ACTOR_REFRESH_MILLIS = 50
+
 // The status that means the router matched nothing. It is the seam the UI is served through: the
 // declared routes answer first, and only a path none of them owns reaches the build.
 export const UNMATCHED = 404
@@ -110,6 +114,8 @@ export interface DevOptions {
   readonly assets?: string | undefined
   // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
   readonly threads?: ThreadsOptions | undefined
+  // actorRefreshMillis is the visible debounce applied to local actor-root changes.
+  readonly actorRefreshMillis?: number | undefined
   readonly disableLogger?: boolean | undefined
   readonly disableListenLog?: boolean | undefined
   // onListen receives the UI URL after the server owns its listening socket.
@@ -120,9 +126,16 @@ export interface DevOptions {
 // Layer rather than a running process, so the caller owns the scope and the process that stops
 // listening stops writing (apps/server/src/host.ts, layerThreads).
 export const dev = (options: DevOptions) => {
+  const actorRefreshMillis = options.actorRefreshMillis ?? DEFAULT_ACTOR_REFRESH_MILLIS
+  if (!Number.isInteger(actorRefreshMillis) || actorRefreshMillis < 0) {
+    throw new Error(`actor refresh must be a non-negative integer, got ${actorRefreshMillis}`)
+  }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
-  const threads = Layer.provide(layerThreads(options.threads ?? {}), config)
+  const threads = Layer.provide(layerThreads({
+    ...options.threads,
+    actorRefresh: { debounceMillis: actorRefreshMillis }
+  }), config)
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).
