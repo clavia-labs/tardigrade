@@ -3,9 +3,15 @@ import { ArrowLeft, ArrowRight, BracketsCurly } from "@phosphor-icons/react"
 import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
-import { ACTOR_RAIL_WIDTH, COLLAPSED_ACTOR_RAIL_WIDTH, ICON_SIZE, PANE_HEADER_HEIGHT } from "./policy"
+import {
+  ACTOR_DIGEST_CHARS,
+  ACTOR_RAIL_WIDTH,
+  COLLAPSED_ACTOR_RAIL_WIDTH,
+  ICON_SIZE,
+  PANE_HEADER_HEIGHT
+} from "./policy"
 import { ProductMark } from "./ProductMark"
-import { matches } from "./roster"
+import { digestLabelOf, matches } from "./roster"
 
 const ACTOR_RAIL_KEY = "voyager.actor-rail"
 
@@ -17,12 +23,14 @@ const storedCollapsed = (): boolean => {
 export const ActorRail = ({
   actors,
   collapsedWidth = COLLAPSED_ACTOR_RAIL_WIDTH,
+  digestChars = ACTOR_DIGEST_CHARS,
   headerHeight = PANE_HEADER_HEIGHT,
   problem,
   selected
 }: {
   readonly actors: ReadonlyArray<ActorSummary>
   readonly collapsedWidth?: number | undefined
+  readonly digestChars?: number | undefined
   readonly headerHeight?: number | undefined
   readonly problem: ProblemError | undefined
   readonly selected: string | undefined
@@ -87,7 +95,11 @@ export const ActorRail = ({
               onClick={() => navigate({ actor: actor.name, thread: undefined, view: undefined, from: undefined, to: undefined })}
             >
               <span className="mono actor-name">{actor.name}</span>
-              {actor.builtIn ? <span className="mono actor-kind">built-in</span> : null}
+              {actor.builtIn ? (
+                <span className="mono actor-kind">built-in</span>
+              ) : actor.digest === undefined ? null : (
+                <span className="mono actor-kind" title={actor.digest}>sha {digestLabelOf(actor.digest, digestChars)}</span>
+              )}
             </button>
           )
         })}

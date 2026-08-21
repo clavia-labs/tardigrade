@@ -421,6 +421,7 @@ textarea {
 }
 
 .actor-kind {
+  flex-shrink: 0;
   margin-left: auto;
   color: var(--faint);
   font-size: 9.5px;
