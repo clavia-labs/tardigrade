@@ -15,9 +15,9 @@ A durable and modular agent harness built for self-improvement.
 ### A harness made for self-improvement
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Tardigrade derives information and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
+We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
 
-$$\lbrace\mathrm{information},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
+$$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Why Tardigrade
 
@@ -78,7 +78,7 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-An agent is made of components. A component derives information and owed transitions from the log. Agent information includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
+An agent is made of components. A component derives a view and owed transitions from the log. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
 import type { AgentComponent } from "tardie"
@@ -86,7 +86,7 @@ import type { AgentComponent } from "tardie"
 const deploys: AgentComponent = {
   name: "deploys",
   derive: () => ({
-    info: {
+    view: {
       system: ["Inspect recent deployments when a release may explain an incident."],
       tools: [{
         spec: {
@@ -109,9 +109,9 @@ const deploys: AgentComponent = {
 
 The call follows one route:
 
-1. The component adds `recent_deploys` to its derived information.
+1. The component adds `recent_deploys` to its derived view.
 2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The shared runtime finds the paired handler in the information that offered the call and asks it to serve against the current log.
+3. The shared runtime finds the paired handler in the view that offered the call and asks it to serve against the current log.
 4. Tardigrade records `ToolReturned`. The next model request includes the result.
 
 ### Compose an agent
@@ -133,7 +133,7 @@ const releaseAnalyst = actorOf(
 )
 ```
 
-`actorOf` combines the components under `agentRuntime`. The runtime interprets their information as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`actorOf` combines the components under `agentRuntime`. The runtime interprets their view as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 

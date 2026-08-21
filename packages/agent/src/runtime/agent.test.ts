@@ -8,7 +8,7 @@ import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { actorOf } from "@clavia/tardigrade-core/component"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import { agentRuntime, renderOf, type AgentComponent, type AgentInfo } from "./agent"
+import { agentRuntime, renderOf, type AgentComponent, type AgentView } from "./agent"
 import { CODE_SYSTEM, codeMode, codeModeFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
@@ -17,8 +17,8 @@ import { toolList } from "../components/tool-list"
 import { receive, type AgentR } from "../turn"
 import { Infer, type InferRequest } from "./infer"
 
-// The component assembly end to end: the render the model sees is the composed information
-// derivation, and a call routes through the same derived tool binding.
+// The component assembly end to end: the render the model sees is the composed view, and a call
+// routes through the same derived tool binding.
 
 // Ticker is a service no assembled agent provides, so a component that requires it is
 // distinguishable at compile time from one that does not.
@@ -57,12 +57,12 @@ const echoTable = toolList([
   }
 ])
 
-const informationComponent = (
+const viewComponent = (
   name: string,
-  info: AgentInfo | ((log: ReadonlyArray<Event>) => AgentInfo)
+  view: AgentView | ((log: ReadonlyArray<Event>) => AgentView)
 ): AgentComponent => ({
   name,
-  derive: (log) => ({ info: typeof info === "function" ? info(log) : info, transitions: [] })
+  derive: (log) => ({ view: typeof view === "function" ? view(log) : view, transitions: [] })
 })
 
 describe("agent runtime", () => {
@@ -126,7 +126,7 @@ describe("agent runtime", () => {
   })
 
   test("a duplicate tool derived after construction fails for that log", () => {
-    const later = informationComponent(
+    const later = viewComponent(
       "later",
       (log) => ({
         system: [],
@@ -142,8 +142,8 @@ describe("agent runtime", () => {
     expect(() => renderOf([echoTable, later], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 
-  test("a tool remains routable from the information that offered its call", async () => {
-    const ephemeral = informationComponent(
+  test("a tool remains routable from the view that offered its call", async () => {
+    const ephemeral = viewComponent(
       "ephemeral",
       (log) => ({
         system: [],
@@ -177,10 +177,10 @@ describe("agent runtime", () => {
   })
 
   test("different values for one context field fail with both component names", () => {
-    const left = informationComponent("left", {
+    const left = viewComponent("left", {
       system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }]
     })
-    const right = informationComponent("right", {
+    const right = viewComponent("right", {
       system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }]
     })
 
@@ -198,7 +198,7 @@ describe("agent runtime", () => {
   test("a system fragment is a projection: it reads the log renderOf was handed", () => {
     const seen: ReadonlyArray<Event>[] = []
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }, { type: "PackageInstalled", name: "slack" }]
-    const catalog = informationComponent(
+    const catalog = viewComponent(
       "catalog",
       (events: ReadonlyArray<Event>) => {
         seen.push(events)
@@ -218,7 +218,7 @@ describe("agent runtime", () => {
 
   test("renderOf over one log is deterministic", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
-    const component = informationComponent(
+    const component = viewComponent(
       "catalog",
       (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [] })
     )

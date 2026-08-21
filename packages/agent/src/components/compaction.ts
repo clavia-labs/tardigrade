@@ -282,7 +282,7 @@ export const compactionFor = (policy: Partial<ContextPolicy>): AgentComponent<In
   return {
     name: "compaction",
     derive: (log) => ({
-      info: { system: [], tools: [], context: [{ component: "compaction", policy }] },
+      view: { system: [], tools: [], context: [{ component: "compaction", policy }] },
       transitions: reactor(log)
     })
   }
