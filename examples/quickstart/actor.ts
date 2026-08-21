@@ -39,9 +39,11 @@ export default defineActor({
       // packages grant access to local files, HTTP, child agents, and saved tool results.
       packages: [filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()]
     }),
-    // reply, budget, and compaction provide completion, bounded work, and long-run context.
+    // reply returns a finished turn to the actor that delegated it.
     reply,
+    // budget stops work tools when the turn reaches its tool-call limit.
     budget,
+    // compaction summarizes older context when a long turn outgrows its context window.
     compaction
   ])
 })
