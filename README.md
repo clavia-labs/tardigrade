@@ -58,6 +58,14 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg run` p
   <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
 </picture>
 
+### For agents
+
+Copy this prompt into your coding agent:
+
+```text
+Read skills/tardigrade/SKILL.md and follow it to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
+```
+
 ## Build one
 
 ```bash
