@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.2.1...v0.3.0-rc) (2026-08-21)
+
+
+### Features
+
+* **voyager:** show agent prompt ([#181](https://github.com/clavia-labs/tardigrade/issues/181)) ([5ab813b](https://github.com/clavia-labs/tardigrade/commit/5ab813bcdfa268e9ddbc70544c50e64b239bf1b7))
+
 ## [0.2.1](https://github.com/clavia-labs/tardigrade/compare/v0.2.0...v0.2.1) (2026-08-21)
 
 
