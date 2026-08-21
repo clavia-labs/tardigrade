@@ -47,7 +47,7 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command creates `researcher/actor.ts` from the bundled [quickstart template](examples/quickstart/actor.ts). Read its comments to understand the actor's parts, then edit it to describe the agent. Build and push the result into the local actor registry:
+The `init` command creates `researcher/actor.ts` from the bundled template. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Build and push the result into the local actor registry:
 
 ```bash
 tdg build actor.ts
