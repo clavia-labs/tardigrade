@@ -63,7 +63,7 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg run` p
 Copy this prompt into your coding agent:
 
 ```text
-Read skills/tardigrade/SKILL.md and follow it to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
+Read https://github.com/clavia-labs/tardigrade/blob/next/skills/tardigrade/SKILL.md and follow it to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
 ```
 
 ## Build one
