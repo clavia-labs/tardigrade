@@ -7,6 +7,7 @@ import { settleActor } from "@clavia/tardigrade-core/actor"
 import type { Package } from "@clavia/tardigrade-code/packages"
 import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Infer, receive } from "./turn"
@@ -77,7 +78,7 @@ const noRouter = Layer.mergeAll(
     call: () => Effect.succeed({ error: "no router bound" }),
     resume: () => Effect.succeed({ error: "no router bound" })
   }),
-  Layer.succeed(Self, "test-agent")
+  Layer.succeed(Self, parseActorAddress("test-agent"))
 )
 
 const readLog = Effect.flatMap(EventLog, (log) => log.read)

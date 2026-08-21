@@ -38,6 +38,7 @@
         "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
@@ -72,6 +73,15 @@
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
         "@clavia/tardigrade-code": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+    },
+    "packages/channels": {
+      "name": "@clavia/tardigrade-channels",
+      "version": "0.0.1",
+      "dependencies": {
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
         "effect": "4.0.0-rc.110",
@@ -200,6 +210,8 @@
     "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
 
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
+
+    "@clavia/tardigrade-channels": ["@clavia/tardigrade-channels@workspace:packages/channels"],
 
     "@clavia/tardigrade-cli": ["@clavia/tardigrade-cli@workspace:apps/cli"],
 

@@ -5,6 +5,8 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost, type HostOptions } from "./host"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
 
 // The driver's confluence property: the order the driver services dirty
 // lanes must not change any outcome. This is the driver-level bag law,
@@ -41,12 +43,15 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.deliver(`mem:${opponent}`, {
+              yield* router.deliver(
+                linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${opponent}`)),
+                {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Event)
+                } as Event
+              )
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })

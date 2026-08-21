@@ -1,12 +1,19 @@
 import { Clock, Effect } from "effect"
-import { Router } from "@clavia/tardigrade-core/router"
+import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import type { Package } from "@clavia/tardigrade-code/packages"
 import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
-import { address as addressOf, readAddress } from "@clavia/tardigrade-core/router"
-import { replyId } from "@clavia/tardigrade-core/message"
+import { readAddress } from "@clavia/tardigrade-core/router"
+import { replyId } from "@clavia/tardigrade-core/communication/message"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import {
+  actorAddressOf,
+  formatActorAddress,
+  parseActorAddress,
+  type ActorAddress
+} from "@clavia/tardigrade-core/communication/address"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
@@ -26,10 +33,8 @@ import { replyId } from "@clavia/tardigrade-core/message"
 // lane's committed replies (`@clavia/tardigrade-core/facets`), so `Package<Router | Self | Facets>`
 // states what a host must bind for these methods to run.
 //
-// `place` is the placement policy: the call's id and the parent's own address in, the child's
-// address out. The caller never learns where the child lives; the default colocates children as
-// sibling facets of the parent's principal, `ag.<callId>` beside the parent's own lane, and a
-// remote child is one different returned string.
+// place selects the child's actor address from the call id and parent address. The host resolves
+// that stable identity to current placement when it interprets the resulting link.
 //
 // A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
 // deliver the brief with `replyTo` this lane, then await the reply row on this lane, host-side
@@ -65,10 +70,11 @@ export interface SpawnOptions {
 // `ag.<callId>`. It parses the parent's address with core's one parser, so a placement can never
 // disagree with the router about what an address is (spawn.test.ts, "the default placement is
 // the host's own sibling address").
-const sibling = (callId: string, self: string): string => addressOf(readAddress(self).home, `ag.${callId}`)
+const sibling = (callId: string, self: ActorAddress): ActorAddress =>
+  actorAddressOf(self.actor, `ag.${callId}`)
 
 export const agentsPackage = (
-  options: SpawnOptions & { readonly place?: (callId: string, self: string) => string } = {}
+  options: SpawnOptions & { readonly place?: (callId: string, self: ActorAddress) => ActorAddress } = {}
 ): Package<Router | Self | Facets> => {
   const place = options.place ?? sibling
   const actorNameOf = options.actorNameOf ?? (() => undefined)
@@ -129,7 +135,8 @@ export const agentsPackage = (
           // The three cross-lane privileges, read where the work happens: deliver, identity,
           // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
-          const self = yield* Self
+          const source = yield* Self
+          const self = formatActorAddress(source)
           const a = args as
             | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
             | undefined
@@ -162,13 +169,14 @@ export const agentsPackage = (
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          const address = place(ctx.callId, self)
+          const target = place(ctx.callId, source)
+          const address = formatActorAddress(target)
           if (a?.background === true) {
             // A background run has no synchronous parent to decide an escalation, so it never asks:
             // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
             // later by `agents.result({ id: callId })`.
             const at = yield* Clock.currentTimeMillis
-            yield* router.deliver(address, {
+            yield* router.deliver(linkOf(source, target), {
               type: "MessageReceived",
               id: ctx.callId,
               text,
@@ -187,7 +195,7 @@ export const agentsPackage = (
           // Escalation is a foreground affordance, and the one shape that still holds its call
           // open: see the module comment for why. Every other foreground run parks below.
           if (a?.escalatable === true) {
-            const answer = yield* router.call(address, {
+            const answer = yield* router.call(linkOf(source, target), {
               id: ctx.callId,
               text,
               ...(output === undefined ? {} : { output }),
@@ -207,7 +215,7 @@ export const agentsPackage = (
           const already = yield* awaitedReply(self, ctx.callId)
           if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output !== undefined)
           const at = yield* Clock.currentTimeMillis
-          yield* router.deliver(address, {
+          yield* router.deliver(linkOf(source, target), {
             type: "MessageReceived",
             id: ctx.callId,
             text,
@@ -228,7 +236,7 @@ export const agentsPackage = (
       // run answered.
       result: (args, ctx) =>
         Effect.gen(function* () {
-          const self = yield* Self
+          const self = formatActorAddress(yield* Self)
           const a = args as { id?: unknown; output?: unknown } | undefined
           const id = String(a?.id ?? "")
           if (id === "") return { error: "agents.result needs { id }" }
@@ -243,6 +251,7 @@ export const agentsPackage = (
       continue: (args, ctx) =>
         Effect.gen(function* () {
           const router = yield* Router
+          const source = yield* Self
           const a = args as { handle?: unknown; grant?: unknown } | undefined
           const handle = a?.handle as { address?: unknown; turn?: unknown; structured?: unknown } | undefined
           const address = String(handle?.address ?? "")
@@ -251,7 +260,11 @@ export const agentsPackage = (
           const want = typeof a?.grant === "number" ? Math.floor(a.grant) : 0
           const granted = want > 0 ? yield* Effect.promise(() => reserve(ctx.callId, want)) : 0
           const decision = granted > 0 ? { amount: granted } : { amount: 0, reason: "the parent declined the request" }
-          const answer = yield* router.resume(address, turn, decision)
+          const answer = yield* router.resume(
+            linkOf(source, parseActorAddress(address)),
+            turn,
+            decision
+          )
           return shape(answer, address, turn, handle?.structured === true)
         })
     }

@@ -4,6 +4,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { actorOf } from "@clavia/tardigrade-core/component"
@@ -43,7 +44,7 @@ const noRouter = Layer.mergeAll(
     call: () => Effect.succeed({ error: "no router bound" }),
     resume: () => Effect.succeed({ error: "no router bound" })
   }),
-  Layer.succeed(Self, "test-agent")
+  Layer.succeed(Self, parseActorAddress("test-agent"))
 )
 
 const readLog = Effect.flatMap(EventLog, (log) => log.read)
