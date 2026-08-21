@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.0](https://github.com/clavia-labs/tardigrade/compare/v0.1.0-rc.1...v0.1.0) (2026-08-21)
+
+
+### Bug Fixes
+
+* install stable package ([#157](https://github.com/clavia-labs/tardigrade/issues/157)) ([ad13106](https://github.com/clavia-labs/tardigrade/commit/ad1310604dafca7de6e9bd3cd4503fca2eb85029))
+
 ## [0.1.0-rc.1](https://github.com/clavia-labs/tardigrade/compare/v0.1.0-rc...v0.1.0-rc.1) (2026-08-20)
 
 
