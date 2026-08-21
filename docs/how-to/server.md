@@ -57,6 +57,7 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_TOKEN` | Unset. When set, every route but `/healthz`, `/openapi.json`, and `/docs` needs `Authorization: Bearer` |
 | `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
+| `MODEL_OUTPUT_GUARANTEE` | `native` when the endpoint honours a strict JSON schema on its own response format. Absent leaves the promise to `MODEL_PROVIDER`, and an unnamed endpoint promises nothing ([structured output](../output.md)) |
 
 The server boots without a model and serves every read; turns fail naming what is missing.
 

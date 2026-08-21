@@ -39,6 +39,7 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
   BudgetExhausted: AWAIT,
   ToolReturned: DONE,
   TurnCompleted: DONE,
+  OutputRejected: BROKEN,
   TurnFailed: BROKEN
 }
 
@@ -141,6 +142,10 @@ export const summaryOf = (
       return line([str(event.name), preview(event.arguments, chars, jsonDepth)], chars)
     case "BlockedOn":
       return line([`awaiting ${str(event.awaiting) ?? ""}`], chars)
+    case "OutputRejected": {
+      const errors = Array.isArray(event.errors) ? (event.errors as ReadonlyArray<unknown>) : []
+      return line([str(event.contract) ?? "", `${errors.length} ${errors.length === 1 ? "reason" : "reasons"}`, str(errors[0])], chars)
+    }
     case "TurnCompleted":
       return line([preview(event.output, chars, jsonDepth)], chars)
     case "TurnFailed":
@@ -206,7 +211,7 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   MessageReceived: ["id", "from", "replyTo", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
-  ModelCalled: ["callId", "ordinal", "epoch", ...STAMP],
+  ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
   TextReturned: [...STAMP, "text"],
   ToolCalled: ["callId", "name", ...STAMP, "arguments", "usage"],
   ToolReturned: ["callId", ...STAMP, "result"],
@@ -215,6 +220,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   PackageCalled: ["callId", "name", ...STAMP, "arguments"],
   PackageReturned: ["callId", ...STAMP, "result"],
   BlockedOn: ["callId", "awaiting", ...STAMP],
+  OutputRejected: ["contract", "attempt", "epoch", ...STAMP, "errors", "text", "usage"],
   TurnCompleted: ["epoch", ...STAMP, "output", "usage"],
   TurnFailed: ["epoch", "cause", "attempts", "attemptKey", ...STAMP, "error", "usage", "policy"],
   TurnResumed: ["failedEpoch", "epoch", ...STAMP],

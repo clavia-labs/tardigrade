@@ -6,6 +6,7 @@ import type { Router } from "@clavia/tardigrade-core/router"
 import type { Self } from "@clavia/tardigrade-core/actor"
 import type { Facets } from "@clavia/tardigrade-core/facets"
 import type { Infer, InferPolicy } from "./runtime/infer"
+import type { OutputContract } from "./output"
 import type { BudgetPolicy } from "./components/budget"
 import type { ContextPolicy } from "./components/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execute"
@@ -37,11 +38,17 @@ export interface AgentPolicy {
 
 // receive sends the inbound to the given actor. The message id is the dedup key, so delivery can
 // be at-least-once.
-export const receive = <R>(
+export const receive = <R, T = unknown>(
   a: Actor<R>,
   // `output` is the turn's contract: a message that declares one is answered in that shape,
-  // whichever door it arrived through.
-  message: { readonly id: string; readonly text: string; readonly input?: unknown; readonly output?: unknown }
+  // whichever door it arrived through, and outputOf reads the answer back as T
+  // (src/output.ts, output; src/boundary.ts, outputOf).
+  message: {
+    readonly id: string
+    readonly text: string
+    readonly input?: unknown
+    readonly output?: OutputContract<T>
+  }
 ): Effect.Effect<void, never, EventLog | R> =>
   Effect.gen(function* () {
     const log = yield* EventLog
@@ -54,7 +61,7 @@ export const receive = <R>(
       id: message.id,
       text: message.text,
       ...(message.input === undefined ? {} : { input: message.input }),
-      ...(message.output === undefined ? {} : { output: message.output }),
+      ...(message.output === undefined ? {} : { output: { name: message.output.name, schema: message.output.schema } }),
       at
     })
   })

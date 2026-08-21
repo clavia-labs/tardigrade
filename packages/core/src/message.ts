@@ -18,7 +18,10 @@ export const MessageReceived = Schema.Struct({
   sender: Schema.optional(Schema.String),
   from: Schema.optional(Schema.String),
   replyTo: Schema.optional(Schema.String),
-  output: Schema.optional(Schema.Unknown), // the expected output's JSON schema; structured turns end via the answer tool
+  // The turn's declared output contract: a schema identity and the JSON schema itself. A turn
+  // that carries one is answered in that shape, and the binding sends the schema on the
+  // provider's own response-format surface (packages/agent/src/output.ts, OutputContract).
+  output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
   outcome: Schema.optional(Schema.Literals(["completed", "failed"])), // a reply's terminal, typed (replyEvent below)
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),

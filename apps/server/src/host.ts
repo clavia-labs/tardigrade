@@ -78,12 +78,21 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
   config.model.baseUrl !== undefined && config.model.apiKey !== undefined && config.model.id !== undefined
 
 const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
-  const { apiKey, baseUrl, id, provider } = config.model
+  const { apiKey, baseUrl, id, provider, output } = config.model
   if (!modelIsConfigured(config) || baseUrl === undefined || apiKey === undefined || id === undefined) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
-  return infer({ baseUrl, apiKey, model: id, ...(provider === undefined ? {} : { provider }) })
+  return infer({
+    baseUrl,
+    apiKey,
+    model: id,
+    ...(provider === undefined ? {} : { provider }),
+    // A declared guarantee is the operator's, and it beats the provider name's own reading. The
+    // schema and the tool list ride one call on both wires this binding speaks
+    // (platform/model/src/output.ts, PROVEN_OUTPUT_CAPABILITIES).
+    ...(output === undefined ? {} : { output: { guarantee: output, withTools: true } })
+  })
 }
 
 // The lane environment: everything the assembly needs that the bun host does not bind. The model

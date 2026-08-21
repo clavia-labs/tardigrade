@@ -131,12 +131,14 @@ const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, tur
 const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
 
 describe("the escalation lifecycle", () => {
-  test("usedOf counts only execute; answer and request_budget are free", () => {
+  test("usedOf counts only execute; the turn's exits are free", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", budget: 5, at: 0 },
       { type: "ToolCalled", callId: "e1", name: "execute", arguments: {}, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "rb1", name: "request_budget", arguments: {}, turn: "m1", at: 2 },
-      { type: "ToolCalled", callId: "a1", name: "answer", arguments: {}, turn: "m1", at: 3 }
+      // A rejected final response is no tool call at all, so it draws nothing down
+      // (src/output.ts, OutputImplementation).
+      { type: "OutputRejected", contract: "scout", attempt: "m1/infer/1", text: "{}", errors: ["/: bad"], turn: "m1", at: 3 }
     ]
     expect(usedOf(log)).toBe(1)
   })

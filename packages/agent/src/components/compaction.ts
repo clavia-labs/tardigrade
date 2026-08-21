@@ -78,6 +78,11 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
       return JSON.stringify(v.arguments ?? {}).length
     case "ToolReturned":
       return Math.min(JSON.stringify(v.result ?? null).length, policy.resultRenderCap)
+    case "OutputRejected":
+      // A rejected response and its reasons render while the correction is owed. A projected
+      // one (its turn completed) measures high rather than low, which fires the guard early
+      // instead of late (request.ts, renderMessages).
+      return String(v.text ?? "").length + JSON.stringify(v.errors ?? []).length
     case "TurnCompleted":
       return String(v.output ?? "").length
     case "TurnFailed":
@@ -202,6 +207,8 @@ const lineOf = (e: Event, policy: ContextPolicy): string | null => {
       return `agent ran: ${clip(JSON.stringify(v.arguments ?? {}), policy.summaryLineCap)}`
     case "ToolReturned":
       return `result: ${clip(JSON.stringify(v.result ?? null), policy.summaryLineCap)}`
+    case "OutputRejected":
+      return `agent (refused, ${String(v.contract ?? "")}): ${clip(String(v.text ?? ""), policy.summaryLineCap)}`
     case "TurnCompleted":
       return `agent: ${String(v.output ?? "")}`
     case "TurnFailed":
@@ -282,7 +289,7 @@ export const compactionFor = (policy: Partial<ContextPolicy>): AgentComponent<In
   return {
     name: "compaction",
     derive: (log) => ({
-      view: { system: [], tools: [], context: [{ component: "compaction", policy }] },
+      view: { system: [], tools: [], context: [{ component: "compaction", policy }], output: [] },
       transitions: reactor(log)
     })
   }

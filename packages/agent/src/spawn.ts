@@ -7,6 +7,7 @@ import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { address as addressOf, readAddress } from "@clavia/tardigrade-core/router"
 import { replyId } from "@clavia/tardigrade-core/message"
+import { outputProfileErrors, type OutputContract } from "./output"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
@@ -51,6 +52,11 @@ import { replyId } from "@clavia/tardigrade-core/message"
 // budget takes the same ceiling the child's own reactor would, and a consumer that moved that
 // ceiling moves both (budget.ts, BudgetPolicy).
 export interface SpawnOptions {
+  // The output contracts a spawning body may ask a child for, by name. Model-authored code has
+  // no TypeScript checking (packages/code/src/execute.ts runs it through AsyncFunction), so a
+  // name resolved here is the only path where the schema was proved at compile time by the host
+  // that declared it. A raw schema stays reachable and is preflighted instead (docs/output.md).
+  readonly outputs?: Readonly<Record<string, OutputContract>>
   readonly actorNameOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
@@ -76,6 +82,8 @@ export const agentsPackage = (
   const shadowOf = options.shadowOf ?? (() => false)
   const worldOf = options.worldOf ?? (() => undefined)
   const defaultBudget = budgetPolicyOf(options.budget).defaultToolBudget
+  const outputs = options.outputs ?? {}
+  const declared = Object.keys(outputs)
   return {
     name: "agents",
     description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable run can ask for more budget at its wall; continue() answers the ask.",
@@ -86,13 +94,13 @@ export const agentsPackage = (
     },
     docs: {
       run: {
-        description: "Brief a fresh agent. `output` (a JSON schema) makes the answer structured and parsed. `model` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. `budget` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. `background: true` returns `{ callId }` at once; result({id: callId}) awaits the reply later. `escalatable: true` lets the agent ask for more budget at the cap instead of answering; the run then returns `{ requesting, reason, amount, handle }`, and you decide with continue().",
+        description: `Brief a fresh agent. \`output\` makes the answer structured and parsed: the name of a declared contract${declared.length === 0 ? " (this host declares none)" : ` (${declared.join(", ")})`}, or a JSON schema of your own. \`model\` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
-            output: { type: "object", description: "JSON schema for a structured answer" },
+            output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             model: { type: "string", enum: ["haiku", "sonnet", "opus"], description: "which model runs the agent; default sonnet" },
             budget: { type: "number", description: "max tool calls before the agent must answer; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
@@ -102,10 +110,10 @@ export const agentsPackage = (
         output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
       },
       result: {
-        description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. `output` re-applies a JSON schema to a structured answer.",
+        description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. `output` says the answer was structured, so it comes back parsed.",
         input: {
           type: "object",
-          properties: { id: { type: "string", description: "the callId a background run answered" }, output: { type: "object", description: "JSON schema for a structured answer" } },
+          properties: { id: { type: "string", description: "the callId a background run answered" }, output: { description: "the contract name or schema the run declared" } },
           required: ["id"]
         },
         output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
@@ -135,13 +143,15 @@ export const agentsPackage = (
             | undefined
           const text = String(a?.text ?? "")
           if (text === "") return { error: "agents.run needs { text }" }
-          // The schema parameter is `output`, and a near-miss spelling fails silently: no schema
-          // means a prose answer, so the caller's field reads come back undefined and the run
-          // returns something plausible and wrong. Say so instead.
+          // The contract parameter is `output`, and a near-miss spelling fails silently: no
+          // contract means a prose answer, so the caller's field reads come back undefined and
+          // the run returns something plausible and wrong. Say so instead.
           if (a?.output === undefined && a?.outputSchema !== undefined) {
-            return { error: "agents.run takes the schema as `output`, not `outputSchema`" }
+            return { error: "agents.run takes the contract as `output`, not `outputSchema`" }
           }
-          const output = a?.output
+          const declaredOutput = outputAsked(a?.output, outputs, declared)
+          if ("error" in declaredOutput) return declaredOutput
+          const output = declaredOutput.contract
           // The model name rides the brief's envelope: the child's log records the choice, so its
           // Infer resolves it from trajectory and replay agrees by construction.
           const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" ? a.model : undefined
@@ -257,6 +267,46 @@ export const agentsPackage = (
     }
   }
 }
+
+// outputAsked resolves what a code body asked the child to answer in. A name is a contract the
+// host declared, whose schema a TypeScript signature already checked. A schema object is the
+// dynamic escape hatch: model-authored code carries no compile-time proof, so the schema is
+// preflighted against the supported profile here, before the child is briefed and before any
+// model is called (output.ts, outputProfileErrors). Anything else is an error the caller reads.
+const outputAsked = (
+  asked: unknown,
+  outputs: Readonly<Record<string, OutputContract>>,
+  declared: ReadonlyArray<string>
+): { readonly contract: OutputContract | undefined } | { readonly error: string } => {
+  if (asked === undefined) return { contract: undefined }
+  if (typeof asked === "string") {
+    const contract = outputs[asked]
+    if (contract === undefined) {
+      return {
+        error:
+          declared.length === 0
+            ? `agents.run has no declared output contract named "${asked}"; this host declares none, so pass a JSON schema instead`
+            : `agents.run has no declared output contract named "${asked}"; declared: ${declared.join(", ")}`
+      }
+    }
+    return { contract }
+  }
+  if (asked === null || typeof asked !== "object") {
+    return { error: "agents.run takes `output` as a declared contract's name or a JSON schema object" }
+  }
+  const problems = outputProfileErrors(asked)
+  if (problems.length > 0) {
+    return {
+      error: `the output schema is outside the supported profile:\n${problems.map((p) => `- ${p}`).join("\n")}`
+    }
+  }
+  return { contract: { name: INLINE_OUTPUT_NAME, schema: asked } }
+}
+
+// INLINE_OUTPUT_NAME is the schema identity an inline schema carries on the wire. Every declared
+// contract names itself; an inline one has no name to carry, so the log and the provider both
+// read this one and an operator can tell the two apart.
+export const INLINE_OUTPUT_NAME = "inline"
 
 // SpawnTerminal is a spawned child's terminal, once its reply has landed on the calling lane.
 interface SpawnTerminal {

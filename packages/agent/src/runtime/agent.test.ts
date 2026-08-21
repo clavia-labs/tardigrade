@@ -133,7 +133,8 @@ describe("agent runtime", () => {
         tools: log.some((event) => event.type === "Ready")
           ? [{ spec: { name: "echo", description: "later", inputSchema: {} }, serve: (_call, _log, answer) => [answer({})] }]
           : [],
-        context: []
+        context: [],
+        output: []
       })
     )
     const agent = actorOf(agentRuntime(), [echoTable, later])
@@ -150,7 +151,8 @@ describe("agent runtime", () => {
         tools: log.some((event) => event.type === "ToolCalled")
           ? []
           : [{ spec: { name: "once", description: "one call", inputSchema: {} }, serve: (_call, _log, answer) => [answer("served")] }],
-        context: []
+        context: [],
+        output: []
       })
     )
     const mind = Layer.succeed(Infer, {
@@ -178,10 +180,10 @@ describe("agent runtime", () => {
 
   test("different values for one context field fail with both component names", () => {
     const left = viewComponent("left", {
-      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }]
+      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }], output: []
     })
     const right = viewComponent("right", {
-      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }]
+      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }], output: []
     })
 
     expect(() => renderOf([left, right], [])).toThrow(
@@ -205,7 +207,8 @@ describe("agent runtime", () => {
         return {
           system: [`packages: ${events.map((e) => String((e as { name?: unknown }).name)).join(", ")}`],
           tools: [],
-          context: []
+          context: [],
+          output: []
         }
       }
     )
@@ -220,7 +223,7 @@ describe("agent runtime", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
     const component = viewComponent(
       "catalog",
-      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [] })
+      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [], output: [] })
     )
     expect(renderOf([codeMode, component], log)).toEqual(renderOf([codeMode, component], log))
   })

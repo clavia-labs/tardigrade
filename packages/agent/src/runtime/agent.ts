@@ -3,6 +3,7 @@ import { composeComponents, type Component, type ComponentRuntime, type ViewAlge
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { ToolSpec } from "../request"
+import { NATIVE_OUTPUT, type OutputImplementation } from "../output"
 import { agentKeys } from "../events"
 import { inferReactorFor, type InferPolicy } from "./infer"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
@@ -27,12 +28,22 @@ export interface ContextFragment {
   readonly policy: Partial<ContextPolicy>
 }
 
+// OutputFragment names one component's output implementation contribution: how a declared
+// contract is obtained. An assembly that mounts none takes NATIVE_OUTPUT; two that disagree
+// throw, because a turn has one final response and cannot obtain it two ways
+// (src/output.ts, OutputImplementation).
+export interface OutputFragment {
+  readonly component: string
+  readonly implementation: OutputImplementation
+}
+
 // AgentView is the view an agent runtime interprets. Arrays retain component order and
 // postpone collision policy until the complete derivation is available.
 export interface AgentView {
   readonly system: ReadonlyArray<string>
   readonly tools: ReadonlyArray<AgentTool<unknown>>
   readonly context: ReadonlyArray<ContextFragment>
+  readonly output: ReadonlyArray<OutputFragment>
 }
 
 // AgentComponent is a core component whose view is interpreted by the agent runtime.
@@ -41,12 +52,26 @@ export type AgentComponent<R = never> = Component<AgentView, R>
 // AGENT_VIEW_ALGEBRA preserves every view contribution in component order. renderOf
 // applies the agent-specific collision and rendering rules to the combined value.
 export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
-  empty: { system: [], tools: [], context: [] },
+  empty: { system: [], tools: [], context: [], output: [] },
   combine: (left, right) => ({
     system: [...left.system, ...right.system],
     tools: [...left.tools, ...right.tools],
-    context: [...left.context, ...right.context]
+    context: [...left.context, ...right.context],
+    output: [...left.output, ...right.output]
   })
+}
+
+// implementationOf resolves the one output implementation the assembly declares. A turn has one
+// final response, so a second declaration is an assembly error even when the two agree: a reader
+// of the mount list must be able to name the implementation from it.
+const implementationOf = (fragments: ReadonlyArray<OutputFragment>): OutputImplementation => {
+  if (fragments.length === 0) return NATIVE_OUTPUT
+  const first = fragments[0]!
+  const second = fragments[1]
+  if (second !== undefined) {
+    throw new Error(`output implementation declared by components ${first.component} and ${second.component}`)
+  }
+  return first.implementation
 }
 
 const contextOf = (fragments: ReadonlyArray<ContextFragment>): Partial<ContextPolicy> => {
@@ -95,19 +120,24 @@ const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArra
   return log
 }
 
-const renderView = (
-  view: AgentView
-): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } => ({
+// Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
+// policy, and the implementation that obtains a declared output contract.
+export interface Rendered {
+  readonly system: string
+  readonly tools: ReadonlyArray<ToolSpec>
+  readonly context: Partial<ContextPolicy>
+  readonly output: OutputImplementation
+}
+
+const renderView = (view: AgentView): Rendered => ({
   system: view.system.filter((fragment) => fragment !== "").join("\n"),
   tools: checkedTools(view.tools).map((tool) => tool.spec),
-  context: contextOf(view.context)
+  context: contextOf(view.context),
+  output: implementationOf(view.output)
 })
 
 // renderOf derives the model request from the same component view that routing reads.
-export const renderOf = <R>(
-  components: ReadonlyArray<AgentComponent<R>>,
-  log: ReadonlyArray<Event>
-): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } =>
+export const renderOf = <R>(components: ReadonlyArray<AgentComponent<R>>, log: ReadonlyArray<Event>): Rendered =>
   renderView(viewFrom(components, log))
 
 // agentRuntime interprets AgentView as inference and tool-routing reactors. actorOf supplies the

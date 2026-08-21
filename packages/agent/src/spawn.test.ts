@@ -7,7 +7,8 @@ import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { replyId } from "@clavia/tardigrade-core/message"
 import { Park } from "@clavia/tardigrade-code/errors"
-import { agentsPackage } from "./spawn"
+import { agentsPackage, INLINE_OUTPUT_NAME } from "./spawn"
+import { output } from "./output"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
@@ -98,5 +99,69 @@ describe("agentsPackage", () => {
       pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:ag.root", sent, lanes)))
     )
     expect(answer).toEqual({ error: "nope" })
+  })
+})
+
+// The contracts a host declares for its children. A name resolves to one of these; anything else
+// a code body invents is a raw schema, and the profile check is what stands in for the compile
+// step model-authored JavaScript never had (packages/code/src/execute.ts runs it through
+// AsyncFunction).
+const SCOUT = output({
+  name: "scout",
+  schema: {
+    type: "object",
+    properties: { summary: { type: "string" } },
+    required: ["summary"],
+    additionalProperties: false
+  }
+})
+
+describe("the output a spawn asks for", () => {
+  const briefOf = async (asked: unknown, outputs?: Readonly<Record<string, typeof SCOUT>>) => {
+    const sent: Array<{ readonly address: string; readonly event: Event }> = []
+    const pkg = agentsPackage(outputs === undefined ? {} : { outputs })
+    const answer = await Effect.runPromise(
+      pkg.methods
+        .run!({ text: "scout", background: true, output: asked }, { callId: "o1" })
+        .pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    return { answer, brief: sent[0]?.event as { output?: unknown } | undefined }
+  }
+
+  test("a declared name resolves to the host's own contract", async () => {
+    const { brief } = await briefOf("scout", { scout: SCOUT })
+    expect(brief?.output).toEqual({ name: "scout", schema: SCOUT.schema })
+  })
+
+  test("a name nobody declared is an error that lists what is declared", async () => {
+    const { answer, brief } = await briefOf("scoot", { scout: SCOUT })
+    expect((answer as { error?: string }).error).toContain("declared: scout")
+    expect(brief).toBeUndefined()
+    const bare = await briefOf("scout")
+    expect((bare.answer as { error?: string }).error).toContain("this host declares none")
+  })
+
+  test("a raw schema in profile rides as an inline contract", async () => {
+    const schema = { type: "object", properties: { a: { type: "string" } }, required: ["a"], additionalProperties: false }
+    const { brief } = await briefOf(schema)
+    expect(brief?.output).toEqual({ name: INLINE_OUTPUT_NAME, schema })
+  })
+
+  test("a raw schema outside the profile is refused before the child is briefed", async () => {
+    const { answer, brief } = await briefOf({ type: "object", properties: { a: { type: "string" } }, required: [] })
+    expect((answer as { error?: string }).error).toContain("outside the supported profile")
+    expect((answer as { error?: string }).error).toContain('missing "a"')
+    // No brief left, so no child and no model was ever called.
+    expect(brief).toBeUndefined()
+  })
+
+  test("an output that is neither a name nor a schema says so", async () => {
+    const { answer } = await briefOf(42)
+    expect((answer as { error?: string }).error).toContain("a declared contract's name or a JSON schema object")
+  })
+
+  test("an undeclared output leaves the brief alone", async () => {
+    const { brief } = await briefOf(undefined)
+    expect(brief?.output).toBeUndefined()
   })
 })

@@ -23,7 +23,16 @@ export interface ModelConfig {
   readonly apiKey: string | undefined
   readonly id: string | undefined
   readonly provider: string | undefined
+  // What this endpoint promises about a turn's declared output contract, for an endpoint no
+  // provider name proves. "native" says it honours a strict JSON schema on its own response
+  // format; absent leaves the promise to the provider name, and an unnamed endpoint promises
+  // nothing, so such a turn fails before it spends (platform/model/src/output.ts, capabilityOf).
+  readonly output: OutputGuarantee | undefined
 }
+
+export const OUTPUT_GUARANTEES = ["native", "none"] as const
+
+export type OutputGuarantee = (typeof OUTPUT_GUARANTEES)[number]
 
 export interface ServerConfigValue {
   readonly port: number
@@ -49,6 +58,15 @@ const text = (env: Env, name: string): string | undefined => {
   return trimmed.length === 0 ? undefined : trimmed
 }
 
+// MODEL_OUTPUT_GUARANTEE names a promise the process must be able to keep, so a value nobody
+// declared is an operator error rather than a reason to guess one.
+const outputGuarantee = (env: Env): OutputGuarantee | undefined => {
+  const raw = text(env, "MODEL_OUTPUT_GUARANTEE")
+  if (raw === undefined) return undefined
+  if ((OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(raw)) return raw as OutputGuarantee
+  throw new Error(`MODEL_OUTPUT_GUARANTEE must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(raw)}`)
+}
+
 // A PORT that is not a number is an operator error, not a reason to fall back: silently listening
 // somewhere other than where the operator asked is worse than refusing to start.
 const port = (env: Env): number => {
@@ -72,7 +90,8 @@ export const readConfig = (env: Env): ServerConfigValue => ({
     baseUrl: text(env, "MODEL_BASE_URL"),
     apiKey: text(env, "MODEL_API_KEY"),
     id: text(env, "MODEL_ID"),
-    provider: text(env, "MODEL_PROVIDER")
+    provider: text(env, "MODEL_PROVIDER"),
+    output: outputGuarantee(env)
   }
 })
 

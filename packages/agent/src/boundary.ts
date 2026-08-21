@@ -1,5 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnTerminalOf } from "@clavia/tardigrade-code/turns"
+import { decodeOutput, type OutputContract } from "./output"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
 // platform's call and resume read it to answer the spawning code. Pure over the log, so a
@@ -31,4 +32,28 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | 
     return { kind: "requesting", callId: String(p.callId), reason: String(p.reason ?? ""), amount: Number(p.amount ?? 0) }
   }
   return undefined
+}
+
+// outputOf reads a finished turn's answer as the value its contract declares. It is a projection
+// like every other reader here: undefined while the turn runs or once it failed, and the decoded
+// value on a completed one.
+//
+// A recorded completion is validated before it lands (runtime/infer.ts, completionOf), so one
+// that misses its contract here is a log written by something that did not go through that path.
+// That throws rather than reading as absent: an answer nobody can trust is worse than a turn
+// that plainly has none.
+export const outputOf = <T>(
+  contract: OutputContract<T>,
+  log: ReadonlyArray<Event>,
+  turn: string
+): T | undefined => {
+  const terminal = turnTerminalOf(log, turn)
+  if (terminal === undefined || terminal.type !== "TurnCompleted") return undefined
+  const decoded = decodeOutput(contract, String((terminal as { output?: unknown }).output))
+  if (decoded.errors.length > 0) {
+    throw new Error(
+      `turn ${turn} completed with an answer that misses the contract "${contract.name}":\n${decoded.errors.map((e) => `- ${e}`).join("\n")}`
+    )
+  }
+  return decoded.value as T
 }

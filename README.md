@@ -202,6 +202,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 ## Learn more
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent components from first principles.
+- [Structured output](docs/output.md): declare a typed answer and get its value back.
 - [HTTP server](docs/how-to/server.md)
 - [CLI](docs/how-to/cli.md)
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.

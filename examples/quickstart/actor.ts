@@ -28,7 +28,7 @@ Return a concise answer with concrete findings.
 const instructions = {
   name: "instructions",
   derive: () => ({
-    view: { system: [actorInstructions], tools: [], context: [] },
+    view: { system: [actorInstructions], tools: [], context: [], output: [] },
     transitions: []
   })
 }

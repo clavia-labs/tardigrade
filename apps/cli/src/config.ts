@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
-import { readConfig, type Env, type ServerConfigValue } from "@clavia/tardigrade-server/config"
+import { OUTPUT_GUARANTEES, readConfig, type Env, type OutputGuarantee, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 
 // Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
 // the command line, then the environment, then the file `tdg setup` wrote, then the exported
@@ -43,6 +43,9 @@ export interface FileConfig {
     readonly apiKey?: string
     readonly id?: string
     readonly provider?: string
+    // What the endpoint promises about a declared output contract, when its name does not prove
+    // one (apps/server/src/config.ts, ModelConfig).
+    readonly output?: string
   }
   readonly url?: string
   readonly token?: string
@@ -73,7 +76,8 @@ export const parseFileConfig = (raw: string): FileConfig => {
       ...(stringField(model, "baseUrl") === undefined ? {} : { baseUrl: stringField(model, "baseUrl")! }),
       ...(stringField(model, "apiKey") === undefined ? {} : { apiKey: stringField(model, "apiKey")! }),
       ...(stringField(model, "id") === undefined ? {} : { id: stringField(model, "id")! }),
-      ...(stringField(model, "provider") === undefined ? {} : { provider: stringField(model, "provider")! })
+      ...(stringField(model, "provider") === undefined ? {} : { provider: stringField(model, "provider")! }),
+      ...(stringField(model, "output") === undefined ? {} : { output: stringField(model, "output")! })
     },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
     ...(stringField(source, "token") === undefined ? {} : { token: stringField(source, "token")! })
@@ -96,6 +100,14 @@ export const readFileConfig = (env: Env): Effect.Effect<FileConfig, never, FileS
 export interface Remote {
   readonly baseUrl: string
   readonly token: string | undefined
+}
+
+// outputGuaranteeOf reads the same names the server's own reader takes, and refuses any other:
+// a value nobody declared would silently leave a turn's contract unpromised.
+const outputGuaranteeOf = (value: string | undefined): OutputGuarantee | undefined => {
+  if (value === undefined) return undefined
+  if ((OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(value)) return value as OutputGuarantee
+  throw new Error(`model.output must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(value)}`)
 }
 
 export interface RemoteFlags {
@@ -144,7 +156,8 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
       baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),
       apiKey: resolve(undefined, base.model.apiKey, model.apiKey),
       id: resolve(undefined, base.model.id, model.id),
-      provider: resolve(undefined, base.model.provider, model.provider)
+      provider: resolve(undefined, base.model.provider, model.provider),
+      output: outputGuaranteeOf(resolve(undefined, base.model.output, model.output))
     }
   }
 }

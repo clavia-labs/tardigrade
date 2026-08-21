@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./components/compaction"
-import { outputSchemaOf } from "./contract"
+import { contractOf, correctionText, NATIVE_OUTPUT, type OutputContract, type OutputImplementation } from "./output"
 import { budgetSpent, canRequestBudget } from "./components/budget"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
@@ -27,19 +27,22 @@ export interface AgentMessage {
   readonly toolCallId?: string
 }
 
+// OutputRequest is the turn's declared final response: the contract, and the implementation
+// that must obtain it. It rides the request as itself rather than as a tool, so a binding maps
+// it onto the provider's own response-format surface (platform/model/src/output.ts,
+// outputSchemaFor).
+export interface OutputRequest {
+  readonly contract: OutputContract
+  readonly implementation: OutputImplementation
+}
+
 export interface ModelRequest {
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
   readonly tools: ReadonlyArray<ToolSpec>
+  // Present when the turn declared a contract. Absent turns end in prose.
+  readonly output?: OutputRequest
 }
-
-// answerTool renders the turn's declared output schema as a tool. Calling it ends the turn, and
-// its arguments are the structured answer, parsed JSON by construction.
-const answerTool = (schema: unknown): ToolSpec => ({
-  name: "answer",
-  description: "Deliver the final answer for this turn. The arguments ARE the answer.",
-  inputSchema: schema
-})
 
 // REQUEST_BUDGET_TOOL is offered only at the wall, and only when the brief made the turn
 // escalatable. The model calls it to ask its parent for more tool calls instead of answering.
@@ -61,12 +64,12 @@ const REQUEST_BUDGET_TOOL: ToolSpec = {
 
 // SYSTEM frames the turn around whatever surface is in play: the surface states how the model
 // acts, and the frame states how a turn ends. The two are separate so a surface swap rewrites
-// only its own half.
+// only its own half. The frame says nothing about the shape of the answer: a turn that declares
+// an output contract gets that shape from the provider's own response format, and a framework
+// sentence about it would be one more instruction to disagree with the schema
+// (request.test.ts, "the frame never mentions the contract, declared or not").
 const SYSTEM = (surface: string): string =>
-  `You are an agent. ${surface}\nWhen the work is done, reply in plain text: that reply is your final answer and ends the turn. Reply plainly without calling a tool when no action is needed.`
-
-const ANSWER_NUDGE =
-  "This turn declares an output schema. Finish by calling the answer tool: its arguments are your final answer and MUST conform to its schema. Never answer in prose."
+  `You are an agent. ${surface}\nWhen the work is done, reply directly: that reply is your final answer and ends the turn. Reply without calling a tool when no action is needed.`
 
 const BUDGET_NUDGE =
   "Your tool budget for this turn is spent, so the work tools are gone. Finish now: answer with your best result from what you have already gathered."
@@ -99,9 +102,18 @@ const userMessageOf = (e: Event, policy: ContextPolicy): AgentMessage => {
 //
 // `policy` sets the truncation caps. It must be the policy the compaction reactor took, or the
 // guard fires against a size this render never sends (compaction.ts, ContextPolicy).
+//
+// `output` is the turn's output implementation, and decides one thing here: whether a corrected
+// exchange still renders. Under `projectHistory` a rejection whose turn went on to complete is
+// dropped, so later inference reads the corrected value as the answer the model gave, while the
+// rejection and its reasons stay in the log for the operator (request.test.ts, "a corrected
+// exchange compacts out of the render, and stays in the log"). A rejection in an unfinished or
+// failed turn always renders: it is what the model must read to correct, or what explains the
+// failure.
 export const renderMessages = (
   trajectory: ReadonlyArray<Event>,
-  policy: Partial<ContextPolicy> = {}
+  policy: Partial<ContextPolicy> = {},
+  output: OutputImplementation = NATIVE_OUTPUT
 ): ReadonlyArray<AgentMessage> => {
   const resolved = contextPolicyOf(policy)
   const messages: AgentMessage[] = []
@@ -111,6 +123,9 @@ export const renderMessages = (
     trajectory
       .filter((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
       .map((e) => String((e as { turn?: unknown }).turn))
+  )
+  const corrected = new Set(
+    trajectory.filter((e) => e.type === "TurnCompleted").map((e) => String((e as { turn?: unknown }).turn))
   )
   const openHead = trajectory.findIndex(
     (e) => e.type === "MessageReceived" && !terminated.has(String((e as { id?: unknown }).id))
@@ -150,6 +165,12 @@ export const renderMessages = (
         })
         break
       }
+      case "OutputRejected": {
+        if (output.projectHistory === true && corrected.has(String(v.turn))) break
+        messages.push({ role: "assistant", content: String(v.text ?? "") })
+        messages.push({ role: "user", content: correctionText((v.errors ?? []) as ReadonlyArray<string>) })
+        break
+      }
       case "TurnCompleted": {
         messages.push({ role: "assistant", content: String(v.output ?? "") })
         break
@@ -165,27 +186,36 @@ export const renderMessages = (
   return messages
 }
 
-// modelRequest folds two policies over the surface's tool table. A declared output schema adds
-// the answer tool and its nudge. A spent budget drops the work tools and adds the budget nudge,
-// so the model can only answer. Both are pure projections of the log, and neither knows what the
-// work tools are.
+// modelRequest folds the turn's policies over the surface's tool table. A spent budget drops the
+// work tools and adds the budget nudge, so the model can only answer. A declared output contract
+// rides the request as itself: it adds no tool, no tool choice, and no sentence to the prompt,
+// because the binding sends it on the provider's own response-format surface
+// (request.test.ts, "a contract is never a tool, a tool choice, or a sentence in the prompt").
 //
 // `context` sets what the render truncates. It rides the same rule the surface does: the actor's
 // compaction reactor must hold the same policy, so the caller that states one here states it
 // there too (compaction.ts, ContextPolicy).
 export const modelRequest = (
   trajectory: ReadonlyArray<Event>,
-  render: { readonly system: string; readonly tools: ReadonlyArray<ToolSpec> },
+  render: {
+    readonly system: string
+    readonly tools: ReadonlyArray<ToolSpec>
+    readonly output?: OutputImplementation
+  },
   context: Partial<ContextPolicy> = {}
 ): ModelRequest => {
-  const schema = outputSchemaOf(trajectory)
+  const contract = contractOf(trajectory)
+  const implementation = render.output ?? NATIVE_OUTPUT
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)
   const work = spent ? [] : render.tools
-  const withAnswer = schema === undefined ? work : [...work, answerTool(schema)]
-  const tools = canRequest ? [...withAnswer, REQUEST_BUDGET_TOOL] : withAnswer
-  const framed = SYSTEM(render.system)
-  const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
+  const tools = canRequest ? [...work, REQUEST_BUDGET_TOOL] : work
+  const base = SYSTEM(render.system)
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
-  return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory, context), tools }
+  return {
+    system: spent ? `${base}\n${budgetLine}` : base,
+    messages: renderMessages(trajectory, context, implementation),
+    tools,
+    ...(contract === undefined ? {} : { output: { contract, implementation } })
+  }
 }

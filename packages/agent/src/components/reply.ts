@@ -70,7 +70,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
 export const reply: AgentComponent<Router | Self> = {
   name: "reply",
   derive: (log) => ({
-    view: { system: [], tools: [], context: [] },
+    view: { system: [], tools: [], context: [], output: [] },
     transitions: replyReactor(log)
   })
 }

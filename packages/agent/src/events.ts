@@ -49,6 +49,16 @@ export const ModelCalled = Schema.Struct({
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
   ordinal: Schema.optional(Schema.Number),
+  // The output policy this attempt ran under, when the turn declared a contract: the schema
+  // identity, the implementation that obtains it, and the guarantee the binding was asked for.
+  // Recorded on the ask so a replay reads which policy produced which response.
+  output: Schema.optional(
+    Schema.Struct({
+      contract: Schema.String,
+      implementation: Schema.String,
+      guarantee: Schema.Literals(["native", "none"])
+    })
+  ),
   epoch: Schema.optional(Schema.Number),
   turn: Schema.optional(Schema.String),
   at: Schema.Number
@@ -71,6 +81,44 @@ export const TurnCompleted = Schema.Struct({
   at: Schema.Number
 })
 
+// TURN_FAILURE_CAUSES are the failure classes a turn ends in, each distinct because each has a
+// different remedy. `model` is a binding that reported nothing more specific; `inference_error`
+// and `inference_attempts_exhausted` are transport; `refused` is a provider that declined to
+// answer and `truncated` is one cut at its output ceiling, neither of which a retry of the same
+// request fixes; `output_unsupported` is a contract the configured provider cannot obtain, found
+// before anything is spent; `output_contract_violation` is a strict provider whose response
+// missed the schema it guaranteed; `output_repairs_exhausted` is a correcting implementation
+// that spent its bound (src/output.ts, OutputImplementation).
+export const TURN_FAILURE_CAUSES = [
+  "model",
+  "inference_error",
+  "inference_attempts_exhausted",
+  "refused",
+  "truncated",
+  "output_unsupported",
+  "output_contract_violation",
+  "output_repairs_exhausted"
+] as const
+
+export type TurnFailureCause = (typeof TURN_FAILURE_CAUSES)[number]
+
+// OutputRejected is one final response judged against the turn's declared output contract and
+// found wanting. It is the state a correcting implementation runs on: the render shows the
+// response back with its reasons, and the correction bound counts these
+// (src/components/repair.ts). A turn under the native implementation records none: a mismatch
+// there is the provider's own contract violation and ends the turn.
+export const OutputRejected = Schema.Struct({
+  type: Schema.Literal("OutputRejected"),
+  contract: Schema.String, // the schema identity the response missed
+  attempt: Schema.String, // the ModelCalled attempt whose response this was
+  text: Schema.String, // the response verbatim: the durable evidence a projection never removes
+  errors: Schema.Array(Schema.String),
+  usage: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Number),
+  turn: Schema.optional(Schema.String),
+  at: Schema.Number
+})
+
 // TurnFailed is the failure terminal for one execution epoch.
 export const TurnFailed = Schema.Struct({
   type: Schema.Literal("TurnFailed"),
@@ -78,9 +126,7 @@ export const TurnFailed = Schema.Struct({
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Number),
-  cause: Schema.optional(
-    Schema.Literals(["model", "inference_error", "inference_attempts_exhausted", "schema_repairs_exhausted"])
-  ),
+  cause: Schema.optional(Schema.Literals(TURN_FAILURE_CAUSES)),
   attempts: Schema.optional(Schema.Number),
   attemptKey: Schema.optional(Schema.String),
   policy: Schema.optional(Schema.Unknown),
@@ -153,6 +199,7 @@ export const AgentEvent = Schema.Union([
   TextReturned,
   ToolCalled,
   ToolReturned,
+  OutputRejected,
   TurnCompleted,
   TurnFailed,
   TurnResumed,
@@ -165,7 +212,9 @@ export const AgentEvent = Schema.Union([
 export type AgentEvent = typeof AgentEvent.Type
 
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
-// model emitted alongside a call; it records as `TextReturned`.
+// model emitted alongside a call; it records as `TextReturned`. A `complete` under a declared
+// output contract carries the final response verbatim, and the infer reactor judges it against
+// the contract before any terminal is recorded (runtime/infer.ts).
 export type Action =
   | { readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string; readonly usage?: Usage }
   | { readonly kind: "complete"; readonly output: string; readonly usage?: Usage }
@@ -174,7 +223,7 @@ export type Action =
       readonly error: string
       readonly usage?: Usage
       readonly failure?: {
-        readonly cause: "inference_error" | "inference_attempts_exhausted"
+        readonly cause: TurnFailureCause
         readonly attempts: number
         readonly policy?: unknown
       }
@@ -187,7 +236,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:"],
+  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -217,6 +266,10 @@ export const agentKeys: KeyFragment = {
         return `bw:${String(v.turn)}/${String(v.budget)}`
       case "BudgetRequested":
         return `br:${String(v.callId)}`
+      case "OutputRejected":
+        // One rejection per logical attempt: a crashed attempt retried under the same key
+        // records the same rejection, and the committed one binds.
+        return `or:${String(v.attempt)}`
       case "CompactionCompleted":
         // The checkpoint's occurrence is the identity it keeps from.
         return `cc:${String(v.keepFrom)}`
@@ -249,10 +302,20 @@ export const textReturned = (fields: { readonly text: string } & Stamp): Event =
 export const turnCompleted = (fields: { readonly output: string } & EpochStamp): Event =>
   ({ type: "TurnCompleted", ...fields }) as Event
 
+export const outputRejected = (
+  fields: {
+    readonly contract: string
+    readonly attempt: string
+    readonly text: string
+    readonly errors: ReadonlyArray<string>
+    readonly usage?: unknown
+  } & EpochStamp
+): Event => ({ type: "OutputRejected", ...fields }) as Event
+
 export const turnFailed = (
   fields: {
     readonly error: string
-    readonly cause?: "model" | "inference_error" | "inference_attempts_exhausted" | "schema_repairs_exhausted"
+    readonly cause?: TurnFailureCause
     readonly attempts?: number
     readonly attemptKey?: string
     readonly policy?: unknown
