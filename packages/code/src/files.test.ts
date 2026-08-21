@@ -16,12 +16,14 @@ const platform = Layer.mergeAll(BunFileSystem.layer, BunPath.layer)
 
 let root = ""
 
-const run = <A>(effect: Effect.Effect<A, never, FileSystem | Path>) =>
+// A method may fail with `Park`, so the helper carries the failure rather than asserting it away:
+// runPromise rejects, and a test that parks says so instead of reading a narrowed type.
+const run = <A, E>(effect: Effect.Effect<A, E, FileSystem | Path>) =>
   Effect.runPromise(Effect.provide(effect, platform))
 
 const call = (method: string, args: unknown) => {
   const pkg = filesPackage({ policy: { root } })
-  return run(pkg.methods[method]!(args, { callId: "c1" }) as Effect.Effect<unknown, never, never>)
+  return run(pkg.methods[method]!(args, { callId: "c1" }))
 }
 
 beforeAll(async () => {
@@ -75,7 +77,7 @@ describe("the files package", () => {
   test("a slice past the cap says truncated", async () => {
     const pkg = filesPackage({ policy: { root, readChars: 5 } })
     const answer = (await run(
-      pkg.methods["read"]!({ path: "notes.txt", length: 1000 }, { callId: "c1" }) as Effect.Effect<unknown, never, never>
+      pkg.methods["read"]!({ path: "notes.txt", length: 1000 }, { callId: "c1" })
     )) as { text: string; size: number; truncated?: boolean }
     expect(answer.text).toBe("alpha")
     expect(answer.size).toBe(17)
@@ -117,7 +119,7 @@ describe("the files package", () => {
   test("a match-heavy search stops at the cap and says truncated", async () => {
     const pkg = filesPackage({ policy: { root, maxMatches: 1 } })
     const answer = (await run(
-      pkg.methods["search"]!({ pattern: "beta" }, { callId: "c1" }) as Effect.Effect<unknown, never, never>
+      pkg.methods["search"]!({ pattern: "beta" }, { callId: "c1" })
     )) as { matches: ReadonlyArray<unknown>; truncated?: boolean }
     expect(answer.matches.length).toBe(1)
     expect(answer.truncated).toBe(true)

@@ -2,6 +2,10 @@
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
     ".": {
+      "ignoreDependencies": [
+        "@effect/tsgo",
+        "@effect/language-service"
+      ],
       "entry": [
         "tools/*.ts",
         "examples/*.ts",

@@ -239,7 +239,7 @@ export const agentsPackage = (
             from: self,
             at
           })
-          return yield* Effect.fail(new Park({ callId: ctx.callId, awaiting: replyId(ctx.callId) }))
+          return yield* new Park({ callId: ctx.callId, awaiting: replyId(ctx.callId) })
         }),
       // Await a run already fired in the background: no delivery, the same reply-or-park read the
       // plain foreground branch of `run` takes. `id` is the `callId` an earlier `background: true`
@@ -264,7 +264,7 @@ export const agentsPackage = (
           if ("error" in declared) return declared
           const reply = yield* awaitedReply(source, id)
           if (reply !== undefined) return shape(answerOf(reply), address, id, declared.contract)
-          return yield* Effect.fail(new Park({ callId: ctx.callId, awaiting: replyId(id) }))
+          return yield* new Park({ callId: ctx.callId, awaiting: replyId(id) })
         }),
       // Resume a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
       // or a spent run budget, denies and the child finishes. The grant draws the run's budget like a

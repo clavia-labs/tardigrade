@@ -12,7 +12,7 @@ export const CodeDispatched = Schema.Struct({
   type: Schema.Literal("CodeDispatched"),
   execId: Schema.String,
   code: Schema.String,
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // PackageCalled records one package call from inside a code body. `callId` is `{execId}.{n}`
@@ -23,7 +23,7 @@ export const PackageCalled = Schema.Struct({
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // PackageReturned records the answer to one package call. The committed pair is the replay
@@ -32,7 +32,7 @@ export const PackageReturned = Schema.Struct({
   type: Schema.Literal("PackageReturned"),
   callId: Schema.String,
   result: Schema.Unknown,
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // BlockedOn is evidence, never a state: one attempt observed one reply absent. It suppresses
@@ -44,7 +44,7 @@ export const BlockedOn = Schema.Struct({
   callId: Schema.String,
   awaiting: Schema.String,
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // CodeSettled is the terminal of one execution: what the code returned, or why it threw. A
@@ -58,7 +58,7 @@ export const CodeSettled = Schema.Struct({
   // Captured console output, capped by the sandbox (packages/code/src/sandbox.ts,
   // SandboxResult.logs). Absent when the body printed nothing.
   logs: Schema.optional(Schema.Array(Schema.String)),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 export const CodeEvent = Schema.Union([

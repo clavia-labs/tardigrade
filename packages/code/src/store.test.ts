@@ -6,8 +6,8 @@ import { hydrate, refs, spill, WORKSPACE_REFS } from "./store"
 // The spill seam over a KeyValueStore: what goes in comes back out whole, and the reserved
 // manifest key indexes the refs one store holds.
 
-const run = <A>(effect: Effect.Effect<A, unknown, KeyValueStore.KeyValueStore>) =>
-  Effect.runPromise(effect.pipe(Effect.provide(KeyValueStore.layerMemory)) as Effect.Effect<A>)
+const run = <A, E>(effect: Effect.Effect<A, E, KeyValueStore.KeyValueStore>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(KeyValueStore.layerMemory)))
 
 describe("spill and hydrate", () => {
   test("a spilled value round-trips exactly", async () => {

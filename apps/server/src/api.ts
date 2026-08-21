@@ -13,6 +13,7 @@ import {
   UnknownActor,
   UnknownProjection,
   UnknownThread,
+  type ActorSummary,
   type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
@@ -225,7 +226,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(params.actor)
-          return flatten(treeOf(logsOf(yield* threads.list())))
+          return flatten(treeOf(logsOf(yield* threads.list)))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
@@ -245,7 +246,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
           const threads = yield* actorOf(params.actor)
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
-          const node = findNode(treeOf(logsOf(yield* threads.list())), params.id)
+          const node = findNode(treeOf(logsOf(yield* threads.list)), params.id)
           if (node === undefined) {
             return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.id)))
           }
@@ -275,66 +276,62 @@ const readOf = (declaration: ProjectionDeclaration) =>
     return declaration.run(log, request.query)
   })
 
-export const layerProjectionsGroup = () =>
-  HttpApiBuilder.group(ServerApi, "projections", (handlers) => {
-    // Every declared name gets the same handler, built from the same record the endpoints were
-    // generated from, so the two cannot disagree about which names exist. The type is the group's
-    // own endpoint map with every key required: `handleAll` accepts a partial record, and a partial
-    // one would leave the group short a handler at run time (api.test.ts, "a declared projection
-    // serves what the actor computes").
-    type Endpoints = (typeof handlers)["~EndpointsByIdentifier"]
-    type Complete = {
-      readonly [Name in keyof Endpoints]: HttpApiEndpoint.Handler<
-        Endpoints[Name],
-        HttpApiEndpoint.MiddlewareError<Endpoints[Name]>,
-        Threads
-      >
-    }
-    const served = Object.fromEntries(
-      Object.entries(agentProjections).map(([name, declaration]) => [name, readOf(declaration)])
-    ) as unknown as Complete
-    return handlers.handleAll(served)
-  })
+export const layerProjectionsGroup = HttpApiBuilder.group(ServerApi, "projections", (handlers) => {
+  // Every declared name gets the same handler, built from the same record the endpoints were
+  // generated from, so the two cannot disagree about which names exist. The type is the group's
+  // own endpoint map with every key required: `handleAll` accepts a partial record, and a partial
+  // one would leave the group short a handler at run time (api.test.ts, "a declared projection
+  // serves what the actor computes").
+  type Endpoints = (typeof handlers)["~EndpointsByIdentifier"]
+  type Complete = {
+    readonly [Name in keyof Endpoints]: HttpApiEndpoint.Handler<
+      Endpoints[Name],
+      HttpApiEndpoint.MiddlewareError<Endpoints[Name]>,
+      Threads
+    >
+  }
+  const served = Object.fromEntries(
+    Object.entries(agentProjections).map(([name, declaration]) => [name, readOf(declaration)])
+  ) as unknown as Complete
+  return handlers.handleAll(served)
+})
 
 // The name a request asked for, when the actor never declared it. The declared names are literal
 // paths, and a literal segment beats a parameter in this router, so this route is reached only by a
 // name that matched nothing (api.test.ts, "a name the actor never declared says what does exist").
 // `events` and `stream` never reach here either, for the same reason: they are the log's own routes.
-export const layerUnknownProjection = () => {
-  const declared = Object.keys(agentProjections)
-  const detail = declared.length === 0
-    ? "This actor declares no projections."
-    : `This actor declares ${declared.map((name) => JSON.stringify(name)).join(", ")}.`
-  return HttpRouter.add(
-    "GET",
-    "/v1/actors/:actor/threads/:id/:name",
-    Effect.gen(function*() {
-      const params = yield* HttpRouter.params
-      const actor = paramOf(params, "actor")
-      const registry = yield* Threads
-      if (actor !== RESERVED_ACTOR && registry.actor?.(actor) === undefined) {
-        return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
-      }
-      const name = paramOf(params, "name")
-      return problemResponse(
-        UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${detail}`)
-      )
-    })
-  )
-}
+const declaredProjections = Object.keys(agentProjections)
+const declaredDetail = declaredProjections.length === 0
+  ? "This actor declares no projections."
+  : `This actor declares ${declaredProjections.map((name) => JSON.stringify(name)).join(", ")}.`
 
-export const layerActorsGroup = () =>
-  HttpApiBuilder.group(ServerApi, "actors", (handlers) =>
-    handlers
-      .handle("actors", () =>
-        Effect.flatMap(Threads, (threads) => threads.actors ?? Effect.succeed([
-          { name: RESERVED_ACTOR, builtIn: true }
-        ])))
-      .handle("pushActor", ({ payload }) =>
-        Effect.gen(function*() {
-          const threads = yield* Threads
-          if (threads.push === undefined) {
-            return yield* Effect.fail(InvalidRequest.of("This server does not accept actor pushes."))
-          }
-          return yield* Effect.mapError(threads.push(payload), (error) => InvalidRequest.of(error.message))
-        })))
+export const layerUnknownProjection = HttpRouter.add(
+  "GET",
+  "/v1/actors/:actor/threads/:id/:name",
+  Effect.gen(function*() {
+    const params = yield* HttpRouter.params
+    const actor = paramOf(params, "actor")
+    const registry = yield* Threads
+    if (actor !== RESERVED_ACTOR && registry.actor?.(actor) === undefined) {
+      return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
+    }
+    const name = paramOf(params, "name")
+    return problemResponse(
+      UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${declaredDetail}`)
+    )
+  })
+)
+
+export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handlers) =>
+  handlers
+    .handle("actors", () =>
+      Effect.flatMap(Threads, (threads): Effect.Effect<ReadonlyArray<ActorSummary>> =>
+        threads.actors ?? Effect.succeed([{ name: RESERVED_ACTOR, builtIn: true }])))
+    .handle("pushActor", ({ payload }) =>
+      Effect.gen(function*() {
+        const threads = yield* Threads
+        if (threads.push === undefined) {
+          return yield* Effect.fail(InvalidRequest.of("This server does not accept actor pushes."))
+        }
+        return yield* Effect.mapError(threads.push(payload), (error) => InvalidRequest.of(error.message))
+      })))

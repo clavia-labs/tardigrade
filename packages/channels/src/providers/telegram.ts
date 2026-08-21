@@ -124,28 +124,25 @@ const providerOf = (options: TelegramOptions): ChannelProvider<TelegramAddress> 
       if (target.provider !== options.name || !isTelegramAddress(target)) {
         return Effect.die(new Error(`invalid address for provider: ${options.name}`))
       }
-      return Effect.tryPromise({
-        try: async () => {
-          const result = await fetch(`${apiBaseUrl}/bot${options.token}/sendMessage`, {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({
-              chat_id: target.chat,
-              text: message.text,
-              ...(target.topic === undefined ? {} : { message_thread_id: target.topic })
-            })
+      return Effect.promise(async () => {
+        const result = await fetch(`${apiBaseUrl}/bot${options.token}/sendMessage`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            chat_id: target.chat,
+            text: message.text,
+            ...(target.topic === undefined ? {} : { message_thread_id: target.topic })
           })
-          const body = await result.json() as { readonly ok?: unknown; readonly description?: unknown }
-          if (!result.ok || body.ok !== true) {
-            throw new Error(
-              typeof body.description === "string"
-                ? `Telegram sendMessage failed: ${body.description}`
-                : `Telegram sendMessage failed with status ${result.status}`
-            )
-          }
-        },
-        catch: (cause) => cause
-      }).pipe(Effect.orDie)
+        })
+        const body = await result.json() as { readonly ok?: unknown; readonly description?: unknown }
+        if (!result.ok || body.ok !== true) {
+          throw new Error(
+            typeof body.description === "string"
+              ? `Telegram sendMessage failed: ${body.description}`
+              : `Telegram sendMessage failed with status ${result.status}`
+          )
+        }
+      })
     }
   }
 }

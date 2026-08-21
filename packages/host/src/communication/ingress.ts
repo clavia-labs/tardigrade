@@ -36,7 +36,7 @@ export const ingressFrom = (
       for (const delivery of deliveries) {
         const target = actorFor(delivery.link.target.actor)
         if (target === undefined) {
-          return yield* Effect.fail(new ActorUnavailable({ actor: delivery.link.target.actor }))
+          return yield* new ActorUnavailable({ actor: delivery.link.target.actor })
         }
         routed.push({ delivery, target })
       }

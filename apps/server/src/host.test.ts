@@ -142,7 +142,7 @@ describe("the threads service", () => {
         yield* threads.append("alpha", brief("m1"))
         yield* threads.append("beta", brief("m2"))
         yield* threads.settled
-        return yield* threads.list()
+        return yield* threads.list
       })
     )
     expect(listed.map((entry) => entry.id)).toEqual(["alpha", "beta"])

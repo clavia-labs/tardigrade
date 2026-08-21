@@ -67,10 +67,10 @@ type Extends<A, B> = [A] extends [B] ? true : never
 
 const asserts = <_ extends true>(): void => {}
 
-asserts<Same<Projections.ThreadStatus, typeof ThreadStatus.Type>>()
-asserts<Same<Projections.ThreadSummary, typeof ThreadSummary.Type>>()
-asserts<Same<Projections.ThreadNode, typeof ThreadNode.Type>>()
-asserts<Same<Actor.TurnStatus, typeof TurnStatus.Type>>()
-asserts<Same<Actor.TurnViewShape, typeof TurnView.Type>>()
+asserts<Same<Projections.ThreadStatus, ThreadStatus>>()
+asserts<Same<Projections.ThreadSummary, ThreadSummary>>()
+asserts<Same<Projections.ThreadNode, ThreadNode>>()
+asserts<Same<Actor.TurnStatus, TurnStatus>>()
+asserts<Same<Actor.TurnViewShape, TurnView>>()
 asserts<Extends<typeof UnknownThread.schema.Type, Problem>>()
 asserts<Extends<typeof InvalidRequest.schema.Type, Problem>>()

@@ -54,7 +54,7 @@ export const ToolCalled = Schema.Struct({
   // recorded here so replay does not decide how this attempt ran from a current capability
   // (runtime/infer.ts, consequenceOf).
   mode: Schema.optional(Schema.Unknown),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // ToolReturned is the answer: the world's reply to one call. A failed call is a returned error,
@@ -63,7 +63,7 @@ export const ToolReturned = Schema.Struct({
   type: Schema.Literal("ToolReturned"),
   callId: Schema.String,
   result: Schema.Unknown,
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // ModelCalled is the ask to the model and the attempt mark in one, appended before the inference
@@ -75,13 +75,13 @@ export const ModelCalled = Schema.Struct({
   callId: Schema.String,
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
-  ordinal: Schema.optional(Schema.Number),
+  ordinal: Schema.optional(Schema.Finite),
   // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
   // ask, so a replay reads which policy produced which response.
   output: Schema.optional(OutputPolicy),
-  epoch: Schema.optional(Schema.Number),
+  epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // TextReturned is the prose the model emitted alongside its decision: working commentary,
@@ -89,7 +89,7 @@ export const ModelCalled = Schema.Struct({
 export const TextReturned = Schema.Struct({
   type: Schema.Literal("TextReturned"),
   text: Schema.String,
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // TurnCompleted is the success terminal, under every policy. The event carries the output.
@@ -103,8 +103,8 @@ export const TurnCompleted = Schema.Struct({
   attemptKey: Schema.optional(Schema.String),
   endpoint: Schema.optional(Endpoint),
   mode: Schema.optional(Schema.Unknown),
-  epoch: Schema.optional(Schema.Number),
-  at: Schema.Number
+  epoch: Schema.optional(Schema.Finite),
+  at: Schema.Finite
 })
 
 // TURN_FAILURE_CAUSES are the failure classes a turn ends in, each distinct because each has a
@@ -149,9 +149,9 @@ export const OutputRejected = Schema.Struct({
   mode: Schema.optional(Schema.Unknown),
   usage: Schema.optional(Schema.Unknown),
   endpoint: Schema.optional(Endpoint),
-  epoch: Schema.optional(Schema.Number),
+  epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // OutputRetryRequested is a component's decision that a rejected response should be asked again,
@@ -169,9 +169,9 @@ export const OutputRetryRequested = Schema.Struct({
   feedback: Schema.String,
   by: Schema.String, // the component that decided
   decision: Schema.optional(Schema.Unknown),
-  epoch: Schema.optional(Schema.Number),
+  epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // TurnFailed is the failure terminal for one execution epoch.
@@ -180,23 +180,23 @@ export const TurnFailed = Schema.Struct({
   error: Schema.String,
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
-  epoch: Schema.optional(Schema.Number),
+  epoch: Schema.optional(Schema.Finite),
   cause: Schema.optional(Schema.Literals(TURN_FAILURE_CAUSES)),
-  attempts: Schema.optional(Schema.Number),
+  attempts: Schema.optional(Schema.Finite),
   attemptKey: Schema.optional(Schema.String),
   policy: Schema.optional(Schema.Unknown),
   mode: Schema.optional(Schema.Unknown),
   endpoint: Schema.optional(Endpoint),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // TurnResumed records the operator request that starts the next execution epoch.
 export const TurnResumed = Schema.Struct({
   type: Schema.Literal("TurnResumed"),
   turn: Schema.String,
-  failedEpoch: Schema.Number,
-  epoch: Schema.Number,
-  at: Schema.Number
+  failedEpoch: Schema.Finite,
+  epoch: Schema.Finite,
+  at: Schema.Finite
 })
 
 // ReplyDelivered records that the turn's terminal went home, or had no home to go to. The
@@ -204,17 +204,17 @@ export const TurnResumed = Schema.Struct({
 export const ReplyDelivered = Schema.Struct({
   type: Schema.Literal("ReplyDelivered"),
   to: Schema.optional(Schema.String), // absent = the inbound named no replyTo, and nothing was sent
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // BudgetExhausted is the wall, fired once when the spend passes the brief's budget. The tools
 // reactor reads it and refuses further execute, so the model answers with its best result.
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
-  budget: Schema.Number,
-  used: Schema.Number,
+  budget: Schema.Finite,
+  used: Schema.Finite,
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 // BudgetRequested opens the escalation lifecycle. At its wall an escalatable agent may ask its
@@ -225,20 +225,20 @@ export const BudgetRequested = Schema.Struct({
   type: Schema.Literal("BudgetRequested"),
   callId: Schema.String, // the request_budget call the parent's answer settles
   reason: Schema.String,
-  amount: Schema.Number,
+  amount: Schema.Finite,
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
-  amount: Schema.Number, // the tool calls added to this turn's budget
+  amount: Schema.Finite, // the tool calls added to this turn's budget
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
   // ceiling (packages/agent/src/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
   callId: Schema.optional(Schema.String),
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 export const BudgetDenied = Schema.Struct({
@@ -247,7 +247,7 @@ export const BudgetDenied = Schema.Struct({
   // The BudgetRequested this denial answers, for the dedup key; symmetry with BudgetGranted.
   callId: Schema.optional(Schema.String),
   turn: Schema.optional(Schema.String),
-  at: Schema.Number
+  at: Schema.Finite
 })
 
 export const AgentEvent = Schema.Union([

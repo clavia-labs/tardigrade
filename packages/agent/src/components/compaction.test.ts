@@ -90,7 +90,7 @@ const mailbox = actor<Infer | EventLog>([compactionReactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>) => {
-    const ref = Effect.runSync(Ref.make<ReadonlyArray<Event>>(initial))
+    const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     const layers = Layer.mergeAll(
       Layer.succeed(

@@ -17,7 +17,7 @@ export const MessageReceived = Schema.Struct({
   outcome: Schema.optional(Schema.Literals(["completed", "failed"])),
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
-  at: Schema.Number
+  at: Schema.Finite
 })
 export type MessageReceived = typeof MessageReceived.Type
 
