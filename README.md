@@ -31,7 +31,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ### For agents
 
-Copy this prompt into your coding agent:
+Copy this prompt into your coding agent, or install the [Tardigrade skill](skills/tardigrade/SKILL.md):
 
 ```text
 Use https://github.com/clavia-labs/tardigrade.
@@ -71,7 +71,7 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg run` p
   <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
 </picture>
 
-## Build one
+## Build your own harness
 
 ```bash
 bun add tardie
