@@ -88,7 +88,8 @@ const deploys: AgentComponent = {
           answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])
         ]
       }],
-      context: []
+      context: [],
+      output: []
     },
     transitions: []
   })
@@ -109,21 +110,19 @@ The call follows one route:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actorOf, agentRuntime, budget, codeMode, compaction, reply } from "tardie"
+import { agentOf, budget, codeMode, compaction, outputFailFast, reply } from "tardie"
 
-const releaseAnalyst = actorOf(
-  agentRuntime(),
-  [
-    deploys,     // recent_deploys and its paired handler
-    codeMode,    // durable JavaScript execution
-    budget,      // a per-turn code budget
-    compaction,  // bounded model context
-    reply        // results for parent agents
-  ]
-)
+const releaseAnalyst = agentOf([
+  deploys,     // recent_deploys and its paired handler
+  codeMode,    // durable JavaScript execution
+  budget,      // a per-turn code budget
+  compaction,  // bounded model context
+  reply,       // results for parent agents
+  outputFailFast // structured results without a retry fallback
+])
 ```
 
-`actorOf` combines the components under `agentRuntime`. The runtime interprets their view as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`agentOf` combines the components and carries their service requirements into the host type. The runtime interprets their view as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 
@@ -192,6 +191,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 ## Learn more
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent components from first principles.
+- [Structured output](docs/output.md): declare a typed result and read its value.
 - [HTTP server](docs/how-to/server.md)
 - [CLI](docs/how-to/cli.md)
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.

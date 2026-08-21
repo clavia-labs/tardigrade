@@ -18,6 +18,28 @@ import type { Usage } from "./usage"
 // kind.
 export { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 
+// Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
+// `provider` and `model` are the configuration's own effective coordinates, so a replay reads
+// which model supplied a native guarantee even when no usage came back; `routedProvider` and
+// `routedModel` are the ones a router named on the wire, which supersede the configured pair as
+// the observed truth (platform/model/src/model.ts, endpointOf).
+export const Endpoint = Schema.Struct({
+  provider: Schema.optional(Schema.String),
+  model: Schema.String,
+  routedProvider: Schema.optional(Schema.String),
+  routedModel: Schema.optional(Schema.String)
+})
+
+// OutputPolicy is what one ask declared: the contract's identity and fingerprint, and the
+// fallback the assembly mounted for a call native output cannot serve. The mode the attempt
+// actually ran in is the binding's to report and lands on the consequence, because only the
+// binding knows what the configured endpoint could promise (src/output.ts, OutputFallback).
+export const OutputPolicy = Schema.Struct({
+  contract: Schema.String,
+  fingerprint: Schema.String,
+  fallback: Schema.optional(Schema.Unknown)
+})
+
 // ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
 export const ToolCalled = Schema.Struct({
   type: Schema.Literal("ToolCalled"),
@@ -27,6 +49,11 @@ export const ToolCalled = Schema.Struct({
   // The spend of the attempt this call answered (packages/agent/src/usage.ts). An empty object
   // is an attempt with unreported spend; an absent field is an event no attempt produced.
   usage: Schema.optional(Schema.Unknown),
+  endpoint: Schema.optional(Endpoint),
+  // A tool call may be one response in a turn that declares final output. Its effective mode is
+  // recorded here so replay does not decide how this attempt ran from a current capability
+  // (runtime/infer.ts, consequenceOf).
+  mode: Schema.optional(Schema.Unknown),
   at: Schema.Number
 })
 
@@ -49,6 +76,9 @@ export const ModelCalled = Schema.Struct({
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
   ordinal: Schema.optional(Schema.Number),
+  // The output policy this attempt ran under, when the turn declared a contract. Recorded on the
+  // ask, so a replay reads which policy produced which response.
+  output: Schema.optional(OutputPolicy),
   epoch: Schema.optional(Schema.Number),
   turn: Schema.optional(Schema.String),
   at: Schema.Number
@@ -67,7 +97,80 @@ export const TurnCompleted = Schema.Struct({
   type: Schema.Literal("TurnCompleted"),
   output: Schema.String,
   usage: Schema.optional(Schema.Unknown),
+  // The ModelCalled this terminal answers, who served it, and the output mode it ran in. The
+  // three join the ask's recorded policy to the answer it produced without reading another event
+  // (src/output.ts, OutputMode).
+  attemptKey: Schema.optional(Schema.String),
+  endpoint: Schema.optional(Endpoint),
+  mode: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Number),
+  at: Schema.Number
+})
+
+// TURN_FAILURE_CAUSES are the failure classes a turn ends in, each distinct because each has a
+// different remedy. `model` is a binding that reported nothing more specific; `inference_error`
+// and `inference_attempts_exhausted` are transport; `refused` is a provider that declined to
+// answer and `truncated` is one cut at its output ceiling, neither of which a retry of the same
+// request fixes; `output_unsupported` is a contract the configured provider cannot obtain, found
+// before anything is spent; `output_contract_violation` is an endpoint that promised a native
+// strict guarantee and broke it; `output_validation_failed` is a response a developer chose to
+// validate locally and fail on rather than correct; `output_repairs_exhausted` is the framework
+// correction loop spending its bound (src/output.ts, OutputMode).
+export const TURN_FAILURE_CAUSES = [
+  "model",
+  "inference_error",
+  "inference_attempts_exhausted",
+  "refused",
+  "truncated",
+  "output_unsupported",
+  "output_contract_violation",
+  "output_validation_failed",
+  "output_repairs_exhausted"
+] as const
+
+export type TurnFailureCause = (typeof TURN_FAILURE_CAUSES)[number]
+
+// OutputRejected is one final response judged against the turn's declared output contract and
+// found wanting. It is the typed state a correcting implementation runs on: the framework loop
+// counts these against its recorded bound, and a delegated one derives whatever it likes from
+// them (src/components/repair.ts). A turn under the native or local implementation records none:
+// a mismatch there is a terminal.
+//
+// `mode` is how the attempt that produced it obtained the contract, recorded here because
+// exhaustion, the park, and the history projection are all read off this event and must not
+// change when a deployment mounts a different fallback (src/output.ts, projectedOutput).
+export const OutputRejected = Schema.Struct({
+  type: Schema.Literal("OutputRejected"),
+  contract: Schema.String, // the schema identity the response missed
+  fingerprint: Schema.optional(Schema.String),
+  attempt: Schema.String, // the ModelCalled attempt whose response this was
+  text: Schema.String, // the response verbatim: the durable evidence a projection never removes
+  errors: Schema.Array(Schema.String),
+  mode: Schema.optional(Schema.Unknown),
+  usage: Schema.optional(Schema.Unknown),
+  endpoint: Schema.optional(Endpoint),
+  epoch: Schema.optional(Schema.Number),
+  turn: Schema.optional(Schema.String),
+  at: Schema.Number
+})
+
+// OutputRetryRequested is a component's decision that a rejected response should be asked again,
+// with the feedback that component chose. It states the request rather than the retry: a process
+// that dies between this record and the inference leaves a request nobody served, and the
+// `ModelCalled` that follows is the durable fact that the ask began (ModelCalled above).
+//
+// It exists so a delegated implementation owns its own loop: the infer reactor parks a delegated
+// turn on its rejection and only this event releases it, and the render shows `feedback` rather
+// than any framework sentence. `decision` is the component's own serializable record of why,
+// stamped so a replay reads the same choice (src/output.ts, OutputFallback).
+export const OutputRetryRequested = Schema.Struct({
+  type: Schema.Literal("OutputRetryRequested"),
+  rejection: Schema.String, // the OutputRejected attempt this answers
+  feedback: Schema.String,
+  by: Schema.String, // the component that decided
+  decision: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Number),
+  turn: Schema.optional(Schema.String),
   at: Schema.Number
 })
 
@@ -78,12 +181,12 @@ export const TurnFailed = Schema.Struct({
   // Present only on the fail a live attempt answered; the give-up terminal carries none.
   usage: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Number),
-  cause: Schema.optional(
-    Schema.Literals(["model", "inference_error", "inference_attempts_exhausted", "schema_repairs_exhausted"])
-  ),
+  cause: Schema.optional(Schema.Literals(TURN_FAILURE_CAUSES)),
   attempts: Schema.optional(Schema.Number),
   attemptKey: Schema.optional(Schema.String),
   policy: Schema.optional(Schema.Unknown),
+  mode: Schema.optional(Schema.Unknown),
+  endpoint: Schema.optional(Endpoint),
   at: Schema.Number
 })
 
@@ -153,6 +256,8 @@ export const AgentEvent = Schema.Union([
   TextReturned,
   ToolCalled,
   ToolReturned,
+  OutputRejected,
+  OutputRetryRequested,
   TurnCompleted,
   TurnFailed,
   TurnResumed,
@@ -165,20 +270,39 @@ export const AgentEvent = Schema.Union([
 export type AgentEvent = typeof AgentEvent.Type
 
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
-// model emitted alongside a call; it records as `TextReturned`.
+// model emitted alongside a call; it records as `TextReturned`. A `complete` under a declared
+// output contract carries the final response verbatim, and the infer reactor judges it against
+// the contract before any terminal is recorded (runtime/infer.ts).
+// AttemptEndpoint is the binding's report of who served the attempt, carried on every action so
+// the consequence records it whether or not the endpoint reported any spend.
+export interface AttemptEndpoint {
+  readonly provider?: string
+  readonly model: string
+  readonly routedProvider?: string
+  readonly routedModel?: string
+}
+
+// `mode` is how an attempt obtained a declared output contract. A binding answering a turn that
+// declared one must state it: the reactor records it and reads it back on replay, and it refuses
+// to invent one (runtime/infer.ts, completionOf).
+type Served = {
+  readonly usage?: Usage
+  readonly endpoint?: AttemptEndpoint
+  readonly mode?: import("./output").OutputMode
+}
+
 export type Action =
-  | { readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string; readonly usage?: Usage }
-  | { readonly kind: "complete"; readonly output: string; readonly usage?: Usage }
-  | {
+  | ({ readonly kind: "call"; readonly callId: string; readonly name: string; readonly arguments: unknown; readonly text?: string } & Served)
+  | ({ readonly kind: "complete"; readonly output: string } & Served)
+  | ({
       readonly kind: "fail"
       readonly error: string
-      readonly usage?: Usage
       readonly failure?: {
-        readonly cause: "inference_error" | "inference_attempts_exhausted"
+        readonly cause: TurnFailureCause
         readonly attempts: number
         readonly policy?: unknown
       }
-    }
+    } & Served)
 
 // agentKeys is the agent lane's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
 // pair; bg/bd name the budget request a decision answers (a grant is SUMMED into the ceiling,
@@ -187,7 +311,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:"],
+  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -217,6 +341,13 @@ export const agentKeys: KeyFragment = {
         return `bw:${String(v.turn)}/${String(v.budget)}`
       case "BudgetRequested":
         return `br:${String(v.callId)}`
+      case "OutputRejected":
+        // One rejection per logical attempt: a crashed attempt retried under the same key
+        // records the same rejection, and the committed one binds.
+        return `or:${String(v.attempt)}`
+      case "OutputRetryRequested":
+        // One decision per rejection, whichever component made it.
+        return `oq:${String(v.rejection)}`
       case "CompactionCompleted":
         // The checkpoint's occurrence is the identity it keeps from.
         return `cc:${String(v.keepFrom)}`
@@ -233,29 +364,74 @@ type Stamp = { readonly turn?: string; readonly at: number }
 type EpochStamp = Stamp & { readonly epoch?: number }
 
 export const toolCalled = (
-  fields: { readonly callId: string; readonly name: string; readonly arguments?: unknown } & Stamp
+  fields: {
+    readonly callId: string
+    readonly name: string
+    readonly arguments?: unknown
+    readonly mode?: unknown
+  } & Stamp
 ): Event => ({ type: "ToolCalled", ...fields }) as Event
 
 export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Event =>
   ({ type: "ToolReturned", ...fields }) as Event
 
 export const modelCalled = (
-  fields: { readonly callId: string; readonly ordinal?: number } & EpochStamp
+  fields: {
+    readonly callId: string
+    readonly ordinal?: number
+    readonly output?: {
+      readonly contract: string
+      readonly fingerprint: string
+      readonly fallback?: unknown
+    }
+  } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event
 
-export const turnCompleted = (fields: { readonly output: string } & EpochStamp): Event =>
-  ({ type: "TurnCompleted", ...fields }) as Event
+export const turnCompleted = (
+  fields: {
+    readonly output: string
+    readonly attemptKey?: string
+    readonly mode?: unknown
+    readonly endpoint?: unknown
+  } & EpochStamp
+): Event => ({ type: "TurnCompleted", ...fields }) as Event
+
+export const outputRejected = (
+  fields: {
+    readonly contract: string
+    readonly fingerprint?: string
+    readonly attempt: string
+    readonly text: string
+    readonly errors: ReadonlyArray<string>
+    readonly mode?: unknown
+    readonly usage?: unknown
+    readonly endpoint?: unknown
+  } & EpochStamp
+): Event => ({ type: "OutputRejected", ...fields }) as Event
+
+// outputRetryRequested records one component's decision to ask again after a rejection, with the
+// feedback that component chose. Any component may append it; the infer reactor reads only
+// whether the rejection it answers has one (runtime/infer.ts).
+export const outputRetryRequested = (
+  fields: {
+    readonly rejection: string
+    readonly feedback: string
+    readonly by: string
+    readonly decision?: unknown
+  } & EpochStamp
+): Event => ({ type: "OutputRetryRequested", ...fields }) as Event
 
 export const turnFailed = (
   fields: {
     readonly error: string
-    readonly cause?: "model" | "inference_error" | "inference_attempts_exhausted" | "schema_repairs_exhausted"
+    readonly cause?: TurnFailureCause
     readonly attempts?: number
     readonly attemptKey?: string
     readonly policy?: unknown
+    readonly endpoint?: unknown
   } & EpochStamp
 ): Event =>
   ({ type: "TurnFailed", ...fields }) as Event
