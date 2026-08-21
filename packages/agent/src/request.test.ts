@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { codeMode, renderOf, toolList } from "./capability"
+import { codeMode, renderOf, toolList } from "./index"
 
 const CODE = renderOf([codeMode], [])
 

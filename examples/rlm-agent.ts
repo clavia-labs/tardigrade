@@ -6,7 +6,7 @@
 
 // The workspace names resolve in this repository. Against the published package the last two
 // are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
-import { agentOf, agentsPackage, boundaryOf, budget, codeModeFor, compaction, reply, workspacePackage } from "tardie"
+import { actorOf, agentRuntime, agentsPackage, boundaryOf, budget, codeModeFor, compaction, reply, workspacePackage } from "tardie"
 import { infer } from "@clavia/tardigrade-model/model"
 import { createBunHost } from "@clavia/tardigrade-bun/host"
 
@@ -14,12 +14,15 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 // values, so the model's system fragment lists them and the assembly's requirements carry their
 // needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
-const rlm = agentOf([
-  codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
-  reply, // reports each turn's terminal to whoever asked
-  budget, // the per-turn code budget, inherited by spawned children
-  compaction // bounded model context over long investigations
-])
+const rlm = actorOf(
+  agentRuntime(),
+  [
+    codeModeFor({ packages: [agentsPackage(), workspacePackage()] }),
+    reply, // reports each turn's terminal to whoever asked
+    budget, // the per-turn code budget, inherited by spawned children
+    compaction // bounded model context over long investigations
+  ]
+)
 
 const model = infer({
   baseUrl: process.env.MODEL_BASE_URL!,

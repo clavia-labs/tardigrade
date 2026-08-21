@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.3.0...v0.4.0-rc) (2026-08-21)
+
+
+### Features
+
+* compose actors from components ([#185](https://github.com/clavia-labs/tardigrade/issues/185)) ([221ad35](https://github.com/clavia-labs/tardigrade/commit/221ad353038a5e476ec501a9391e6f2a00fb3832))
+
 ## [0.3.0](https://github.com/clavia-labs/tardigrade/compare/v0.3.0-rc...v0.3.0) (2026-08-21)
 
 

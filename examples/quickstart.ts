@@ -170,7 +170,7 @@ const render = (e: Event): string => {
   return `${e.type} ${JSON.stringify({ ...e, type: undefined })}`
 }
 
-// The agent. Three reactors on one log; adding a capability is adding a reactor.
+// The agent. Three reactors on one log; adding a component adds a derivation.
 const agent: Actor = { reactors: [infer, tools, compaction] }
 
 console.log("settling:")

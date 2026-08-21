@@ -91,8 +91,8 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
   ...pkg.annotations?.[method]
 })
 
-// Package is one named unit of an actor's world face, the dual of a Capability on its model
-// face (packages/agent/src/capability.ts). A capability declares what the model is offered
+// Package is one named unit of an actor's world face, the dual of an AgentComponent on its model
+// face (packages/agent/src/runtime/agent.ts). A component derives what the model is offered
 // (`tools`, `system`) and what settles its calls (`serve`); a package declares what code is
 // offered (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls
 // methods as `zohorecruit.insert_record(args)`. The platform binds the methods to providers;
@@ -107,11 +107,11 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
 // deliberately outside Package: it belongs to the host boundary and gets its own concept once a
 // consumer exists.
 //
-// Which packages an assembly passes is capability scoping: a task that must never send messages
+// Which packages an assembly passes is component scoping: a task that must never send messages
 // is given no sending package, and the code cannot name what the assembly did not pass. The
 // powerless default is the empty array (execute.ts, codeReactor).
 //
-// `R` is what a package's methods need from the environment, the dual of `Capability<R>` on the
+// `R` is what a package's methods need from the environment, the dual of `AgentComponent<R>` on the
 // model face. A package that reaches for a service names it in its type, and the reactor that
 // runs the package declares the union of what its packages need (execute.ts, codeReactorFor); a
 // package that reaches for nothing is `Package<never>` and runs anywhere.
@@ -136,7 +136,7 @@ export interface Package<R = never> {
 
 // PackageRequirements extracts one package's R, so a mixed list infers the union of what its
 // members need rather than collapsing on the first element's R. It is the package-face twin of
-// RequirementsOf (packages/agent/src/capability.ts), and what makes the environment a code
+// ComponentRequirements (packages/core/src/component.ts), and what makes the environment a code
 // reactor demands a function of the packages it was passed (execute.test.ts, "a package's
 // requirements ride its type").
 export type PackageRequirements<T> = T extends Package<infer R> ? R : never
