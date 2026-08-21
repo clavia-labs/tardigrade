@@ -32,6 +32,17 @@ jobs:
     outputs:
       releases_created: ${{ steps.release.outputs.releases_created }}
     steps:
+      - uses: actions/checkout@v7
+        if: github.ref_name == 'next'
+        with:
+          fetch-depth: 0
+      - name: Check stable release sync
+        if: github.ref_name == 'next'
+        run: |
+          if ! git merge-base --is-ancestor origin/main HEAD; then
+            echo "::error::Sync the stable release from main into next before creating another RC."
+            exit 1
+          fi
       - uses: googleapis/release-please-action@v5
         id: release
         with:
