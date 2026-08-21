@@ -117,7 +117,7 @@ export const App = (): ReactElement => {
       <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {actor !== undefined && route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
-          <Quickstart actor={actor} />
+          <Quickstart />
         ) : route.thread === undefined ? (
           <div className="mono pane-empty">{discovered.ready ? "select a run" : "loading actors"}</div>
         ) : (
