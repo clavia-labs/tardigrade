@@ -1,19 +1,16 @@
 import { ACTOR_NAME_PATTERN } from "tardie"
+import { existsSync } from "node:fs"
+import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 
 export interface ActorTemplateOptions {
   readonly name: string
   readonly instructions?: string
 }
 
-export const defaultActorInstructions = (name: string): string =>
-  [
-    `You are ${name}, a focused research agent.`,
-    "",
-    "Investigate the user's request carefully.",
-    "Use project files as evidence.",
-    "Delegate independent research when it helps.",
-    "Return a concise answer with concrete findings."
-  ].join("\n")
+export const INSTALLED_ACTOR_TEMPLATE = "../../examples/quickstart/actor.ts"
+export const REPO_ACTOR_TEMPLATE = "../../../examples/quickstart/actor.ts"
+export const ACTOR_TEMPLATE_CANDIDATES: ReadonlyArray<string> = [INSTALLED_ACTOR_TEMPLATE, REPO_ACTOR_TEMPLATE]
 
 const templateLiteralOf = (value: string): string =>
   value
@@ -21,49 +18,45 @@ const templateLiteralOf = (value: string): string =>
     .replaceAll("`", "\\`")
     .replaceAll("${", "\\${")
 
-export const actorTemplate = (options: ActorTemplateOptions): string => {
+const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, field: string): string => {
+  const matches = source.match(pattern)
+  if (matches === null || matches.length !== 1) throw new Error(`quickstart template must contain one ${field}`)
+  return source.replace(pattern, replacement)
+}
+
+export const renderActorTemplate = (source: string, options: ActorTemplateOptions): string => {
   if (!ACTOR_NAME_PATTERN.test(options.name)) {
     throw new Error(`actor name must match ${String(ACTOR_NAME_PATTERN)}, got ${JSON.stringify(options.name)}`)
   }
-  const instructions = (options.instructions ?? defaultActorInstructions(options.name)).trim()
+
+  let rendered = replaceExactlyOnce(
+    source,
+    /^const actorName = .+$/gmu,
+    `const actorName = ${JSON.stringify(options.name)}`,
+    "actorName declaration"
+  )
+  if (options.instructions === undefined) return rendered
+
+  const instructions = options.instructions.trim()
   if (instructions.length === 0) throw new Error("actor instructions must not be blank")
-
-  return `import {
-  agentOf,
-  agentsPackage,
-  budget,
-  codeModeFor,
-  compaction,
-  defineActor,
-  fetchPackage,
-  filesPackage,
-  reply,
-  workspacePackage
-} from "tardie"
-
-const instructions = {
-  name: "instructions",
-  system: \`
-${templateLiteralOf(instructions)}
-\`.trim()
+  rendered = replaceExactlyOnce(
+    rendered,
+    /^const actorInstructions = `[\s\S]*?`\.trim\(\)$/gmu,
+    `const actorInstructions = \`\n${templateLiteralOf(instructions)}\n\`.trim()`,
+    "actorInstructions declaration"
+  )
+  return rendered
 }
 
-export default defineActor({
-  name: ${JSON.stringify(options.name)},
-  actor: agentOf([
-    instructions,
-    codeModeFor({
-      packages: [
-        filesPackage(),
-        fetchPackage(),
-        agentsPackage(),
-        workspacePackage()
-      ]
-    }),
-    reply,
-    budget,
-    compaction
-  ])
-})
-`
+export const loadActorTemplate = async (candidates: ReadonlyArray<string>): Promise<string> => {
+  const found = candidates.find((candidate) => existsSync(candidate))
+  if (found === undefined) throw new Error(`quickstart template is missing. Looked in: ${candidates.join(", ")}`)
+  return readFile(found, "utf8")
 }
+
+export const actorTemplate = async (
+  options: ActorTemplateOptions,
+  candidates: ReadonlyArray<string> = ACTOR_TEMPLATE_CANDIDATES.map((candidate) =>
+    fileURLToPath(new URL(candidate, import.meta.url))
+  )
+): Promise<string> => renderActorTemplate(await loadActorTemplate(candidates), options)

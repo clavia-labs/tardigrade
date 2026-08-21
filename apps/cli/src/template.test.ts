@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
-import { actorTemplate, defaultActorInstructions } from "./template"
+import { actorTemplate, renderActorTemplate } from "./template"
 
 let root = ""
 
@@ -20,11 +20,12 @@ const build = async (source: string) => {
 
 describe("actorTemplate", () => {
   test("builds a named actor with the useful local reach", async () => {
-    const source = actorTemplate({ name: "researcher" })
+    const source = await actorTemplate({ name: "reviewer" })
     const built = await build(source)
 
-    expect(built.manifest.name).toBe("researcher")
-    expect(source).toContain(defaultActorInstructions("researcher"))
+    expect(built.manifest.name).toBe("reviewer")
+    expect(source).toContain('const actorName = "reviewer"')
+    expect(source).toContain("You are ${actorName}, a focused research agent.")
     expect(source).toContain("filesPackage()")
     expect(source).toContain("fetchPackage()")
     expect(source).toContain("agentsPackage()")
@@ -32,7 +33,7 @@ describe("actorTemplate", () => {
   })
 
   test("keeps custom instructions valid inside the editable template literal", async () => {
-    const source = actorTemplate({
+    const source = await actorTemplate({
       name: "reviewer",
       instructions: "Review `src` and explain ${findings}.\nKeep Windows paths like C:\\code intact."
     })
@@ -43,10 +44,16 @@ describe("actorTemplate", () => {
     expect(source).toContain("C:\\\\code")
   })
 
-  test("refuses an invalid name or blank instructions", () => {
-    expect(() => actorTemplate({ name: "Release Analyst" })).toThrow("actor name must match")
-    expect(() => actorTemplate({ name: "reviewer", instructions: "   " })).toThrow(
+  test("refuses an invalid name or blank instructions", async () => {
+    await expect(actorTemplate({ name: "Release Analyst" })).rejects.toThrow("actor name must match")
+    await expect(actorTemplate({ name: "reviewer", instructions: "   " })).rejects.toThrow(
       "actor instructions must not be blank"
+    )
+  })
+
+  test("refuses a template without its editable fields", () => {
+    expect(() => renderActorTemplate("export default {}", { name: "reviewer" })).toThrow(
+      "quickstart template must contain one actorName declaration"
     )
   })
 })
