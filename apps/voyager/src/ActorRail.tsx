@@ -1,17 +1,21 @@
 import type { ActorSummary, ProblemError } from "@clavia/tardigrade-client"
+import { Avatar } from "@base-ui-components/react/avatar"
 import { ArrowLeft, ArrowRight, BracketsCurly } from "@phosphor-icons/react"
 import { useState, type ReactElement } from "react"
 
 import { navigate } from "./nav"
 import {
   ACTOR_DIGEST_CHARS,
-  ACTOR_RAIL_WIDTH,
+  ACTOR_MARK_CHARS,
+  ACTOR_MARK_SIZE,
   COLLAPSED_ACTOR_RAIL_WIDTH,
   ICON_SIZE,
-  PANE_HEADER_HEIGHT
+  PANE_HEADER_HEIGHT,
+  RAIL_WIDTH
 } from "./policy"
 import { ProductMark } from "./ProductMark"
-import { digestLabelOf, matches } from "./roster"
+import { actorMarkOf, digestLabelOf, matches } from "./roster"
+import { ThemeToggle } from "./ThemeToggle"
 
 const ACTOR_RAIL_KEY = "voyager.actor-rail"
 
@@ -25,15 +29,21 @@ export const ActorRail = ({
   collapsedWidth = COLLAPSED_ACTOR_RAIL_WIDTH,
   digestChars = ACTOR_DIGEST_CHARS,
   headerHeight = PANE_HEADER_HEIGHT,
+  markChars = ACTOR_MARK_CHARS,
+  markSize = ACTOR_MARK_SIZE,
   problem,
-  selected
+  selected,
+  width = RAIL_WIDTH
 }: {
   readonly actors: ReadonlyArray<ActorSummary>
   readonly collapsedWidth?: number | undefined
   readonly digestChars?: number | undefined
   readonly headerHeight?: number | undefined
+  readonly markChars?: number | undefined
+  readonly markSize?: number | undefined
   readonly problem: ProblemError | undefined
   readonly selected: string | undefined
+  readonly width?: number | undefined
 }): ReactElement => {
   const [query, setQuery] = useState("")
   const [collapsed, setCollapsed] = useState(storedCollapsed)
@@ -42,7 +52,7 @@ export const ActorRail = ({
   return (
     <aside
       className={`actor-rail${collapsed ? " actor-rail-collapsed" : ""}`}
-      style={{ width: collapsed ? collapsedWidth : ACTOR_RAIL_WIDTH }}
+      style={{ width: collapsed ? collapsedWidth : width }}
     >
       <div className="pane-chrome" style={{ height: headerHeight }}>
         <div className="actor-head">
@@ -83,6 +93,28 @@ export const ActorRail = ({
           {problem.detail === undefined ? null : <div className="problem-detail">{problem.detail}</div>}
         </div>
       )}
+      {!collapsed ? null : (
+        <div className="actor-mark-list" aria-label="actors">
+          {actors.map((actor) => {
+            const chosen = actor.name === selected
+            return (
+              <button
+                type="button"
+                key={actor.name}
+                className={`actor-mark-button${chosen ? " actor-mark-selected" : ""}`}
+                aria-label={`Open ${actor.name}`}
+                aria-current={chosen ? "true" : undefined}
+                title={actor.name}
+                onClick={() => navigate({ actor: actor.name, thread: undefined, view: undefined, from: undefined, to: undefined })}
+              >
+                <Avatar.Root className="mono actor-mark" style={{ width: markSize, height: markSize }} aria-hidden="true">
+                  <Avatar.Fallback>{actorMarkOf(actor.name, markChars)}</Avatar.Fallback>
+                </Avatar.Root>
+              </button>
+            )
+          })}
+        </div>
+      )}
       <div className="actor-only actor-list">
         {shown.map((actor) => {
           const chosen = actor.name === selected
@@ -113,6 +145,7 @@ export const ActorRail = ({
           <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span className="actor-only">API</span>
         </button>
+        <ThemeToggle className="actor-api" label={<span className="actor-only">Theme</span>} />
       </div>
     </aside>
   )

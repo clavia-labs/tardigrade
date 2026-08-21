@@ -41,9 +41,6 @@
       "project": [
         "src/**/*.{ts,tsx}",
         "dev/**/*.ts"
-      ],
-      "ignoreDependencies": [
-        "@base-ui-components/react"
       ]
     }
   }

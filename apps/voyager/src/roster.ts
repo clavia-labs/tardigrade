@@ -1,6 +1,6 @@
 import type { ThreadStatus, ThreadSummary } from "@clavia/tardigrade-client"
 
-import { ACTOR_DIGEST_CHARS } from "./policy"
+import { ACTOR_DIGEST_CHARS, ACTOR_MARK_CHARS } from "./policy"
 
 // The rail's projections. GET /v1/actors/:actor/threads answers with every thread and its parent, and the rail shows
 // roots alone, so these functions turn one flat listing into the rows the rail renders. They are
@@ -75,6 +75,16 @@ export const matches = (id: string, query: string): boolean =>
 export const digestLabelOf = (digest: string, chars: number = ACTOR_DIGEST_CHARS): string => {
   const hexadecimal = digest.startsWith("sha256:") ? digest.slice("sha256:".length) : digest
   return hexadecimal.slice(0, chars)
+}
+
+// actorMarkOf derives a compact monogram from an actor name. A compound name contributes the
+// first character of each part; a single part contributes its first characters.
+export const actorMarkOf = (name: string, chars: number = ACTOR_MARK_CHARS): string => {
+  const parts = name.trim().split(/[^A-Za-z0-9]+/u).filter((part) => part.length > 0)
+  const mark = parts.length > 1
+    ? parts.map((part) => part[0] ?? "").join("")
+    : parts[0] ?? name.trim()
+  return mark.slice(0, chars).toUpperCase()
 }
 
 // agoOf renders an age in one unit: seconds under a minute, minutes under an hour, hours beyond. A
