@@ -40,4 +40,4 @@ Use `--json` when another program consumes command output. Human output includes
 
 ## Improve a harness
 
-When the task is to optimize an existing actor with GEPA, read [references/gepa.md](references/gepa.md) before changing `actor.ts`. Treat the event log as reflective evidence, keep candidate identity explicit, and test changes against a stated evaluation set.
+When the task is to optimize an existing actor, read [references/gepa.md](references/gepa.md) before changing `actor.ts`. Act as the optimizer: score runs, reflect on their traces, propose actor changes, and test each candidate through the CLI.
