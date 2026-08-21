@@ -29,10 +29,10 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-Install the release candidate and run the default agent. Use Bun 1.4 or later.
+Install Tardigrade and run the default agent. Use Bun 1.4 or later.
 
 ```bash
-bun add --global tardie@next
+bun add -g tardie
 tdg dev
 ```
 
