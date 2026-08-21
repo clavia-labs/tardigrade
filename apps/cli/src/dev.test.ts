@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs"
+import { createHash } from "node:crypto"
+import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
@@ -6,7 +7,7 @@ import { Console, Effect, Exit, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { Infer } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, Infer } from "tardie"
 import type { Action } from "tardie/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 
@@ -48,23 +49,26 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // booted starts the whole command on an ephemeral port and hands the body its base URL. ":memory:"
 // keeps the store to this process, so the case owns every event it reads.
 const booted = <A>(
-  body: (baseUrl: string, hostname: string) => Promise<A>,
+  body: (baseUrl: string, hostname: string, actors: string) => Promise<A>,
   env: Record<string, string | undefined> = {},
   options: Pick<DevOptions, "onListen"> = {}
-): Promise<A> =>
-  Effect.gen(function*() {
+): Promise<A> => {
+  const actors = mkdtempSync(join(tmpdir(), "tardigrade-dev-actors-"))
+  const actorData = mkdtempSync(join(tmpdir(), "tardigrade-dev-data-"))
+  const running = Effect.gen(function*() {
     const server = yield* HttpServer.HttpServer
     const address = server.address
     const port = address._tag === "TcpAddress" ? address.port : 0
     const hostname = address._tag === "TcpAddress" ? address.hostname : ""
-    return yield* Effect.promise(() => body(`http://${hostname}:${port}`, hostname))
+    return yield* Effect.promise(() => body(`http://${hostname}:${port}`, hostname, actors))
   }).pipe(
     Effect.provide(
       dev({
         config: resolveServer({
           port: 0,
           db: ":memory:",
-          actors: `/tmp/tardigrade-dev-test-${process.pid}`
+          actors,
+          actorData
         }, env),
         assets: buildDirectory(),
         threads: { infer: layerScripted },
@@ -76,6 +80,38 @@ const booted = <A>(
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
+  return running.finally(() => {
+    rmSync(actors, { recursive: true, force: true })
+    rmSync(actorData, { recursive: true, force: true })
+  })
+}
+
+// installActor performs the final atomic directory swap of a local push.
+const installActor = (root: string, name: string, revision: string): string => {
+  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, actor: { reactors: [], keyOf: () => undefined } }\n`
+  const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
+  const destination = join(root, name)
+  const incoming = `${destination}.incoming`
+  const previous = `${destination}.previous`
+  rmSync(incoming, { recursive: true, force: true })
+  rmSync(previous, { recursive: true, force: true })
+  mkdirSync(incoming, { recursive: true })
+  writeFileSync(join(incoming, "actor.mjs"), module)
+  writeFileSync(join(incoming, "manifest.json"), JSON.stringify({
+    schema: ACTOR_ARTIFACT_VERSION,
+    name,
+    module: "actor.mjs",
+    digest
+  }))
+  try {
+    renameSync(destination, previous)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+  }
+  renameSync(incoming, destination)
+  rmSync(previous, { recursive: true, force: true })
+  return digest
+}
 
 // Runs one invocation against the booted server through the real client, capturing what it printed.
 const drive = async (baseUrl: string, args: ReadonlyArray<string>) => {
@@ -163,6 +199,32 @@ describe("tdg dev", () => {
     expect(seen.deep.body).toBe(INDEX)
     expect(seen.ghost.status).toBe(404)
     expect(seen.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
+  })
+
+  test("a local push refreshes the actor registry", async () => {
+    const seen = await booted(async (baseUrl, _hostname, actors) => {
+      const waitFor = async (digest: string) => {
+        let listed: ReadonlyArray<{ readonly name: string; readonly builtIn: boolean; readonly digest?: string }> = []
+        for (let attempt = 0; attempt < 100; attempt++) {
+          listed = await (await fetch(`${baseUrl}/v1/actors`)).json() as typeof listed
+          if (listed.some((actor) => actor.name === "reviewer" && actor.digest === digest)) return listed
+          await Bun.sleep(10)
+        }
+        return listed
+      }
+      const first = installActor(actors, "reviewer", "first")
+      await waitFor(first)
+      const digest = installActor(actors, "reviewer", "second")
+      const listed = await waitFor(digest)
+      const accepted = await fetch(`${baseUrl}/v1/actors/reviewer/threads/review/events`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "MessageReceived", id: "m1", text: "inspect" })
+      })
+      return { digest, listed, accepted: { status: accepted.status, body: await accepted.json() } }
+    })
+    expect(seen.listed).toContainEqual({ name: "reviewer", builtIn: false, digest: seen.digest })
+    expect(seen.accepted).toEqual({ status: 202, body: { actor: "reviewer", thread: "review" } })
   })
 
   // `tdg dev` is the local command: it binds loopback and carries no gate, so `TARDIGRADE_TOKEN` in

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
@@ -12,7 +13,7 @@ afterEach(async () => {
 })
 
 const build = async (source: string) => {
-  root = await mkdtemp(join(process.cwd(), ".tdg-template-test-"))
+  root = await mkdtemp(join(tmpdir(), "tardigrade-template-test-"))
   const entry = join(root, "actor.ts")
   await writeFile(entry, source, "utf8")
   return buildActor(entry, { cwd: root, out: "output" })
