@@ -1,8 +1,9 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { budgetExhausted } from "./events"
+import { budgetExhausted } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnHead, turnView } from "@clavia/tardigrade-code/turns"
+import type { AgentComponent } from "../runtime/agent"
 
 // The budget reactor observes the turn's tool spend and fires BudgetExhausted once when it
 // passes the brief's budget. Detection lives here; enforcement lives with the tools reactor,
@@ -129,3 +130,17 @@ export const budgetReactorFor = (policy: Partial<BudgetPolicy> = {}): Reactor<ne
 
 // budgetReactor is that reactor on the default ceiling.
 export const budgetReactor: Reactor<never> = budgetReactorFor()
+
+// budgetFor derives budget transitions and contributes no agent information.
+export const budgetFor = (policy: Partial<BudgetPolicy>): AgentComponent => {
+  const reactor = budgetReactorFor(policy)
+  return {
+    name: "budget",
+    derive: (log) => ({
+      info: { system: [], tools: [], context: [] },
+      transitions: reactor(log)
+    })
+  }
+}
+
+export const budget: AgentComponent = budgetFor({})

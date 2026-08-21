@@ -1,7 +1,7 @@
 import type { Event } from "@clavia/tardigrade-core/event"
-import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./compaction"
+import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./components/compaction"
 import { outputSchemaOf } from "./contract"
-import { budgetSpent, canRequestBudget } from "./budget"
+import { budgetSpent, canRequestBudget } from "./components/budget"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
 // projection. Domain policy lives with the agent; the platform maps these provider-agnostic

@@ -2,7 +2,8 @@ import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
-  agentOf,
+  actorOf,
+  agentRuntime,
   agentsPackage,
   budget,
   codeModeFor,
@@ -24,7 +25,7 @@ import { inboundOf } from "./projections"
 // mounts what is declared here by name (packages/client/src/contract.ts, apiOf).
 
 // The assembly, one for every lane: code mode with four packages in scope, plus the three policy
-// capabilities. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,
+// components. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,
 // "Explicitly out of scope for v1").
 //
 // What the four packages add up to is what this actor can reach. `agents` fans work out to children
@@ -33,12 +34,15 @@ import { inboundOf } from "./projections"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export const assemblyOf = () =>
-  agentOf([
-    codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
-    reply,
-    budget,
-    compaction
-  ])
+  actorOf(
+    agentRuntime(),
+    [
+      codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
+      reply,
+      budget,
+      compaction
+    ]
+  )
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a
 // package added above lands in the host's obligation and a host that binds nothing for it fails to

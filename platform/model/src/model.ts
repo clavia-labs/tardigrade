@@ -4,7 +4,7 @@ import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import { Infer, type InferRequest } from "tardie/infer"
+import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
@@ -540,7 +540,7 @@ export const infer = (config: ModelConfig) => {
             fetch: fetcher
           })
     // The actor decides the request, render included; the platform maps it to the wire and
-    // streams it, holding no opinion about tools (tardie, capability.ts).
+    // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
     const req = modelRequest(request.trajectory, request, request.context ?? {})
     const schema = outputSchemaOf(request.trajectory) // the answer parser needs the turn's declared shape
     const stream = adapter.chatStream({

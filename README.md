@@ -15,14 +15,14 @@ A durable and modular agent harness built for self-improvement.
 ### A harness made for self-improvement
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Similarly, Tardigrade defines the harness as a set of state transitions derived from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
+We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Tardigrade derives information and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
 
-$$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
+$$\lbrace\mathrm{information},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Why Tardigrade
 
-- **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent capabilities.
-- **Strongly typed, built on Effect.** Typed services and Layers make each capability's dependencies explicit. A missing service fails during compile.
+- **Composable harness.** Add tools, code execution, budgets, compaction, and replies as independent components.
+- **Strongly typed, built on Effect.** Typed services and Layers make each component's dependencies explicit. A missing service fails during compile.
 - **Crash proof.** A durable host derives unfinished work from the stored log.
 - **Serverless.** All you need is a durable store, no process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
 - **Inspect and improve every run.** Log as core supports native debugging, replay, and experiments with state forked from any checkpoint.
@@ -76,55 +76,64 @@ bun add tardie
 
 You can use `npm install tardie` instead. Install `tardie@next` to test a release candidate.
 
-### Create a capability
+### Create a component
 
-An agent is made of capabilities. A capability is one value with two halves: what the model is shown (`tools`, `system`), and how the calls that come back are handled (`serve`). This one gives the model a single tool:
+An agent is made of components. A component derives information and owed transitions from the log. Agent information includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
-import type { Capability } from "tardie"
+import type { AgentComponent } from "tardie"
 
-const deploys: Capability = {
+const deploys: AgentComponent = {
   name: "deploys",
-  tools: () => [
-    {
-      name: "recent_deploys",
-      description: "List recent production deploys",
-      inputSchema: { type: "object", properties: {}, additionalProperties: false }
-    }
-  ],
-  serve: (call, log, answer) => {
-    if (call.name !== "recent_deploys") return undefined
-    return [answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])]
-  }
+  derive: () => ({
+    info: {
+      system: ["Inspect recent deployments when a release may explain an incident."],
+      tools: [{
+        spec: {
+          name: "recent_deploys",
+          description: "List recent production deploys",
+          inputSchema: { type: "object", properties: {}, additionalProperties: false }
+        },
+        serve: (_call, _log, answer) => [
+          answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])
+        ]
+      }],
+      context: []
+    },
+    transitions: []
+  })
 }
 ```
 
-`tools` derives what the model is offered from the log; a constant capability ignores it. `serve` handles a call that comes back: `answer` mints the transition that records the result, and returning `undefined` passes the call to the next capability. Replace the sample result with a call to your deployment API.
+`derive` is a pure log projection. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` mints the transition that records the result. Replace the sample result with a call to your deployment API.
 
 The call follows one route:
 
-1. `tools` adds `recent_deploys` to the next model request.
+1. The component adds `recent_deploys` to its derived information.
 2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The shared router asks each mounted capability's `serve` to handle the call. `deploys` matches the name and answers.
+3. The shared runtime finds the paired handler in the information that offered the call and asks it to serve against the current log.
 4. Tardigrade records `ToolReturned`. The next model request includes the result.
 
 ### Compose an agent
 
-Mount the capability beside the built-in parts that this task needs:
+Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { agentOf, budget, codeMode, compaction, reply } from "tardie"
+import { actorOf, agentRuntime, budget, codeMode, compaction, reply } from "tardie"
 
-const releaseAnalyst = agentOf([
-  deploys,     // recent_deploys and its handler
-  codeMode,    // durable JavaScript execution
-  budget,      // a per-turn code budget
-  compaction,  // bounded model context
-  reply        // results for parent agents
-])
+const releaseAnalyst = actorOf(
+  agentRuntime(),
+  [
+    deploys,     // recent_deploys and its paired handler
+    codeMode,    // durable JavaScript execution
+    budget,      // a per-turn code budget
+    compaction,  // bounded model context
+    reply        // results for parent agents
+  ]
+)
 ```
 
-`agentOf` combines every model-facing part and runtime handler. The model sees `recent_deploys` and `execute` in one request. Policy capabilities react to the same log.
+`actorOf` combines the components under `agentRuntime`. The runtime interprets their information as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 
@@ -134,7 +143,7 @@ A run can follow this path:
 MessageReceived -> recent_deploys -> execute -> TurnCompleted
 ```
 
-Each action and result becomes an event that every capability can interpret.
+Each action and result becomes an event that every component can interpret.
 
 ### Run the composition
 
@@ -192,7 +201,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 
 ## Learn more
 
-- [Quickstart](docs/quickstart.md): build the event loop and its agent capabilities from first principles.
+- [Quickstart](docs/quickstart.md): build the event loop and its agent components from first principles.
 - [HTTP server](docs/how-to/server.md)
 - [CLI](docs/how-to/cli.md)
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.

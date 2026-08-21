@@ -1,9 +1,10 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { compactionCompleted } from "./events"
+import { compactionCompleted } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
-import { Infer } from "./infer"
+import { Infer } from "../runtime/infer"
+import type { AgentComponent } from "../runtime/agent"
 
 // The compaction reactor: a pure observer of the context size, with the hysteresis design. A
 // guard fires compaction at a resolved tool round, any moment the open turn awaits no call, when
@@ -274,3 +275,17 @@ export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): React
 // compactionReactor is that reactor on the default policy. An agent on another policy builds its
 // own with `compactionReactorFor` and hands the same policy to its render.
 export const compactionReactor: Reactor<Infer> = compactionReactorFor()
+
+// compactionFor derives one context contribution and the transitions governed by that policy.
+export const compactionFor = (policy: Partial<ContextPolicy>): AgentComponent<Infer> => {
+  const reactor = compactionReactorFor(policy)
+  return {
+    name: "compaction",
+    derive: (log) => ({
+      info: { system: [], tools: [], context: [{ component: "compaction", policy }] },
+      transitions: reactor(log)
+    })
+  }
+}
+
+export const compaction: AgentComponent<Infer> = compactionFor({})

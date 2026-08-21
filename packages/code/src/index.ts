@@ -1,4 +1,4 @@
-// The package root: the reactor and the key fragment a caller assembles an agent from. The
-// subpath exports stay for everything else.
+// The package root exposes the code reactor and its event keys. Agent assemblies adapt these
+// through codeModeFor in packages/agent/src/components/code.ts.
 export { codeReactor } from "./execute"
 export { codeKeys } from "./events"

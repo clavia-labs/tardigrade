@@ -1,10 +1,11 @@
 import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/router"
 import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { replyDelivered } from "./events"
+import { replyDelivered } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyEvent } from "@clavia/tardigrade-core/message"
 import { turnTerminalOf, replyView } from "@clavia/tardigrade-code/turns"
+import type { AgentComponent } from "../runtime/agent"
 
 // The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
 // terminal goes back to that actor as a plain `MessageReceived`, and the caller folds it as a
@@ -63,4 +64,13 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
         })
     })
   ]
+}
+
+// reply derives parent-delivery transitions and contributes no agent information.
+export const reply: AgentComponent<Router | Self> = {
+  name: "reply",
+  derive: (log) => ({
+    info: { system: [], tools: [], context: [] },
+    transitions: replyReactor(log)
+  })
 }

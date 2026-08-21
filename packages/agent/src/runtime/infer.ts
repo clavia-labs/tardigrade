@@ -1,11 +1,11 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { modelCalled, textReturned, turnFailed } from "./events"
+import { modelCalled, textReturned, turnFailed } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { Action } from "./events"
+import type { Action } from "../events"
 import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/turns"
-import type { ContextPolicy } from "./compaction"
+import type { ContextPolicy } from "../components/compaction"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -28,9 +28,9 @@ export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, repairAtMost:
 export interface InferRequest {
   readonly trajectory: ReadonlyArray<Event>
   readonly system: string
-  readonly tools: ReadonlyArray<import("./request").ToolSpec>
+  readonly tools: ReadonlyArray<import("../request").ToolSpec>
   // What the render truncates and where, stated by the assembly so the binding renders against
-  // the same numbers the compaction guard fires on (capability.ts, compactionFor).
+  // the same numbers the compaction guard fires on (components/compaction.ts, compactionFor).
   readonly context?: Partial<ContextPolicy>
 }
 
@@ -111,11 +111,11 @@ const terminated = (slice: ReadonlyArray<Event>): boolean =>
 const terminalKey = (turn: string, epoch: number): string =>
   epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
 
-// Render derives what the model is shown over this log: the assembly owns it (capability.ts,
+// Render derives what the model is shown over this log: the assembly owns it (runtime/agent.ts,
 // renderOf).
 export type Render = (log: ReadonlyArray<Event>) => {
   readonly system: string
-  readonly tools: ReadonlyArray<import("./request").ToolSpec>
+  readonly tools: ReadonlyArray<import("../request").ToolSpec>
   readonly context?: Partial<ContextPolicy>
 }
 

@@ -7,11 +7,11 @@ import { jsSandboxFor } from "@clavia/tardigrade-code/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/workspace"
 import { createHost, type Host, type LaneEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./events"
-import { Infer, type InferRequest } from "./infer"
+import { Infer, type InferRequest } from "./runtime/infer"
 import { boundaryOf } from "./boundary"
 import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
-import { agentOf, budgetFor, codeModeFor, compactionFor, reply, toolList, type Capability } from "./capability"
+import { actorOf, agentRuntime, budgetFor, codeModeFor, compactionFor, reply, toolList, type AgentComponent } from "./index"
 import type { RlmR } from "./turn"
 
 const ROOT_LANE = "ag.root"
@@ -70,10 +70,10 @@ const hosted = (assembled: Actor<RlmR>, mind: Mind, log: ReadonlyArray<Event> = 
 }
 
 // rlm is the default assembly: the work surface plus reply, budget, and compaction, over an
-// in-process host. The three policy capabilities are always mounted, so a test that swaps the
+// in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
-const rlm = (mind: Mind, capabilities: ReadonlyArray<Capability<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
-  hosted(agentOf([...capabilities, reply, budgetFor({}), compactionFor({})], {}), mind, log)
+const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
+  hosted(actorOf(agentRuntime({}), [...components, reply, budgetFor({}), compactionFor({})]), mind, log)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
@@ -162,7 +162,7 @@ describe("an assembled agent", () => {
     // the turn loop, the budget wall, and the answer contract while presenting that harness's
     // tools (surface.ts).
     const reads: string[] = []
-    const capabilities = [toolList([
+    const components = [toolList([
       {
         spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
         run: (input) => {
@@ -176,7 +176,7 @@ describe("an assembled agent", () => {
       const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: unknown } | undefined
       if (returned !== undefined) return { kind: "complete", output: String(returned.result) }
       return { kind: "call", callId: "n1", name: "read", arguments: { path: "/contract.md" } }
-    }, capabilities)
+    }, components)
     const answer = await mind.run("read the contract")
     expect(answer.output).toBe("contents of /contract.md")
     expect(reads).toEqual(["/contract.md"])
@@ -191,7 +191,7 @@ describe("an assembled agent", () => {
     const keys: string[] = []
     const failureInRequest: boolean[] = []
     let postToolCalls = 0
-    const capabilities = [
+    const components = [
       toolList([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: {} } },
@@ -210,7 +210,7 @@ describe("an assembled agent", () => {
       postToolCalls += 1
       if (postToolCalls === 1) throw new Error("provider connection ended")
       return { kind: "complete", output: String((returned as { result?: unknown }).result) }
-    }, capabilities)
+    }, components)
 
     const failed = await mind.run("read the contract")
     expect(failed).toMatchObject({ turn: "run-0", error: "provider connection ended" })
@@ -263,14 +263,14 @@ describe("an assembled agent", () => {
   })
 
   test("a call outside the surface comes back as an unknown tool, never a dead turn", async () => {
-    const capabilities = [toolList([
+    const components = [toolList([
       { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
     ])]
     const mind = rlm(async ({ trajectory }) => {
       const returned = trajectory.find((e) => e.type === "ToolReturned") as { result?: { error?: string } } | undefined
       if (returned !== undefined) return { kind: "complete", output: String(returned.result?.error) }
       return { kind: "call", callId: "x1", name: "execute", arguments: { code: "return 1" } }
-    }, capabilities)
+    }, components)
     const answer = await mind.run("go")
     expect(answer.output).toContain("unknown tool: execute")
     expect(answer.output).toContain("read")
