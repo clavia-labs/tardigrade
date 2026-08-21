@@ -161,9 +161,9 @@ export const layerApp = (options: ApiOptions = {}) =>
   Layer.mergeAll(
     Layer.provide(
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
-        layerActorsGroup(),
+        layerActorsGroup,
         layerThreadsGroup(options),
-        layerProjectionsGroup(),
+        layerProjectionsGroup,
         layerHealthGroup
       ]),
       layerRequestProblems
@@ -173,7 +173,7 @@ export const layerApp = (options: ApiOptions = {}) =>
     // After the declared routes and before the catch-all: a literal segment beats a parameter in
     // this router, so a projection the actor declared is served and every other name under a thread
     // is told what does exist (api.ts, layerUnknownProjection).
-    layerUnknownProjection(),
+    layerUnknownProjection,
     layerNotFound,
     layerCors,
     layerAuth

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Clock, Effect, Random } from "effect"
 import { StopReason } from "@aws-sdk/client-bedrock-runtime"
 import {
   codeMode,
@@ -601,6 +601,8 @@ describe("infer: throttle-shaped retry", () => {
       return calls === 1 ? new Response(JSON.stringify({ error: { message: "rate limited" } }), { status: 429 }) : okStream()
     }) as unknown as typeof globalThis.fetch
     const slept: Array<number> = []
+    const seed = "throttle retry"
+    const expectedDelay = Effect.runSync(Random.next.pipe(Random.withSeed(seed))) * 2_000
     const layer = infer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
@@ -613,14 +615,63 @@ describe("infer: throttle-shaped retry", () => {
     })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-        Effect.provide(layer)
+        Effect.provide(layer),
+        Random.withSeed(seed)
       ) as Effect.Effect<unknown>
     )
     expect(action).toMatchObject({ kind: "complete", output: "ok" })
     expect(calls).toBe(2)
-    expect(slept).toHaveLength(1)
-    expect(slept[0]).toBeGreaterThanOrEqual(0)
-    expect(slept[0]).toBeLessThan(2_000)
+    expect(slept).toEqual([expectedDelay])
+  })
+
+  test("a retry reads the supplied Clock", async () => {
+    const now = 1_000_000
+    let clockReads = 0
+    const liveClock = Effect.runSync(Clock.Clock)
+    const clock: Clock.Clock = {
+      currentTimeMillisUnsafe: () => {
+        clockReads += 1
+        return now
+      },
+      currentTimeMillis: Effect.succeed(now),
+      currentTimeNanosUnsafe: () => liveClock.currentTimeNanosUnsafe(),
+      currentTimeNanos: liveClock.currentTimeNanos,
+      monotonicTimeNanosUnsafe: () => liveClock.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanos: liveClock.monotonicTimeNanos,
+      sleep: (duration) => liveClock.sleep(duration)
+    }
+    let calls = 0
+    const slept: Array<number> = []
+    const seed = "clock retry"
+    const expectedDelay = Effect.runSync(Random.next.pipe(Random.withSeed(seed))) * 2_000
+    const layer = infer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "test-model",
+      fetch: (async () => {
+        calls += 1
+        if (calls === 1) {
+          return new Response(JSON.stringify({ error: { message: "rate limited" } }), {
+            status: 429
+          })
+        }
+        return okStream()
+      }) as unknown as typeof globalThis.fetch,
+      sleep: (ms) => {
+        slept.push(ms)
+        return Promise.resolve()
+      }
+    })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Clock.Clock, clock),
+        Random.withSeed(seed)
+      ) as Effect.Effect<unknown>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
+    expect(clockReads).toBe(1)
+    expect(slept).toEqual([expectedDelay])
   })
 
   test("retries exhaust after the bounded set and report the effective policy", async () => {
@@ -653,6 +704,7 @@ describe("infer: throttle-shaped retry", () => {
         attempts: 4,
         policy: {
           throttleRetryDelaysMs: [2_000, 8_000, 30_000],
+          retryAfterJitterMs: 1_000,
           stream: { firstChunkMs: 90_000, idleMs: 90_000, totalMs: 300_000 }
         }
       }
@@ -748,6 +800,7 @@ describe("model selection", () => {
 
 describe("retry-after", () => {
   const NOW = 1_000_000
+  const nextRandom = () => 0.5
 
   test("reads seconds and date forms, from any seat a failure carries headers in", () => {
     expect(retryAfterMsOf({ headers: { "Retry-After": "7" } }, NOW)).toBe(7_000)
@@ -760,24 +813,26 @@ describe("retry-after", () => {
   })
 
   test("a stated wait within the ceiling is honored; past it, retries stop", () => {
-    const stated = throttleDelayMs({ headers: { "retry-after": "7" } }, 0, NOW)
-    expect(stated).toBeGreaterThanOrEqual(7_000)
-    expect(stated).toBeLessThan(8_000)
-    expect(throttleDelayMs({ headers: { "retry-after": "300" } }, 0, NOW)).toBeUndefined()
+    const stated = throttleDelayMs({ headers: { "retry-after": "7" } }, 0, NOW, nextRandom)
+    expect(stated).toBe(7_500)
+    expect(throttleDelayMs({ headers: { "retry-after": "300" } }, 0, NOW, nextRandom)).toBeUndefined()
   })
 
   test("no stated wait falls back to the ladder, and the ladder still bounds retries", () => {
-    const fallback = throttleDelayMs({}, 1, NOW)
-    expect(fallback).toBeGreaterThanOrEqual(0)
-    expect(fallback).toBeLessThanOrEqual(8_000)
-    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 3, NOW)).toBeUndefined()
+    const fallback = throttleDelayMs({}, 1, NOW, nextRandom)
+    expect(fallback).toBe(4_000)
+    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 3, NOW, nextRandom)).toBeUndefined()
   })
 
   test("a caller-supplied ladder sets the retry count and the Retry-After ceiling", () => {
     const short = [100]
-    expect(throttleDelayMs({}, 0, NOW, short)).toBeLessThanOrEqual(100)
-    expect(throttleDelayMs({}, 1, NOW, short)).toBeUndefined()
-    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 0, NOW, short)).toBeUndefined()
+    expect(throttleDelayMs({}, 0, NOW, nextRandom, short)).toBe(50)
+    expect(throttleDelayMs({}, 1, NOW, nextRandom, short)).toBeUndefined()
+    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 0, NOW, nextRandom, short)).toBeUndefined()
+  })
+
+  test("a caller-supplied Retry-After jitter changes the stated wait", () => {
+    expect(throttleDelayMs({ headers: { "retry-after": "1" } }, 0, NOW, nextRandom, [2_000], 200)).toBe(1_100)
   })
 })
 

@@ -177,31 +177,28 @@ const providerOf = (options: SlackOptions): ChannelProvider<SlackAddress> => {
       if (target.provider !== options.name || !isSlackAddress(target)) {
         return Effect.die(new Error(`invalid address for provider: ${options.name}`))
       }
-      return Effect.tryPromise({
-        try: async () => {
-          const result = await fetch(`${apiBaseUrl}/chat.postMessage`, {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${options.botToken}`,
-              "content-type": "application/json; charset=utf-8"
-            },
-            body: JSON.stringify({
-              channel: target.channel,
-              text: message.text,
-              thread_ts: target.thread
-            })
+      return Effect.promise(async () => {
+        const result = await fetch(`${apiBaseUrl}/chat.postMessage`, {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${options.botToken}`,
+            "content-type": "application/json; charset=utf-8"
+          },
+          body: JSON.stringify({
+            channel: target.channel,
+            text: message.text,
+            thread_ts: target.thread
           })
-          const body = await result.json() as { readonly ok?: unknown; readonly error?: unknown }
-          if (!result.ok || body.ok !== true) {
-            throw new Error(
-              typeof body.error === "string"
-                ? `Slack chat.postMessage failed: ${body.error}`
-                : `Slack chat.postMessage failed with status ${result.status}`
-            )
-          }
-        },
-        catch: (cause) => cause
-      }).pipe(Effect.orDie)
+        })
+        const body = await result.json() as { readonly ok?: unknown; readonly error?: unknown }
+        if (!result.ok || body.ok !== true) {
+          throw new Error(
+            typeof body.error === "string"
+              ? `Slack chat.postMessage failed: ${body.error}`
+              : `Slack chat.postMessage failed with status ${result.status}`
+          )
+        }
+      })
     }
   }
 }

@@ -90,7 +90,8 @@ const post = (thread: string, body: unknown) =>
 
 const seed = Effect.promise(async () => {
   for (const { thread, ...message } of FIXTURE_BRIEFS) await post(thread, { type: "MessageReceived", ...message })
-  console.log(`fixture: seeded ${FIXTURE_BRIEFS.length} briefs on http://127.0.0.1:${FIXTURE_PORT}`)
-})
+}).pipe(
+  Effect.tap(() => Effect.log(`fixture: seeded ${FIXTURE_BRIEFS.length} briefs on http://127.0.0.1:${FIXTURE_PORT}`))
+)
 
 BunRuntime.runMain(Layer.launch(Layer.effectDiscard(seed).pipe(Layer.provideMerge(app))))

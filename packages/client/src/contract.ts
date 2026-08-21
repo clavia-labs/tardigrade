@@ -134,8 +134,8 @@ export type ThreadStatus = typeof ThreadStatus.Type
 export const ThreadSummary = Schema.Struct({
   id: Schema.String,
   parent: Schema.optionalKey(Schema.String),
-  events: Schema.Number,
-  lastAt: Schema.optionalKey(Schema.Number),
+  events: Schema.Finite,
+  lastAt: Schema.optionalKey(Schema.Finite),
   status: ThreadStatus
 }).annotate({ identifier: "ThreadSummary" })
 
@@ -162,7 +162,7 @@ export type TurnStatus = typeof TurnStatus.Type
 export const TurnView = Schema.Struct({
   turn: Schema.String,
   status: TurnStatus,
-  epoch: Schema.Number,
+  epoch: Schema.Finite,
   output: Schema.optionalKey(Schema.String),
   error: Schema.optionalKey(Schema.String)
 }).annotate({ identifier: "TurnView" })
@@ -174,7 +174,7 @@ export type TurnView = typeof TurnView.Type
 // and `after` still means the same place (apps/server/src/api.test.ts, "after and limit page the
 // log, and types filters without renumbering it").
 export const EventRow = Schema.Struct({
-  seq: Schema.Number,
+  seq: Schema.Finite,
   event: Event
 }).annotate({ identifier: "EventRow" })
 
@@ -193,7 +193,7 @@ export type Accepted = typeof Accepted.Type
 
 export const Health = Schema.Struct({
   status: Schema.Literals(["resting", "driving"]),
-  dirty: Schema.Number
+  dirty: Schema.Finite
 }).annotate({ identifier: "Health" })
 
 export type Health = typeof Health.Type

@@ -19,7 +19,9 @@ bun run setup
 bun run gate
 ```
 
-The gate runs lint (oxlint), prose lint (`tools/docs-lint.ts`), typecheck (every package plus root tools), tests (`bun test` per package), and dead-code analysis (knip) in parallel. It must exit 0. Narrow it with `bun run gate --only=typecheck` while iterating. The pre-push hook runs the whole gate.
+The gate runs lint (oxlint), prose lint (`tools/docs-lint.ts`), Effect lint (`@effect/tsgo`, one run per TypeScript project), typecheck (every package plus root tools), tests (`bun test` per package), and dead-code analysis (knip) in parallel. It must exit 0. Narrow it with `bun run gate --only=typecheck` while iterating. The pre-push hook runs the whole gate.
+
+The Effect lint reads rules the type checker does not carry: an effect nobody yielded, a requirement nobody provides, a wall clock read inside a replayed body, a schema that admits `NaN`. [tsconfig.effect.json](tsconfig.effect.json) names every installed rule with the severity this repository holds it to, and each rule that is off says why. The gate checks that list against the installed rule catalog, then fails on an error or warning. `bun run lint:effect` runs it alone. A source exception uses `// @effect-diagnostics-next-line <rule>:off` with its reason at the expression it covers.
 
 `any` is a lint error. It defeats the checks the rest of the framework leans on, and every place it looked necessary had an honest type behind it. The one exception is annotated where it sits, with the reason it can not be written any other way.
 

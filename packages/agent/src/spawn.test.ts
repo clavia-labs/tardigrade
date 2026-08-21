@@ -97,7 +97,13 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const parked = await Effect.runPromise(
-      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c5" }).pipe(Effect.provide(env("mem:ag.root", sent)), Effect.flip)
+      // flip then orDie: the call must park, and a success is a defect rather than a failure
+      // typed as the method's own result.
+      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c5" }).pipe(
+        Effect.provide(env("mem:ag.root", sent)),
+        Effect.flip,
+        Effect.orDie
+      )
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))

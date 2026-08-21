@@ -1,4 +1,7 @@
 {
+  // tsconfig.effect.json carries the Effect lint policy, so every project that extends this file is
+  // held to the same rules in the gate and in editors that run the Effect language service.
+  "extends": "./tsconfig.effect.json",
   "compilerOptions": {
     "strict": true,
     "exactOptionalPropertyTypes": true,

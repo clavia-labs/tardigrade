@@ -1,4 +1,5 @@
 import { Console, Effect, Redacted } from "effect"
+import type { PlatformError } from "effect/PlatformError"
 import { FileSystem } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 
@@ -266,7 +267,7 @@ export const homeOf = (env: Env): string | undefined => {
 export const writeSetup = (
   home: string,
   answers: SetupAnswers
-): Effect.Effect<string, unknown, FileSystem> =>
+): Effect.Effect<string, PlatformError, FileSystem> =>
   Effect.gen(function*() {
     const fs = yield* FileSystem
     const path = configPathIn(home)

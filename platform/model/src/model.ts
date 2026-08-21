@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Clock, Effect, Layer, Random } from "effect"
 import { StreamProcessor, type ModelMessage, type ProcessorResult, type StreamChunk, type Tool, type ToolCall } from "@tanstack/ai"
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
@@ -216,6 +216,8 @@ export interface ModelConfig {
   readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
+  // retryAfterJitterMs adds a random wait to a provider's Retry-After value. Absent, DEFAULT_RETRY_AFTER_JITTER_MS.
+  readonly retryAfterJitterMs?: number
   readonly fetch?: FetchImpl // test seam
   readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
 }
@@ -236,6 +238,7 @@ type NativeOutputProvided<C extends ModelConfig> = [C] extends [
 // trouble. `bounded()` below throws plain `Error`s for the same shape of failure (a stream that
 // never starts or stalls), so the message is checked too.
 export const DEFAULT_THROTTLE_RETRY_DELAYS_MS: ReadonlyArray<number> = [2_000, 8_000, 30_000]
+export const DEFAULT_RETRY_AFTER_JITTER_MS = 1_000
 
 const isThrottleShaped = (e: unknown): boolean => {
   const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
@@ -249,7 +252,7 @@ const isThrottleShaped = (e: unknown): boolean => {
 
 // Full jitter (AWS's term for it): a uniform draw between 0 and the base, so many attempts
 // throttled at the same instant do not retry in lockstep and re-trip the same limit together.
-const jittered = (baseMs: number): number => Math.random() * baseMs
+const jittered = (baseMs: number, nextRandom: () => number): number => nextRandom() * baseMs
 
 // retryAfterMsOf reads the provider's own wait from a thrown failure, in both forms the
 // specification allows (a count of seconds, or a date to wait until). The adapters differ in
@@ -278,20 +281,22 @@ export const retryAfterMsOf = (e: unknown, now: number): number | undefined => {
 }
 
 // throttleDelayMs decides one in-flight wait: the provider's stated Retry-After when it fits
-// the ladder's own ceiling (plus up to a second of jitter, so a herd released together does not
-// re-trip the limit), the jittered ladder otherwise, and undefined for a stated wait past the
-// ceiling. A stated wait past the ceiling ends the bounded retry set.
+// the ladder's own ceiling (plus the stated jitter, so a herd released together does not re-trip
+// the limit), the jittered ladder otherwise, and undefined for a stated wait past the ceiling. A
+// stated wait past the ceiling ends the bounded retry set.
 export const throttleDelayMs = (
   e: unknown,
   attempt: number,
   now: number,
-  delays: ReadonlyArray<number> = DEFAULT_THROTTLE_RETRY_DELAYS_MS
+  nextRandom: () => number,
+  delays: ReadonlyArray<number> = DEFAULT_THROTTLE_RETRY_DELAYS_MS,
+  retryAfterJitterMs: number = DEFAULT_RETRY_AFTER_JITTER_MS
 ): number | undefined => {
   if (attempt >= delays.length) return undefined
   const ceiling = delays[delays.length - 1]!
   const stated = retryAfterMsOf(e, now)
-  if (stated !== undefined) return stated > ceiling ? undefined : stated + Math.random() * 1_000
-  return jittered(delays[attempt]!)
+  if (stated !== undefined) return stated > ceiling ? undefined : stated + nextRandom() * retryAfterJitterMs
+  return jittered(delays[attempt]!, nextRandom)
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -620,7 +625,8 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
-  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, stream: bounds }
+  const retryAfterJitterMs = config.retryAfterJitterMs ?? DEFAULT_RETRY_AFTER_JITTER_MS
+  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, retryAfterJitterMs, stream: bounds }
   const attemptOnce = async (
     req: ModelRequest,
     mode: OutputMode,
@@ -719,42 +725,53 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     }
   }
   const layer = Layer.succeed(Infer, {
-    react: (request: InferRequest, key?: string) =>
-      Effect.gen(function* () {
-        const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
-        const stats: { finish?: string; rung: number; waits: number; attempts: number } = {
-          rung: 0,
-          waits: 0,
-          attempts: 0
-        }
-        // The actor decides the request, render included; the platform maps it to the wire and
-        // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
-        const req = modelRequest(request.trajectory, request, request.context ?? {})
-        // The contract's preflight runs before the first socket: an endpoint that cannot promise
-        // the declared schema, or a schema outside the profile both wires send unchanged, ends
-        // the turn having spent nothing (src/output.ts, outputPreflight).
-        const selected = outputModeOf(req, config)
-        if ("errors" in selected) {
-          const action: Action = {
-            kind: "fail",
-            error: selected.errors.join("\n"),
-            endpoint: endpointOf(config, undefined),
-            failure: {
-              cause: "output_unsupported",
-              attempts: 0,
-              policy: { provider: config.provider, model: config.model, output: capabilityOf(config) }
-            }
+    react: Effect.fn("llm.react", {
+      kind: "client",
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": config.model,
+        "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
+      }
+    })(function* (request: InferRequest, key?: string) {
+      // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it
+      // reads it from the Clock the caller supplied rather than the global one, so a test drives
+      // the ladder without waiting on real time (model.test.ts, "infer: throttle-shaped retry").
+      const clock = yield* Clock.Clock
+      const random = yield* Random.Random
+      const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
+      const stats: { finish?: string; rung: number; waits: number; attempts: number } = {
+        rung: 0,
+        waits: 0,
+        attempts: 0
+      }
+      // The actor decides the request, render included; the platform maps it to the wire and
+      // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
+      const req = modelRequest(request.trajectory, request, request.context ?? {})
+      // The contract's preflight runs before the first socket: an endpoint that cannot promise
+      // the declared schema, or a schema outside the profile both wires send unchanged, ends
+      // the turn having spent nothing (src/output.ts, outputPreflight).
+      const selected = outputModeOf(req, config)
+      if ("errors" in selected) {
+        const action: Action = {
+          kind: "fail",
+          error: selected.errors.join("\n"),
+          endpoint: endpointOf(config, undefined),
+          failure: {
+            cause: "output_unsupported",
+            attempts: 0,
+            policy: { provider: config.provider, model: config.model, output: capabilityOf(config) }
           }
-          yield* Effect.annotateCurrentSpan("gen_ai.output.supported", false)
-          return action
         }
-        const mode = selected.mode
-        if (req.output?.kind === "contract") {
-          yield* Effect.annotateCurrentSpan("gen_ai.output.contract", req.output.contract.name)
-          yield* Effect.annotateCurrentSpan("gen_ai.output.mode", mode.name)
-          yield* Effect.annotateCurrentSpan("gen_ai.output.native", mode.kind === "native")
-        }
-        const action = yield* Effect.promise<Action>(async () => {
+        yield* Effect.annotateCurrentSpan("gen_ai.output.supported", false)
+        return action
+      }
+      const mode = selected.mode
+      if (req.output?.kind === "contract") {
+        yield* Effect.annotateCurrentSpan("gen_ai.output.contract", req.output.contract.name)
+        yield* Effect.annotateCurrentSpan("gen_ai.output.mode", mode.name)
+        yield* Effect.annotateCurrentSpan("gen_ai.output.native", mode.kind === "native")
+      }
+      const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         const parts: Usage[] = []
         let missed = false
@@ -816,7 +833,14 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
                 failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
               })
             }
-            const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
+            const delay = throttleDelayMs(
+              e,
+              attempt,
+              clock.currentTimeMillisUnsafe(),
+              () => random.nextDoubleUnsafe(),
+              throttleDelays,
+              retryAfterJitterMs
+            )
             if (delay === undefined) {
               const message = e instanceof Error ? e.message : String(e)
               return ends({
@@ -833,38 +857,29 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
             await sleep(delay)
           }
         }
-        })
-        // The wide-span discipline: everything a failure query filters by rides the one span.
-        // Names follow the GenAI semantic conventions where they exist (registry, 2026).
-        yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
-        yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
-        yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
-        yield* Effect.annotateCurrentSpan("retry.attempts", stats.attempts)
-        if (action.usage !== undefined) {
-          // The usage stamp may carry wire-reported provenance; the span follows the same rule.
-          if (action.usage.provider !== undefined) {
-            yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
-          }
-          yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
-          yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
-          if (action.usage.costUsd !== undefined) {
-            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
-            if (action.usage.costSource !== undefined) {
-              yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
-            }
+      })
+      // The wide-span discipline: everything a failure query filters by rides the one span.
+      // Names follow the GenAI semantic conventions where they exist (registry, 2026).
+      yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
+      yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
+      yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+      yield* Effect.annotateCurrentSpan("retry.attempts", stats.attempts)
+      if (action.usage !== undefined) {
+        // The usage stamp may carry wire-reported provenance; the span follows the same rule.
+        if (action.usage.provider !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
+        }
+        yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
+        yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+        if (action.usage.costUsd !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
+          if (action.usage.costSource !== undefined) {
+            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
           }
         }
-        return action
-      }).pipe(
-        Effect.withSpan("llm.react", {
-          kind: "client",
-          attributes: {
-            "gen_ai.operation.name": "chat",
-            "gen_ai.request.model": config.model,
-            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
-          }
-        })
-      )
+      }
+      return action
+    })
   })
   return (
     config.output?.guarantee === "native" && config.output.withTools

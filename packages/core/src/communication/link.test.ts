@@ -11,7 +11,7 @@ describe("links", () => {
       chat: "-1001234567890",
       topic: "42"
     }
-    const target = Schema.decodeUnknownSync(ActorAddress)({
+    const target = Schema.decodeSync(ActorAddress)({
       actor: "support",
       thread: "telegram:-1001234567890:42"
     })

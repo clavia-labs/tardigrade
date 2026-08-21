@@ -133,8 +133,12 @@ describe("the agent with execute as the only tool", () => {
     const spies = { insert: 0, search: 0 }
     const agent = agentWith([zoho(spies)])
     const layers = Layer.mergeAll(
-    KeyValueStore.layerMemory,
-    memoryLog(), codeThenComplete(count), jsSandbox, noRouter)
+      KeyValueStore.layerMemory,
+      memoryLog(),
+      codeThenComplete(count),
+      jsSandbox,
+      noRouter
+    )
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "add the JD and search candidates" })
@@ -188,7 +192,13 @@ describe("the agent with execute as the only tool", () => {
     const events = await run(readLog, memoryLog(spilled))
     const [answer] = toolsReactor(events)
     expect(answer).toBeDefined()
-    const returned = await run(answer!.act(answer!.input as never) as Effect.Effect<ReadonlyArray<Event>>, memoryLog())
+    // Every reactor's `act` is typed against the agent's whole environment, so a settle that only
+    // reads the log still states it. Providing it is what proves the settle never reaches for the
+    // sandbox or the model to answer from a pointer.
+    const returned = await run(
+      answer!.act(answer!.input as never),
+      Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(), codeThenComplete({ calls: 0 }), jsSandbox, noRouter)
+    )
     expect(returned[0]!.type).toBe("ToolReturned")
     const result = (returned[0] as unknown as { result: { result: Record<string, unknown> } }).result.result
     expect(result.tmp).toBe("t1.result")

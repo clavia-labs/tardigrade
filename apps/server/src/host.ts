@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer } from "effect"
+import { Clock, Context, Data, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { createHash } from "node:crypto"
@@ -43,10 +43,18 @@ export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
 export const idOf = (lane: string): string | undefined =>
   lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
 
+// ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
+// artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
+// validation `Error` apart from a filesystem one by its message (api.ts, pushActor).
+export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
 export interface ActorThreads {
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
-  readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
+  readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
 
@@ -65,7 +73,7 @@ export class Threads extends Context.Service<
     readonly settled: ActorThreads["settled"]
     readonly actors?: Effect.Effect<ReadonlyArray<ActorSummary>>
     readonly actor?: (name: string) => ActorThreads | undefined
-    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, Error>
+    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
   }
 >()("tardigrade/server/Threads") {}
 
@@ -220,15 +228,14 @@ const runtimeOf = async (
         request()
       }),
     events: read,
-    list: () =>
-      Effect.gen(function*() {
-        const lanes = yield* Effect.promise(() => host.lanes())
-        const ids = lanes.flatMap((candidate) => {
-          const id = idOf(candidate)
-          return id === undefined ? [] : [id]
-        })
-        return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
-      }),
+    list: Effect.gen(function*() {
+      const lanes = yield* Effect.promise(() => host.lanes())
+      const ids = lanes.flatMap((candidate) => {
+        const id = idOf(candidate)
+        return id === undefined ? [] : [id]
+      })
+      return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
+    }),
     settled
   }
   return {
@@ -353,7 +360,7 @@ const make = (options: ThreadsOptions) =>
 
     const selected = (name: string): ActorThreads | undefined => runtimes.get(name)?.threads
     const primary = selected(RESERVED_ACTOR)!
-    const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, Error> =>
+    const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, ActorPushRefused> =>
       Effect.tryPromise({
         try: () => exclusive(async () => {
           const manifest = artifact.manifest as ActorArtifactManifest
@@ -394,7 +401,7 @@ const make = (options: ThreadsOptions) =>
             throw error
           }
         }),
-        catch: (error) => error instanceof Error ? error : new Error(String(error))
+        catch: (error) => new ActorPushRefused({ message: error instanceof Error ? error.message : String(error), cause: error })
       })
 
     const service: Context.Service.Shape<typeof Threads> = {

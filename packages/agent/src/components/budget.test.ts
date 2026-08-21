@@ -1,8 +1,15 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { actorOf } from "@clavia/tardigrade-core/component"
+import { Self } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
+import { Router } from "@clavia/tardigrade-core/router"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { Infer } from "../turn"
+import { NativeOutputSupport } from "../runtime/infer"
 import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
 import { agentRuntime } from "../runtime/agent"
 import { codeMode } from "./code"
@@ -10,6 +17,22 @@ import { compaction } from "./compaction"
 import { reply } from "./reply"
 
 const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction]).reactors[1]!
+
+// The rest of the agent's environment, which every reactor's `act` is typed against whether or not
+// it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model
+// is asked, no actor is addressed, and no store is read (turn.test.ts, noRouter).
+const rest = Layer.mergeAll(
+  KeyValueStore.layerMemory,
+  Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
+  Layer.succeed(Router, {
+    deliver: () => Effect.void,
+    call: () => Effect.succeed({ error: "no router bound" }),
+    resume: () => Effect.succeed({ error: "no router bound" })
+  }),
+  Layer.succeed(Self, parseActorAddress("test-agent")),
+  Layer.succeed(NativeOutputSupport, { withTools: true }),
+  Layer.succeed(Infer, { react: () => Effect.die("the tools gate never asks the model") })
+)
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
 // except the last), then any extra events appended after.
@@ -32,7 +55,7 @@ const fire = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> =>
   }))
   const derived = budgetReactor(events)
   if (derived.length > 0) {
-    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
+    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)))
     events.push(...out)
   }
   return events.slice(log.length)
@@ -104,7 +127,9 @@ describe("the tools gate reacts to BudgetExhausted", () => {
     }))
     const derived = toolsReactor(events)
     if (derived.length > 0) {
-      const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
+      const out = await Effect.runPromise(
+        derived[0]!.act(derived[0]!.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
+      )
       events.push(...out)
     }
     return events.slice(log.length)

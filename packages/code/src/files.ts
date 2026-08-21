@@ -188,7 +188,7 @@ export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | P
           const entries = yield* Effect.forEach(kept, (name) =>
             fs.stat(path.join(confined.path, name)).pipe(
               Effect.map((info) => ({ name, type: String(info.type) })),
-              Effect.catch(() => Effect.succeed({ name, type: "Unknown" }))
+              Effect.orElseSucceed(() => ({ name, type: "Unknown" }))
             ))
           const truncated = names.names.length > kept.length
           return { entries, ...(truncated ? { truncated } : {}) }
