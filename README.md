@@ -31,7 +31,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ### For agents
 
-Copy this prompt into your coding agent:
+Copy this prompt into your coding agent, or install the [Tardigrade skill](skills/tardigrade/SKILL.md):
 
 ```text
 Use https://github.com/clavia-labs/tardigrade.
