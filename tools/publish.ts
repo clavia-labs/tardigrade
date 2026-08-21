@@ -46,8 +46,10 @@ const BIN_ENTRY = "./src/cli/main.ts"
 // name is not the workspace directory's, so the candidate this command tries inside the repository
 // cannot match it (apps/cli/src/assets.ts, INSTALLED_ASSETS).
 const STAGED_ASSETS = "ui"
+const STAGED_EXAMPLES = "examples"
 
 const VOYAGER_SOURCE = "apps/voyager/dist"
+const QUICKSTART_SOURCE = "examples/quickstart"
 
 const VOYAGER_BUILD = ["bun", "run", "--cwd", "apps/voyager", "build"]
 
@@ -172,6 +174,7 @@ try {
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
     cp(join(root, VOYAGER_SOURCE), join(stage, STAGED_ASSETS), { recursive: true }),
+    cp(join(root, QUICKSTART_SOURCE), join(stage, STAGED_EXAMPLES, "quickstart"), { recursive: true }),
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,
@@ -201,7 +204,7 @@ try {
         : repository,
     bugs: publicSource.pkg.bugs,
     publishConfig: publicSource.pkg.publishConfig,
-    files: ["src", STAGED_ASSETS],
+    files: ["src", STAGED_ASSETS, STAGED_EXAMPLES],
     engines: publicSource.pkg.engines,
     type: "module",
     bin: { [BIN_NAME]: BIN_ENTRY },

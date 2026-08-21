@@ -4,7 +4,8 @@
     ".": {
       "entry": [
         "tools/*.ts",
-        "examples/*.ts"
+        "examples/*.ts",
+        "examples/quickstart/*.ts"
       ],
       "project": [
         "tools/**/*.ts",
