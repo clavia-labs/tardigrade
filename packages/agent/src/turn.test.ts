@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Ref } from "effect"
+import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { settleActor } from "@clavia/tardigrade-core/actor"
+import { send, settleActor, transition } from "@clavia/tardigrade-core/actor"
 import type { Package } from "@clavia/tardigrade-code/packages"
 import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
@@ -12,7 +12,28 @@ import { Self } from "@clavia/tardigrade-core/actor"
 import { Infer, receive } from "./turn"
 import { modelRequest } from "./request"
 import type { InferRequest } from "./runtime/infer"
-import { actorOf, agentRuntime, budget, codeModeFor, compaction, output, outputOf, outputRepair, outputRepairFor, reply, toolList } from "./index"
+import { turnFailed } from "./events"
+import type { AgentComponent } from "./runtime/agent"
+import type { OutputFallback } from "./output"
+import {
+  actorOf,
+  agentRuntime,
+  budget,
+  codeModeFor,
+  compaction,
+  fingerprintOf,
+  output,
+  outputFailFast,
+  repairFallback,
+  FAIL_FAST_FALLBACK,
+  NATIVE_MODE,
+  outputOf,
+  outputRepair,
+  outputRepairFor,
+  outputRetryRequested,
+  reply,
+  toolList
+} from "./index"
 
 // The default assembly over a stated scope, and its runtime reactors, reconstructed the way
 // agentRuntime mounts them: reactors[0] is the infer loop, reactors[1] is the call router. The
@@ -414,6 +435,11 @@ const BAD_ANSWER = JSON.stringify({ aspects: JSON.stringify(GOOD_ANSWER) })
 const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
   new Set(log.filter((e) => e.type === "TurnCompleted").map((e) => String((e as { turn?: unknown }).turn)))
 
+// The stub binding states the mode it emulates, the way a real binding reports the mode it
+// selected. Nothing synthesizes one: a declared-output answer with no mode is an invariant error
+// (runtime/infer.ts, completionOf).
+const REPAIR_TWO = repairFallback({ attempts: 2 })
+
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
   actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, budget, compaction, outputRepairFor(policy)])
 
@@ -423,7 +449,7 @@ describe("a turn that declares an output contract", () => {
       memoryLog(),
       KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
-        react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER) })
+        react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: NATIVE_MODE })
       }),
       jsSandbox,
       noRouter
@@ -437,10 +463,18 @@ describe("a turn that declares an output contract", () => {
     )
     expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
     expect(outputOf(SCOUT, events, "m1")?.aspects[0]?.name).toBe("grader nondeterminism")
-    // The policy the attempt ran under is on the ask, so a replay reads it without guessing.
-    expect(events.find((e) => e.type === "ModelCalled")).toMatchObject({
-      output: { contract: "scout", implementation: "native", guarantee: "native" }
-    })
+    // The ask records the declared policy: the contract's identity, its fingerprint, and the
+    // fallback the assembly mounted, which is none here.
+    const called = events.find((e) => e.type === "ModelCalled") as {
+      output?: { contract?: string; fingerprint?: string; fallback?: unknown }
+    }
+    expect(called.output?.contract).toBe("scout")
+    expect(called.output?.fingerprint).toBe(fingerprintOf(SCOUT))
+    expect(called.output?.fallback).toBeUndefined()
+    // The consequence records the mode the attempt actually ran in, which is what replay reads.
+    const done = events.find((e) => e.type === "TurnCompleted") as { mode?: unknown; attemptKey?: string }
+    expect(done.mode).toEqual({ kind: "native", name: "native" })
+    expect(done.attemptKey).toBe("m1/infer/0")
   })
 
   test("real tool calls stay tool calls; the contract governs the response that ends the turn", async () => {
@@ -451,7 +485,7 @@ describe("a turn that declares an output contract", () => {
         react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) =>
           Effect.succeed(
             trajectory.some((e) => e.type === "ToolReturned")
-              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER) }
+              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: NATIVE_MODE }
               : { kind: "call" as const, callId: "c1", name: "execute", arguments: { code: "return 1" } }
           )
       }),
@@ -477,7 +511,7 @@ describe("a turn that declares an output contract", () => {
       Layer.succeed(Infer, {
         react: () => {
           asked += 1
-          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER })
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: NATIVE_MODE })
         }
       }),
       jsSandbox,
@@ -495,14 +529,14 @@ describe("a turn that declares an output contract", () => {
     const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string; policy?: unknown }
     expect(failed.cause).toBe("output_contract_violation")
     expect(failed.error).toContain("aspects")
-    expect(failed.policy).toMatchObject({ name: "native", guarantee: "native" })
+    expect(failed.policy).toMatchObject({ kind: "native", name: "native" })
   })
 
   test("prose under a contract is the same violation, never a second ask", async () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "here are the aspects" }) }),
+      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "here are the aspects", mode: NATIVE_MODE }) }),
       jsSandbox,
       noRouter
     )
@@ -525,17 +559,19 @@ describe("the repair implementation", () => {
       memoryLog(),
       KeyValueStore.layerMemory,
       Layer.succeed(Infer, {
-        react: ({ trajectory, system }: { trajectory: ReadonlyArray<Event>; system: string }) => {
+        react: (request: InferRequest) => {
+          const trajectory = request.trajectory
           // The correction is a real message, so the model reads why it was refused.
           const refused = trajectory.some((e) => e.type === "OutputRejected")
           seen.push(refused ? "corrected" : "first")
-          // The implementation asks for the contract in the prompt, because it claims no
-          // provider guarantee.
-          expect(system).toContain('conforming to the schema "scout"')
+          // The fallback's instruction rides the output request, so it reaches the model only on
+          // an attempt running as that fallback (request.ts, OutputRequest).
+          expect(request.output?.system).toContain('conforming to the schema "scout"')
+          expect(request.system).not.toContain("scout")
           return Effect.succeed(
             refused
-              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER) }
-              : { kind: "complete" as const, output: BAD_ANSWER }
+              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO }
+              : { kind: "complete" as const, output: BAD_ANSWER, mode: REPAIR_TWO }
           )
         }
       }),
@@ -575,8 +611,8 @@ describe("the repair implementation", () => {
           const owed = request.trajectory.some((e) => e.type === "OutputRejected" && !completedTurns(request.trajectory).has(String((e as { turn?: unknown }).turn)))
           return Effect.succeed(
             owed || request.trajectory.some((e) => e.type === "TurnCompleted")
-              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER) }
-              : { kind: "complete" as const, output: BAD_ANSWER }
+              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO }
+              : { kind: "complete" as const, output: BAD_ANSWER, mode: REPAIR_TWO }
           )
         }
       }),
@@ -613,8 +649,8 @@ describe("the repair implementation", () => {
           keys.push(key)
           return Effect.succeed(
             trajectory.some((e) => e.type === "OutputRejected")
-              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER) }
-              : { kind: "complete" as const, output: BAD_ANSWER }
+              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO }
+              : { kind: "complete" as const, output: BAD_ANSWER, mode: REPAIR_TWO }
           )
         }
       }),
@@ -639,7 +675,7 @@ describe("the repair implementation", () => {
       Layer.succeed(Infer, {
         react: () => {
           asked += 1
-          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER })
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: REPAIR_TWO })
         }
       }),
       jsSandbox,
@@ -669,7 +705,7 @@ describe("the repair implementation", () => {
       Layer.succeed(Infer, {
         react: () => {
           asked += 1
-          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER })
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: repairFallback({ attempts: 0 }) })
         }
       }),
       jsSandbox,
@@ -686,9 +722,54 @@ describe("the repair implementation", () => {
     expect(events.find((e) => e.type === "TurnFailed")).toMatchObject({ cause: "output_repairs_exhausted" })
   })
 
-  test("two components declaring an implementation collide at construction", () => {
-    expect(() => actorOf(agentRuntime(), [codeModeFor({ packages: [] }), outputRepair, outputRepairFor({ attempts: 1 })])).toThrow(
-      "output implementation declared by components output.repair and output.repair"
+  test("a bound that is not a whole count of asks is refused where it is stated", () => {
+    for (const attempts of [-1, 1.5, Number.NaN]) {
+      expect(() => outputRepairFor({ attempts })).toThrow("not applicable")
+    }
+  })
+
+  test("the recorded policy decides exhaustion, so a later mount cannot extend an old round", () => {
+    // Two rejections already stand, recorded under a bound of one. Mounting a looser policy now
+    // must not reopen that round: replay reads the log, never today's assembly
+    // (src/output.ts, implementationOf; runtime/infer.ts, spentPolicyOf).
+    const spent = repairFallback({ attempts: 1 })
+    const seeded: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "decompose this topic", output: { name: SCOUT.name, schema: SCOUT.schema }, at: 0 },
+      { type: "ModelCalled", callId: "m1/infer/0", ordinal: 0, turn: "m1", at: 1 },
+      { type: "OutputRejected", contract: "scout", attempt: "m1/infer/0", text: BAD_ANSWER, errors: ["/aspects: bad"], mode: spent, turn: "m1", at: 2 },
+      { type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", at: 3 },
+      { type: "OutputRejected", contract: "scout", attempt: "m1/infer/1", text: BAD_ANSWER, errors: ["/aspects: bad"], mode: spent, turn: "m1", at: 4 }
+    ]
+    let asked = 0
+    const layers = Layer.mergeAll(
+      memoryLog(seeded),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, {
+        react: () => {
+          asked += 1
+          return Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: REPAIR_TWO })
+        }
+      }),
+      jsSandbox,
+      noRouter
+    )
+    return run(
+      Effect.gen(function* () {
+        yield* settleActor(repairAgent({ attempts: 5 }))
+        return yield* readLog
+      }),
+      layers
+    ).then((events) => {
+      expect(asked).toBe(0)
+      const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; policy?: { attempts?: number } }
+      expect(failed.cause).toBe("output_repairs_exhausted")
+      expect(failed.policy?.attempts).toBe(1)
+    })
+  })
+
+  test("two components declaring a fallback collide at construction", () => {
+    expect(() => actorOf(agentRuntime(), [codeModeFor({ packages: [] }), outputRepair, outputFailFast])).toThrow(
+      "output fallback declared by components output.repair and output.fail-fast"
     )
   })
 })
@@ -743,5 +824,268 @@ describe("the mind on a native surface", () => {
     ])
     expect(reads).toEqual(["/contract.md"])
     expect(events.some((e) => e.type === "CodeDispatched" || e.type === "BudgetExhausted" || e.type === "ContextCompacted")).toBe(false)
+  })
+})
+
+describe("the fail-fast implementation", () => {
+  const failFastAgent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, budget, compaction, outputFailFast])
+
+  test("a missed response ends the turn with its own cause, and never asks again", async () => {
+    let asked = 0
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, {
+        react: (request: InferRequest) => {
+          asked += 1
+          // The fallback carries its own instruction, and the base prompt stays what it would be
+          // with nothing mounted (request.ts, OutputRequest).
+          expect(request.output?.system).toContain('conforming to the schema "scout"')
+          expect(request.system).not.toContain("scout")
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: FAIL_FAST_FALLBACK })
+        }
+      }),
+      jsSandbox,
+      noRouter
+    )
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(failFastAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        return yield* readLog
+      }),
+      layers
+    )
+    expect(asked).toBe(1)
+    expect(events.some((e) => e.type === "OutputRejected")).toBe(false)
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    // Its own class: a local decision to stop, told apart from a provider breaking a promise it
+    // made and from a correction loop spending its bound (src/events.ts, TURN_FAILURE_CAUSES).
+    expect(failed.cause).toBe("output_validation_failed")
+    expect(failed.error).toContain("aspects")
+  })
+
+  test("a conforming response completes the turn like any other", async () => {
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: FAIL_FAST_FALLBACK }) }),
+      jsSandbox,
+      noRouter
+    )
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(failFastAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        return yield* readLog
+      }),
+      layers
+    )
+    expect(outputOf(SCOUT, events, "m1")).toEqual(GOOD_ANSWER)
+  })
+})
+
+// A domain-specific mechanism is a component with its own implementation value. The core records
+// the rejection and stops; this component decides the feedback, the bound, and whether to ask
+// again at all. Nothing about the framework repair loop reaches it.
+const HOUSE_STYLE: OutputFallback = { kind: "delegated", name: "house-style", projectHistory: true }
+
+const houseStyle = (options: { readonly asks: number }): AgentComponent => ({
+  name: "output.house-style",
+  derive: (log: ReadonlyArray<Event>) => {
+    const rejections = log.filter((e) => e.type === "OutputRejected")
+    const answered = new Set(
+      log.filter((e) => e.type === "OutputRetryRequested").map((e) => String((e as { rejection?: unknown }).rejection))
+    )
+    const owed = rejections.find((e) => !answered.has(String((e as { attempt?: unknown }).attempt))) as
+      | { attempt?: string; turn?: string }
+      | undefined
+    const view = {
+      system: [],
+      tools: [],
+      context: [],
+      output: [{ component: "output.house-style", fallback: HOUSE_STYLE }]
+    }
+    if (owed === undefined) return { view, transitions: [] }
+    const spent = rejections.length
+    if (spent > options.asks) {
+      return {
+        view,
+        transitions: [
+          transition({
+            key: `tn:${String(owed.turn)}`,
+            input: { turn: String(owed.turn) },
+            act: (input) =>
+              Effect.gen(function* () {
+                const at = yield* Clock.currentTimeMillis
+                return [turnFailed({ error: "the house style was not met", cause: "output_validation_failed", turn: input.turn, at })]
+              })
+          })
+        ]
+      }
+    }
+    return {
+      view,
+      transitions: [
+        transition({
+          key: `oq:${String(owed.attempt)}`,
+          input: { rejection: String(owed.attempt), turn: String(owed.turn) },
+          act: (input) =>
+            Effect.gen(function* () {
+              const at = yield* Clock.currentTimeMillis
+              return [
+                outputRetryRequested({
+                  rejection: input.rejection,
+                  feedback: "House style: every description ends in a full stop.",
+                  by: "output.house-style",
+                  decision: { rule: "full-stop" },
+                  turn: input.turn,
+                  at
+                })
+              ]
+            })
+        })
+      ]
+    }
+  }
+})
+
+describe("a domain-specific implementation", () => {
+  test("the core records the rejection and waits; the component decides the feedback", async () => {
+    const prompts: Array<ReadonlyArray<{ readonly role: string; readonly content: string | null }>> = []
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, {
+        react: (request: InferRequest) => {
+          prompts.push(modelRequest(request.trajectory, request, request.context ?? {}).messages)
+          return Effect.succeed(
+            request.trajectory.some((e) => e.type === "OutputRetryRequested")
+              ? { kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: HOUSE_STYLE }
+              : { kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE }
+          )
+        }
+      }),
+      jsSandbox,
+      noRouter
+    )
+    const agent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, houseStyle({ asks: 2 })])
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        return yield* readLog
+      }),
+      layers
+    )
+    // The component's own request stands between the rejection and the next ask.
+    expect(events.map((e) => e.type)).toContain("OutputRetryRequested")
+    const decided = events.find((e) => e.type === "OutputRetryRequested") as { feedback?: string; by?: string; decision?: unknown }
+    expect(decided.by).toBe("output.house-style")
+    expect(decided.decision).toEqual({ rule: "full-stop" })
+    // The second prompt carries the component's sentence, and none of the framework's.
+    const correcting = prompts[1]!.map((m) => String(m.content)).join("\n")
+    expect(correcting).toContain("House style: every description ends in a full stop.")
+    expect(correcting).not.toContain("Reply again with JSON")
+    expect(correcting).not.toContain("never a string holding one")
+    expect(outputOf(SCOUT, events, "m1")).toEqual(GOOD_ANSWER)
+  })
+
+  test("without its decision the turn rests: the core schedules no ask of its own", async () => {
+    let asked = 0
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, {
+        react: () => {
+          asked += 1
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE })
+        }
+      }),
+      jsSandbox,
+      noRouter
+    )
+    // A component that mounts the implementation and derives nothing: the rejection stands, and
+    // the turn is durably parked rather than quietly retried.
+    const silent: AgentComponent = {
+      name: "output.silent",
+      derive: () => ({
+        view: { system: [], tools: [], context: [], output: [{ component: "output.silent", fallback: HOUSE_STYLE }] },
+        transitions: []
+      })
+    }
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(actorOf(agentRuntime(), [codeModeFor({ packages: [] }), silent]), {
+          id: "m1",
+          text: "decompose this topic",
+          output: SCOUT
+        })
+        return yield* readLog
+      }),
+      layers
+    )
+    expect(asked).toBe(1)
+    expect(events.filter((e) => e.type === "OutputRejected")).toHaveLength(1)
+    expect(events.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")).toBe(false)
+  })
+
+  test("its own bound ends the turn its own way", async () => {
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: HOUSE_STYLE }) }),
+      jsSandbox,
+      noRouter
+    )
+    const agent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, houseStyle({ asks: 1 })])
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        return yield* readLog
+      }),
+      layers
+    )
+    const failed = events.find((e) => e.type === "TurnFailed") as { error?: string; cause?: string }
+    expect(failed.error).toBe("the house style was not met")
+    expect(failed.cause).toBe("output_validation_failed")
+    expect(events.filter((e) => e.type === "OutputRejected")).toHaveLength(2)
+  })
+})
+
+describe("a declaration nobody can serve", () => {
+  test("ends the turn before a model is asked", async () => {
+    let asked = 0
+    const layers = Layer.mergeAll(
+      memoryLog(),
+      KeyValueStore.layerMemory,
+      Layer.succeed(Infer, {
+        react: () => {
+          asked += 1
+          return Effect.succeed({ kind: "complete" as const, output: "{}" })
+        }
+      }),
+      jsSandbox,
+      noRouter
+    )
+    const events = await run(
+      Effect.gen(function* () {
+        const log = yield* EventLog
+        const at = yield* Clock.currentTimeMillis
+        // A brief that arrived through a door with no TypeScript on it: the API declares a
+        // contract, and this declares an open schema no wire sends unchanged.
+        yield* send(rlmAgent, {
+          type: "MessageReceived",
+          id: "m1",
+          text: "go",
+          output: { name: "loose", schema: { type: "object", properties: { a: { type: "string" } }, required: [] } },
+          at
+        })
+        void log
+        return yield* readLog
+      }),
+      layers
+    )
+    expect(asked).toBe(0)
+    const failed = events.find((e) => e.type === "TurnFailed") as { cause?: string; error?: string }
+    expect(failed.cause).toBe("output_unsupported")
+    expect(failed.error).toContain("required must list every property")
   })
 })

@@ -1,13 +1,40 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { codeMode, output, outputRepairFor, renderOf } from "tardie"
+import { StopReason } from "@aws-sdk/client-bedrock-runtime"
+import {
+  codeMode,
+  output,
+  outputFrom,
+  outputRepairFor,
+  renderOf,
+  repairFallback,
+  FAIL_FAST_FALLBACK,
+  NATIVE_MODE
+} from "tardie"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
 const surfaceRender = renderOf([codeMode], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, ...surfaceRender })
 import { Infer } from "tardie"
-import { actionOf, bedrockAdapter, DEFAULT_STREAM_BOUNDS, ladderOf, modelAskOf, modelIdOf, infer, retryAfterMsOf, throttleDelayMs } from "./model"
-import { capabilityOf, converseOutputConfig, outputPreflight, PROVEN_OUTPUT_CAPABILITIES } from "./output"
+import {
+  actionOf,
+  bedrockAdapter,
+  DEFAULT_STREAM_BOUNDS,
+  ladderOf,
+  modelAskOf,
+  modelIdOf,
+  infer,
+  retryAfterMsOf,
+  tapStopReason,
+  throttleDelayMs
+} from "./model"
+import {
+  capabilityOf,
+  converseOutputConfig,
+  converseStopClass,
+  outputModeOf,
+  outputPreflight
+} from "./output"
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 
@@ -22,7 +49,7 @@ describe("actionOf", () => {
       content: "let me check",
       toolCalls: [{ id: "call_9", type: "function", function: { name: "execute", arguments: '{"code":"return 2"}' } }]
     } as never)
-    expect(action).toEqual({ kind: "call", callId: "call_9", name: "execute", arguments: { code: "return 2" }, text: "let me check" })
+    expect(action).toMatchObject({ kind: "call", callId: "call_9", name: "execute", arguments: { code: "return 2" }, text: "let me check" })
   })
 
   test("plain text completes; nothing throws", () => {
@@ -68,51 +95,76 @@ const declared = (): ReadonlyArray<Event> => [
   { type: "MessageReceived", id: "m1", text: "decompose this topic", output: { name: SCOUT.name, schema: SCOUT.schema }, at: 1 }
 ]
 
-describe("the output capability", () => {
-  test("a named provider this repository read the wire for is proven; an unnamed endpoint is not", () => {
-    expect(capabilityOf({ provider: "openai" })).toEqual(PROVEN_OUTPUT_CAPABILITIES["openai"]!)
-    expect(capabilityOf({ provider: "bedrock" })).toEqual(PROVEN_OUTPUT_CAPABILITIES["bedrock"]!)
-    expect(capabilityOf({ provider: "some-gateway" })).toBeUndefined()
+const NATIVE_CAPABILITY = { guarantee: "native" as const, withTools: true }
+
+const REPAIR = repairFallback({ attempts: 2 })
+
+describe("the output mode one attempt runs in", () => {
+  const contract = { kind: "contract" as const, contract: SCOUT }
+  const withRepair = { ...contract, fallback: REPAIR, fallbackSystem: "reply with that JSON alone" }
+
+  // A provider name is not evidence. Structured output belongs to the endpoint and the model
+  // together, so a vendor string cannot let an unsupported model pass preflight and spend
+  // (src/output.ts, capabilityOf).
+  test("no provider name grants a guarantee; only a declaration does", () => {
     expect(capabilityOf({})).toBeUndefined()
-    // A configuration may declare what the provider name cannot prove, and it wins.
-    expect(capabilityOf({ provider: "openai", output: { guarantee: "none", withTools: false } })).toEqual({
-      guarantee: "none",
-      withTools: false
-    })
+    expect(outputPreflight({ output: contract, tools: [] }, { provider: "openai", model: "gpt-3.5-turbo" }).join(" ")).toContain(
+      "declares no structured output capability"
+    )
+    expect(outputPreflight({ output: contract, tools: [] }, { provider: "bedrock", model: "amazon.titan-text" }).join(" ")).toContain(
+      "declares no structured output capability"
+    )
+    // Every reason names the endpoint and the model that could not serve it.
+    const refused = outputPreflight({ output: contract, tools: [] }, { model: "mystery" }).join(" ")
+    expect(refused).toContain("mystery")
+    expect(refused).toContain("MODEL_OUTPUT_GUARANTEE")
   })
 
-  test("preflight passes a proven endpoint, and refuses an unproven one by name", () => {
-    const request = { output: { contract: SCOUT, implementation: { name: "native" as const, guarantee: "native" as const, onMismatch: "fail" as const } }, tools: [] }
-    expect(outputPreflight(request, { provider: "openai", model: "gpt-5.2" })).toEqual([])
-    const refused = outputPreflight(request, { model: "some-model" }).join(" ")
-    expect(refused).toContain("declares no structured output capability")
-    expect(refused).toContain("some-model")
-    expect(outputPreflight(request, { model: "m", output: { guarantee: "native", withTools: true } })).toEqual([])
+  // Native comes first whenever the endpoint can serve the call. A mounted fallback is a policy
+  // for the calls it cannot serve, and it never turns the provider's own guarantee off.
+  test("a declared native capability runs natively, mounted fallback or not", () => {
+    const config = { provider: "openai", model: "gpt-5.2", output: NATIVE_CAPABILITY }
+    expect(outputModeOf({ output: contract, tools: [] }, config)).toEqual({ mode: { kind: "native", name: "native" } })
+    expect(outputModeOf({ output: withRepair, tools: [] }, config)).toEqual({ mode: { kind: "native", name: "native" } })
   })
 
-  test("an implementation that asks for no guarantee preflights clean anywhere", () => {
-    const repair = renderOf([codeMode, outputRepairFor()], []).output
-    const request = { output: { contract: SCOUT, implementation: repair }, tools: [] }
-    expect(outputPreflight(request, { model: "m" })).toEqual([])
+  test("no native capability runs the declared fallback, and fails without one", () => {
+    const config = { model: "m" }
+    expect(outputModeOf({ output: withRepair, tools: [] }, config)).toEqual({ mode: REPAIR })
+    const failFast = { ...contract, fallback: FAIL_FAST_FALLBACK }
+    expect(outputModeOf({ output: failFast, tools: [] }, config)).toEqual({ mode: FAIL_FAST_FALLBACK })
+    const selected = outputModeOf({ output: contract, tools: [] }, config)
+    expect("errors" in selected && selected.errors.join(" ")).toContain("declares no structured output capability")
+    const declaredNone = outputModeOf({ output: contract, tools: [] }, { model: "m", output: { guarantee: "none" } })
+    expect("errors" in declaredNone && declaredNone.errors.join(" ")).toContain("declares no native structured output")
   })
 
-  test("an endpoint that cannot carry a schema beside tools refuses before spend, never a second call", () => {
-    const request = { output: { contract: SCOUT, implementation: { name: "native" as const, guarantee: "native" as const, onMismatch: "fail" as const } }, tools: [{}] }
+  // A native endpoint that cannot carry a schema beside tools makes native unavailable for this
+  // call alone, so the declared fallback runs and nothing buys a second inference.
+  test("a tool list an endpoint cannot combine makes native unavailable for the call", () => {
     const config = { provider: "narrow", model: "m", output: { guarantee: "native" as const, withTools: false } }
-    expect(outputPreflight(request, config).join(" ")).toContain("cannot carry the contract")
-    expect(outputPreflight({ ...request, tools: [] }, config)).toEqual([])
+    expect(outputModeOf({ output: contract, tools: [] }, config)).toEqual({ mode: { kind: "native", name: "native" } })
+    expect(outputModeOf({ output: withRepair, tools: [{}] }, config)).toEqual({ mode: REPAIR })
+    const selected = outputModeOf({ output: contract, tools: [{}] }, config)
+    expect("errors" in selected && selected.errors.join(" ")).toContain("cannot carry the contract")
+    expect("errors" in selected && selected.errors.join(" ")).toContain("mounts no output fallback")
   })
 
-  test("a schema outside the profile refuses before spend, whatever the endpoint promised", () => {
-    const loose = { name: "loose", schema: { type: "object", properties: { a: { type: "string" } }, required: [] } }
-    const request = { output: { contract: loose, implementation: { name: "native" as const, guarantee: "native" as const, onMismatch: "fail" as const } }, tools: [] }
-    expect(outputPreflight(request, { provider: "openai", model: "m" }).join(" ")).toContain("outside the schema profile")
+  test("a declaration that is not a contract fails before spend, whatever the endpoint promised", () => {
+    const loose = outputFrom("loose", { type: "object", properties: { a: { type: "string" } }, required: [] })
+    expect("errors" in loose).toBe(true)
+    const invalid = { kind: "invalid" as const, errors: ["message m1: /: bad"] }
+    expect(
+      outputPreflight({ output: invalid, tools: [] }, { model: "m", output: NATIVE_CAPABILITY }).join(" ")
+    ).toContain("is not a contract")
   })
 })
 
 describe("the Converse output surface", () => {
+  const request = { kind: "contract" as const, contract: SCOUT }
+
   test("the contract maps onto outputConfig.textFormat, with the schema as a JSON string", () => {
-    expect(converseOutputConfig({ contract: SCOUT, implementation: { name: "native", guarantee: "native", onMismatch: "fail" } })).toEqual({
+    expect(converseOutputConfig(request, NATIVE_MODE)).toEqual({
       textFormat: {
         type: "json_schema",
         structure: { jsonSchema: { name: "scout", schema: JSON.stringify(SCOUT.schema) } }
@@ -122,14 +174,50 @@ describe("the Converse output surface", () => {
 
   test("buildInput sets the native surface, and never a forced tool", () => {
     const config = { baseUrl: "https://bedrock.test/us-east-1", apiKey: "k", model: "anthropic.claude-sonnet", provider: "bedrock" }
-    const request = { contract: SCOUT, implementation: { name: "native" as const, guarantee: "native" as const, onMismatch: "fail" as const } }
     const options = { model: config.model, messages: [{ role: "user", content: "go" }], systemPrompts: ["be brief"], tools: [] }
-    const withContract = bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS, request).buildInput(options as never)
-    expect(withContract.outputConfig).toEqual(converseOutputConfig(request))
+    const withContract = bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS, request, NATIVE_MODE).buildInput(options as never)
+    expect(withContract.outputConfig).toEqual(converseOutputConfig(request, NATIVE_MODE)!)
     expect(JSON.stringify(withContract.toolConfig ?? {})).not.toContain("scout")
     expect(withContract.inferenceConfig).toMatchObject({ maxTokens: 4096 })
     // No contract, no output surface at all.
     expect(bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS).buildInput(options as never).outputConfig).toBeUndefined()
+    // A fallback mode sends no schema on the wire, whatever the contract says.
+    expect(
+      bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS, request, REPAIR).buildInput(options as never).outputConfig
+    ).toBeUndefined()
+  })
+
+  // The adapter's own processor folds several stop reasons into "stop" before the shared
+  // processor sees them, so the raw reason is tapped off the SDK stream and read here. The cases
+  // are the SDK's own enum, so a reason AWS adds breaks this test rather than passing silently
+  // (@aws-sdk/client-bedrock-runtime, StopReason).
+  test("every Converse stop reason has a class, and the classes are the failure classes", () => {
+    expect(Object.values(StopReason).map((reason) => [reason, converseStopClass(reason)])).toEqual([
+      ["content_filtered", "refused"],
+      ["end_turn", "ok"],
+      ["guardrail_intervened", "refused"],
+      ["malformed_model_output", "violation"],
+      ["malformed_tool_use", "ok"],
+      ["max_tokens", "truncated"],
+      ["model_context_window_exceeded", "truncated"],
+      ["stop_sequence", "ok"],
+      ["tool_use", "ok"]
+    ])
+    expect(converseStopClass(undefined)).toBe("ok")
+  })
+
+  test("the stop tap keeps the raw reason the processor folds away", async () => {
+    const stops: { stopReason?: string } = {}
+    const events = {
+      async *[Symbol.asyncIterator]() {
+        yield { messageStart: { role: "assistant" } }
+        yield { messageStop: { stopReason: "guardrail_intervened" } }
+      }
+    }
+    const seen: Array<unknown> = []
+    for await (const event of tapStopReason(events, stops)) seen.push(event)
+    expect(seen).toHaveLength(2)
+    expect(stops.stopReason).toBe("guardrail_intervened")
   })
 })
 
@@ -193,22 +281,28 @@ describe("infer end to end", () => {
         Effect.provide(layer)
       ) as Effect.Effect<unknown>
     )
-    expect(action).toEqual({ kind: "complete", output: "the answer is 4" })
+    expect(action).toMatchObject({ kind: "complete", output: "the answer is 4" })
   })
 
-  test("a declared contract rides response_format strictly, beside the tools and with no answer tool", async () => {
-    let body: {
-      tools?: ReadonlyArray<{ function?: { name?: string } }>
-      tool_choice?: unknown
-      messages?: ReadonlyArray<{ role: string; content?: string }>
-      response_format?: { type?: string; json_schema?: { name?: string; strict?: boolean; schema?: unknown } }
-    } | null = null
-    const answer = JSON.stringify({ aspects: [{ name: "a", description: "b" }] })
+  const ANSWER = JSON.stringify({ aspects: [{ name: "a", description: "b" }] })
+
+  type Sent = {
+    tools?: ReadonlyArray<{ function?: { name?: string } }>
+    tool_choice?: unknown
+    messages?: ReadonlyArray<{ role: string; content?: string }>
+    response_format?: { type?: string; json_schema?: { name?: string; strict?: boolean; schema?: unknown } }
+  }
+
+  const wire = async (options: {
+    readonly fallback?: ReturnType<typeof outputRepairFor>
+    readonly capability?: { readonly guarantee: "native"; readonly withTools: boolean }
+  }) => {
+    let body: Sent | null = null
     const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
       body = JSON.parse(await request.text())
       return sse([
-        { id: "r3", choices: [{ index: 0, delta: { role: "assistant", content: answer } }] },
+        { id: "r3", choices: [{ index: 0, delta: { role: "assistant", content: ANSWER } }] },
         { id: "r3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])
     }) as typeof globalThis.fetch
@@ -217,16 +311,27 @@ describe("infer end to end", () => {
       apiKey: "k",
       model: "gpt-5.2",
       provider: "openai",
+      ...(options.capability === undefined ? {} : { output: options.capability }),
       fetch: fetchImpl
     })
-    const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(reqOf(declared()))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
-    )
+    const render = renderOf(options.fallback === undefined ? [codeMode] : [codeMode, options.fallback], declared())
+    const action = (await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react({ trajectory: declared(), ...render })).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<unknown>
+    )) as Action
+    return { action, sent: body! }
+  }
+
+  test("a declared contract rides response_format strictly, beside the tools and with no answer tool", async () => {
+    const { action, sent } = await wire({ capability: NATIVE_CAPABILITY })
     // The structured response is the completion, decoded from the content the schema constrained.
-    expect(action).toEqual({ kind: "complete", output: answer })
-    const sent = body!
+    expect(action).toMatchObject({ kind: "complete", output: ANSWER })
+    // The mode is reported on the action, so the reactor records a fact rather than a guess.
+    expect(action.mode).toEqual({ kind: "native", name: "native" })
     expect(sent.response_format).toMatchObject({ type: "json_schema" })
-    expect(sent.response_format?.json_schema).toMatchObject({ name: "structured_output", strict: true })
+    // The declared identity rides the wire, not the adapter's fixed one.
+    expect(sent.response_format?.json_schema).toMatchObject({ name: "scout", strict: true })
     // The schema reaches the wire unchanged, which is what the supported profile buys.
     expect(sent.response_format?.json_schema?.schema).toEqual(SCOUT.schema as never)
     // The work tools still ride the same call, and no tool stands for the answer.
@@ -239,24 +344,30 @@ describe("infer end to end", () => {
     expect(system).not.toContain("schema")
   })
 
+  // Native is preferred whenever the endpoint can serve the call, so a mounted fallback changes
+  // neither the transport nor a single word of the request (src/output.ts, outputModeOf).
+  test("a mounted fallback is dormant on a native endpoint", async () => {
+    const bare = await wire({ capability: NATIVE_CAPABILITY })
+    const mounted = await wire({ capability: NATIVE_CAPABILITY, fallback: outputRepairFor({ attempts: 2 }) })
+    expect(mounted.action.mode).toEqual({ kind: "native", name: "native" })
+    expect(mounted.sent.response_format).toEqual(bare.sent.response_format as never)
+    expect(mounted.sent.messages).toEqual(bare.sent.messages as never)
+    expect(JSON.stringify(mounted.sent.messages)).not.toContain("Reply with that JSON alone")
+  })
+
+  test("the same fallback runs, and sends its instruction, on an endpoint with no guarantee", async () => {
+    const { action, sent } = await wire({ fallback: outputRepairFor({ attempts: 2 }) })
+    expect(action.mode).toEqual({ kind: "repair", name: "repair", attempts: 2, projectHistory: true })
+    // No guarantee was claimed, so no schema was sent.
+    expect(sent.response_format).toBeUndefined()
+    // The fallback's own instruction is what asks for the shape.
+    const system = sent.messages?.filter((m) => m.role === "system").map((m) => m.content).join("\n") ?? ""
+    expect(system).toContain('conforming to the schema "scout"')
+  })
+
   test("an implementation that asks for no guarantee sends no response_format at all", async () => {
-    let body: { response_format?: unknown } | null = null
-    const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      const request = input instanceof Request ? input : new Request(String(input), init)
-      body = JSON.parse(await request.text())
-      return sse([
-        { id: "r4", choices: [{ index: 0, delta: { role: "assistant", content: "{}" } }] },
-        { id: "r4", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
-      ])
-    }) as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", fetch: fetchImpl })
-    const repaired = renderOf([codeMode, outputRepairFor()], declared())
-    await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react({ trajectory: declared(), ...repaired })).pipe(
-        Effect.provide(layer)
-      ) as Effect.Effect<unknown>
-    )
-    expect(body!.response_format).toBeUndefined()
+    const { sent } = await wire({ fallback: outputRepairFor() })
+    expect(sent.response_format).toBeUndefined()
   })
 
   test("an unsupported contract fails before the fetch, so nothing is spent", async () => {
@@ -280,23 +391,99 @@ describe("infer end to end", () => {
     expect(action.usage).toBeUndefined()
   })
 
-  test("a refusal is its own failure class, keeps its bill, and the ladder does not climb it", async () => {
+  // A structured-output refusal arrives as a `refusal` delta under an ordinary stop, which the
+  // adapter's processor keeps nowhere: an unread one reads as "the model said nothing" and enters
+  // the transport failure path (https://developers.openai.com/api/docs/guides/structured-outputs).
+  test("a refusal on the wire is its own failure class, keeps its bill, and the ladder does not climb it", async () => {
     let calls = 0
     const fetchImpl = (async () => {
       calls += 1
       return sse([
         { id: "r5", choices: [{ index: 0, delta: { role: "assistant" } }] },
-        { id: "r5", choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }], usage: { prompt_tokens: 11, completion_tokens: 0 } }
+        { id: "r5", choices: [{ index: 0, delta: { refusal: "I cannot " } }] },
+        { id: "r5", choices: [{ index: 0, delta: { refusal: "help with that." } }] },
+        { id: "r5", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 0 } }
       ])
     }) as unknown as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", provider: "openai", fetch: fetchImpl, sleep: async () => {} })
+    const layer = infer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "m",
+      provider: "openai",
+      output: NATIVE_CAPABILITY,
+      fetch: fetchImpl,
+      sleep: async () => {}
+    })
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf(declared()))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )) as Action
     expect(calls).toBe(1)
     expect((action as { failure?: { cause?: string } }).failure).toMatchObject({ cause: "refused" })
-    // A refusal still spent the prompt, so the turn records what it cost.
+    // The whole refusal is reported, assembled from its deltas.
+    expect((action as { error?: string }).error).toContain("I cannot help with that.")
+    // A refusal still spent the prompt, so the turn records what it cost, and who served it.
     expect(action.usage).toMatchObject({ promptTokens: 11 })
+    expect(action.endpoint).toMatchObject({ provider: "openai", model: "m" })
+    expect(action.mode).toEqual({ kind: "native", name: "native" })
+  })
+
+  test("a content filter with no text is the same class", async () => {
+    const fetchImpl = (async () =>
+      sse([
+        { id: "r6", choices: [{ index: 0, delta: { role: "assistant" } }] },
+        { id: "r6", choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }] }
+      ])) as unknown as typeof globalThis.fetch
+    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", fetch: fetchImpl, sleep: async () => {} })
+    const action = (await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
+      ).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+    )) as Action
+    expect((action as { failure?: { cause?: string } }).failure).toMatchObject({ cause: "refused" })
+  })
+
+  // Provenance is not a by-product of billing. An endpoint that reports no tokens still has to be
+  // named in the log, or a replay cannot say which model supplied a native guarantee
+  // (tardie, src/events.ts, Endpoint).
+  test("the endpoint is recorded even when the wire reports no usage at all", async () => {
+    const fetchImpl = (async () =>
+      sse([
+        { id: "r7", choices: [{ index: 0, delta: { role: "assistant", content: ANSWER } }] },
+        { id: "r7", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])) as unknown as typeof globalThis.fetch
+    const layer = infer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "gpt-5.2",
+      provider: "openai",
+      output: NATIVE_CAPABILITY,
+      fetch: fetchImpl
+    })
+    const action = (await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf(declared()))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+    )) as Action
+    expect(action.usage).toBeUndefined()
+    expect(action.endpoint).toEqual({ provider: "openai", model: "gpt-5.2" })
+  })
+
+  test("a router that names its upstream records both the configured pair and the routed one", async () => {
+    const fetchImpl = (async () =>
+      sse([
+        { id: "r8", provider: "Anthropic", model: "claude-sonnet-4.5", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
+        { id: "r8", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+      ])) as unknown as typeof globalThis.fetch
+    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "auto", provider: "openrouter", fetch: fetchImpl })
+    const action = (await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
+      ).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
+    )) as Action
+    expect(action.endpoint).toEqual({
+      provider: "openrouter",
+      model: "auto",
+      routedProvider: "Anthropic",
+      routedModel: "claude-sonnet-4.5"
+    })
   })
 
   test("the attempt key rides as the Idempotency-Key header; absent, no header", async () => {
@@ -393,7 +580,7 @@ describe("infer: cost provenance", () => {
         )
       ) as Effect.Effect<Action>
     )
-    expect(unknown).toEqual({ kind: "complete", output: "ok" })
+    expect(unknown).toMatchObject({ kind: "complete", output: "ok" })
   })
 })
 
@@ -429,7 +616,7 @@ describe("infer: throttle-shaped retry", () => {
         Effect.provide(layer)
       ) as Effect.Effect<unknown>
     )
-    expect(action).toEqual({ kind: "complete", output: "ok" })
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
     expect(calls).toBe(2)
     expect(slept).toHaveLength(1)
     expect(slept[0]).toBeGreaterThanOrEqual(0)

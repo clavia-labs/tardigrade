@@ -7,7 +7,7 @@ import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { address as addressOf, readAddress } from "@clavia/tardigrade-core/router"
 import { replyId } from "@clavia/tardigrade-core/message"
-import { outputProfileErrors, type OutputContract } from "./output"
+import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } from "./output"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
@@ -83,7 +83,7 @@ export const agentsPackage = (
   const worldOf = options.worldOf ?? (() => undefined)
   const defaultBudget = budgetPolicyOf(options.budget).defaultToolBudget
   const outputs = options.outputs ?? {}
-  const declared = Object.keys(outputs)
+  const declared_ = Object.keys(outputs)
   return {
     name: "agents",
     description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable run can ask for more budget at its wall; continue() answers the ask.",
@@ -94,7 +94,7 @@ export const agentsPackage = (
     },
     docs: {
       run: {
-        description: `Brief a fresh agent. \`output\` makes the answer structured and parsed: the name of a declared contract${declared.length === 0 ? " (this host declares none)" : ` (${declared.join(", ")})`}, or a JSON schema of your own. \`model\` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
+        description: `Brief a fresh agent. \`output\` makes the answer structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
         input: {
           type: "object",
           properties: {
@@ -110,10 +110,10 @@ export const agentsPackage = (
         output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
       },
       result: {
-        description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. `output` says the answer was structured, so it comes back parsed.",
+        description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. An answer comes back parsed when that run declared a contract, which is read from the run itself.",
         input: {
           type: "object",
-          properties: { id: { type: "string", description: "the callId a background run answered" }, output: { description: "the contract name or schema the run declared" } },
+          properties: { id: { type: "string", description: "the callId a background run answered" } },
           required: ["id"]
         },
         output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
@@ -123,7 +123,7 @@ export const agentsPackage = (
         input: {
           type: "object",
           properties: {
-            handle: { type: "object", description: "the handle from a requesting run" },
+            handle: { type: "object", description: "the handle from a requesting run: where the child is, and which turn" },
             grant: { type: "number", description: "extra tool calls to grant; 0 or less denies" }
           },
           required: ["handle", "grant"]
@@ -149,7 +149,7 @@ export const agentsPackage = (
           if (a?.output === undefined && a?.outputSchema !== undefined) {
             return { error: "agents.run takes the contract as `output`, not `outputSchema`" }
           }
-          const declaredOutput = outputAsked(a?.output, outputs, declared)
+          const declaredOutput = outputAsked(a?.output, outputs, declared_)
           if ("error" in declaredOutput) return declaredOutput
           const output = declaredOutput.contract
           // The model name rides the brief's envelope: the child's log records the choice, so its
@@ -208,14 +208,14 @@ export const agentsPackage = (
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world })
             })
-            return shape(answer, address, ctx.callId, output !== undefined)
+            return shape(answer, address, ctx.callId, output)
           }
           // Plain foreground: the same park logic `tasks.fire` uses. A reply already on the lane
           // (a replayed attempt) answers at once, with no re-delivery; otherwise the brief goes
           // out with `replyTo` this lane, exactly the background delivery above, and the host
           // parks this call until the reply lands.
           const already = yield* awaitedReply(self, ctx.callId)
-          if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output !== undefined)
+          if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
           yield* router.deliver(address, {
             type: "MessageReceived",
@@ -236,14 +236,25 @@ export const agentsPackage = (
       // Await a run already fired in the background: no delivery, the same reply-or-park read the
       // plain foreground branch of `run` takes. `id` is the `callId` an earlier `background: true`
       // run answered.
+      //
+      // Whether that run declared a contract is recovered from the run's own recorded call, never
+      // from an argument here: a later flag saying "this was structured" would let a caller parse
+      // prose that happens to be JSON into a shape nobody asked the child for
+      // (spawn.test.ts, "a later call cannot invent a contract the run never declared").
+      //
       result: (args, ctx) =>
         Effect.gen(function* () {
           const self = yield* Self
-          const a = args as { id?: unknown; output?: unknown } | undefined
+          const a = args as { id?: unknown } | undefined
           const id = String(a?.id ?? "")
           if (id === "") return { error: "agents.result needs { id }" }
+          // The child is where this package placed it, recomputed rather than taken from the
+          // caller: `place` is the one owner of that answer (sibling above).
+          const address = place(id, self)
+          const declared = yield* declaredRun(self, address, id)
+          if ("error" in declared) return declared
           const reply = yield* awaitedReply(self, id)
-          if (reply !== undefined) return shape(answerOf(reply), "", id, a?.output !== undefined)
+          if (reply !== undefined) return shape(answerOf(reply), address, id, declared.contract)
           return yield* Effect.fail(new Park({ callId: ctx.callId, awaiting: replyId(id) }))
         }),
       // Resume a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
@@ -253,16 +264,21 @@ export const agentsPackage = (
       continue: (args, ctx) =>
         Effect.gen(function* () {
           const router = yield* Router
+          const self = yield* Self
           const a = args as { handle?: unknown; grant?: unknown } | undefined
-          const handle = a?.handle as { address?: unknown; turn?: unknown; structured?: unknown } | undefined
+          const handle = a?.handle as { address?: unknown; turn?: unknown } | undefined
           const address = String(handle?.address ?? "")
           const turn = String(handle?.turn ?? "")
           if (address === "" || turn === "") return { error: "agents.continue needs { handle, grant }; the handle comes from a run that is requesting" }
+          // The contract comes from the child's own brief, like `result`, so a rewritten handle
+          // cannot make an answer structured that never was.
+          const declared = yield* declaredRun(self, address, turn)
+          if ("error" in declared) return declared
           const want = typeof a?.grant === "number" ? Math.floor(a.grant) : 0
           const granted = want > 0 ? yield* Effect.promise(() => reserve(ctx.callId, want)) : 0
           const decision = granted > 0 ? { amount: granted } : { amount: 0, reason: "the parent declined the request" }
           const answer = yield* router.resume(address, turn, decision)
-          return shape(answer, address, turn, handle?.structured === true)
+          return shape(answer, address, turn, declared.contract)
         })
     }
   }
@@ -294,14 +310,51 @@ const outputAsked = (
   if (asked === null || typeof asked !== "object") {
     return { error: "agents.run takes `output` as a declared contract's name or a JSON schema object" }
   }
-  const problems = outputProfileErrors(asked)
-  if (problems.length > 0) {
+  const built = outputFrom(INLINE_OUTPUT_NAME, asked)
+  if ("errors" in built) {
     return {
-      error: `the output schema is outside the supported profile:\n${problems.map((p) => `- ${p}`).join("\n")}`
+      error: `the output schema is outside the supported profile:\n${built.errors.map((p) => `- ${p}`).join("\n")}`
     }
   }
-  return { contract: { name: INLINE_OUTPUT_NAME, schema: asked } }
+  return { contract: built.contract }
 }
+
+// declaredRun recovers what one run asked its child to answer in. Two durable facts settle it,
+// and neither is an argument a later call supplies.
+//
+// The run's own recorded call says whether structured output was asked for at all. The child's
+// turn head says which contract, schema and all, so a name the code body used is resolved once,
+// at the run, and never again: a registry entry that changes or disappears afterwards cannot
+// re-read an old answer as a shape nobody asked for.
+//
+// A run that asked for structure whose declaration cannot be read fails closed. Returning the
+// text would erase a contract that is known to exist merely because its terms are out of reach
+// (spawn.test.ts, "a run stays bound to the schema it was started under").
+const declaredRun = (
+  self: string,
+  address: string,
+  turn: string
+): Effect.Effect<{ readonly contract: OutputContract | undefined } | { readonly error: string }, never, Facets> =>
+  Effect.gen(function* () {
+    const logs = yield* Facets
+    const here = yield* logs.read(readAddress(self).facet)
+    const call = here.find(
+      (e) =>
+        e.type === "PackageCalled" &&
+        String((e as { callId?: unknown }).callId) === turn &&
+        String((e as { name?: unknown }).name) === "agents.run"
+    ) as { arguments?: { output?: unknown } } | undefined
+    if (call === undefined) return { error: `no agents.run with id ${JSON.stringify(turn)} was called from here` }
+    if (call.arguments?.output === undefined) return { contract: undefined }
+    const child = yield* logs.read(readAddress(address).facet)
+    const declared = declarationForTurn(child, turn)
+    if (declared.kind === "contract") return { contract: declared.contract }
+    return {
+      error:
+        `the original output declaration for run ${JSON.stringify(turn)} is unavailable` +
+        (declared.kind === "invalid" ? `: ${declared.errors.join("; ")}` : "")
+    }
+  })
 
 // INLINE_OUTPUT_NAME is the schema identity an inline schema carries on the wire. Every declared
 // contract names itself; an inline one has no name to carry, so the log and the provider both
@@ -339,24 +392,29 @@ const answerOf = (reply: SpawnTerminal): { output?: string; error?: string } =>
     ? { output: reply.text }
     : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }
 
-// shape renders a boundary as the code's return value. A request carries a handle the code passes back to
-// `agents.continue`; `structured` rides the handle so a later grant parses the schema'd answer the
-// same way the first `run` would. A schema'd terminal comes back parsed, a prose one raw.
+// shape renders a boundary as the code's return value. A request carries a handle the code passes
+// back to `agents.continue`; the handle names where and which turn, and nothing about the answer's
+// shape, because the contract is recovered from the recorded call at every step (declaredRun).
+//
+// A terminal under a contract comes back decoded and validated. A terminal that misses the
+// contract comes back as an error rather than as a value: the child's own reactor already refused
+// such an answer, so one arriving here means the reply did not come from that path, and reading it
+// as the contract's shape would be the reinterpretation this whole surface exists to prevent.
 const shape = (
   answer: { output?: string; error?: string; requesting?: boolean; reason?: string; amount?: number },
   address: string,
   turn: string,
-  structured: boolean
+  contract: OutputContract | undefined
 ): unknown => {
   if (answer.requesting === true) {
-    return { requesting: true, reason: answer.reason, amount: answer.amount, handle: { address, turn, structured } }
+    return { requesting: true, reason: answer.reason, amount: answer.amount, handle: { address, turn } }
   }
-  if (structured && answer.output !== undefined) {
-    try {
-      return { output: JSON.parse(answer.output) }
-    } catch {
-      return answer
+  if (contract === undefined || answer.output === undefined) return answer
+  const decoded = decodeOutput(contract, answer.output)
+  if (decoded.errors.length > 0) {
+    return {
+      error: `the run answered outside its declared contract "${contract.name}": ${decoded.errors.join("; ")}`
     }
   }
-  return answer
+  return { output: decoded.value }
 }

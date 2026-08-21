@@ -134,18 +134,25 @@ describe("the config file", () => {
     })
   })
 
-  test("the output guarantee resolves in the same order every value does", async () => {
-    await put(JSON.stringify({ model: { output: "native" } }))
+  // The capability is the operator's whole statement: a native guarantee has to say whether it
+  // survives beside a tool list, because a turn that offers tools and declares a contract sends
+  // both on one call (platform/model/src/output.ts, outputModeOf).
+  test("the output capability resolves in the same order every value does", async () => {
+    await put(JSON.stringify({ model: { output: "native", outputWithTools: "true" } }))
     const file = await read({ HOME: home })
-    expect(resolveServer({}, {}, file).model.output).toBe("native")
-    expect(resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "none" }, file).model.output).toBe("none")
+    expect(resolveServer({}, {}, file).model.output).toEqual({ guarantee: "native", withTools: true })
+    expect(resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "none" }, file).model.output).toEqual({ guarantee: "none" })
+    expect(resolveServer({}, {}, {}).model.output).toBeUndefined()
   })
 
-  test("an output guarantee nobody declared refuses to resolve, rather than leaving a contract unpromised", async () => {
+  test("a capability nobody stated whole refuses to resolve, rather than leaving one field guessed", async () => {
     await put(JSON.stringify({ model: { output: "probably" } }))
     const file = await read({ HOME: home })
-    expect(() => resolveServer({}, {}, file)).toThrow("model.output must be one of")
-    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "maybe" }, {})).toThrow("MODEL_OUTPUT_GUARANTEE must be one of")
+    expect(() => resolveServer({}, {}, file)).toThrow("model output guarantee must be one of")
+    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "maybe" }, {})).toThrow("model output guarantee must be one of")
+    // A native guarantee with no tool-combination answer is half a statement.
+    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "native" }, {})).toThrow("survives beside a tool list")
+    expect(() => resolveServer({}, { MODEL_OUTPUT_WITH_TOOLS: "true" }, {})).toThrow("with no guarantee")
   })
 
   test("the file is the third source for the model, and the environment beats it", async () => {

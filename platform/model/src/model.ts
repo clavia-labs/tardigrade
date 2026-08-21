@@ -5,11 +5,20 @@ import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
 import { Infer, type InferRequest } from "tardie"
-import type { Action } from "tardie/events"
+import type { Action, AttemptEndpoint } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/request"
-import { capabilityOf, converseOutputConfig, outputPreflight, outputSchemaFor, type OutputCapability } from "./output"
+import {
+  capabilityOf,
+  converseOutputConfig,
+  converseStopClass,
+  compatibleResponseFormat,
+  outputModeOf,
+  fallbackSystemFor,
+  type OutputCapability
+} from "./output"
+import { NATIVE_MODE, type OutputMode } from "tardie/output"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
@@ -165,8 +174,18 @@ class RefusedError extends Error {
   readonly refused = true
 }
 
+// ViolatedError marks a provider breaking a native strict guarantee on its own wire, which
+// Converse says outright (output.ts, converseStopClass). The compatible leg reports the same
+// class through local validation instead (tardie, runtime/infer.ts, completionOf).
+class ViolatedError extends Error {
+  readonly violated = true
+}
+
 const isRefused = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { refused?: unknown }).refused === true
+
+const isViolation = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { violated?: unknown }).violated === true
 
 const noopLogger = new Proxy({}, { get: () => () => {} }) as never
 
@@ -353,7 +372,9 @@ export const bedrockAdapter = (
   config: ModelConfig,
   maxTokens: number,
   bounds: StreamBounds,
-  output?: OutputRequest
+  output?: OutputRequest,
+  mode: OutputMode = NATIVE_MODE,
+  stops: { stopReason?: string } = {}
 ) => {
   const handler = bedrockHandler(config, bounds)
   const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
@@ -376,10 +397,12 @@ export const bedrockAdapter = (
       // Converse truncates at its own small default otherwise, and a truncated stream ends a
       // tool call with EMPTY arguments: a whole generated code body silently gone.
       input.inferenceConfig = { ...input.inferenceConfig, maxTokens }
-      if (output !== undefined && outputSchemaFor(output) !== undefined) {
-        input.outputConfig = { ...input.outputConfig, ...converseOutputConfig(output) }
-      }
+      const outputConfig = output === undefined ? undefined : converseOutputConfig(output, mode)
+      if (outputConfig !== undefined) input.outputConfig = { ...input.outputConfig, ...outputConfig }
       return input
+    }
+    protected override async sendStream(input: BedrockRuntime.ConverseStreamCommandInput) {
+      return tapStopReason(await super.sendStream(input), stops)
     }
   })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
 }
@@ -427,6 +450,10 @@ interface Wire {
   readonly usage?: unknown
   readonly provider?: string
   readonly model?: string
+  // A structured-output refusal arrives as `choices[].delta.refusal` with an ordinary `stop`
+  // finish reason, and the adapter's processor keeps neither. The raw body is the only place it
+  // survives, so it is read here (model.test.ts, "a refusal on the wire").
+  readonly refusal?: string
 }
 
 // captureWire reads the last `usage` object (and provenance) off an SSE (or JSON) body. The
@@ -444,17 +471,34 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     // the live branch already failed; bytes read so far may still hold a usage chunk
   }
   const text = new TextDecoder().decode(concatBytes(chunks))
-  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => ({
-    ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
-    ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
-    ...(typeof parsed.model === "string" ? { model: parsed.model } : {})
-  })
+  const refusalOf = (parsed: { choices?: ReadonlyArray<{ delta?: { refusal?: unknown }; message?: { refusal?: unknown } }> }): string | undefined => {
+    for (const choice of parsed.choices ?? []) {
+      const refusal = choice.delta?.refusal ?? choice.message?.refusal
+      if (typeof refusal === "string" && refusal !== "") return refusal
+    }
+    return undefined
+  }
+  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
+    const refusal = refusalOf(parsed as never)
+    return {
+      ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
+      ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
+      ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+      ...(refusal === undefined ? {} : { refusal })
+    }
+  }
   let last: Wire = {}
   for (const line of text.split(/\r?\n/)) {
     const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
     if (payload === "" || payload === "[DONE]") continue
     try {
-      last = { ...last, ...wireOf(JSON.parse(payload) as never) }
+      const next = wireOf(JSON.parse(payload) as never)
+      // Refusal deltas arrive in pieces, like content: each chunk carries the next fragment.
+      last = {
+        ...last,
+        ...next,
+        ...(next.refusal === undefined ? {} : { refusal: `${last.refusal ?? ""}${next.refusal}` })
+      }
     } catch {
       // a keep-alive or a malformed line is not usage
     }
@@ -508,8 +552,46 @@ const stampOf = (config: ModelConfig) => ({
   model: config.model
 })
 
+// endpointOf is who served an attempt, recorded whether or not the endpoint reported a single
+// token. The configured pair is always present, so a replay can say which model supplied a
+// native guarantee even for an endpoint that bills nothing; a router that names the upstream it
+// served from adds the observed pair beside it (tardie, src/events.ts, Endpoint).
+const endpointOf = (config: ModelConfig, wire: Wire | undefined): AttemptEndpoint => ({
+  ...stampOf(config),
+  ...(wire?.provider === undefined ? {} : { routedProvider: wire.provider }),
+  ...(wire?.model === undefined ? {} : { routedModel: wire.model })
+})
+
+const served = (action: Action, endpoint: AttemptEndpoint): Action => ({ ...action, endpoint })
+
+// tapStopReason keeps the raw Converse stop reason the adapter's processor folds away, so a
+// guardrail refusal and a malformed structured response are told apart from an ordinary stop
+// (output.ts, converseStopClass).
+export const tapStopReason = <T>(
+  stream: AsyncIterable<T>,
+  into: { stopReason?: string }
+): AsyncIterable<T> => ({
+  async *[Symbol.asyncIterator]() {
+    for await (const event of stream) {
+      const stop = (event as { messageStop?: { stopReason?: unknown } }).messageStop?.stopReason
+      if (typeof stop === "string") into.stopReason = stop
+      yield event
+    }
+  }
+})
+
 const usageOn = (e: unknown): Usage | undefined =>
   e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
+
+const endpointOn = (e: unknown): AttemptEndpoint | undefined =>
+  e !== null && typeof e === "object" && "endpoint" in e ? (e as { endpoint?: AttemptEndpoint }).endpoint : undefined
+
+const carriesEndpoint = (e: unknown): boolean => endpointOn(e) !== undefined
+
+// failed attaches an attempt's spend and endpoint to a failure the loop above classifies, so the
+// two survive the throw the way a truncation's own do.
+const failed = <E extends Error>(error: E, usage: Usage | undefined, endpoint: AttemptEndpoint): E =>
+  Object.assign(error, { usage, endpoint })
 
 const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined => {
   if (parts.length === 0) return undefined
@@ -535,11 +617,16 @@ export const infer = (config: ModelConfig) => {
   const failurePolicy = { throttleRetryDelaysMs: throttleDelays, stream: bounds }
   const attemptOnce = async (
     req: ModelRequest,
+    mode: OutputMode,
     key: string | undefined,
     maxTokens: number,
     rung: number,
     stats: { finish?: string }
   ): Promise<Action> => {
+    // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
+    // recorded fact rather than re-deciding from a capability that may have changed since
+    // (tardie, runtime/infer.ts, completionOf).
+    const stamped = (action: Action): Action => (req.output === undefined ? action : { ...action, mode })
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
     // response, and the ladder would climb nowhere (the removed driver learned this). Rung zero
@@ -550,9 +637,10 @@ export const infer = (config: ModelConfig) => {
     }
     const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
+    const stops: { stopReason?: string } = {}
     const adapter =
       config.provider === "bedrock"
-        ? bedrockAdapter(config, maxTokens, bounds, req.output)
+        ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops)
         : openaiCompatibleText(config.model, {
             name: "tardigrade",
             baseURL: config.baseUrl,
@@ -563,48 +651,65 @@ export const infer = (config: ModelConfig) => {
             maxRetries: 0,
             fetch: fetcher
           })
-    // The declared contract rides `outputSchema`, which the compatible leg maps onto
-    // `response_format: { type: "json_schema", strict: true }` beside the tool list
-    // (@tanstack/openai-base, mapOptionsToRequest) and the Converse leg onto `outputConfig`
-    // through the adapter above. Absent under an implementation that asked for no guarantee, so
+    // The declared contract rides each wire's own surface: `response_format` through the
+    // compatible leg's provider-options seam, and `outputConfig` through the Converse leg's
+    // buildInput above. Both are absent under an implementation that asked for no guarantee, so
     // no endpoint is handed a schema it never promised to keep.
+    const responseFormat = config.provider === "bedrock" ? undefined : compatibleResponseFormat(req.output, mode)
+    // The fallback's own instruction rides the request and reaches the model only on an attempt
+    // running as that fallback, so a native attempt sends exactly the base prompt.
+    const fallbackSystem = fallbackSystemFor(req.output, mode)
     const stream = adapter.chatStream({
       model: config.model,
       messages: req.messages.map(toMessage) as never,
       tools: req.tools.map(toTool) as never,
-      systemPrompts: [req.system],
-      ...(outputSchemaFor(req.output) === undefined ? {} : { outputSchema: outputSchemaFor(req.output) as never }),
-      // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
-      // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
-      // is a provider default nobody chose.
-      modelOptions: { max_tokens: maxTokens } as never,
+      systemPrompts: fallbackSystem === undefined ? [req.system] : [req.system, fallbackSystem],
+      modelOptions: {
+        // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
+        // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
+        // is a provider default nobody chose.
+        max_tokens: maxTokens,
+        ...(responseFormat === undefined ? {} : { response_format: responseFormat })
+      } as never,
       logger: noopLogger
     } as never)
-    const spendOf = async (): Promise<Usage | undefined> => {
+    // The wire is read once and answers two questions: what the attempt spent, and who served
+    // it. The endpoint stands whether or not any spend was reported, so an endpoint that bills
+    // nothing is still named in the log (tardie, src/events.ts, Endpoint).
+    const settle = async (): Promise<{ readonly usage: Usage | undefined; readonly endpoint: AttemptEndpoint; readonly wire: Wire | undefined }> => {
       const wire = await sink.promise
       // Wire-reported provenance wins: a router that names the upstream it served from records
       // the true split; the configured stamp covers a wire that stays silent.
-      return usageFrom([wire?.usage, held.tokens], config.pricing, {
+      const usage = usageFrom([wire?.usage, held.tokens], config.pricing, {
         ...stampOf(config),
         ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
         ...(wire?.model === undefined ? {} : { model: wire.model })
       })
+      return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
       const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
-      const usage = await spendOf()
-      stats.finish = result.finishReason ?? "stop"
-      if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
-      return withSpend(actionOf(result), usage)
+      const { usage, endpoint, wire } = await settle()
+      stats.finish = stops.stopReason ?? result.finishReason ?? "stop"
+      const converse = converseStopClass(stops.stopReason)
+      if (result.finishReason === "length" || converse === "truncated") throw new TruncatedError(maxTokens, usage)
+      // A structured-output refusal reaches the compatible wire as a `refusal` delta under an
+      // ordinary stop, and the Converse wire as its own stop reason. Neither survives the shared
+      // processor, so both are read here rather than from the decoded result.
+      if (wire?.refusal !== undefined) throw failed(new RefusedError(`the provider refused to answer this request: ${wire.refusal}`), usage, endpoint)
+      if (converse === "refused") throw failed(new RefusedError("the provider refused to answer this request"), usage, endpoint)
+      if (converse === "violation") {
+        throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
+      }
+      return stamped(served(withSpend(actionOf(result), usage), endpoint))
     } catch (e) {
       await sink.reader?.cancel().catch(() => undefined)
-      // A truncation already carries its own spend; every other failure, a refusal included,
-      // gets the attempt's spend attached here so the bill survives the throw.
-      if (isTruncated(e)) throw e
-      const usage = await spendOf()
-      if (usage === undefined) throw e
-      if (e !== null && typeof e === "object") throw Object.assign(e, { usage })
-      throw Object.assign(new Error(String(e)), { usage })
+      // A truncation already carries its own spend; every other failure gets the attempt's spend
+      // and endpoint attached here so both survive the throw.
+      if (isTruncated(e) || carriesEndpoint(e)) throw e
+      const { usage, endpoint } = await settle()
+      if (e !== null && typeof e === "object") throw Object.assign(e, { usage, endpoint })
+      throw Object.assign(new Error(String(e)), { usage, endpoint })
     }
   }
   return Layer.succeed(Infer, {
@@ -622,11 +727,12 @@ export const infer = (config: ModelConfig) => {
         // The contract's preflight runs before the first socket: an endpoint that cannot promise
         // the declared schema, or a schema outside the profile both wires send unchanged, ends
         // the turn having spent nothing (src/output.ts, outputPreflight).
-        const unsupported = outputPreflight(req, config)
-        if (unsupported.length > 0) {
+        const selected = outputModeOf(req, config)
+        if ("errors" in selected) {
           const action: Action = {
             kind: "fail",
-            error: unsupported.join("\n"),
+            error: selected.errors.join("\n"),
+            endpoint: endpointOf(config, undefined),
             failure: {
               cause: "output_unsupported",
               attempts: 0,
@@ -636,10 +742,11 @@ export const infer = (config: ModelConfig) => {
           yield* Effect.annotateCurrentSpan("gen_ai.output.supported", false)
           return action
         }
-        if (req.output !== undefined) {
+        const mode = selected.mode
+        if (req.output?.kind === "contract") {
           yield* Effect.annotateCurrentSpan("gen_ai.output.contract", req.output.contract.name)
-          yield* Effect.annotateCurrentSpan("gen_ai.output.implementation", req.output.implementation.name)
-          yield* Effect.annotateCurrentSpan("gen_ai.output.guarantee", req.output.implementation.guarantee)
+          yield* Effect.annotateCurrentSpan("gen_ai.output.mode", mode.name)
+          yield* Effect.annotateCurrentSpan("gen_ai.output.native", mode.kind === "native")
         }
         const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
@@ -653,11 +760,16 @@ export const infer = (config: ModelConfig) => {
           try {
             stats.rung = rung
             stats.attempts += 1
-            const action = await attemptOnce(req, key, ladder[rung]!, rung, stats)
+            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats)
             remember(action.usage, true)
-            return withSpend(action, spentOf(parts, missed))
+            return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
           } catch (e) {
             const usage = isTruncated(e) ? e.usage : usageOn(e)
+            const endpoint = endpointOn(e) ?? endpointOf(config, undefined)
+            const ends = (action: Action): Action => {
+              const billed = served(withSpend(action, spentOf(parts, missed)), endpoint)
+              return req.output === undefined ? billed : { ...billed, mode }
+            }
             remember(usage, isTruncated(e) || usage !== undefined)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
@@ -666,53 +778,50 @@ export const infer = (config: ModelConfig) => {
               }
               // The top rung still truncates: the turn fails loudly instead of shipping half an
               // answer, and the error names the remedy.
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`,
-                  failure: { cause: "truncated", attempts: stats.attempts, policy: { maxTokensLadder: ladder } }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`,
+                failure: { cause: "truncated", attempts: stats.attempts, policy: { maxTokensLadder: ladder } }
+              })
             }
             // A refusal is the provider declining this request. The same request retried earns
             // the same refusal, so the ladder stops here and the turn records why.
             if (isRefused(e)) {
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: e instanceof Error ? e.message : String(e),
-                  failure: { cause: "refused", attempts: stats.attempts }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: e instanceof Error ? e.message : String(e),
+                failure: { cause: "refused", attempts: stats.attempts }
+              })
+            }
+            // The endpoint said outright that it could not produce the output it was constrained
+            // to. Retrying asks the same endpoint for the same broken promise.
+            if (isViolation(e)) {
+              return ends({
+                kind: "fail",
+                error: e instanceof Error ? e.message : String(e),
+                failure: { cause: "output_contract_violation", attempts: stats.attempts }
+              })
             }
             if (!isThrottleShaped(e)) {
               const message = e instanceof Error ? e.message : String(e)
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
-                  failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
+              })
             }
             const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
             if (delay === undefined) {
               const message = e instanceof Error ? e.message : String(e)
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
-                  failure: {
-                    cause: "inference_attempts_exhausted",
-                    attempts: stats.attempts,
-                    policy: failurePolicy
-                  }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                failure: {
+                  cause: "inference_attempts_exhausted",
+                  attempts: stats.attempts,
+                  policy: failurePolicy
+                }
+              })
             }
             stats.waits += 1
             await sleep(delay)

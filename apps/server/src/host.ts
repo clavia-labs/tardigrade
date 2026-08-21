@@ -88,10 +88,9 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
     apiKey,
     model: id,
     ...(provider === undefined ? {} : { provider }),
-    // A declared guarantee is the operator's, and it beats the provider name's own reading. The
-    // schema and the tool list ride one call on both wires this binding speaks
-    // (platform/model/src/output.ts, PROVEN_OUTPUT_CAPABILITIES).
-    ...(output === undefined ? {} : { output: { guarantee: output, withTools: true } })
+    // The capability is the operator's whole statement, passed through as declared. Nothing here
+    // fills a field it did not state (platform/model/src/output.ts, capabilityOf).
+    ...(output === undefined ? {} : { output })
   })
 }
 

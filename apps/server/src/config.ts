@@ -23,16 +23,23 @@ export interface ModelConfig {
   readonly apiKey: string | undefined
   readonly id: string | undefined
   readonly provider: string | undefined
-  // What this endpoint promises about a turn's declared output contract, for an endpoint no
-  // provider name proves. "native" says it honours a strict JSON schema on its own response
-  // format; absent leaves the promise to the provider name, and an unnamed endpoint promises
-  // nothing, so such a turn fails before it spends (platform/model/src/output.ts, capabilityOf).
-  readonly output: OutputGuarantee | undefined
+  // What this endpoint and this model promise about a turn's declared output contract. A
+  // provider name proves nothing here: structured output is a property of the endpoint AND the
+  // model behind it, so an operator states it. Absent, a turn that declares a contract fails
+  // before it spends (platform/model/src/output.ts, capabilityOf).
+  readonly output: OutputCapabilityValue | undefined
 }
 
 export const OUTPUT_GUARANTEES = ["native", "none"] as const
 
 export type OutputGuarantee = (typeof OUTPUT_GUARANTEES)[number]
+
+// OutputCapabilityValue is the whole capability, so nothing about it is a default this process
+// chose. `withTools` says whether the schema may ride the same call as a tool list, which an
+// operator must state alongside a native guarantee rather than inherit.
+export type OutputCapabilityValue =
+  | { readonly guarantee: "none" }
+  | { readonly guarantee: "native"; readonly withTools: boolean }
 
 export interface ServerConfigValue {
   readonly port: number
@@ -58,13 +65,29 @@ const text = (env: Env, name: string): string | undefined => {
   return trimmed.length === 0 ? undefined : trimmed
 }
 
-// MODEL_OUTPUT_GUARANTEE names a promise the process must be able to keep, so a value nobody
-// declared is an operator error rather than a reason to guess one.
-const outputGuarantee = (env: Env): OutputGuarantee | undefined => {
-  const raw = text(env, "MODEL_OUTPUT_GUARANTEE")
-  if (raw === undefined) return undefined
-  if ((OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(raw)) return raw as OutputGuarantee
-  throw new Error(`MODEL_OUTPUT_GUARANTEE must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(raw)}`)
+// MODEL_OUTPUT_GUARANTEE and MODEL_OUTPUT_WITH_TOOLS name a promise the process must be able to
+// keep, so a value nobody declared is an operator error rather than a reason to guess one. A
+// native guarantee has to say whether it survives beside a tool list, because a turn that offers
+// tools and declares a contract sends both on one call (platform/model/src/output.ts).
+export const outputCapabilityOf = (
+  guarantee: string | undefined,
+  withTools: string | undefined
+): OutputCapabilityValue | undefined => {
+  if (guarantee === undefined) {
+    if (withTools !== undefined) {
+      throw new Error("the model output capability states a tool combination with no guarantee; set the guarantee too")
+    }
+    return undefined
+  }
+  if (!(OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(guarantee)) {
+    throw new Error(`the model output guarantee must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(guarantee)}`)
+  }
+  if (guarantee === "none") return { guarantee: "none" }
+  if (withTools === "true") return { guarantee: "native", withTools: true }
+  if (withTools === "false") return { guarantee: "native", withTools: false }
+  throw new Error(
+    `a native model output guarantee must state whether it survives beside a tool list: set the tool combination to true or false, got ${JSON.stringify(withTools)}`
+  )
 }
 
 // A PORT that is not a number is an operator error, not a reason to fall back: silently listening
@@ -91,7 +114,7 @@ export const readConfig = (env: Env): ServerConfigValue => ({
     apiKey: text(env, "MODEL_API_KEY"),
     id: text(env, "MODEL_ID"),
     provider: text(env, "MODEL_PROVIDER"),
-    output: outputGuarantee(env)
+    output: outputCapabilityOf(text(env, "MODEL_OUTPUT_GUARANTEE"), text(env, "MODEL_OUTPUT_WITH_TOOLS"))
   }
 })
 

@@ -24,10 +24,9 @@ export const CONFIG_DIR_MODE = 0o700
 export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
 
 // Preset is one entry in the provider select. `baseUrl` prefills the next prompt and stays
-// editable; an absent one asks with no default. `provider` names the endpoint, which selects a
-// protocol other than the OpenAI-compatible one the model binding speaks by default and says
-// what the endpoint promises about a declared output contract (platform/model/src/model.ts,
-// platform/model/src/output.ts).
+// editable; an absent one asks with no default. `provider` names the endpoint's vendor, which
+// also selects a protocol other than the OpenAI-compatible one the model binding speaks by
+// default (platform/model/src/model.ts).
 //
 // The list is short on purpose. Every URL here is a promise to keep it correct, so an endpoint this
 // repository does not track belongs behind "Other" rather than in the list.
@@ -45,8 +44,9 @@ export const PRESETS: ReadonlyArray<Preset> = [
   {
     title: "OpenAI",
     description: "The OpenAI-compatible protocol the binding speaks by default",
-    // Named, so a turn that declares an output contract is served from this endpoint's own
-    // strict response format instead of refused (platform/model/src/output.ts).
+    // Named so the log records which vendor served a turn. It says nothing about structured
+    // output: that promise belongs to the endpoint and the model together, and an operator
+    // states it (platform/model/src/output.ts, capabilityOf).
     provider: "openai",
     baseUrl: "https://api.openai.com/v1",
     modelExample: "gpt-5.2",

@@ -1,93 +1,165 @@
 import type * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
-import { outputProfileErrors } from "tardie/output"
+import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "tardie/output"
 import type { OutputRequest } from "tardie/request"
 
-// The binding's half of the output contract: which provider can promise a strict schema, what
-// the promise costs a request, and how the declared schema reaches each wire. A turn that
-// declares a contract the configured provider cannot honour fails here, before a socket opens
+// The binding's half of the output contract: what an endpoint promises about a declared schema,
+// what that promise costs a request, and how the schema reaches each wire. A turn that declares a
+// contract the configured endpoint cannot honour fails here, before a socket opens
 // (docs/output.md, "When the provider cannot").
 
-// OutputCapability is what one configured endpoint can promise about a declared contract.
-// `guarantee: "native"` means the endpoint takes the schema on its own response-format surface
-// and constrains the response to it. `withTools` says the schema may ride the same call as a
-// tool list: an endpoint that refuses the combination fails the turn before spend rather than
-// letting the binding buy a second inference to finalize, which no caller asked for.
-export interface OutputCapability {
-  readonly guarantee: "native" | "none"
-  readonly withTools: boolean
+// OutputCapability is what one configured endpoint promises about a declared contract. It is a
+// union so a value cannot say two things at once: an endpoint that promises nothing has no
+// tool-combination question to answer, and one that promises a native strict schema must say
+// whether that schema may ride the same call as a tool list.
+export type OutputCapability =
+  | { readonly guarantee: "none" }
+  | { readonly guarantee: "native"; readonly withTools: boolean }
+
+// capabilityOf resolves the endpoint's capability: what the configuration declares, and nothing
+// else. A provider name is not evidence. Structured output on both wires this repository binds is
+// a property of the endpoint AND the model behind it: OpenAI documents Chat Completions
+// structured outputs for a listed set of models, and AWS documents Converse structured output for
+// a listed set of Claude models, so `provider: "openai"` or `provider: "bedrock"` says nothing
+// about the model id an operator configured. Inferring a strict guarantee from the vendor would
+// let an unsupported model pass preflight and spend
+// (https://developers.openai.com/api/docs/guides/structured-outputs;
+// https://docs.aws.amazon.com/bedrock/latest/userguide/structured-output.html).
+export const capabilityOf = (config: { readonly output?: OutputCapability }): OutputCapability | undefined =>
+  config.output
+
+// UNPROVEN is the message an endpoint that declared nothing earns. It names the two ways out, so
+// an operator reading a failed turn knows what to set rather than which source to read.
+const UNPROVEN = (where: string, contract: string, implementation: string): string =>
+  `${where} declares no structured output capability, so the "${implementation}" implementation cannot promise the contract "${contract}". ` +
+  `Declare one when this endpoint and this model honour a strict JSON schema (MODEL_OUTPUT_GUARANTEE=native with MODEL_OUTPUT_WITH_TOOLS, or the binding's \`output\` option), ` +
+  `or mount an output implementation that needs no guarantee.`
+
+// outputModeOf selects how one attempt obtains the declared contract. Native comes first
+// whenever the configured endpoint can serve this call, because a strict schema on the wire is a
+// better guarantee than any local reading; mounting a fallback never turns that off. Native is
+// unavailable when the endpoint promises nothing, when it promises nothing native, or when it
+// cannot carry a schema beside the tools this request offers, and then the declared fallback runs.
+// With neither, the turn fails before it spends (docs/output.md, "When the provider cannot").
+export const outputModeOf = (
+  request: { readonly output?: OutputRequest; readonly tools: ReadonlyArray<unknown> },
+  config: { readonly provider?: string; readonly model: string; readonly output?: OutputCapability }
+): { readonly mode: OutputMode } | { readonly errors: ReadonlyArray<string> } => {
+  const output = request.output
+  const where = `${config.provider ?? "the configured OpenAI-compatible endpoint"} model ${config.model}`
+  if (output === undefined) return { mode: NATIVE_MODE }
+  if (output.kind === "invalid") {
+    return { errors: [`${where} was asked for an output that is not a contract:`, ...output.errors.map((e) => `- ${e}`)] }
+  }
+  const problems = [...outputNameErrors(output.contract.name), ...outputProfileErrors(output.contract.schema)]
+  if (problems.length > 0) {
+    return {
+      errors: [
+        `${where} was asked for the contract "${output.contract.name}", which is outside the schema profile both wires send unchanged:`,
+        ...problems.map((problem) => `- ${problem}`)
+      ]
+    }
+  }
+  const capability = capabilityOf(config)
+  if (capability?.guarantee === "native" && (capability.withTools || request.tools.length === 0)) {
+    return { mode: NATIVE_MODE }
+  }
+  if (output.fallback !== undefined) return { mode: output.fallback }
+  if (capability === undefined) return { errors: [UNPROVEN(where, output.contract.name, "native")] }
+  if (capability.guarantee !== "native") {
+    return {
+      errors: [
+        `${where} declares no native structured output, so the contract "${output.contract.name}" cannot be obtained from its response format, and this agent mounts no output fallback.`
+      ]
+    }
+  }
+  return {
+    errors: [
+      `${where} declares that it cannot carry the contract "${output.contract.name}" and a tool list of ${request.tools.length} on one call, and this agent mounts no output fallback. Let the turn spend its tool budget before it answers, or mount one.`
+    ]
+  }
 }
 
-// PROVEN_OUTPUT_CAPABILITIES is the table of providers this repository binds and has read the
-// wire for: the OpenAI Chat Completions `response_format: { type: "json_schema", strict: true }`
-// alongside `tools`, and the Converse `outputConfig.textFormat` alongside `toolConfig`. A
-// provider absent from this table is unproven, whatever protocol it speaks, because the promise
-// belongs to the endpoint and the model rather than to the shape of the request.
-export const PROVEN_OUTPUT_CAPABILITIES: Readonly<Record<string, OutputCapability>> = {
-  openai: { guarantee: "native", withTools: true },
-  bedrock: { guarantee: "native", withTools: true }
-}
-
-// capabilityOf resolves the endpoint's capability: what the configuration declares, else what
-// the provider name proves, else nothing. An OpenAI-compatible endpoint nobody named is the
-// third case: it may well be strict, and no request this binding can send would tell.
-export const capabilityOf = (config: {
-  readonly provider?: string
-  readonly output?: OutputCapability
-}): OutputCapability | undefined => {
-  if (config.output !== undefined) return config.output
-  if (config.provider === undefined) return undefined
-  return PROVEN_OUTPUT_CAPABILITIES[config.provider]
-}
-
-// outputPreflight says why this request cannot be served, before it is sent. It is empty when
-// the request declares no contract, when the implementation asks for no guarantee, or when the
-// endpoint can keep the one it asks for. A host may call it at startup against its own
-// contracts; the binding calls it on every attempt, so a log carrying a foreign contract fails
-// the same way (model.test.ts, "an unsupported contract fails before the fetch, so nothing is
-// spent").
+// outputPreflight says why this request cannot be served, before it is sent. It is empty when the
+// request can run in some mode, and it is the same reading outputModeOf does, so a host may call
+// it at startup against its own contracts and read what a turn would read
+// (model.test.ts, "an unsupported contract fails before the fetch, so nothing is spent").
 export const outputPreflight = (
   request: { readonly output?: OutputRequest; readonly tools: ReadonlyArray<unknown> },
   config: { readonly provider?: string; readonly model: string; readonly output?: OutputCapability }
 ): ReadonlyArray<string> => {
-  const output = request.output
-  if (output === undefined || output.implementation.guarantee !== "native") return []
-  const where = `${config.provider ?? "the configured OpenAI-compatible endpoint"} model ${config.model}`
-  const capability = capabilityOf(config)
-  if (capability === undefined) {
-    return [
-      `${where} declares no structured output capability, so the "${output.implementation.name}" implementation cannot promise the contract "${output.contract.name}". Declare one with the binding's \`output\` option when the endpoint honours a strict JSON schema, or mount an output implementation that does not need one.`
-    ]
-  }
-  if (capability.guarantee !== "native") {
-    return [
-      `${where} declares no native structured output, so the contract "${output.contract.name}" cannot be obtained from its response format. Mount an output implementation that does not need one.`
-    ]
-  }
-  if (!capability.withTools && request.tools.length > 0) {
-    return [
-      `${where} cannot carry the contract "${output.contract.name}" and a tool list on one call. Let the turn spend its tool budget before it answers, or mount an output implementation that does not need a native schema.`
-    ]
-  }
-  const problems = outputProfileErrors(output.contract.schema)
-  if (problems.length === 0) return []
-  return [
-    `the contract "${output.contract.name}" is outside the schema profile both wires send unchanged:`,
-    ...problems.map((problem) => `- ${problem}`)
-  ]
+  const selected = outputModeOf(request, config)
+  return "errors" in selected ? selected.errors : []
 }
 
-// outputSchemaFor returns the schema a native attempt sends, and undefined when the attempt
-// sends none. It is the one place that reads the implementation's guarantee, so no leg can send
-// a schema an implementation asked to be left off.
-export const outputSchemaFor = (output: OutputRequest | undefined): unknown =>
-  output === undefined || output.implementation.guarantee !== "native" ? undefined : output.contract.schema
+// outputSchemaFor returns the schema an attempt sends, and undefined when it sends none. Only a
+// native mode puts a schema on the wire, so no endpoint is handed one it never promised to keep.
+export const outputSchemaFor = (output: OutputRequest | undefined, mode: OutputMode): unknown =>
+  output === undefined || output.kind !== "contract" || mode.kind !== "native" ? undefined : output.contract.schema
+
+// outputNameFor is the schema identity a native attempt sends beside the schema. Both wires carry
+// a name, and both carry the declared one (compatibleResponseFormat; converseOutputConfig).
+export const outputNameFor = (output: OutputRequest | undefined, mode: OutputMode): string | undefined =>
+  outputSchemaFor(output, mode) === undefined || output?.kind !== "contract" ? undefined : output.contract.name
+
+// fallbackSystemFor is the extra prompt an attempt sends: the fallback's own instruction, and only
+// on an attempt running as that fallback. A native attempt reads exactly what it would read with
+// nothing mounted (model.test.ts, "a mounted fallback is dormant on a native endpoint").
+export const fallbackSystemFor = (output: OutputRequest | undefined, mode: OutputMode): string | undefined =>
+  mode.kind === "native" || output?.kind !== "contract" ? undefined : output.fallbackSystem
+
+// compatibleResponseFormat is the strict native response format the OpenAI-compatible wire takes.
+// It is built here and passed through the adapter's provider-options seam rather than through its
+// own schema converter: that converter exists to make an arbitrary schema strict-compatible, and
+// the supported profile already is, so the schema travels unchanged and carries its declared name
+// instead of the adapter's fixed one (@tanstack/openai-base, mapOptionsToRequest;
+// model.test.ts, "a declared contract rides response_format").
+export const compatibleResponseFormat = (
+  output: OutputRequest | undefined,
+  mode: OutputMode
+):
+  | {
+      readonly type: "json_schema"
+      readonly json_schema: { readonly name: string; readonly schema: unknown; readonly strict: true }
+    }
+  | undefined => {
+  const schema = outputSchemaFor(output, mode)
+  const name = outputNameFor(output, mode)
+  if (schema === undefined || name === undefined) return undefined
+  return { type: "json_schema", json_schema: { name, schema, strict: true } }
+}
 
 // converseOutputConfig maps a contract onto the Converse structured output surface. The schema
 // travels as a JSON string there, which is the shape `ConverseStreamCommandInput` declares
 // (@aws-sdk/client-bedrock-runtime, OutputFormat).
-export const converseOutputConfig = (output: OutputRequest): BedrockRuntime.OutputConfig => ({
-  textFormat: {
-    type: "json_schema",
-    structure: { jsonSchema: { name: output.contract.name, schema: JSON.stringify(output.contract.schema) } }
+export const converseOutputConfig = (
+  output: OutputRequest,
+  mode: OutputMode
+): BedrockRuntime.OutputConfig | undefined => {
+  const schema = outputSchemaFor(output, mode)
+  const name = outputNameFor(output, mode)
+  if (schema === undefined || name === undefined) return undefined
+  return { textFormat: { type: "json_schema", structure: { jsonSchema: { name, schema: JSON.stringify(schema) } } } }
+}
+
+// ConverseStop is what one raw Converse stop reason means to this binding. The adapter's stream
+// processor folds several of them into "stop" before the shared processor ever sees them, so the
+// raw reason is tapped off the SDK stream and read here instead
+// (@aws-sdk/client-bedrock-runtime, StopReason; model.ts, tapStopReason).
+export type ConverseStop = "refused" | "truncated" | "violation" | "ok"
+
+export const converseStopClass = (stopReason: string | undefined): ConverseStop => {
+  switch (stopReason) {
+    case "guardrail_intervened":
+    case "content_filtered":
+      return "refused"
+    case "max_tokens":
+    case "model_context_window_exceeded":
+      return "truncated"
+    // Converse reports a model that could not produce its constrained output this way, which is
+    // exactly the promise a native structured response breaks.
+    case "malformed_model_output":
+      return "violation"
+    default:
+      return "ok"
   }
-})
+}

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { codeMode, output, outputRepairFor, renderOf, toolList } from "./index"
+import { canonicalOf, codeMode, output, outputRepairFor, renderOf, toolList } from "./index"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -103,10 +103,11 @@ describe("modelRequest tool and prompt policy", () => {
     expect(modelRequest(head(), CODE).tools.map((t) => t.name)).toEqual(["execute"])
     const req = modelRequest(head([], true), CODE)
     expect(req.tools.map((t) => t.name)).toEqual(["execute"])
-    expect(req.output).toEqual({
-      contract: { name: "scout", schema: SCOUT.schema },
-      implementation: { name: "native", guarantee: "native", onMismatch: "fail" }
-    })
+    expect(req.output?.kind).toBe("contract")
+    expect(req.output?.kind === "contract" && canonicalOf(req.output.contract)).toBe(canonicalOf(SCOUT))
+    // Nothing is mounted, so the request declares no fallback at all.
+    expect(req.output?.kind === "contract" && req.output.fallback).toBeUndefined()
+    expect(req.output?.kind === "contract" && req.output.fallbackSystem).toBeUndefined()
     expect(req.system).not.toContain("scout")
     expect(req.system).not.toContain("schema")
   })
@@ -117,19 +118,24 @@ describe("modelRequest tool and prompt policy", () => {
     }
   })
 
-  test("the mounted implementation rides the request, and states what it asks the binding for", () => {
+  // A mounted fallback is a policy for a call native output cannot serve, and it stays dormant
+  // otherwise: its instruction rides the output request rather than the base prompt, so the
+  // binding decides whether the model ever reads it (platform/model/src/output.ts, outputSystemFor).
+  test("a mounted fallback rides the request, and adds nothing to the base prompt", () => {
+    const bare = modelRequest(head([], true), CODE)
     const repaired = renderOf([codeMode, outputRepairFor({ attempts: 1 })], head([], true))
     const req = modelRequest(head([], true), repaired)
-    expect(req.output?.implementation).toEqual({
+    expect(req.output?.kind === "contract" && req.output.fallback).toEqual({
+      kind: "repair",
       name: "repair",
-      guarantee: "none",
-      onMismatch: "reject",
       attempts: 1,
       projectHistory: true
     })
-    // The repair implementation asks for the contract in the prompt, because it claims none of
-    // the provider.
-    expect(req.system).toContain('conforming to the schema "scout"')
+    expect(req.output?.kind === "contract" && req.output.fallbackSystem).toContain('conforming to the schema "scout"')
+    // Mounting it changed neither the prompt nor the conversation.
+    expect(req.system).toBe(bare.system)
+    expect(req.system).not.toContain("scout")
+    expect(req.messages).toEqual(bare.messages)
   })
 
   test("once the budget is spent, execute is dropped and the nudge is added", () => {
@@ -143,7 +149,7 @@ describe("modelRequest tool and prompt policy", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
     const req = modelRequest(spent, CODE)
     expect(req.tools.map((t) => t.name)).toEqual([])
-    expect(req.output?.contract.name).toBe("scout")
+    expect(req.output?.kind === "contract" && req.output.contract.name).toBe("scout")
   })
 
   test("a spent wall from an earlier turn does not drop execute in a fresh turn", () => {
@@ -156,34 +162,75 @@ describe("modelRequest tool and prompt policy", () => {
     expect(modelRequest(trajectory, CODE).tools.map((t) => t.name)).toEqual(["execute"])
   })
 
-  test("an output declaration that is not a contract is loud, never an undeclared turn", () => {
+  // A declaration nobody can serve rides the request as a verdict rather than as an absence: a
+  // request with no output reads as a turn that wanted prose, and this one wanted something else
+  // (output.ts, DeclaredOutput; platform/model/src/output.ts, outputPreflight).
+  test("an output declaration that is not a contract rides the request as invalid", () => {
     const raw: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 0 }]
-    expect(() => modelRequest(raw, CODE)).toThrow("declares an output that is not a contract")
+    const req = modelRequest(raw, CODE)
+    expect(req.output?.kind).toBe("invalid")
+    expect(req.output?.kind === "invalid" && req.output.errors.join(" ")).toContain("is not a contract")
   })
 })
 
 describe("the repair exchange in the render", () => {
-  const rejection = (turn: string, at: number): Event => ({
+  const repair = (projectHistory: boolean) => ({
+    kind: "repair" as const,
+    name: "repair",
+    attempts: 2,
+    projectHistory
+  })
+  const rejection = (turn: string, at: number, projectHistory = true): Event => ({
     type: "OutputRejected",
     contract: "scout",
     attempt: `${turn}/infer/0`,
     text: '{"a":1}',
     errors: ["/a: expected string"],
+    mode: repair(projectHistory),
     turn,
     at
   })
-  const repaired = outputRepairFor()
-  const implementation = renderOf([codeMode, repaired], []).output
 
-  test("an owed correction renders as the reply and its reasons", () => {
-    const trajectory: Event[] = [
-      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
-      rejection("m1", 1)
-    ]
-    const messages = renderMessages(trajectory, {}, implementation)
+  test("an owed correction renders as the reply and the framework's reasons", () => {
+    const trajectory: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }, rejection("m1", 1)]
+    const messages = renderMessages(trajectory)
     expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"])
     expect(messages[1]!.content).toBe('{"a":1}')
     expect(String(messages[2]!.content)).toContain("/a: expected string")
+  })
+
+  // The generic correction sentence belongs to the framework loop alone. A component that mounts
+  // a delegated implementation decides its own feedback, and nothing is written on its behalf
+  // (output.ts, OutputImplementation; runtime/infer.ts, openRejection).
+  test("a delegated implementation writes its own feedback, and the framework writes none", () => {
+    const delegated: Event = {
+      type: "OutputRejected",
+      contract: "scout",
+      attempt: "m1/infer/0",
+      text: '{"a":1}',
+      errors: ["/a: expected string"],
+      mode: { kind: "delegated", name: "house-style", projectHistory: true },
+      turn: "m1",
+      at: 1
+    }
+    const owed = renderMessages([{ type: "MessageReceived", id: "m1", text: "go", at: 0 }, delegated])
+    // Nobody has decided yet, so the rejected reply stands alone with no framework sentence.
+    expect(owed.map((m) => m.role)).toEqual(["user", "assistant"])
+    const decided = renderMessages([
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      delegated,
+      {
+        type: "OutputRetryRequested",
+        rejection: "m1/infer/0",
+        feedback: "House style: dates are ISO 8601.",
+        by: "house-style",
+        turn: "m1",
+        at: 2
+      }
+    ])
+    expect(decided.map((m) => m.role)).toEqual(["user", "assistant", "user"])
+    expect(decided[2]!.content).toBe("House style: dates are ISO 8601.")
+    expect(String(decided[2]!.content)).not.toContain("Reply again with JSON")
   })
 
   test("a corrected exchange compacts out of the render, and stays in the log", () => {
@@ -193,21 +240,21 @@ describe("the repair exchange in the render", () => {
       { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 2 },
       { type: "MessageReceived", id: "m2", text: "next", at: 3 }
     ]
-    const messages = renderMessages(trajectory, {}, implementation)
     // The turn reads as though the model answered correctly the first time.
-    expect(messages.map((m) => m.content)).toEqual(["go", '{"a":"one"}', "next"])
+    expect(renderMessages(trajectory).map((m) => m.content)).toEqual(["go", '{"a":"one"}', "next"])
     // The rejection is still a fact of the log; only the render dropped it.
     expect(trajectory.some((e) => e.type === "OutputRejected")).toBe(true)
   })
 
-  test("projection is the implementation's policy, and an implementation that keeps history keeps it", () => {
+  // The projection reads the policy recorded on the rejection, so what an old turn means cannot
+  // change when a deployment mounts a different one (output.ts, projectedOutput).
+  test("a rejection recorded under a policy that keeps history keeps rendering", () => {
     const trajectory: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
-      rejection("m1", 1),
+      rejection("m1", 1, false),
       { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 2 }
     ]
-    const kept = renderOf([codeMode, outputRepairFor({ projectHistory: false })], []).output
-    expect(renderMessages(trajectory, {}, kept).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
+    expect(renderMessages(trajectory).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
   })
 
   test("a failed turn keeps its rejection: it is what explains the failure", () => {
@@ -216,8 +263,7 @@ describe("the repair exchange in the render", () => {
       rejection("m1", 1),
       { type: "TurnFailed", error: "spent", turn: "m1", at: 2 }
     ]
-    const messages = renderMessages(trajectory, {}, implementation)
-    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
+    expect(renderMessages(trajectory).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
   })
 })
 
@@ -248,7 +294,8 @@ describe("the tool surface decides the tool table", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
     // The wall drops the work tools whatever they are, and leaves the contract standing.
     expect(modelRequest(spent, LAB).tools.map((t) => t.name)).toEqual([])
-    expect(modelRequest(spent, LAB).output?.contract.name).toBe("scout")
+    const spentReq = modelRequest(spent, LAB)
+    expect(spentReq.output?.kind === "contract" && spentReq.output.contract.name).toBe("scout")
     expect(modelRequest(spent, LAB).system).toContain("tool budget for this turn is spent")
   })
 

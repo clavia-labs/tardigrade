@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { output, type Decoded, type OutputContract, type OutputProblems } from "./output"
+import { output, type Decoded, type OutputContract, type OutputFallback, type OutputMode, type OutputProblems } from "./output"
 
 // The compile-time half of the contract. Every assertion here is checked by `bun run typecheck`,
 // which fails on an unsatisfied `@ts-expect-error` as loudly as on a type error, so a schema that
@@ -7,7 +7,7 @@ import { output, type Decoded, type OutputContract, type OutputProblems } from "
 // half is output.test.ts.
 //
 // The assertions sit inside functions nobody calls: a rejected `output` call throws at
-// construction, and the values are declared rather than built.
+// construction, and the values are parameters rather than built.
 
 // accepts asserts that its argument has the annotated type. The call is the assertion.
 const accepts = <T>(_value: T): void => {}
@@ -63,6 +63,18 @@ export const decodes = (aspects: Aspects): void => {
   }>>({ a: [1, 2] })
 }
 
+// A contract is nominal, so no shape stands in for one. Both probes below are the ways a shape
+// would have been counterfeited: a fresh literal, and a spread of a genuine contract with the
+// public fields replaced (output.test.ts, "a contract's schema is its own copy, frozen through").
+export const cannotBeForged = (genuine: typeof ASPECTS): void => {
+  // @ts-expect-error a literal is not a contract, whatever fields it copies
+  accepts<OutputContract<Aspects>>({ name: "forged", schema: { type: "null" } })
+  // @ts-expect-error a spread of a contract loses the brand that made it one
+  accepts<OutputContract<Aspects>>({ ...genuine, name: "forged", schema: { type: "null" } })
+  // @ts-expect-error the same holds for the erased contract type
+  accepts<OutputContract>({ name: "forged", schema: { type: "null" } })
+}
+
 // A contract's value type erases in one direction only: a proven contract stands where an
 // unproven one is asked for, and never the reverse.
 export const erases = (proven: typeof ASPECTS, unproven: OutputContract): void => {
@@ -84,9 +96,49 @@ export const rejects = (): void => {
     }
   })
   output({
+    name: "ghost",
+    // @ts-expect-error required names a property the schema does not declare
+    schema: { type: "object", properties: { a: { type: "string" } }, required: ["a", "ghost"], additionalProperties: false }
+  })
+  output({
     name: "open",
     // @ts-expect-error an object declares additionalProperties false, or the wire closes it
     schema: { type: "object", properties: { a: { type: "string" } }, required: ["a"] }
+  })
+  output({
+    name: "patterned",
+    // @ts-expect-error a keyword neither wire carries is outside the profile
+    schema: {
+      type: "object",
+      properties: { a: { type: "string", pattern: "^x$" } },
+      required: ["a"],
+      additionalProperties: false
+    }
+  })
+  output({
+    name: "titled",
+    // @ts-expect-error the same holds for an annotation keyword
+    schema: {
+      type: "object",
+      properties: { a: { type: "string", title: "A" } },
+      required: ["a"],
+      additionalProperties: false
+    }
+  })
+  output({
+    name: "nested",
+    // @ts-expect-error the rule reads every node, not only the root's own properties
+    schema: {
+      type: "object",
+      properties: {
+        a: {
+          type: "array",
+          items: { type: "object", properties: { b: { type: "string", minLength: 1 } }, required: ["b"], additionalProperties: false }
+        }
+      },
+      required: ["a"],
+      additionalProperties: false
+    }
   })
   output({
     name: "referenced",
@@ -133,6 +185,30 @@ export const rejects = (): void => {
     // @ts-expect-error the root of a declared output is an object schema
     schema: { type: "array", items: { type: "string" } }
   })
+}
+
+// A mode is a closed union, so a value cannot state a policy nobody implements. Each probe below
+// is a policy that reads as sensible and is not one.
+export const modes = (): void => {
+  accepts<OutputMode>({ kind: "native", name: "native" })
+  accepts<OutputMode>({ kind: "local", name: "fail-fast" })
+  accepts<OutputMode>({ kind: "repair", name: "repair", attempts: 2, projectHistory: true })
+  accepts<OutputMode>({ kind: "delegated", name: "mine", projectHistory: false })
+  // @ts-expect-error a native mode has no correction bound to state
+  accepts<OutputMode>({ kind: "native", name: "native", attempts: 100, projectHistory: true })
+  // @ts-expect-error a local mode has no history to project: it never corrects
+  accepts<OutputMode>({ kind: "local", name: "fail-fast", projectHistory: true })
+  // @ts-expect-error the framework loop states its bound
+  accepts<OutputMode>({ kind: "repair", name: "repair", projectHistory: true })
+  // @ts-expect-error a delegated mode owns its own bound, so it states none here
+  accepts<OutputMode>({ kind: "delegated", name: "mine", projectHistory: false, attempts: 3 })
+  // @ts-expect-error the kinds are the four the framework implements
+  accepts<OutputMode>({ kind: "native-checked", name: "invented" })
+  // A fallback is what a component mounts, and native is never one of them: mounting a policy
+  // cannot turn the provider's own guarantee off (components/repair.ts).
+  accepts<OutputFallback>({ kind: "repair", name: "repair", attempts: 1, projectHistory: false })
+  // @ts-expect-error native is a mode an attempt runs in, never a fallback a component declares
+  accepts<OutputFallback>({ kind: "native", name: "native" })
 }
 
 // The rule reads the same at any depth, and an in-profile schema has no problems at all, so the

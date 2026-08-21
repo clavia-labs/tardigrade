@@ -73,23 +73,60 @@ describe("outputOf", () => {
     schema: { type: "object", properties: { a: { type: "string" } }, required: ["a"], additionalProperties: false }
   })
 
+  const declaration = { name: CONTRACT.name, schema: CONTRACT.schema }
+
   test("a completed turn reads back as its contract's value", () => {
     const log: ReadonlyArray<Event> = [
-      { type: "MessageReceived", id: "m1", text: "go", output: { name: CONTRACT.name, schema: CONTRACT.schema }, at: 0 },
+      { type: "MessageReceived", id: "m1", text: "go", output: declaration, at: 0 },
       { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 1 }
     ]
     expect(outputOf(CONTRACT, log, "m1")).toEqual({ a: "one" })
   })
 
   test("a running turn and a failed turn have no answer to read", () => {
-    expect(outputOf(CONTRACT, [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }], "m1")).toBeUndefined()
+    expect(outputOf(CONTRACT, [{ type: "MessageReceived", id: "m1", text: "go", output: declaration, at: 0 }], "m1")).toBeUndefined()
     expect(
       outputOf(CONTRACT, [{ type: "TurnFailed", error: "refused", turn: "m1", at: 1 }], "m1")
     ).toBeUndefined()
   })
 
   test("a recorded answer that misses its contract is loud, never a value nobody can trust", () => {
-    const log: ReadonlyArray<Event> = [{ type: "TurnCompleted", output: '{"a":1}', turn: "m1", at: 1 }]
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "go", output: declaration, at: 0 },
+      { type: "TurnCompleted", output: '{"a":1}', turn: "m1", at: 1 }
+    ]
     expect(() => outputOf(CONTRACT, log, "m1")).toThrow('misses the contract "note"')
+  })
+
+  // Holding a contract is not evidence that an answer was produced under it. Without this check a
+  // reader turns any completed turn whose text happens to parse into the shape it wanted.
+  test("a turn that declared nothing is never reinterpreted", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "plain prose", at: 0 },
+      { type: "TurnCompleted", output: '{"a":"reinterpreted"}', turn: "m1", at: 1 }
+    ]
+    expect(() => outputOf(CONTRACT, log, "m1")).toThrow('did not declare the contract "note"')
+  })
+
+  test("a turn that declared a different contract is a mismatch, whatever the name", () => {
+    const other = output({
+      name: "note",
+      schema: { type: "object", properties: { a: { type: "number" } }, required: ["a"], additionalProperties: false }
+    })
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "go", output: { name: other.name, schema: other.schema }, at: 0 },
+      { type: "TurnCompleted", output: '{"a":1}', turn: "m1", at: 1 }
+    ]
+    // Same name, different schema: a reader holding the string contract is not holding this one.
+    expect(() => outputOf(CONTRACT, log, "m1")).toThrow("is not the contract")
+    expect(outputOf(other, log, "m1")).toEqual({ a: 1 })
+  })
+
+  test("a declaration that is not a contract fails the read rather than being ignored", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 0 },
+      { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 1 }
+    ]
+    expect(() => outputOf(CONTRACT, log, "m1")).toThrow("did not declare")
   })
 })

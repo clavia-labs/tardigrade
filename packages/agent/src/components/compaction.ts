@@ -3,6 +3,7 @@ import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { compactionCompleted } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
+import { projectedOutput } from "../output"
 import { Infer } from "../runtime/infer"
 import type { AgentComponent } from "../runtime/agent"
 
@@ -79,10 +80,12 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
     case "ToolReturned":
       return Math.min(JSON.stringify(v.result ?? null).length, policy.resultRenderCap)
     case "OutputRejected":
-      // A rejected response and its reasons render while the correction is owed. A projected
-      // one (its turn completed) measures high rather than low, which fires the guard early
-      // instead of late (request.ts, renderMessages).
+      // A rejected response and its reasons render while the correction is owed. A projected one
+      // never reaches this function: the measure reads the same projection the render does
+      // (src/output.ts, projectedOutput).
       return String(v.text ?? "").length + JSON.stringify(v.errors ?? []).length
+    case "OutputRetryRequested":
+      return String(v.feedback ?? "").length
     case "TurnCompleted":
       return String(v.output ?? "").length
     case "TurnFailed":
@@ -97,7 +100,7 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
 // the estimate is a pure function of the recorded events (compaction.test.ts, "the measure").
 export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number => {
   const resolved = contextPolicyOf(policy)
-  return Math.ceil(events.reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
+  return Math.ceil(projectedOutput(events).reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
 }
 
 // checkpointOf returns the last checkpoint: the identity the next span starts from, and the
@@ -209,6 +212,8 @@ const lineOf = (e: Event, policy: ContextPolicy): string | null => {
       return `result: ${clip(JSON.stringify(v.result ?? null), policy.summaryLineCap)}`
     case "OutputRejected":
       return `agent (refused, ${String(v.contract ?? "")}): ${clip(String(v.text ?? ""), policy.summaryLineCap)}`
+    case "OutputRetryRequested":
+      return `asked again: ${clip(String(v.feedback ?? ""), policy.summaryLineCap)}`
     case "TurnCompleted":
       return `agent: ${String(v.output ?? "")}`
     case "TurnFailed":
@@ -242,11 +247,15 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 // model never sees (ContextPolicy above).
 export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): Reactor<Infer> => (log) => {
   const resolved = contextPolicyOf(policy)
-  if (!(firedUncovered(log) || (overContext(log, resolved) && atRoundBoundary(log)))) return []
-  const cut = cutOf(log, resolved)
+  // The projection runs first, so the guard, the cut, and the brief all read the history the
+  // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
+  // its rejected reply into a summary (src/output.ts, projectedOutput).
+  const view = projectedOutput(log)
+  if (!(firedUncovered(view) || (overContext(view, resolved) && atRoundBoundary(view)))) return []
+  const cut = cutOf(view, resolved)
   if (cut === undefined) return []
-  const prior = checkpointOf(log)
-  const span = log.slice(keepFromIndex(log, prior.keepFrom), cut.index)
+  const prior = checkpointOf(view)
+  const span = view.slice(keepFromIndex(view, prior.keepFrom), cut.index)
   return [
     transition({
       key: `cc:${cut.keepFrom}`,

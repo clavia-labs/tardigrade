@@ -44,7 +44,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
-| Model | | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER`, `MODEL_OUTPUT_GUARANTEE` | what `tdg setup` saved |
+| Model | | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER`, `MODEL_OUTPUT_GUARANTEE`, `MODEL_OUTPUT_WITH_TOOLS` | what `tdg setup` saved |
 
 `tdg setup` writes the file at mode 0600 and never prints the key back. With no model configured the server still boots and still serves every read; it says so at boot and turns fail naming what is missing.
 

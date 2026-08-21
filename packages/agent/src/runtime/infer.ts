@@ -5,7 +5,19 @@ import { modelCalled, outputRejected, textReturned, turnFailed } from "../events
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "../events"
 import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/turns"
-import { contractOf, decodeOutput, NATIVE_OUTPUT, type OutputContract, type OutputImplementation } from "../output"
+import {
+  asksAgain,
+  correctionsOf,
+  decodeOutput,
+  declaredOutputOf,
+  fingerprintOf,
+  modeOf,
+  mismatchCauseOf,
+  recordsRejection,
+  type OutputContract,
+  type OutputFallback,
+  type OutputMode
+} from "../output"
 import type { ContextPolicy } from "../components/compaction"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
@@ -34,8 +46,9 @@ export interface InferRequest {
   // What the render truncates and where, stated by the assembly so the binding renders against
   // the same numbers the compaction guard fires on (components/compaction.ts, compactionFor).
   readonly context?: Partial<ContextPolicy>
-  // How a declared output contract is obtained. Absent takes the native implementation.
-  readonly output?: OutputImplementation
+  // What the turn does when native structured output is unavailable for this call, and the
+  // prompt that fallback needs. Absent means the assembly declared none.
+  readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
@@ -63,67 +76,112 @@ interface Consequence {
   readonly attempt: string
   readonly at: number
   readonly contract: OutputContract | undefined
-  readonly output: OutputImplementation
 }
+
+const stampOf = (action: Action): { readonly endpoint?: unknown } =>
+  action.endpoint === undefined ? {} : { endpoint: action.endpoint }
 
 // completionOf judges one `complete` action against the turn's declared contract. An undeclared
 // turn ends in prose. A declared one is validated here whatever the provider promised, so a
 // strict binding is checked rather than trusted (docs/output.md, "Structural and semantic
-// correctness"); a mismatch is the provider's contract violation under a native guarantee, and
-// a rejection under an implementation that corrects.
-const completionOf = (output: string, usage: unknown, ctx: Consequence): Event => {
-  if (ctx.contract === undefined) {
-    return { type: "TurnCompleted", output, usage, turn: ctx.turn, ...epochStamp(ctx.epoch), at: ctx.at } as Event
+// correctness"). What a mismatch means belongs to the implementation: a terminal under native or
+// local, and a recorded rejection under the two that carry on (src/output.ts, mismatchCauseOf).
+const completionOf = (action: Action & { readonly kind: "complete" }, usage: unknown, ctx: Consequence): Event => {
+  const mode = action.mode
+  const completed = {
+    type: "TurnCompleted",
+    output: action.output,
+    usage,
+    attemptKey: ctx.attempt,
+    ...(mode === undefined ? {} : { mode }),
+    ...stampOf(action),
+    turn: ctx.turn,
+    ...epochStamp(ctx.epoch),
+    at: ctx.at
+  } as Event
+  if (ctx.contract === undefined) return completed
+  // A declared contract is obtained in a mode the binding chose, and every consequence records
+  // which. A binding that answers a declared turn without stating one has broken its own
+  // contract, and guessing a mode here would put a fact in the log nobody established
+  // (Infer above; platform/model/src/output.ts, outputModeOf).
+  if (mode === undefined) {
+    return {
+      type: "TurnFailed",
+      error: `the model binding answered a turn declaring "${ctx.contract.name}" without stating the output mode it ran in`,
+      usage,
+      turn: ctx.turn,
+      ...epochStamp(ctx.epoch),
+      cause: "inference_error",
+      attempts: 1,
+      attemptKey: ctx.attempt,
+      ...stampOf(action),
+      at: ctx.at
+    } as Event
   }
-  const decoded = decodeOutput(ctx.contract, output)
-  if (decoded.errors.length === 0) {
-    return { type: "TurnCompleted", output, usage, turn: ctx.turn, ...epochStamp(ctx.epoch), at: ctx.at } as Event
-  }
-  if (ctx.output.onMismatch === "reject") {
+  const decoded = decodeOutput(ctx.contract, action.output)
+  if (decoded.errors.length === 0) return completed
+  if (recordsRejection(mode)) {
     return outputRejected({
       contract: ctx.contract.name,
+      fingerprint: fingerprintOf(ctx.contract),
       attempt: ctx.attempt,
-      text: output,
+      text: action.output,
       errors: decoded.errors,
+      mode,
       usage,
+      ...stampOf(action),
       turn: ctx.turn,
       ...epochStamp(ctx.epoch),
       at: ctx.at
     })
   }
+  const cause = mismatchCauseOf(mode) ?? "output_contract_violation"
   return {
     type: "TurnFailed",
     error:
-      `the response missed the declared output contract "${ctx.contract.name}" the ${ctx.output.name} implementation guarantees:\n` +
+      `the response missed the declared output contract "${ctx.contract.name}" in ${mode.name} mode:\n` +
       decoded.errors.map((e) => `- ${e}`).join("\n"),
     usage,
     turn: ctx.turn,
     ...epochStamp(ctx.epoch),
-    cause: "output_contract_violation",
+    cause,
     attempts: 1,
     attemptKey: ctx.attempt,
-    policy: ctx.output,
+    policy: mode,
+    ...stampOf(action),
     at: ctx.at
   } as Event
 }
 
 // consequenceOf returns the action's recorded answer: the model responds by acting. Every
-// consequence carries the turn it serves and the attempt's spend: `usage` is always stamped,
-// and an attempt whose binding reported nothing stamps an empty object, so usageIn reads the
-// spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
+// consequence carries the turn it serves, the attempt's spend, and who served it: `usage` is
+// always stamped, and an attempt whose binding reported nothing stamps an empty object, so
+// usageIn reads the spend as unknown rather than absent (usage.test.ts, "unknown is sticky").
+// `endpoint` is separate from spend on purpose: an endpoint that reports no tokens still has to
+// be named in the log (events.ts, Endpoint).
 const consequenceOf = (action: Action, ctx: Consequence): Event => {
   const usage = action.usage ?? {}
   return action.kind === "call"
-    ? { type: "ToolCalled", callId: action.callId, name: action.name, arguments: action.arguments, usage, turn: ctx.turn, at: ctx.at }
+    ? ({
+        type: "ToolCalled",
+        callId: action.callId,
+        name: action.name,
+        arguments: action.arguments,
+        usage,
+        ...stampOf(action),
+        turn: ctx.turn,
+        at: ctx.at
+      } as Event)
     : action.kind === "complete"
-      ? completionOf(action.output, usage, ctx)
-      : {
+      ? completionOf(action, usage, ctx)
+      : ({
           type: "TurnFailed",
           error: action.error,
           usage,
           turn: ctx.turn,
           ...epochStamp(ctx.epoch),
           cause: action.failure?.cause ?? "model",
+          ...(action.mode === undefined ? {} : { mode: action.mode }),
           ...(action.failure === undefined
             ? {}
             : {
@@ -131,8 +189,9 @@ const consequenceOf = (action: Action, ctx: Consequence): Event => {
                 attemptKey: ctx.attempt,
                 ...(action.failure.policy === undefined ? {} : { policy: action.failure.policy })
               }),
+          ...stampOf(action),
           at: ctx.at
-        }
+        } as Event)
 }
 
 const failureMessage = (cause: Cause.Cause<never>): string => {
@@ -167,13 +226,42 @@ const terminated = (slice: ReadonlyArray<Event>): boolean =>
 const terminalKey = (turn: string, epoch: number): string =>
   epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
 
+const rejectionsIn = (events: ReadonlyArray<Event>): ReadonlyArray<Event> =>
+  events.filter((event) => event.type === "OutputRejected")
+
+// openRejection returns the rejection this turn still owes an answer to: the last one no
+// `OutputRetryRequested` has released. It is what parks a delegated turn, so the component that
+// mounted the implementation decides what happens next instead of the reactor asking again by
+// itself (src/output.ts, asksAgain).
+const openRejection = (events: ReadonlyArray<Event>): Event | undefined => {
+  const answered = new Set(
+    events
+      .filter((e) => e.type === "OutputRetryRequested")
+      .map((e) => String((e as { rejection?: unknown }).rejection))
+  )
+  return rejectionsIn(events)
+    .filter((event) => !answered.has(String((event as { attempt?: unknown }).attempt)))
+    .at(-1)
+}
+
+// spentModeOf is the mode a rejection was recorded under. Exhaustion and the park read it rather
+// than the mounted fallback, so a deployment that raises or lowers the bound later cannot change
+// what an already-recorded correction round was allowed to spend (events.ts, OutputRejected).
+const spentModeOf = (rejections: ReadonlyArray<Event>): OutputMode | undefined => {
+  for (let i = rejections.length - 1; i >= 0; i--) {
+    const recorded = modeOf((rejections[i] as { mode?: unknown }).mode)
+    if (recorded !== undefined) return recorded
+  }
+  return undefined
+}
+
 // Render derives what the model is shown over this log: the assembly owns it (runtime/agent.ts,
 // renderOf).
 export type Render = (log: ReadonlyArray<Event>) => {
   readonly system: string
   readonly tools: ReadonlyArray<import("../request").ToolSpec>
   readonly context?: Partial<ContextPolicy>
-  readonly output?: OutputImplementation
+  readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
 export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): Reactor<Infer | EventLog> => (log) => {
@@ -193,76 +281,94 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   ).length
   // A rejected response is a spent logical attempt: the next ask must not reuse the idempotency
   // key, or a deduping provider answers the correction with the response it just refused.
-  const rejected = slice.filter((e) => e.type === "OutputRejected").length
+  const rejected = rejectionsIn(slice).length
   const logicalAttempt = slice.filter((e) => e.type === "ToolCalled").length + modelFailures + rejected
   const attempt = `${turn}/infer/${logicalAttempt}`
   const rendered = render(log)
-  const output = rendered.output ?? NATIVE_OUTPUT
-  const contract = contractOf(slice)
+  const fallback = rendered.output?.fallback
+  const declared = declaredOutputOf(slice)
+  const terminate = (
+    input: {
+      readonly cause: import("../events").TurnFailureCause
+      readonly error: string
+      readonly attempts: number
+      readonly policy: unknown
+    }
+  ) => [
+    transition({
+      key: terminalKey(turn, epoch),
+      input: { turn, epoch, attempt, ...input },
+      act: (given) =>
+        Effect.gen(function* () {
+          const at = yield* Clock.currentTimeMillis
+          return [
+            turnFailed({
+              error: given.error,
+              cause: given.cause,
+              attempts: given.attempts,
+              attemptKey: given.attempt,
+              policy: given.policy,
+              turn: given.turn,
+              ...epochStamp(given.epoch),
+              at
+            })
+          ]
+        })
+    })
+  ]
+  // A declaration that is not a contract this repository can serve ends the turn here, before a
+  // socket opens. It is the same class the binding reports when an endpoint cannot promise a
+  // contract, because both are the turn asking for an output nobody can produce.
+  if (declared.kind === "invalid") {
+    return terminate({
+      cause: "output_unsupported",
+      error: `the turn's declared output cannot be served:\n${declared.errors.map((e) => `- ${e}`).join("\n")}`,
+      attempts: 0,
+      policy: fallback ?? null
+    })
+  }
+  const contract = declared.kind === "contract" ? declared.contract : undefined
   // The give-up and correction bounds are derivations, so each derives its own terminal
   // transition: one terminal per turn epoch, and a duplicate of either kind absorbs.
   if (died >= giveUpAfter) {
-    return [
-      transition({
-        key: terminalKey(turn, epoch),
-        input: { turn, epoch, attempt, attempts: died, policy: { giveUpAfter }, error: `the model attempt died ${giveUpAfter} times in a row` },
-        act: (input) =>
-          Effect.gen(function* () {
-            const at = yield* Clock.currentTimeMillis
-            return [
-              turnFailed({
-                error: input.error,
-                cause: "inference_attempts_exhausted",
-                attempts: input.attempts,
-                attemptKey: input.attempt,
-                policy: input.policy,
-                turn: input.turn,
-                ...epochStamp(input.epoch),
-                at
-              })
-            ]
-          })
-      })
-    ]
+    return terminate({
+      cause: "inference_attempts_exhausted",
+      error: `the model attempt died ${giveUpAfter} times in a row`,
+      attempts: died,
+      policy: { giveUpAfter }
+    })
   }
   const epochStart = slice.findLastIndex(
     (event) => event.type === "TurnResumed" && Number((event as { epoch?: unknown }).epoch) === epoch
   )
   const epochEvents = epochStart === -1 ? slice : slice.slice(epochStart + 1)
-  // The correction bound is the implementation's, read off the render. An implementation that
-  // states none spends nothing on corrections, so the first rejection ends the turn.
-  const corrections = epochEvents.filter((event) => event.type === "OutputRejected").length
-  const allowed = output.attempts ?? 0
-  if (corrections > allowed) {
-    return [
-      transition({
-        key: terminalKey(turn, epoch),
-        input: {
-          turn,
-          epoch,
-          attempt,
-          attempts: corrections,
-          policy: output,
-          error: `the response did not satisfy the declared output contract after ${allowed} correction${allowed === 1 ? "" : "s"}`
-        },
-        act: (input) =>
-          Effect.gen(function* () {
-            const at = yield* Clock.currentTimeMillis
-            return [
-              turnFailed({
-                error: input.error,
-                cause: "output_repairs_exhausted",
-                attempts: input.attempts,
-                attemptKey: input.attempt,
-                policy: input.policy,
-                turn: input.turn,
-                ...epochStamp(input.epoch),
-                at
-              })
-            ]
-          })
+  const rejections = rejectionsIn(epochEvents)
+  const owed = openRejection(epochEvents)
+  if (owed !== undefined) {
+    const spent = spentModeOf(rejections)
+    // A rejection with no recorded mode is a log this reactor did not write. Asking again on a
+    // policy nobody recorded would be a guess, so the turn ends instead.
+    if (spent === undefined) {
+      return terminate({
+        cause: "output_validation_failed",
+        error: "a rejected response carries no recorded output mode, so no correction policy applies to it",
+        attempts: rejections.length,
+        policy: null
       })
-    ]
+    }
+    // A delegated mode parks here. The component that mounted it reads the rejection and decides:
+    // its own feedback through `OutputRetryRequested`, its own terminal, or nothing. The reactor
+    // never schedules the framework loop on its behalf.
+    if (!asksAgain(spent)) return []
+    const allowed = correctionsOf(spent)
+    if (rejections.length > allowed) {
+      return terminate({
+        cause: "output_repairs_exhausted",
+        error: `the response did not satisfy the declared output contract after ${allowed} correction${allowed === 1 ? "" : "s"}`,
+        attempts: rejections.length,
+        policy: spent
+      })
+    }
   }
   // The attempt's identity, the same string its ModelCalled mark carries. A died attempt leaves
   // its mark. The completed tool calls count logical attempts, so an operator resume keeps the
@@ -277,13 +383,17 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
         ordinal: marks,
         trajectory: trajectoryOf(log),
         render: rendered,
-        output,
-        // The policy this attempt runs under, stamped on the ask so a replay reads which
-        // implementation and which schema produced which response.
+        // The declared policy, stamped on the ask: the contract's identity and the fallback the
+        // assembly mounted. The mode the attempt actually ran in is the binding's to report, and
+        // it lands on the consequence (events.ts, OutputPolicy; completionOf above).
         stamp:
           contract === undefined
             ? undefined
-            : { contract: contract.name, implementation: output.name, guarantee: output.guarantee },
+            : {
+                contract: contract.name,
+                fingerprint: fingerprintOf(contract),
+                ...(fallback === undefined ? {} : { fallback })
+              },
         contract
       },
       act: (input) =>
@@ -327,8 +437,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
               epoch: input.epoch,
               attempt: input.attempt,
               at: after,
-              contract: input.contract,
-              output: input.output
+              contract: input.contract
             })
           ]
         })

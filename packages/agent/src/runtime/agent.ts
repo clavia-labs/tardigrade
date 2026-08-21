@@ -3,7 +3,7 @@ import { composeComponents, type Component, type ComponentRuntime, type ViewAlge
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { ToolSpec } from "../request"
-import { NATIVE_OUTPUT, type OutputImplementation } from "../output"
+import type { OutputFallback } from "../output"
 import { agentKeys } from "../events"
 import { inferReactorFor, type InferPolicy } from "./infer"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
@@ -28,13 +28,17 @@ export interface ContextFragment {
   readonly policy: Partial<ContextPolicy>
 }
 
-// OutputFragment names one component's output implementation contribution: how a declared
-// contract is obtained. An assembly that mounts none takes NATIVE_OUTPUT; two that disagree
-// throw, because a turn has one final response and cannot obtain it two ways
-// (src/output.ts, OutputImplementation).
+// OutputFragment names one component's output fallback contribution: what a turn does when
+// native structured output is unavailable for the call. An assembly that mounts none has no
+// fallback, so such a turn fails before it spends; two that disagree throw, because a turn has
+// one final response and one way to fall back (src/output.ts, OutputFallback).
 export interface OutputFragment {
   readonly component: string
-  readonly implementation: OutputImplementation
+  readonly fallback: OutputFallback
+  // The prompt this fallback needs when it runs. It reaches the model only on an attempt whose
+  // mode is this fallback, so a native attempt reads exactly what it would read with nothing
+  // mounted (request.ts, OutputRequest; platform/model/src/model.ts).
+  readonly system?: string
 }
 
 // AgentView is the view an agent runtime interprets. Arrays retain component order and
@@ -61,17 +65,17 @@ export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
   })
 }
 
-// implementationOf resolves the one output implementation the assembly declares. A turn has one
-// final response, so a second declaration is an assembly error even when the two agree: a reader
-// of the mount list must be able to name the implementation from it.
-const implementationOf = (fragments: ReadonlyArray<OutputFragment>): OutputImplementation => {
-  if (fragments.length === 0) return NATIVE_OUTPUT
-  const first = fragments[0]!
+// fallbackFrom resolves the one output fallback the assembly declares. A turn has one final
+// response, so a second declaration is an assembly error even when the two agree: a reader of the
+// mount list must be able to name the fallback from it.
+const fallbackFrom = (fragments: ReadonlyArray<OutputFragment>): OutputFragment | undefined => {
+  const first = fragments[0]
+  if (first === undefined) return undefined
   const second = fragments[1]
   if (second !== undefined) {
-    throw new Error(`output implementation declared by components ${first.component} and ${second.component}`)
+    throw new Error(`output fallback declared by components ${first.component} and ${second.component}`)
   }
-  return first.implementation
+  return first
 }
 
 const contextOf = (fragments: ReadonlyArray<ContextFragment>): Partial<ContextPolicy> => {
@@ -121,20 +125,31 @@ const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArra
 }
 
 // Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
-// policy, and the implementation that obtains a declared output contract.
+// policy, and the fallback for a declared output contract native output cannot serve. `output` is
+// absent when the assembly declares no fallback.
 export interface Rendered {
   readonly system: string
   readonly tools: ReadonlyArray<ToolSpec>
   readonly context: Partial<ContextPolicy>
-  readonly output: OutputImplementation
+  readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
-const renderView = (view: AgentView): Rendered => ({
-  system: view.system.filter((fragment) => fragment !== "").join("\n"),
-  tools: checkedTools(view.tools).map((tool) => tool.spec),
-  context: contextOf(view.context),
-  output: implementationOf(view.output)
-})
+const renderView = (view: AgentView): Rendered => {
+  const fragment = fallbackFrom(view.output)
+  return {
+    system: view.system.filter((piece) => piece !== "").join("\n"),
+    tools: checkedTools(view.tools).map((tool) => tool.spec),
+    context: contextOf(view.context),
+    ...(fragment === undefined
+      ? {}
+      : {
+          output: {
+            fallback: fragment.fallback,
+            ...(fragment.system === undefined || fragment.system === "" ? {} : { system: fragment.system })
+          }
+        })
+  }
+}
 
 // renderOf derives the model request from the same component view that routing reads.
 export const renderOf = <R>(components: ReadonlyArray<AgentComponent<R>>, log: ReadonlyArray<Event>): Rendered =>

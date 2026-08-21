@@ -40,6 +40,7 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
   ToolReturned: DONE,
   TurnCompleted: DONE,
   OutputRejected: BROKEN,
+  OutputRetryRequested: AWAIT,
   TurnFailed: BROKEN
 }
 
@@ -146,6 +147,8 @@ export const summaryOf = (
       const errors = Array.isArray(event.errors) ? (event.errors as ReadonlyArray<unknown>) : []
       return line([str(event.contract) ?? "", `${errors.length} ${errors.length === 1 ? "reason" : "reasons"}`, str(errors[0])], chars)
     }
+    case "OutputRetryRequested":
+      return line([str(event.by) ?? "", str(event.feedback) ?? ""], chars)
     case "TurnCompleted":
       return line([preview(event.output, chars, jsonDepth)], chars)
     case "TurnFailed":
@@ -220,9 +223,10 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   PackageCalled: ["callId", "name", ...STAMP, "arguments"],
   PackageReturned: ["callId", ...STAMP, "result"],
   BlockedOn: ["callId", "awaiting", ...STAMP],
-  OutputRejected: ["contract", "attempt", "epoch", ...STAMP, "errors", "text", "usage"],
-  TurnCompleted: ["epoch", ...STAMP, "output", "usage"],
-  TurnFailed: ["epoch", "cause", "attempts", "attemptKey", ...STAMP, "error", "usage", "policy"],
+  OutputRejected: ["contract", "fingerprint", "attempt", "epoch", "mode", ...STAMP, "errors", "text", "usage", "endpoint"],
+  OutputRetryRequested: ["rejection", "by", "epoch", ...STAMP, "feedback", "decision"],
+  TurnCompleted: ["epoch", "attemptKey", "mode", ...STAMP, "output", "usage", "endpoint"],
+  TurnFailed: ["epoch", "cause", "attempts", "attemptKey", "mode", ...STAMP, "error", "usage", "policy", "endpoint"],
   TurnResumed: ["failedEpoch", "epoch", ...STAMP],
   ReplyDelivered: ["to", ...STAMP],
   BudgetExhausted: ["budget", "used", ...STAMP],

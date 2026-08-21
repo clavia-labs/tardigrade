@@ -17,19 +17,35 @@ export { inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type In
 // (docs/output.md).
 export {
   output,
+  outputFrom,
   outputErrors,
+  outputNameErrors,
   outputProfileErrors,
   decodeOutput,
-  contractOf,
+  declarationOf,
+  declarationForTurn,
+  declaredOutputOf,
+  canonicalOf,
+  fingerprintOf,
+  projectedOutput,
   correctionText,
-  NATIVE_OUTPUT,
+  correctionAttemptsErrors,
+  correctionsOf,
+  fallbackOf,
+  modeOf,
+  mismatchCauseOf,
+  projectsHistory,
+  asksAgain,
+  recordsRejection,
+  NATIVE_MODE,
   OUTPUT_NAME_PATTERN,
-  OUTPUT_SCHEMA_DEPTH,
   OUTPUT_STRING_FORMATS,
+  OutputContract,
   type Decoded,
+  type DeclaredOutput,
   type InProfile,
-  type OutputContract,
-  type OutputImplementation,
+  type OutputFallback,
+  type OutputMode,
   type OutputProblems,
   type OutputSchema,
   type OutputStringFormat
@@ -37,9 +53,11 @@ export {
 export {
   outputRepair,
   outputRepairFor,
-  repairImplementation,
+  outputFailFast,
+  outputSystemFor,
+  repairFallback,
   repairPolicyOf,
-  repairSystemFor,
+  FAIL_FAST_FALLBACK,
   DEFAULT_REPAIR_POLICY,
   type RepairPolicy
 } from "./components/repair"
@@ -47,7 +65,7 @@ export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./co
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export { replyReactor } from "./components/reply"
 export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./components/compaction"
-export { agentKeys, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./events"
+export { agentKeys, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./resume"
 export {
   usageIn,
