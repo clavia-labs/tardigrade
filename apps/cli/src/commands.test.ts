@@ -142,6 +142,7 @@ describe("parsing", () => {
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
   test("the tree names setup, and its help says what it writes", async () => {
     expect((await drive([])).lines.join("\n")).toContain("setup")
+    expect((await drive([])).lines.join("\n")).toContain("init")
     expect((await drive([])).lines.join("\n")).toContain("build")
     expect((await drive([])).lines.join("\n")).toContain("push")
     expect((await drive([])).lines.join("\n")).toContain("actors")
@@ -166,6 +167,9 @@ describe("parsing", () => {
     expect(pushHelp).toContain("--target")
     expect(pushHelp).toContain("local")
     expect(pushHelp).toContain("hosted")
+    const initHelp = (await drive(["init", "--help"])).lines.join("\n")
+    expect(initHelp).toContain("--dir")
+    expect(initHelp).toContain("--force")
   })
 
   test("push requires an explicit target", async () => {
@@ -290,7 +294,9 @@ describe("run", () => {
       }
     )
     expect(ran.failed).toBe(false)
-    expect(ran.lines[0]).toBe("root m1 completed\nthe summary")
+    expect(ran.lines[0]).toBe(
+      "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?actor=default&thread=root"
+    )
   })
 
   test("a thread nobody named is minted, so a run births its own thread", async () => {

@@ -421,13 +421,63 @@ textarea {
 }
 
 .actor-kind {
+  flex-shrink: 0;
   margin-left: auto;
   color: var(--faint);
   font-size: 9.5px;
 }
 
+.actor-mark-list {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) 0;
+  overflow-y: auto;
+}
+
+.actor-mark-button {
+  display: grid;
+  width: 100%;
+  min-height: var(--row-h);
+  padding: 0;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.actor-mark {
+  display: grid;
+  place-items: center;
+  border-radius: var(--radius);
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 9.5px;
+  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.actor-mark-button:hover .actor-mark {
+  color: var(--ink);
+}
+
+.actor-mark-button:active .actor-mark {
+  transform: scale(0.97);
+}
+
+.actor-mark-selected .actor-mark,
+.actor-mark-selected:hover .actor-mark {
+  background: var(--moss-wash);
+  color: var(--moss-ink);
+}
+
 .actor-footer {
+  display: flex;
   flex-shrink: 0;
+  flex-direction: column;
+  gap: 2px;
   margin-top: auto;
   padding: var(--space-2);
   border-top: 1px solid var(--hair);
@@ -454,6 +504,12 @@ textarea {
   color: var(--ink);
 }
 
+.actor-api-active,
+.actor-api-active:hover {
+  background: var(--moss-wash);
+  color: var(--moss-ink);
+}
+
 .actor-api:active {
   transform: scale(0.97);
 }
@@ -465,27 +521,18 @@ textarea {
 
 .api-view {
   display: flex;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   height: 100%;
   overflow: hidden;
 }
 
 .api-nav {
   display: flex;
-  width: 320px;
   min-width: 0;
   flex-direction: column;
-  background: var(--surface);
+  background: var(--bg);
   border-right: 1px solid var(--hair);
-}
-
-.api-nav-head {
-  display: flex;
-  min-height: 64px;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  border-bottom: 1px solid var(--hair);
 }
 
 .api-search-wrap {
@@ -1059,10 +1106,6 @@ textarea {
 }
 
 @media (max-width: 760px) {
-  .api-nav {
-    width: 240px;
-  }
-
   .api-detail {
     padding-right: var(--space-4);
     padding-left: var(--space-4);
@@ -1081,12 +1124,6 @@ textarea {
 
   .api-operation-examples {
     position: static;
-  }
-}
-
-@media (max-width: 900px) {
-  .actor-rail:not(.actor-rail-collapsed) {
-    width: 160px !important;
   }
 }
 
@@ -1180,19 +1217,6 @@ textarea {
 
 .icon-btn:active {
   transform: scale(0.97);
-}
-
-.theme-toggle {
-  position: absolute;
-  z-index: 2;
-  top: var(--space-3);
-  right: var(--space-5);
-}
-
-@media (max-width: 640px) {
-  .theme-toggle {
-    right: var(--space-4);
-  }
 }
 
 /* The copy control while it confirms. The glyph itself is swapped in React rather than by a rule,
@@ -1305,6 +1329,21 @@ textarea {
 }
 
 /* The event list: the log in log order, one row per event. */
+.thread-view {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.thread-trace {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
 .events {
   flex: 1;
   min-width: 0;
@@ -1324,6 +1363,11 @@ textarea {
 
 .event-row:hover {
   background: var(--sunken);
+}
+
+.event-row-selected,
+.event-row-selected:hover {
+  background: var(--moss-wash);
 }
 
 /* The stamp carries the event type verbatim, so it is mono and it is wide enough for the longest
@@ -1362,25 +1406,44 @@ textarea {
   color: var(--faint);
 }
 
-/* An open row stops clamping its summary and wraps it instead: the reader asked for the whole line,
-   and it alone keeps a measure (src/policy.ts, SUMMARY_WIDTH). */
-.event-row-open .event-text {
-  white-space: pre-wrap;
-  overflow: visible;
-  text-overflow: clip;
+.event-inspector {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  border-left: 1px solid var(--hair);
+  background: var(--bg);
 }
 
-/* An opened row's fields hang under it on one hairline: names in the left column, values in the
-   right, both on the page's own ground. No card and no fill, so the expansion reads as the row
-   continuing rather than as a second surface (mock.html, .ev-detail). */
+.event-inspector-head {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--space-4);
+  border-bottom: 1px solid var(--hair);
+}
+
+.event-inspector-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: var(--space-2);
+}
+
+.event-inspector-seq {
+  color: var(--faint);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+/* The selected event's fields use one hairline: names in the left column and values on the page's
+   own ground. No card or fill separates the payload from the inspector that already contains it. */
 .event-detail {
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 5px 20px;
-  margin-top: 2px;
-  margin-right: 0;
-  margin-bottom: 10px;
-  padding-left: 18px;
+  margin: var(--space-4);
+  padding-left: var(--space-3);
   border-left: 1px solid var(--hair);
 }
 
@@ -1447,21 +1510,6 @@ textarea {
 .event-json {
   line-height: 1.55;
   tab-size: 2;
-}
-
-/* Entrances only, opacity only (voyager-design-system.md, principle 4). */
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-.fade-in {
-  animation: fade-in var(--base) var(--ease) both;
 }
 
 /* The quiet line a pane with nothing to show stands on. */

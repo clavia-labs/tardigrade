@@ -2,13 +2,9 @@
 // policy value the app applies (AGENTS.md, "Design"). A screen imports the default and takes an
 // override at the call site rather than reading a literal.
 
-// The rail's width in pixels (mock.html, the aside). It is a number here because the layout
-// measures against it.
-export const RAIL_WIDTH = 280
-
-// The actor pane's width in pixels. Actor names are shorter than run ids, so the first level keeps
-// a narrower measure than the run rail beside it.
-export const ACTOR_RAIL_WIDTH = 208
+// The list rail width in pixels. Actor, run, and API panes share the Flamecast v6 thread rail
+// measure (flamecast-v6/apps/web/src/system.css, .chat-split).
+export const RAIL_WIDTH = 236
 
 // The shared identity-row height in pixels. Each pane's title begins on the same horizontal datum,
 // and each pane accepts another height when embedded in a tighter shell.
@@ -17,6 +13,18 @@ export const PANE_HEADER_HEIGHT = 64
 // The width the actor pane keeps when it is collapsed, in pixels. It holds the toggle and nothing
 // else, so a reader can always open the list again from where they closed it.
 export const COLLAPSED_ACTOR_RAIL_WIDTH = 48
+
+// The hexadecimal characters shown from a pushed actor's digest. ActorRail accepts another length
+// when an embedding has a wider or narrower actor pane.
+export const ACTOR_DIGEST_CHARS = 7
+
+// The characters a collapsed actor's monogram keeps. ActorRail accepts another count when names
+// in an embedding need a shorter or longer mark.
+export const ACTOR_MARK_CHARS = 2
+
+// The collapsed actor monogram's square size in pixels. ActorRail accepts another size when its
+// collapsed width changes.
+export const ACTOR_MARK_SIZE = 28
 
 // How many nested object levels the API explorer renders before naming the remaining schema. The
 // explorer accepts another depth when a larger surface needs to show more of a recursive model.
@@ -29,6 +37,10 @@ export const ICON_SIZE = 15
 // The event type pill's width in pixels. One shared width aligns every event summary, and Thread
 // accepts another width when an embedding uses a different event vocabulary.
 export const EVENT_STAMP_WIDTH = 164
+
+// The event inspector's preferred width in pixels. It yields space to the trace when the viewport
+// is narrow, and Thread accepts another width when its surrounding shell has a different measure.
+export const EVENT_INSPECTOR_WIDTH = 480
 
 // How often the rail re-reads GET /v1/actors/:actor/threads for the roster: the roots and their counts. The server
 // publishes no change feed for the listing, so the rail polls, and this is both the delay between a
@@ -77,11 +89,6 @@ export const COPY_CONFIRM_MS = 1200
 // The column the event type is padded to in copied text. The times, types, and summaries then line
 // up in a plain-text editor, which is where the copied window is read.
 export const COPY_TYPE_WIDTH = 16
-
-// The widest an opened row's wrapped summary grows, in pixels (mock.html, .ev-row.open .ev-text). A
-// collapsed row takes the pane's whole width, so collapsing the rail buys visible text; only the
-// wrapped line keeps a measure.
-export const SUMMARY_WIDTH = 680
 
 // The longest summary string the app puts in the DOM. The visible ellipsis is the pane's, and this
 // cap only keeps a megabyte-long code body out of a text node that shows one line of it.

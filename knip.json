@@ -4,7 +4,8 @@
     ".": {
       "entry": [
         "tools/*.ts",
-        "examples/*.ts"
+        "examples/*.ts",
+        "examples/quickstart/*.ts"
       ],
       "project": [
         "tools/**/*.ts",
@@ -40,9 +41,6 @@
       "project": [
         "src/**/*.{ts,tsx}",
         "dev/**/*.ts"
-      ],
-      "ignoreDependencies": [
-        "@base-ui-components/react"
       ]
     }
   }

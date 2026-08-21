@@ -1,5 +1,5 @@
 import { OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
-import { ArrowLeft, MagnifyingGlass } from "@phosphor-icons/react"
+import { ArrowLeft, BracketsCurly, MagnifyingGlass } from "@phosphor-icons/react"
 import { useEffect, useMemo, useRef, useState, type ReactElement } from "react"
 
 import {
@@ -16,7 +16,7 @@ import {
 } from "./api"
 import { client } from "./client"
 import { navigate, useRoute } from "./nav"
-import { API_SCHEMA_DEPTH, ICON_SIZE } from "./policy"
+import { API_SCHEMA_DEPTH, ICON_SIZE, PANE_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
 import { ThemeToggle } from "./ThemeToggle"
 
@@ -274,7 +274,15 @@ const ApiReference = ({
   </article>
 )
 
-export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schemaDepth?: number | undefined }): ReactElement => {
+export const ApiSurface = ({
+  headerHeight = PANE_HEADER_HEIGHT,
+  navWidth = RAIL_WIDTH,
+  schemaDepth = API_SCHEMA_DEPTH
+}: {
+  readonly headerHeight?: number | undefined
+  readonly navWidth?: number | undefined
+  readonly schemaDepth?: number | undefined
+}): ReactElement => {
   const route = useRoute()
   const { document, problem } = useApiDocument()
   const [query, setQuery] = useState("")
@@ -332,20 +340,22 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
   }, [document])
   return (
     <div className="api-view">
-      <aside className="api-nav">
-        <div className="api-nav-head">
-          <button
-            type="button"
-            className="icon-btn"
-            aria-label="Back to Voyager"
-            title="Back to Voyager"
-            onClick={() => navigate({ view: undefined, operation: undefined }, { replace: true })}
-          >
-            <ArrowLeft size={ICON_SIZE} weight="light" aria-hidden="true" />
-          </button>
-          <div>
-            <ProductMark />
-            <div className="mono actor-label">api</div>
+      <aside className="api-nav" style={{ width: navWidth }}>
+        <div className="pane-chrome" style={{ height: headerHeight }}>
+          <div className="actor-head">
+            <div className="actor-identity">
+              <ProductMark />
+              <div className="mono actor-label">api</div>
+            </div>
+            <button
+              type="button"
+              className="icon-btn"
+              aria-label="Back to Voyager"
+              title="Back to Voyager"
+              onClick={() => navigate({ view: undefined, operation: undefined }, { replace: true })}
+            >
+              <ArrowLeft size={ICON_SIZE} weight="light" aria-hidden="true" />
+            </button>
           </div>
         </div>
         <label className="api-search-wrap">
@@ -382,6 +392,18 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
             </section>
           ))}
         </nav>
+        <div className="actor-footer">
+          <button
+            type="button"
+            className="actor-api actor-api-active"
+            aria-current="page"
+            onClick={() => jumpTo(undefined)}
+          >
+            <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
+            <span>API</span>
+          </button>
+          <ThemeToggle className="actor-api" label={<span>Theme</span>} />
+        </div>
       </aside>
       <main className="api-reading">
         {problem !== undefined ? (
@@ -392,7 +414,6 @@ export const ApiSurface = ({ schemaDepth = API_SCHEMA_DEPTH }: { readonly schema
           <ApiReference document={document} depth={schemaDepth} />
         )}
       </main>
-      <ThemeToggle />
     </div>
   )
 }

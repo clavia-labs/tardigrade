@@ -7,10 +7,12 @@ import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
 import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
+import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
 // are values, so the help a person reads and the completions a shell installs are generated from
@@ -159,6 +161,36 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     ])
   )
 
+export const initCommand = Command.make("init", {
+  name: Argument.string("name").pipe(Argument.withDescription("The actor name")),
+  dir: Flag.string("dir").pipe(
+    Flag.withDescription("The directory to create. Defaults to a directory named after the actor."),
+    Flag.optional
+  ),
+  force: Flag.boolean("force").pipe(
+    Flag.withDescription("Replace actor.ts when it already exists."),
+    Flag.withDefault(false)
+  ),
+  json
+}, (flags) =>
+  Effect.gen(function*() {
+    const directory = stated(flags.dir)
+    const initialized = yield* Effect.tryPromise({
+      try: () => initActor(flags.name, {
+        ...(directory === undefined ? {} : { directory }),
+        force: flags.force
+      }),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf(initialized) : initSummary(initialized))
+  })).pipe(
+    Command.withDescription("Create an editable actor from the bundled quickstart."),
+    Command.withExamples([
+      { command: "tdg init researcher", description: "Create researcher/actor.ts and print the local workflow" },
+      { command: "tdg init reviewer --dir actors/reviewer", description: "Create the actor in a stated directory" }
+    ])
+  )
+
 export const buildCommand = Command.make("build", {
   entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to bundle")),
   out: Flag.string("out").pipe(
@@ -173,7 +205,7 @@ export const buildCommand = Command.make("build", {
       try: () => buildActor(flags.entry, out === undefined ? {} : { out }),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built))
+    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built, flags.entry))
   })).pipe(
     Command.withDescription("Bundle and validate one named actor as a portable artifact."),
     Command.withExamples([
@@ -346,7 +378,13 @@ export const runCommand = Command.make("run", {
     const id = stated(flags.id) ?? cli.mintId()
     const accepted = yield* call(() => client.append(thread, { type: "MessageReceived", id, text: flags.brief }))
     const view = yield* settle(client, accepted.thread, id, flags.poll, flags.timeout)
-    yield* Console.log(flags.json ? jsonOf(view) : turnLines(accepted.thread, view))
+    yield* Console.log(
+      flags.json
+        ? jsonOf(view)
+        : view.status === SETTLED
+        ? `${turnLines(accepted.thread, view)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
+        : turnLines(accepted.thread, view)
+    )
     if (view.status !== SETTLED) {
       return yield* Effect.fail(userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`))
     }
@@ -444,5 +482,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
 )

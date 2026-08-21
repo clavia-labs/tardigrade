@@ -10,7 +10,6 @@ import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
 import { EMPTY_ROSTER, latestRootOf, rosterOf, type Roster } from "./roster"
-import { ThemeToggle } from "./ThemeToggle"
 import { ActorRail } from "./ActorRail"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
@@ -18,6 +17,7 @@ import { ActorRail } from "./ActorRail"
 // there is nowhere else to go: voyager reads a run and never writes to it.
 
 interface Reading {
+  readonly actor: string | undefined
   readonly roster: Roster
   // When the listing was read, so every age on screen is measured from one instant.
   readonly at: number
@@ -27,14 +27,14 @@ interface Reading {
 // chip are the same listing read twice rather than two calls. The last good reading survives a
 // failure, so a server restart holds the rail rather than blanking it.
 const useRoster = (actor: string | undefined, intervalMs: number) => {
-  const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
+  const [reading, setReading] = useState<Reading>({ actor: undefined, roster: EMPTY_ROSTER, at: Date.now() })
   const [summaries, setSummaries] = useState<ReadonlyArray<ThreadSummary>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
   const [ready, setReady] = useState(false)
 
   useEffect(() => {
     setSummaries([])
-    setReading({ roster: EMPTY_ROSTER, at: Date.now() })
+    setReading({ actor, roster: EMPTY_ROSTER, at: Date.now() })
     setProblem(undefined)
     setReady(false)
     if (actor === undefined) return
@@ -45,7 +45,7 @@ const useRoster = (actor: string | undefined, intervalMs: number) => {
         const all = await selected.list()
         if (!live) return
         setSummaries(all)
-        setReading({ roster: rosterOf(all), at: Date.now() })
+        setReading({ actor, roster: rosterOf(all), at: Date.now() })
         setProblem(undefined)
         setReady(true)
       } catch (error) {
@@ -105,11 +105,11 @@ export const App = (): ReactElement => {
     navigate({ actor }, { replace: true })
   }, [actor, route.actor])
   useEffect(() => {
-    if (!ready || route.view !== undefined || route.thread !== undefined) return
+    if (!ready || reading.actor !== actor || route.view !== undefined || route.thread !== undefined) return
     const latest = latestRootOf(reading.roster)
     if (latest === undefined) return
     navigate({ thread: latest.id, from: undefined, to: undefined }, { replace: true })
-  }, [reading.roster, ready, route.thread, route.view])
+  }, [actor, reading.actor, reading.roster, ready, route.thread, route.view])
   if (route.view === "api") return <ApiSurface />
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
@@ -124,7 +124,6 @@ export const App = (): ReactElement => {
           <Thread actor={actor ?? RESERVED_ACTOR} id={route.thread} status={status} />
         )}
       </main>
-      <ThemeToggle />
     </div>
   )
 }

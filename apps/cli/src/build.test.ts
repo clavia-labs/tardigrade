@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { ACTOR_ARTIFACT_VERSION } from "tardie"
 
-import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE, buildActor } from "./build"
+import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE, buildActor, buildSummary } from "./build"
 
 let root = ""
 
@@ -13,7 +14,7 @@ afterEach(async () => {
 })
 
 const entry = async (source: string): Promise<string> => {
-  root = await mkdtemp(join(process.cwd(), ".tdg-build-test-"))
+  root = await mkdtemp(join(tmpdir(), "tdg-build-test-"))
   const path = join(root, "actor.ts")
   await writeFile(path, source, "utf8")
   return path
@@ -39,5 +40,18 @@ describe("buildActor", () => {
   test("refuses an unnamed module", async () => {
     const path = await entry("export default { actor: { reactors: [], keyOf: () => 'root' } }")
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("name must match")
+  })
+
+  test("the summary hands the source to local push", async () => {
+    const path = await entry(`
+      import { defineActor } from "tardie"
+      export default defineActor({
+        name: "researcher",
+        actor: { reactors: [], keyOf: () => "root" }
+      })
+    `)
+    const built = await buildActor(path, { cwd: root, out: "output" })
+
+    expect(buildSummary(built, "my actor.ts")).toContain("tdg push 'my actor.ts' --target local")
   })
 })
