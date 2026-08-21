@@ -1,10 +1,20 @@
 import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { Router, type CallResult } from "@clavia/tardigrade-core/router"
+import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import { linkedEventOf } from "@clavia/tardigrade-core/communication/delivery"
+import {
+  formatActorAddress,
+  isProviderAddress,
+  parseActorAddress,
+  type ActorAddress,
+  type ProviderAddress
+} from "@clavia/tardigrade-core/communication/address"
+import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
+import { outboundFrom, type Provider } from "./communication/provider"
 
 // A host runs the emergent graph: many lanes, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
@@ -36,6 +46,7 @@ export type HostOptions<R> = {
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly call?: Parameters<typeof Router.of>[0]["call"]
   readonly resume?: Parameters<typeof Router.of>[0]["resume"]
+  readonly providers?: ReadonlyArray<Provider>
   // edgesOf arms the deadlock sentinel: after a drive drains, the host
   // breaks each await cycle among resting lanes by failing one victim
   // edge with a synthetic error reply, then drives on. Without it a
@@ -87,12 +98,17 @@ const seen = (events: ReadonlyArray<Event>, event: Event): boolean => {
   return events.some((e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === id)
 }
 
+const isOutboundLink = (
+  link: Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
+): link is Link<ActorAddress, ProviderAddress> => isProviderAddress(link.target)
+
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const principal = options.principal ?? "mem"
   const lanes = new Map<string, ReadonlyArray<Event>>()
   const dirty = new Set<string>()
+  const outbound = outboundFrom(options.providers ?? [])
 
   const read = (lane: string): ReadonlyArray<Event> => lanes.get(lane) ?? []
   // append implements guarantee 5 of the log port (packages/core/src/event-log.ts): a keyed
@@ -140,7 +156,15 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   }
 
   const router = Layer.succeed(Router, {
-    deliver: (address: string, event: Event) => Effect.sync(() => deliver(address, event)),
+    deliver: (link, event) =>
+      isOutboundLink(link)
+        ? outbound.send(link, event as import("@clavia/tardigrade-core/communication/message").MessageReceived)
+        : Effect.sync(() =>
+            deliver(
+              formatActorAddress(link.target),
+              event.type === "MessageReceived" ? linkedEventOf({ link, event }) : event
+            )
+          ),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -159,7 +183,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         })
       ),
       router,
-      Layer.succeed(Self, self(lane)),
+      Layer.succeed(Self, parseActorAddress(self(lane))),
       // All lanes share one store here, so the observe privilege is the host's own read
       // (packages/core/src/logs.ts, Facets). A lane's own log still arrives as EventLog: this
       // one reads a sibling and cannot append.

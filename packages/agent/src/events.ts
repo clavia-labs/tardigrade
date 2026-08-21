@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { MessageReceived } from "@clavia/tardigrade-core/message"
+import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/event-log"
 import type { Usage } from "./usage"
@@ -16,7 +16,7 @@ import type { Usage } from "./usage"
 
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
-export { MessageReceived } from "@clavia/tardigrade-core/message"
+export { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 
 // ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
 export const ToolCalled = Schema.Struct({

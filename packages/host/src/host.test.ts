@@ -5,6 +5,8 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
 
 // The host against toy reactors, package-pure: no app vocabulary.
 // A "player" lane answers every unanswered ping on its log with a pong
@@ -41,7 +43,7 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.deliver(opponent, {
+              yield* router.deliver(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,

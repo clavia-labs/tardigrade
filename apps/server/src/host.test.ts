@@ -1,6 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import { Ingress } from "@clavia/tardigrade-host/ingress"
+import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 
@@ -45,13 +48,16 @@ const config = layerConfig(readConfig({
 // The body runs with both services the layer provides: the threads it drives, and the gauge
 // /healthz reads over the same driver (http.ts, DriverGauge).
 const running = <A, E>(
-  body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge>
+  body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>
 ): Promise<A> =>
   Effect.gen(function*() {
     const threads = yield* Threads
     return yield* body(threads)
   }).pipe(
-    Effect.provide(Layer.provide(layerThreads({ infer: layerScripted }), config)),
+    Effect.provide(Layer.provide(layerThreads({
+      infer: layerScripted,
+      providers: [{ name: "test", send: () => Effect.void }]
+    }), config)),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
@@ -61,6 +67,61 @@ const running = <A, E>(
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
 
 describe("the threads service", () => {
+  test("ingress commits a deduplicated batch before any actor is driven", async () => {
+    const result = await running((threads) =>
+      Effect.gen(function*() {
+        const ingress = yield* Ingress
+        const deliveries: ReadonlyArray<Delivery> = [
+          {
+            link: {
+              source: { provider: "test" },
+              target: { actor: RESERVED_ACTOR, thread: "alpha" }
+            },
+            event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
+          },
+          {
+            link: {
+              source: { provider: "test" },
+              target: { actor: RESERVED_ACTOR, thread: "beta" }
+            },
+            event: { type: "MessageReceived", id: "m2", text: "second", at: 43 }
+          },
+          {
+            link: {
+              source: { provider: "test" },
+              target: { actor: RESERVED_ACTOR, thread: "alpha" }
+            },
+            event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
+          }
+        ]
+        yield* ingress.commit(deliveries)
+        const gauge = yield* DriverGauge
+        const committed = {
+          alpha: yield* threads.events("alpha"),
+          beta: yield* threads.events("beta"),
+          dirty: yield* gauge.dirty,
+          resting: yield* gauge.resting
+        }
+        yield* ingress.schedule(deliveries)
+        yield* threads.settled
+        return {
+          committed,
+          settled: {
+            alpha: yield* threads.events("alpha"),
+            beta: yield* threads.events("beta")
+          }
+        }
+      })
+    )
+
+    expect(result.committed.alpha.map((event) => event.type)).toEqual(["MessageReceived"])
+    expect(result.committed.beta.map((event) => event.type)).toEqual(["MessageReceived"])
+    expect(result.committed.dirty).toBe(0)
+    expect(result.committed.resting).toBe(false)
+    expect(result.settled.alpha.some((event) => event.type === "TurnCompleted")).toBe(true)
+    expect(result.settled.beta.some((event) => event.type === "TurnCompleted")).toBe(true)
+  })
+
   test("an appended brief drives to a completed turn", async () => {
     const types = await running((threads) =>
       Effect.gen(function*() {

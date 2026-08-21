@@ -29,17 +29,7 @@ $$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-### For agents
-
-Copy this prompt into your coding agent, or install the [Tardigrade skill](skills/tardigrade/SKILL.md):
-
-```text
-Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local actor. Share its Voyager trace URL.
-```
-
-### For developers
-
-Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later.
+Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later. If you are using a coding agent, the [Tardigrade skill](skills/tardigrade/SKILL.md) can help.
 
 ```bash
 bun add -g tardie

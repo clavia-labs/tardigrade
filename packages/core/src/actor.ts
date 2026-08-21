@@ -2,6 +2,7 @@ import { Context, Effect } from "effect"
 import { EventLog } from "./event-log"
 import type { Event } from "./event"
 import { triggerOf } from "./trace"
+import type { ActorAddress } from "./communication/address"
 
 // An actor is the single writer of one log and the reactors over it.
 // All state is a projection of the log: a crash loses nothing, and two
@@ -11,7 +12,7 @@ import { triggerOf } from "./trace"
 
 // Self is the current actor's own address, bound by the platform per
 // lane.
-export class Self extends Context.Service<Self, string>()("tardigrade/Self") {}
+export class Self extends Context.Service<Self, ActorAddress>()("tardigrade/Self") {}
 
 // Transition is one keyed unit of work: state in, events out. The
 // runtime fires a transition only when no record derives its key; a

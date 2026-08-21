@@ -7,11 +7,21 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { Router, type CallResult } from "@clavia/tardigrade-core/router"
+import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import { linkedEventOf } from "@clavia/tardigrade-core/communication/delivery"
+import {
+  formatActorAddress,
+  isProviderAddress,
+  parseActorAddress,
+  type ActorAddress,
+  type ProviderAddress
+} from "@clavia/tardigrade-core/communication/address"
+import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
+import { outboundFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 
@@ -59,6 +69,7 @@ export type BunHostOptions<R> = {
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly call?: Parameters<typeof Router.of>[0]["call"]
   readonly resume?: Parameters<typeof Router.of>[0]["resume"]
+  readonly providers?: ReadonlyArray<Provider>
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
@@ -88,6 +99,10 @@ const laneOf = (address: string): string => {
 }
 
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
+
+const isOutboundLink = (
+  link: Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
+): link is Link<ActorAddress, ProviderAddress> => isProviderAddress(link.target)
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
@@ -130,6 +145,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   )
 
   const dirty = new Set<string>()
+  const outbound = outboundFrom(options.providers ?? [])
 
   const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>, never> =>
     sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`.pipe(
@@ -205,7 +221,13 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
 
   const router = Layer.succeed(Router, {
-    deliver: deliverEffect,
+    deliver: (link, event) =>
+      isOutboundLink(link)
+        ? outbound.send(link, event as import("@clavia/tardigrade-core/communication/message").MessageReceived)
+        : deliverEffect(
+            formatActorAddress(link.target),
+            event.type === "MessageReceived" ? linkedEventOf({ link, event }) : event
+          ),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -222,7 +244,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, self(lane)),
+      Layer.succeed(Self, parseActorAddress(self(lane))),
       // Every lane's log lives in this one durable store, so the observe privilege is the same
       // read the host serves itself (packages/core/src/facets.ts, Facets). A binding whose lanes
       // are remote proxies or refuses instead.
