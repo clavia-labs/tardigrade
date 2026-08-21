@@ -29,6 +29,14 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
+### For agents
+
+Copy this prompt into your coding agent:
+
+```text
+Read https://github.com/clavia-labs/tardigrade/blob/next/skills/tardigrade/SKILL.md and follow it to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
+```
+
 Install Tardigrade and create an actor. Use Bun 1.4 or later.
 
 ```bash
@@ -57,14 +65,6 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg run` p
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">
   <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
 </picture>
-
-### For agents
-
-Copy this prompt into your coding agent:
-
-```text
-Read https://github.com/clavia-labs/tardigrade/blob/next/skills/tardigrade/SKILL.md and follow it to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
-```
 
 ## Build one
 
