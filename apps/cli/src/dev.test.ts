@@ -190,10 +190,12 @@ describe("tdg dev", () => {
       const listed = await drive(baseUrl, ["ls", "--json"])
       const logged = await drive(baseUrl, ["events", "root", "--types", "MessageReceived"])
       const ghost = await drive(baseUrl, ["events", "ghost"])
-      return { ran, listed, logged, ghost }
+      return { baseUrl, ran, listed, logged, ghost }
     })
     expect(seen.ran.failed).toBe(false)
-    expect(seen.ran.lines[0]).toBe("root m1 completed\nthe scripted answer")
+    expect(seen.ran.lines[0]).toBe(
+      `root m1 completed\nthe scripted answer\n\ntrace\n  ${seen.baseUrl}/?actor=default&thread=root`
+    )
     expect(JSON.parse(seen.listed.lines[0] ?? "")).toMatchObject([{ id: "root", status: "settled" }])
     expect(seen.logged.lines[0]).toContain("MessageReceived")
     expect(seen.logged.lines[0]).toContain("survey the log")
