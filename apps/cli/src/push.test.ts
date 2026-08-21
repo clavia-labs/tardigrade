@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE } from "./build"
-import { PUSH_PATH, pushActor } from "./push"
+import { PUSH_PATH, pushActor, pushSummary } from "./push"
 
 let root = ""
 
@@ -30,6 +30,8 @@ describe("pushActor", () => {
     expect(await readFile(join(installed, ACTOR_MODULE_FILE), "utf8"))
       .toBe(await readFile(join(pushed.directory, ACTOR_MODULE_FILE), "utf8"))
     expect(JSON.parse(await readFile(join(installed, ACTOR_MANIFEST_FILE), "utf8"))).toEqual(pushed.manifest)
+    expect(pushSummary(pushed)).toContain("tdg dev")
+    expect(pushSummary(pushed)).toContain('--actor reviewer')
   })
 
   test("sends the same artifact to a hosted server", async () => {
@@ -53,5 +55,6 @@ describe("pushActor", () => {
     const payload = JSON.parse(await request!.text())
     expect(payload.manifest).toEqual(pushed.manifest)
     expect(payload.module).toBe(await readFile(join(pushed.directory, ACTOR_MODULE_FILE), "utf8"))
+    expect(pushSummary(pushed)).not.toContain("tdg dev")
   })
 })

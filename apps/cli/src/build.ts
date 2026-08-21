@@ -10,6 +10,8 @@ import {
   type ActorDefinition
 } from "tardie"
 
+import { shellWord } from "./workflow"
+
 export const DEFAULT_BUILD_DIRECTORY = ".tardigrade/build"
 export const ACTOR_MODULE_FILE = "actor.mjs"
 export const ACTOR_MANIFEST_FILE = "manifest.json"
@@ -108,9 +110,12 @@ export const buildActor = async (entry: string, options: BuildActorOptions = {})
   }
 }
 
-export const buildSummary = (built: BuiltActor): string =>
+export const buildSummary = (built: BuiltActor, entry: string): string =>
   [
     `built ${built.manifest.name}`,
     `at    ${built.directory}`,
-    `hash  ${built.manifest.digest}`
+    `hash  ${built.manifest.digest}`,
+    "",
+    "next",
+    `  tdg push ${shellWord(entry)} --target local`
   ].join("\n")

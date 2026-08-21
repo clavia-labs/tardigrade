@@ -294,7 +294,9 @@ describe("run", () => {
       }
     )
     expect(ran.failed).toBe(false)
-    expect(ran.lines[0]).toBe("root m1 completed\nthe summary")
+    expect(ran.lines[0]).toBe(
+      "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?actor=default&thread=root"
+    )
   })
 
   test("a thread nobody named is minted, so a run births its own thread", async () => {

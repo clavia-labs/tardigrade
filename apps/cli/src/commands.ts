@@ -12,6 +12,7 @@ import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from ".
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
 import { Cli, type CliProjections } from "./services"
+import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
 // are values, so the help a person reads and the completions a shell installs are generated from
@@ -204,7 +205,7 @@ export const buildCommand = Command.make("build", {
       try: () => buildActor(flags.entry, out === undefined ? {} : { out }),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built))
+    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built, flags.entry))
   })).pipe(
     Command.withDescription("Bundle and validate one named actor as a portable artifact."),
     Command.withExamples([
@@ -377,7 +378,13 @@ export const runCommand = Command.make("run", {
     const id = stated(flags.id) ?? cli.mintId()
     const accepted = yield* call(() => client.append(thread, { type: "MessageReceived", id, text: flags.brief }))
     const view = yield* settle(client, accepted.thread, id, flags.poll, flags.timeout)
-    yield* Console.log(flags.json ? jsonOf(view) : turnLines(accepted.thread, view))
+    yield* Console.log(
+      flags.json
+        ? jsonOf(view)
+        : view.status === SETTLED
+        ? `${turnLines(accepted.thread, view)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
+        : turnLines(accepted.thread, view)
+    )
     if (view.status !== SETTLED) {
       return yield* Effect.fail(userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`))
     }

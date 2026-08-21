@@ -2,6 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path"
 
 import { actorTemplate } from "./template"
+import { runCommandFor, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 
@@ -46,9 +47,6 @@ const shownPath = (cwd: string, path: string): string => {
   return shown.length === 0 ? "." : shown
 }
 
-const shellWord = (value: string): string =>
-  /^[A-Za-z0-9_./-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`
-
 export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()): string => {
   const directory = shownPath(cwd, actor.directory)
   const entry = shownPath(actor.directory, actor.entry)
@@ -62,6 +60,6 @@ export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()
     "  tdg dev",
     "",
     "then, in another terminal",
-    `  tdg run "Read this repository and tell me what it does" --actor ${actor.name}`
+    `  ${runCommandFor(actor.name)}`
   ].join("\n")
 }
