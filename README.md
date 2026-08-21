@@ -34,12 +34,15 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Copy this prompt into your coding agent:
 
 ```text
-Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
+Use https://github.com/clavia-labs/tardigrade.
+Follow skills/tardigrade/SKILL.md to create and author a local Tardigrade actor.
+Build, push, and run the actor.
+Finish by sharing the Voyager trace URL.
 ```
 
 ### For developers
 
-Install Tardigrade and create an actor. Use Bun 1.4 or later.
+Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later.
 
 ```bash
 bun add -g tardie
@@ -47,7 +50,7 @@ tdg init researcher
 cd researcher
 ```
 
-Edit `actor.ts` to describe the agent, then build and push it into the local actor registry:
+The `init` command creates `researcher/actor.ts` from the bundled quickstart template. Edit it to describe the agent, then build and push it into the local actor registry:
 
 ```bash
 tdg build actor.ts
