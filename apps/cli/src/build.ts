@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
-import { pathToFileURL } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 import {
   ACTOR_ARTIFACT_VERSION,
@@ -13,6 +13,7 @@ import {
 export const DEFAULT_BUILD_DIRECTORY = ".tardigrade/build"
 export const ACTOR_MODULE_FILE = "actor.mjs"
 export const ACTOR_MANIFEST_FILE = "manifest.json"
+export const TARDIE_ENTRY = fileURLToPath(import.meta.resolve("tardie"))
 
 export interface BuildActorOptions {
   readonly out?: string
@@ -45,6 +46,13 @@ const definitionOf = async (modulePath: string): Promise<ActorDefinition<unknown
   return candidate as ActorDefinition<unknown>
 }
 
+export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
+  name: "tardie",
+  setup(builder) {
+    builder.onResolve({ filter: /^tardie$/ }, () => ({ path: entry }))
+  }
+})
+
 export const buildActor = async (entry: string, options: BuildActorOptions = {}): Promise<BuiltActor> => {
   const cwd = resolve(options.cwd ?? process.cwd())
   const source = resolve(cwd, entry)
@@ -59,7 +67,8 @@ export const buildActor = async (entry: string, options: BuildActorOptions = {})
       target: "bun",
       format: "esm",
       minify: false,
-      sourcemap: "none"
+      sourcemap: "none",
+      plugins: [tardiePlugin()]
     })
     if (!result.success) {
       const detail = result.logs.map((log) => log.message).join("\n")
