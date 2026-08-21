@@ -34,10 +34,7 @@ $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 Copy this prompt into your coding agent, or install the [Tardigrade skill](skills/tardigrade/SKILL.md):
 
 ```text
-Use https://github.com/clavia-labs/tardigrade.
-Follow skills/tardigrade/SKILL.md to create and author a local Tardigrade actor.
-Build, push, and run the actor.
-Finish by sharing the Voyager trace URL.
+Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local actor. Share its Voyager trace URL.
 ```
 
 ### For developers
