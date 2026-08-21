@@ -131,13 +131,13 @@ export const budgetReactorFor = (policy: Partial<BudgetPolicy> = {}): Reactor<ne
 // budgetReactor is that reactor on the default ceiling.
 export const budgetReactor: Reactor<never> = budgetReactorFor()
 
-// budgetFor derives budget transitions and contributes no agent information.
+// budgetFor derives budget transitions and contributes an empty agent view.
 export const budgetFor = (policy: Partial<BudgetPolicy>): AgentComponent => {
   const reactor = budgetReactorFor(policy)
   return {
     name: "budget",
     derive: (log) => ({
-      info: { system: [], tools: [], context: [] },
+      view: { system: [], tools: [], context: [] },
       transitions: reactor(log)
     })
   }

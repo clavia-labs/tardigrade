@@ -1,6 +1,6 @@
 ---------------------------- MODULE Component ----------------------------
-(* A component derives information and transitions from one log. The agent
-   runtime interprets one kind of information as tool bindings. A binding
+(* A component derives a view and transitions from one log. The agent runtime
+   interprets one kind of view as tool bindings. A binding
    pairs a visible tool with its handler, but pairing at one log does not by
    itself keep the tool routable after ToolCalled extends that log.
 
@@ -40,7 +40,7 @@ Init ==
   /\ pending = FALSE
   /\ called = "none"
 
-(* Offer appends ModelCalled after deriving the information from the prior
+(* Offer appends ModelCalled after deriving the view from the prior
    prefix, the order inferReactorFor commits in runtime/infer.ts. *)
 Offer ==
   /\ offerAt = 0

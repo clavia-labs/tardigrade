@@ -66,11 +66,11 @@ export {
 // The component assembly: code mode is the default, and an agent measured against a fixed tool
 // list mounts its own (runtime/agent.ts).
 export {
-  AGENT_INFO_ALGEBRA,
+  AGENT_VIEW_ALGEBRA,
   agentRuntime,
   renderOf,
   type AgentComponent,
-  type AgentInfo,
+  type AgentView,
   type AgentTool,
   type ContextFragment
 } from "./runtime/agent"
@@ -87,5 +87,5 @@ export {
   type ComponentRequirements,
   type ComponentRuntime,
   type Derivation,
-  type InfoAlgebra
+  type ViewAlgebra
 } from "@clavia/tardigrade-core/component"

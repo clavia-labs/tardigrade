@@ -84,7 +84,7 @@ const decisionFor = (
 // Every branch here is component-independent policy; a tool binding decides only how a
 // work call becomes events.
 // toolsReactorFrom is the policy over a routed serve and a derived tool list: the component
-// assembly's entry (runtime/agent.ts), where the tools are information derived from the log.
+// assembly's entry (runtime/agent.ts), where the tools belong to the view derived from the log.
 export const toolsReactorFrom = <R = never>(
   serve: Serve<R>,
   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>

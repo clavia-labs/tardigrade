@@ -66,11 +66,11 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
   ]
 }
 
-// reply derives parent-delivery transitions and contributes no agent information.
+// reply derives parent-delivery transitions and contributes an empty agent view.
 export const reply: AgentComponent<Router | Self> = {
   name: "reply",
   derive: (log) => ({
-    info: { system: [], tools: [], context: [] },
+    view: { system: [], tools: [], context: [] },
     transitions: replyReactor(log)
   })
 }

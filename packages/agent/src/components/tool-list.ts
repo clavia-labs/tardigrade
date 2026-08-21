@@ -18,7 +18,7 @@ export const toolList = <R = never>(
 ): AgentComponent<R> => ({
   name: "tools",
   derive: (log) => ({
-    info: {
+    view: {
       system: [
         (typeof system === "function" ? system(log) : system) ||
           `You act on the world by calling the tools available to you: ${tools.map((tool) => tool.spec.name).join(", ")}.`

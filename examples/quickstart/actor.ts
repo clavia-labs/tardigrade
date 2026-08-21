@@ -28,14 +28,14 @@ Return a concise answer with concrete findings.
 const instructions = {
   name: "instructions",
   derive: () => ({
-    info: { system: [actorInstructions], tools: [], context: [] },
+    view: { system: [actorInstructions], tools: [], context: [] },
     transitions: []
   })
 }
 
 export default defineActor({
   name: actorName,
-  // actorOf composes components under the explicit agent information runtime.
+  // actorOf composes components under the explicit agent view runtime.
   actor: actorOf(
     agentRuntime(),
     [
