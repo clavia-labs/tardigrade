@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.1.0...v0.2.0-rc) (2026-08-21)
+
+
+### Features
+
+* **cli:** add actor template ([#160](https://github.com/clavia-labs/tardigrade/issues/160)) ([22740f4](https://github.com/clavia-labs/tardigrade/commit/22740f41eabcac396cca9e885d77d6830ade2d2f))
+* **cli:** add init command ([#162](https://github.com/clavia-labs/tardigrade/issues/162)) ([b191d22](https://github.com/clavia-labs/tardigrade/commit/b191d22a00794c1f2d6797bc5f4642633c645a5e))
+* **cli:** guide actor onboarding ([#166](https://github.com/clavia-labs/tardigrade/issues/166)) ([5be3082](https://github.com/clavia-labs/tardigrade/commit/5be3082b9860e3380d2ce816a37ba1d06ba2b0c9))
+* **voyager:** add event inspector ([#165](https://github.com/clavia-labs/tardigrade/issues/165)) ([fc24fda](https://github.com/clavia-labs/tardigrade/commit/fc24fda848a49844975700bbf14a13b90ebc2cd4))
+* **voyager:** show actor digest ([#164](https://github.com/clavia-labs/tardigrade/issues/164)) ([80f5f70](https://github.com/clavia-labs/tardigrade/commit/80f5f70deb81708198e7b8bd08a8d8cd2af65fbb))
+
 ## [0.1.0](https://github.com/clavia-labs/tardigrade/compare/v0.1.0-rc.1...v0.1.0) (2026-08-21)
 
 
