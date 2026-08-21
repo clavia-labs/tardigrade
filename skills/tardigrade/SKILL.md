@@ -1,6 +1,6 @@
 ---
 name: tardigrade
-description: Create, author, build, push, run, and inspect Tardigrade actors with the tdg CLI. Use when a task works with actor.ts, the local actor registry, or a Tardigrade run.
+description: Create, author, build, push, run, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with actor.ts, the local actor registry, a Tardigrade run, or GEPA harness optimization from run traces.
 ---
 
 # Tardigrade
@@ -37,3 +37,7 @@ tdg run "Investigate the failure" --actor researcher --url http://localhost:4241
 ```
 
 Use `--json` when another program consumes command output. Human output includes workflow guidance and trace links.
+
+## Improve a harness
+
+When the task is to optimize an existing actor, read [references/gepa.md](references/gepa.md) before changing `actor.ts`. Act as the optimizer: score runs, reflect on their traces, propose actor changes, and test each candidate through the CLI.
