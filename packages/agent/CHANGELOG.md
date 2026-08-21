@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0-rc.1](https://github.com/clavia-labs/tardigrade/compare/v0.2.0-rc...v0.2.0-rc.1) (2026-08-21)
+
+
+### Bug Fixes
+
+* **dev:** refresh pushed actors ([#176](https://github.com/clavia-labs/tardigrade/issues/176)) ([7dde017](https://github.com/clavia-labs/tardigrade/commit/7dde017cb155b94f914903d559f93c43de23b274))
+
 ## [0.2.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.1.0...v0.2.0-rc) (2026-08-21)
 
 
