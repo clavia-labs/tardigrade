@@ -5,28 +5,28 @@ import { send, type Actor } from "@clavia/tardigrade-core/actor"
 import type { Router } from "@clavia/tardigrade-core/router"
 import type { Self } from "@clavia/tardigrade-core/actor"
 import type { Facets } from "@clavia/tardigrade-core/facets"
-import type { Infer, InferPolicy } from "./infer"
-import type { BudgetPolicy } from "./budget"
-import type { ContextPolicy } from "./compaction"
+import type { Infer, InferPolicy } from "./runtime/infer"
+import type { BudgetPolicy } from "./components/budget"
+import type { ContextPolicy } from "./components/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execute"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/workspace"
 
-export { Infer } from "./infer"
+export { Infer } from "./runtime/infer"
 
 // AgentR is the runtime's needs: Infer for the model, EventLog for settle, Router, Self, and
 // Facets for reply and spawn (the deliver, identity, and observe privileges; core/facets.ts), and
 // KeyValueStore for the spill store code mode writes bounded results to
-// (packages/code/src/spill.ts). Capabilities add their own on top (capability.ts,
-// RequirementsOf).
+// (packages/code/src/spill.ts). Components add their own on top (core/component.ts,
+// ComponentRequirements).
 export type AgentR = Infer | EventLog | Router | Self | Facets | KeyValueStore.KeyValueStore
 export type RlmR = AgentR
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
-// packages/code/src/execute.ts). `infer` is the runtime's policy (agentOf takes it); `workspace`
+// packages/code/src/execute.ts). `infer` is the runtime's policy (agentRuntime takes it); `workspace`
 // bounds the workspace package's own read and grep answers (packages/code/src/workspace.ts); the
-// rest ride their capabilities (budgetFor, compactionFor, codeModeFor).
+// rest ride their components (budgetFor, compactionFor, codeModeFor).
 export interface AgentPolicy {
   readonly infer: Partial<InferPolicy>
   readonly budget: Partial<BudgetPolicy>

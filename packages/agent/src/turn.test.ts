@@ -10,14 +10,14 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Infer, receive } from "./turn"
-import { agentOf, budget, codeModeFor, compaction, reply, toolList } from "./capability"
+import { actorOf, agentRuntime, budget, codeModeFor, compaction, reply, toolList } from "./index"
 
 // The default assembly over a stated scope, and its runtime reactors, reconstructed the way
-// agentOf mounts them: reactors[0] is the infer loop, reactors[1] is the call router. The
+// agentRuntime mounts them: reactors[0] is the infer loop, reactors[1] is the call router. The
 // packages are values the assembly passes, so a test that needs one names it here
-// (capability.ts, codeModeFor).
+// (components/code.ts, codeModeFor).
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  agentOf([codeModeFor({ packages }), reply, budget, compaction])
+  actorOf(agentRuntime(), [codeModeFor({ packages }), reply, budget, compaction])
 const rlmAgent = agentWith([])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!
@@ -478,7 +478,7 @@ describe("a turn that declares an output schema", () => {
 describe("the mind on a native surface", () => {
   test("a turn completes with no budget, code, or compaction reactors", async () => {
     const reads: string[] = []
-    const mind = agentOf([
+    const mind = actorOf(agentRuntime(), [
       toolList([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },

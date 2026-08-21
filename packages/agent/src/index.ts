@@ -7,13 +7,13 @@ export {
   type ActorDefinition
 } from "./artifact"
 
-// The parts a caller lists. An agent is capabilities over one log; the reactors underneath
-// remain reachable for a bespoke assembly.
-export { inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type InferRequest, type Render } from "./infer"
-export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./budget"
-export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./tools"
-export { replyReactor } from "./reply"
-export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./compaction"
+// The parts a caller lists. An agent is components over one log; the reactors underneath remain
+// reachable for a bespoke assembly.
+export { inferReactorFor, Infer, DEFAULT_INFER_POLICY, type InferPolicy, type InferRequest, type Render } from "./runtime/infer"
+export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
+export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
+export { replyReactor } from "./components/reply"
+export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./components/compaction"
 export { agentKeys } from "./events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./resume"
 export {
@@ -63,6 +63,29 @@ export {
   type FetchPolicy
 } from "@clavia/tardigrade-code/fetch"
 
-// The capability assembly: code mode is the default, and an agent measured against a fixed
-// tool list mounts its own (capability.ts).
-export { agentOf, renderOf, codeMode, codeModeFor, CODE_SYSTEM, codeSystemFor, toolList, reply, budget, budgetFor, compaction, compactionFor, type Capability, type NativeTool } from "./capability"
+// The component assembly: code mode is the default, and an agent measured against a fixed tool
+// list mounts its own (runtime/agent.ts).
+export {
+  AGENT_INFO_ALGEBRA,
+  agentRuntime,
+  renderOf,
+  type AgentComponent,
+  type AgentInfo,
+  type AgentTool,
+  type ContextFragment
+} from "./runtime/agent"
+export { codeMode, codeModeFor, CODE_SYSTEM, codeSystemFor } from "./components/code"
+export { toolList, type NativeTool } from "./components/tool-list"
+export { budget, budgetFor } from "./components/budget"
+export { compaction, compactionFor } from "./components/compaction"
+export { reply } from "./components/reply"
+export {
+  actorOf,
+  composeComponents,
+  reactorOf,
+  type Component,
+  type ComponentRequirements,
+  type ComponentRuntime,
+  type Derivation,
+  type InfoAlgebra
+} from "@clavia/tardigrade-core/component"

@@ -288,11 +288,11 @@ export interface CodePolicy {
 // The packages arrive as values, and what they need arrives with them: the reactor's environment
 // is the spill store plus the union of the packages' own requirements, so a lane assembled with a
 // service-needing package cannot be run where that service is missing (execute.test.ts, "a
-// package's requirements ride its type"). Which packages are passed is the capability scope: the
+// package's requirements ride its type"). Which packages are passed is the component scope: the
 // code can only name these, and the empty array is the powerless lane (packages.ts, Package).
 // Two packages under one name would make `pkg.name` ambiguous in the body's scope, so a duplicate
-// is a construction-time error, the same reading agentOf takes of two capabilities claiming one
-// tool name (packages/agent/src/capability.ts, agentOf).
+// is a construction-time error, the same reading agentRuntime takes of two components claiming one
+// tool name (packages/agent/src/runtime/agent.ts, agentRuntime).
 export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>>>(
   policy: Partial<CodePolicy>,
   packages: P

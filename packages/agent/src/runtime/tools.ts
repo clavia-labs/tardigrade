@@ -1,13 +1,13 @@
 import { Clock, Effect } from "effect"
 import { transition, type Reactor, type Transition } from "@clavia/tardigrade-core/actor"
-import { budgetRequested, toolReturned } from "./events"
+import { budgetRequested, toolReturned } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnView } from "@clavia/tardigrade-code/turns"
-import { budgetSpent } from "./budget"
-import { answerErrors, outputSchemaOf, repairText } from "./contract"
+import { budgetSpent } from "../components/budget"
+import { answerErrors, outputSchemaOf, repairText } from "../contract"
 // The tools reactor: the agent's side of the tool table. The policy here is the same whatever
 // the tools are: the answer contract, the escalation ask, the budget wall, and the unknown-tool
-// error. The work tools themselves come from the mounted capabilities (capability.ts), so an
+// error. The work tools themselves come from the mounted components (runtime/agent.ts), so an
 // agent measured against a fixed tool table mounts `toolList` and keeps every behavior here.
 //
 
@@ -24,7 +24,7 @@ export interface PendingCall {
 export type Answer = (result: unknown) => Transition<never, never>
 
 // Serve returns the transitions one call owes: an empty array while the world still works, and
-// undefined when the call names no tool of its capability.
+// undefined when the call names no derived tool.
 export type Serve<R = never> = (
   call: PendingCall,
   log: ReadonlyArray<Event>,
@@ -79,15 +79,15 @@ const decisionFor = (
 
 // toolsReactorFor derives one transition per pending call, branch by branch. The records each
 // branch appends carry the keys: an answer tr:<callId>, an escalation ask br:<callId>, and
-// whatever key the capability's own dispatch mints. An escalating call with no parental decision
+// whatever key the component's own dispatch mints. An escalating call with no parental decision
 // derives nothing (the turn is durably paused); the decision's arrival re-derives the answer.
-// Every branch here is capability-independent policy; a capability's serve decides only how a
+// Every branch here is component-independent policy; a tool binding decides only how a
 // work call becomes events.
-// toolsReactorFrom is the policy over a routed serve and a derived tool list: the capability
-// assembly's entry (capability.ts), where the tools are a projection of the log.
+// toolsReactorFrom is the policy over a routed serve and a derived tool list: the component
+// assembly's entry (runtime/agent.ts), where the tools are information derived from the log.
 export const toolsReactorFrom = <R = never>(
   serve: Serve<R>,
-  toolsFor: (log: ReadonlyArray<Event>) => ReadonlyArray<{ readonly name: string }>
+  toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
 ): Reactor<R> => (log) => {
   const call = pendingCall(log)
   if (call === undefined) return []
@@ -138,7 +138,7 @@ export const toolsReactorFrom = <R = never>(
     return [answering({ error: repairText(errors.length > 0 ? errors : ["the answer tool was called with no arguments"]) })]
   }
   // The budget gate: the wall on the turn refuses the work and keeps what the model has. It
-  // precedes the serve so a spent turn cannot dispatch, whatever a capability would have done.
+  // precedes the serve so a spent turn cannot dispatch, whatever a component would have done.
   if (budgetSpent(log)) {
     return [
       answering({
@@ -148,7 +148,7 @@ export const toolsReactorFrom = <R = never>(
   }
   const served = serve(call, log, answering)
   if (served === undefined) {
-    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${toolsFor(log).map((t) => t.name).join(", ")}.` })]
+    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${toolsFor(log, call).map((t) => t.name).join(", ")}.` })]
   }
   return served
 }

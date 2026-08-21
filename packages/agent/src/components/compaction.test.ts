@@ -3,10 +3,10 @@ import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { send, actor } from "@clavia/tardigrade-core/actor"
-import { Infer } from "./infer"
+import { Infer } from "../runtime/infer"
 import { composeKeys } from "@clavia/tardigrade-core/event-log"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import { agentKeys } from "./events"
+import { agentKeys } from "../events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {

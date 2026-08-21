@@ -43,6 +43,7 @@ type Transition<T, E extends Event = Event> = {
 }
 ```
 ### Reactor
+
 A reactor derives the transitions the log enables. It takes the event log and returns the transitions whose work is due; the runtime fires each transition whose key the log does not record and appends the results, keyed record last.
 ```ts
 // A Reactor derives the transitions the log enables. It must ignore event
@@ -50,8 +51,33 @@ A reactor derives the transitions the log enables. It takes the event log and re
 // log does not record and appends the results, keyed record last.
 type Reactor = (events: Event[]) => Transition[]
 ```
+### Component
+
+A component derives information and transitions from the same log. Information is available to a consumer such as the agent runtime, while transitions go to actor reconciliation. Either side may be empty.
+
+```ts
+type Derivation<I> = {
+  info: I
+  transitions: Transition[]
+}
+
+type Component<I> = {
+  name: string
+  derive: (events: Event[]) => Derivation<I>
+}
+```
+
+Components compose when their information type has an explicit combination rule. Transitions concatenate in component order. The information rule states how values combine, including ordering and collision policy.
+
+```ts
+type InfoAlgebra<I> = {
+  empty: I
+  combine: (left: I, right: I) => I
+}
+```
 ### Actor
-An actor is one event log and the reactors over it. The log is mailbox and state at once: a send lands as an event, reactors derive what it enables, fires append the results, and the new events enable the next round. Settling ends when no reactor enables a transition.
+
+An actor is one event log and the reactors over it. The log is mailbox and state at once: a send lands as an event, reactors derive what it enables, fires append the results, and the new events enable the next round. Settling ends when no reactor enables a transition. `reactorOf(component)` adapts a component's transition projection to this unchanged runtime.
 ```ts
 // An Actor is the single writer of one log and the reactors over it. The
 // platform serializes sends per actor, so appends never race
@@ -65,8 +91,10 @@ const send = async (actor: Actor, event: Event): Promise<void>
 
 ```mermaid
 flowchart TB
-  log[("event log")] -->|"events"| reactor["reactor"]
-  reactor -->|"transitions = f(log)"| transitions["transitions"]
+  log[("event log")] -->|"events"| component["component"]
+  component -->|"info = f(log)"| info["information"]
+  component -->|"transitions = f(log)"| transitions["transitions"]
+  info --> consumer["consumer"]
   transitions -->|"keys the log does not record"| act["act(input)"]
   act -->|"events, keyed record last"| log
 ```
@@ -118,7 +146,7 @@ const infer: Reactor = (events) => {
 
 Notice the key: the count of answered calls. A crashed inference never records `llm/2`, so the next settle derives `llm/2` again and retries the same attempt. Durability, with no retry code.
 #### Compaction
-**Compaction.** The loop appends forever, and the trajectory grows with it. Keeping it small is a capability, so it is a reactor. Assume a token estimate `sizeOf(events)` and a `BUDGET` it compares against.
+**Compaction.** The loop appends forever, and the trajectory grows with it. Keeping it small requires a reactor. Assume a token estimate `sizeOf(events)` and a `BUDGET` it compares against.
 
 ```ts
 // CompactionCompleted is the checkpoint: the summary so far, and the index it covers.
@@ -167,7 +195,7 @@ const agent: Actor = { reactors: [infer, tools, compaction] }
 await send(agent, { type: "MessageReceived", text: "What changed in the deploy?" })
 ```
 
-Adding a capability is adding a reactor to the list.
+This example constructs the low-level actor directly. The agent package groups related information and transitions into components, composes their information with an `InfoAlgebra`, and adapts their transitions into the same reactor list.
 #### Architecture
 The agent, as the loop: one log, three reactors deriving from it, fires landing back in it.
 
@@ -179,7 +207,5 @@ flowchart TB
   tools -->|"ToolReturned"| log
   compaction -->|"CompactionCompleted"| log
 ```
-
-
 
 

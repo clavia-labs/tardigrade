@@ -2,10 +2,14 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { agentOf, budget, codeMode, compaction, reply } from "./capability"
+import { actorOf } from "@clavia/tardigrade-core/component"
+import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
+import { agentRuntime } from "../runtime/agent"
+import { codeMode } from "./code"
+import { compaction } from "./compaction"
+import { reply } from "./reply"
 
-const toolsReactor = agentOf([codeMode, reply, budget, compaction]).reactors[1]!
+const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction]).reactors[1]!
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
 // except the last), then any extra events appended after.
