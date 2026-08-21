@@ -37,6 +37,8 @@ Copy this prompt into your coding agent:
 Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local Tardigrade actor. Finish by sharing the Voyager trace URL.
 ```
 
+### For developers
+
 Install Tardigrade and create an actor. Use Bun 1.4 or later.
 
 ```bash
