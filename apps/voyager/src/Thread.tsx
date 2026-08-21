@@ -1,17 +1,18 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react"
+import { X } from "@phosphor-icons/react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
 import { clientFor } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, LOG_POLL_MS, PANE_HEADER_HEIGHT, SUMMARY_WIDTH } from "./policy"
+import { BOTTOM_SLACK_PX, EVENT_INSPECTOR_WIDTH, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, PANE_HEADER_HEIGHT } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
 import { WindowBrush } from "./WindowBrush"
 
 // The center pane: one thread's log as a flat chronological list under its own header and the window
 // brush (mock.html, the main element). The pane holds cursors only: which thread, which range the
-// window holds, which row is open. Every fact on it is the server's, read through src/client.ts.
+// window holds, which row is selected. Every fact on it is the server's, read through src/client.ts.
 
 const errorOf = (error: unknown): ProblemError =>
   error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER })
@@ -125,43 +126,57 @@ const FieldValue = ({ collapsedHeight, field }: { readonly collapsedHeight: numb
   )
 }
 
-// An opened row's fields, hanging off the row on one hairline: the event's own names on the left,
-// its values on the page's own ground on the right. There is no card, because the expansion is the
-// row saying more rather than a second surface (mock.html, .ev-detail). The keys and values are
-// src/narrative.ts's answer, so what a type shows is a tested fact rather than a render decision.
-const Detail = ({
+// Inspector shows the selected event beside the trace. Its keys and values are fieldsOf's tested
+// projection, so selecting a row changes where the payload is read without changing its content
+// (src/narrative.test.ts, "known expanded fields follow the event's reading order").
+const Inspector = ({
   collapsedHeight,
+  headerHeight,
   moment,
-  stampWidth
+  onClose,
+  width
 }: {
   readonly collapsedHeight: number
+  readonly headerHeight: number
   readonly moment: Moment
-  readonly stampWidth: number
-}): ReactElement => (
-  <div
-    className="event-detail fade-in"
-    style={{ marginLeft: `calc(${stampWidth}px + var(--space-2) + var(--space-3))` }}
-  >
-    {fieldsOf(moment.event).map((field) => (
-      <Fragment key={field.key}>
-        <span className="mono event-key">{field.key}</span>
-        <FieldValue field={field} collapsedHeight={collapsedHeight} />
-      </Fragment>
-    ))}
-  </div>
-)
+  readonly onClose: () => void
+  readonly width: number
+}): ReactElement => {
+  const stamp = stampOf(moment.event.type)
+  return (
+    <aside className="event-inspector" style={{ width }} aria-label={`${moment.event.type} event details`}>
+      <div className="event-inspector-head" style={{ height: headerHeight }}>
+        <div className="event-inspector-title">
+          <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg }}>
+            {moment.event.type}
+          </span>
+          <span className="mono event-inspector-seq">event {moment.seq}</span>
+        </div>
+        <button type="button" className="icon-btn" aria-label="Close event details" title="Close event details" onClick={onClose}>
+          <X size={ICON_SIZE} weight="light" />
+        </button>
+      </div>
+      <div className="event-detail">
+        {fieldsOf(moment.event).map((field) => (
+          <Fragment key={field.key}>
+            <span className="mono event-key">{field.key}</span>
+            <FieldValue field={field} collapsedHeight={collapsedHeight} />
+          </Fragment>
+        ))}
+      </div>
+    </aside>
+  )
+}
 
 const Row = ({
   moment,
-  onToggle,
-  open,
-  fieldCollapsedHeight,
+  onSelect,
+  selected,
   stampWidth
 }: {
   readonly moment: Moment
-  readonly onToggle: () => void
-  readonly open: boolean
-  readonly fieldCollapsedHeight: number
+  readonly onSelect: () => void
+  readonly selected: boolean
   readonly stampWidth: number
 }): ReactElement => {
   const stamp = stampOf(moment.event.type)
@@ -170,29 +185,24 @@ const Row = ({
       <div
         role="button"
         tabIndex={0}
-        aria-expanded={open}
-        className={`event-row${open ? " event-row-open" : ""}`}
-        onClick={onToggle}
+        aria-pressed={selected}
+        className={`event-row${selected ? " event-row-selected" : ""}`}
+        onClick={onSelect}
         onKeyDown={(pressed) => {
           if (pressed.key !== "Enter" && pressed.key !== " ") return
           pressed.preventDefault()
-          onToggle()
+          onSelect()
         }}
       >
         <span className="mono event-stamp" style={{ background: stamp.bg, color: stamp.fg, width: stampWidth }}>
           {moment.event.type}
         </span>
-        {/* A collapsed line takes the pane's whole width; only the wrapped line an open row shows
-            keeps a measure (src/policy.ts, SUMMARY_WIDTH). */}
-        <span className="event-text" style={open ? { maxWidth: SUMMARY_WIDTH } : undefined}>
-          {moment.summary}
-        </span>
+        <span className="event-text">{moment.summary}</span>
         <span className="mono event-time">
           {moment.time}
           {moment.duration === undefined ? "" : ` · ${moment.duration}`}
         </span>
       </div>
-      {!open ? null : <Detail moment={moment} collapsedHeight={fieldCollapsedHeight} stampWidth={stampWidth} />}
     </div>
   )
 }
@@ -218,6 +228,7 @@ export const Thread = ({
   fieldCollapsedHeight = FIELD_COLLAPSED_HEIGHT,
   headerHeight = PANE_HEADER_HEIGHT,
   id,
+  inspectorWidth = EVENT_INSPECTOR_WIDTH,
   stampWidth = EVENT_STAMP_WIDTH,
   status
 }: {
@@ -225,6 +236,7 @@ export const Thread = ({
   readonly id: string
   readonly fieldCollapsedHeight?: number | undefined
   readonly headerHeight?: number | undefined
+  readonly inspectorWidth?: number | undefined
   readonly stampWidth?: number | undefined
   readonly status: ThreadStatus | undefined
 }): ReactElement => {
@@ -233,7 +245,7 @@ export const Thread = ({
   // a drag renders from one place: `navigate` publishes the URL synchronously, and a control that
   // read its value back out of that publication would render one step behind the handle (src/nav.ts).
   const [window, setWindow] = useState<Window | undefined>(windowOf(route))
-  const [opened, setOpened] = useState<number | undefined>(undefined)
+  const [selected, setSelected] = useState<number | undefined>(undefined)
   const { dropped, loaded, problem, rows } = useLog(actor, id, LOG_POLL_MS)
 
   const pane = useRef<HTMLDivElement | null>(null)
@@ -245,10 +257,19 @@ export const Thread = ({
   const seeded = useRef(false)
 
   useEffect(() => {
-    setOpened(undefined)
+    setSelected(undefined)
     atEnd.current = true
     seeded.current = false
   }, [actor, id])
+
+  useEffect(() => {
+    if (selected === undefined) return
+    const close = (pressed: KeyboardEvent) => {
+      if (pressed.key === "Escape") setSelected(undefined)
+    }
+    addEventListener("keydown", close)
+    return () => removeEventListener("keydown", close)
+  }, [selected])
 
   // A route the pane did not write is one it must follow: a shared link, or a back button
   // (src/nav.ts, useRoute). A drag of its own lands here already equal and changes nothing.
@@ -278,6 +299,7 @@ export const Thread = ({
 
   const held = window ?? FULL_WINDOW
   const shown = shownIn(moments, axis, held)
+  const inspected = selected === undefined ? undefined : moments.find((moment) => moment.seq === selected)
 
   // A drag replaces rather than pushes, so forty steps do not cost forty back presses.
   const onWindow = (next: Window) => {
@@ -300,37 +322,47 @@ export const Thread = ({
   }
 
   return (
-    <>
-      <div className="pane-chrome" style={{ height: headerHeight }}>
-        <Head id={id} status={status} />
-      </div>
-      <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
-      {problem === undefined ? null : <Problem problem={problem} />}
-      {!dropped ? null : <div className="mono stream-note">stream dropped; polling</div>}
-      <div
-        ref={pane}
-        className="events"
-        onScroll={() => {
-          const element = pane.current
-          if (element === null) return
-          atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_SLACK_PX
-        }}
-      >
-        {shown.length === 0
-          ? loaded && problem === undefined
-            ? <div className="mono pane-empty">{moments.length === 0 ? "no events yet" : "no events in the window"}</div>
-            : null
-          : shown.map((moment) => (
-              <Row
-                key={moment.seq}
-                moment={moment}
-                open={opened === moment.seq}
-                fieldCollapsedHeight={fieldCollapsedHeight}
-                stampWidth={stampWidth}
-                onToggle={() => setOpened(opened === moment.seq ? undefined : moment.seq)}
-              />
-            ))}
-      </div>
-    </>
+    <div className="thread-view">
+      <section className="thread-trace">
+        <div className="pane-chrome" style={{ height: headerHeight }}>
+          <Head id={id} status={status} />
+        </div>
+        <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
+        {problem === undefined ? null : <Problem problem={problem} />}
+        {!dropped ? null : <div className="mono stream-note">stream dropped; polling</div>}
+        <div
+          ref={pane}
+          className="events"
+          onScroll={() => {
+            const element = pane.current
+            if (element === null) return
+            atEnd.current = element.scrollHeight - element.scrollTop - element.clientHeight <= BOTTOM_SLACK_PX
+          }}
+        >
+          {shown.length === 0
+            ? loaded && problem === undefined
+              ? <div className="mono pane-empty">{moments.length === 0 ? "no events yet" : "no events in the window"}</div>
+              : null
+            : shown.map((moment) => (
+                <Row
+                  key={moment.seq}
+                  moment={moment}
+                  selected={selected === moment.seq}
+                  stampWidth={stampWidth}
+                  onSelect={() => setSelected(selected === moment.seq ? undefined : moment.seq)}
+                />
+              ))}
+        </div>
+      </section>
+      {inspected === undefined ? null : (
+        <Inspector
+          moment={inspected}
+          collapsedHeight={fieldCollapsedHeight}
+          headerHeight={headerHeight}
+          width={inspectorWidth}
+          onClose={() => setSelected(undefined)}
+        />
+      )}
+    </div>
   )
 }

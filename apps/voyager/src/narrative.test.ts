@@ -121,14 +121,15 @@ const stamped = new Date(2024, 0, 1, 14, 2, 11, 480).getTime()
 const keysOf = (event: Event) => fieldsOf(event).map((field) => field.key)
 
 describe("fieldsOf", () => {
-  test("a message lists its id and its instant, and drops the text the row already is", () => {
+  test("a message lists its id, instant, and complete text", () => {
     expect(fieldsOf({ type: "MessageReceived", id: "m1", text: "spawn survey", at: stamped })).toEqual([
       { key: "id", value: "m1", kind: "text" },
-      { key: "at", value: "14:02:11.480", kind: "text" }
+      { key: "at", value: "14:02:11.480", kind: "text" },
+      { key: "text", value: "spawn survey", kind: "text" }
     ])
   })
 
-  test("a text the row had to cut is kept whole, because the cut line is not the value", () => {
+  test("a long message stays whole", () => {
     const text = "x".repeat(500)
     const fields = fieldsOf({ type: "MessageReceived", id: "m1", text, at: stamped })
     expect(fields.map((field) => field.key)).toEqual(["id", "at", "text"])
@@ -217,8 +218,8 @@ describe("fieldsOf", () => {
     expect(keysOf(event)).toEqual(["turn", "at", "output", "lane"])
   })
 
-  test("an output the row states verbatim is the row's line and not a field of its own", () => {
-    expect(keysOf({ type: "TurnCompleted", turn: "m1", output: "done", at: stamped })).toEqual(["turn", "at"])
+  test("a completed turn keeps its output", () => {
+    expect(keysOf({ type: "TurnCompleted", turn: "m1", output: "done", at: stamped })).toEqual(["turn", "at", "output"])
   })
 
   test("an absent optional is not a field, and the instant is the only clock", () => {

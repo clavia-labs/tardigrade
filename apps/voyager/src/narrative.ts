@@ -242,12 +242,9 @@ const valueOf = (value: unknown, inlineChars: number, jsonDepth: number): { read
   return { text: compact.length <= inlineChars ? compact : JSON.stringify(shown, null, 2), json: true }
 }
 
-// fieldsOf is what an opened row shows: the event's own fields, in the order its type states, each
-// rendered for reading. `type` is dropped because the stamp already says it, and a field whose
-// rendered value is the summary string verbatim is dropped because the row above already is that
-// line. A summary the row had to cut is not verbatim, so the long text stays and the reader gets
-// the whole of it. Nothing else is dropped: ids, correlation keys, instants, and payloads are what
-// a row is opened for.
+// fieldsOf is what the inspector shows: every event field in the order its type states, rendered
+// for reading. `type` is dropped because the inspector's stamp already says it. IDs, correlation
+// keys, instants, and payloads remain because the inspector is the complete event view.
 export const fieldsOf = (
   event: Event,
   inlineChars: number = FIELD_INLINE_CHARS,
@@ -256,14 +253,12 @@ export const fieldsOf = (
   const own = Object.keys(event).filter((field) => field !== "type" && event[field] !== undefined)
   const order = ORDER[event.type] ?? []
   const keys = [...order.filter((field) => own.includes(field)), ...own.filter((field) => !order.includes(field))]
-  const summary = summaryOf(event, SUMMARY_CHARS, jsonDepth)
   const fields: Array<Field> = []
   for (const key of keys) {
     const raw = event[key]
     const rendered = TIME_FIELDS.includes(key) && typeof raw === "number"
       ? { text: instantOf(raw), json: false }
       : valueOf(raw, inlineChars, jsonDepth)
-    if (rendered.text === summary) continue
     const kind = event.type === "CodeDispatched" && key === "code" ? "code" : rendered.json ? "json" : "text"
     fields.push({ key, value: rendered.text, kind })
   }
