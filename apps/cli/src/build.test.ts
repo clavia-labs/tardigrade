@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { ACTOR_ARTIFACT_VERSION } from "tardie"
@@ -13,7 +14,7 @@ afterEach(async () => {
 })
 
 const entry = async (source: string): Promise<string> => {
-  root = await mkdtemp(join(process.cwd(), ".tdg-build-test-"))
+  root = await mkdtemp(join(tmpdir(), "tdg-build-test-"))
   const path = join(root, "actor.ts")
   await writeFile(path, source, "utf8")
   return path

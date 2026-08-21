@@ -7,6 +7,7 @@ import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
 import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
@@ -156,6 +157,36 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     ),
     Command.withExamples([
       { command: "tdg setup", description: "Answer four prompts and write the file" }
+    ])
+  )
+
+export const initCommand = Command.make("init", {
+  name: Argument.string("name").pipe(Argument.withDescription("The actor name")),
+  dir: Flag.string("dir").pipe(
+    Flag.withDescription("The directory to create. Defaults to a directory named after the actor."),
+    Flag.optional
+  ),
+  force: Flag.boolean("force").pipe(
+    Flag.withDescription("Replace actor.ts when it already exists."),
+    Flag.withDefault(false)
+  ),
+  json
+}, (flags) =>
+  Effect.gen(function*() {
+    const directory = stated(flags.dir)
+    const initialized = yield* Effect.tryPromise({
+      try: () => initActor(flags.name, {
+        ...(directory === undefined ? {} : { directory }),
+        force: flags.force
+      }),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf(initialized) : initSummary(initialized))
+  })).pipe(
+    Command.withDescription("Create an editable actor from the bundled quickstart."),
+    Command.withExamples([
+      { command: "tdg init researcher", description: "Create researcher/actor.ts and print the local workflow" },
+      { command: "tdg init reviewer --dir actors/reviewer", description: "Create the actor in a stated directory" }
     ])
   )
 
@@ -444,5 +475,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
 )
