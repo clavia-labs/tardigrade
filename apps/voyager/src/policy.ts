@@ -18,6 +18,10 @@ export const PANE_HEADER_HEIGHT = 64
 // else, so a reader can always open the list again from where they closed it.
 export const COLLAPSED_ACTOR_RAIL_WIDTH = 48
 
+// The hexadecimal characters shown from a pushed actor's digest. ActorRail accepts another length
+// when an embedding has a wider or narrower actor pane.
+export const ACTOR_DIGEST_CHARS = 7
+
 // How many nested object levels the API explorer renders before naming the remaining schema. The
 // explorer accepts another depth when a larger surface needs to show more of a recursive model.
 export const API_SCHEMA_DEPTH = 3
