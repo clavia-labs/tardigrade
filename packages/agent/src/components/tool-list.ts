@@ -41,7 +41,8 @@ export const toolList = <R = never>(
           ]
         }
       })) as ReadonlyArray<AgentTool<unknown>>,
-      context: []
+      context: [],
+      output: []
     },
     transitions: []
   })

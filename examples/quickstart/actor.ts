@@ -1,6 +1,5 @@
 import {
-  actorOf,
-  agentRuntime,
+  agentOf,
   agentsPackage,
   budget,
   codeModeFor,
@@ -8,6 +7,7 @@ import {
   defineActor,
   fetchPackage,
   filesPackage,
+  outputFailFast,
   reply,
   workspacePackage
 } from "tardie"
@@ -28,29 +28,28 @@ Return a concise answer with concrete findings.
 const instructions = {
   name: "instructions",
   derive: () => ({
-    view: { system: [actorInstructions], tools: [], context: [] },
+    view: { system: [actorInstructions], tools: [], context: [], output: [] },
     transitions: []
   })
 }
 
 export default defineActor({
   name: actorName,
-  // actorOf composes components under the explicit agent view runtime.
-  actor: actorOf(
-    agentRuntime(),
-    [
-      instructions,
-      // codeModeFor gives the model one code tool over the packages listed here.
-      codeModeFor({
-        // packages grant access to local files, HTTP, child agents, and saved tool results.
-        packages: [filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()]
-      }),
-      // reply returns a finished turn to the actor that delegated it.
-      reply,
-      // budget stops work tools when the turn reaches its tool-call limit.
-      budget,
-      // compaction summarizes older context when a long turn outgrows its context window.
-      compaction
-    ]
-  )
+  // agentOf carries component and output requirements into the host type.
+  actor: agentOf([
+    instructions,
+    // codeModeFor gives the model one code tool over the packages listed here.
+    codeModeFor({
+      // packages grant access to local files, HTTP, child agents, and saved tool results.
+      packages: [filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()]
+    }),
+    // reply returns a finished turn to the actor that delegated it.
+    reply,
+    // budget stops work tools when the turn reaches its tool-call limit.
+    budget,
+    // compaction summarizes older context when a long turn outgrows its context window.
+    compaction,
+    // outputFailFast handles structured results on endpoints with no native guarantee without retrying.
+    outputFailFast
+  ])
 })

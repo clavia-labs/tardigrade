@@ -9,14 +9,14 @@ import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { actorOf } from "@clavia/tardigrade-core/component"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import { agentRuntime, renderOf, type AgentComponent, type AgentView } from "./agent"
+import { agentRuntime, defineOutputFallback, renderOf, type AgentComponent, type AgentView } from "./agent"
 import { CODE_SYSTEM, codeMode, codeModeFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
 import { reply } from "../components/reply"
 import { toolList } from "../components/tool-list"
 import { receive, type AgentR } from "../turn"
-import { Infer, type InferRequest } from "./infer"
+import { Infer, NativeOutputSupport, type InferRequest } from "./infer"
 
 // The component assembly end to end: the render the model sees is the composed view, and a call
 // routes through the same derived tool binding.
@@ -44,7 +44,8 @@ const noRouter = Layer.mergeAll(
     call: () => Effect.succeed({ error: "no router bound" }),
     resume: () => Effect.succeed({ error: "no router bound" })
   }),
-  Layer.succeed(Self, parseActorAddress("test-agent"))
+  Layer.succeed(Self, parseActorAddress("test-agent")),
+  Layer.succeed(NativeOutputSupport, { withTools: true })
 )
 
 const readLog = Effect.flatMap(EventLog, (log) => log.read)
@@ -67,6 +68,18 @@ const viewComponent = (
 })
 
 describe("agent runtime", () => {
+  test("a marked output fallback must be present for every log", () => {
+    const changing = defineOutputFallback(viewComponent("changing-output", (log) => ({
+      system: [],
+      tools: [],
+      context: [],
+      output: log.length === 0
+        ? [{ component: "changing-output", fallback: { kind: "local", name: "fail-fast" } }]
+        : []
+    })))
+    expect(() => changing.derive([{ type: "Ready" }])).toThrow("must declare one applicable fallback for every log")
+  })
+
   test("the render is the composed derivation, and the request carries it to the model", async () => {
     const seen: InferRequest[] = []
     const mind = Layer.succeed(Infer, {
@@ -134,7 +147,8 @@ describe("agent runtime", () => {
         tools: log.some((event) => event.type === "Ready")
           ? [{ spec: { name: "echo", description: "later", inputSchema: {} }, serve: (_call, _log, answer) => [answer({})] }]
           : [],
-        context: []
+        context: [],
+        output: []
       })
     )
     const agent = actorOf(agentRuntime(), [echoTable, later])
@@ -151,7 +165,8 @@ describe("agent runtime", () => {
         tools: log.some((event) => event.type === "ToolCalled")
           ? []
           : [{ spec: { name: "once", description: "one call", inputSchema: {} }, serve: (_call, _log, answer) => [answer("served")] }],
-        context: []
+        context: [],
+        output: []
       })
     )
     const mind = Layer.succeed(Infer, {
@@ -179,10 +194,10 @@ describe("agent runtime", () => {
 
   test("different values for one context field fail with both component names", () => {
     const left = viewComponent("left", {
-      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }]
+      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }], output: []
     })
     const right = viewComponent("right", {
-      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }]
+      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }], output: []
     })
 
     expect(() => renderOf([left, right], [])).toThrow(
@@ -206,7 +221,8 @@ describe("agent runtime", () => {
         return {
           system: [`packages: ${events.map((e) => String((e as { name?: unknown }).name)).join(", ")}`],
           tools: [],
-          context: []
+          context: [],
+          output: []
         }
       }
     )
@@ -221,7 +237,7 @@ describe("agent runtime", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
     const component = viewComponent(
       "catalog",
-      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [] })
+      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [], output: [] })
     )
     expect(renderOf([codeMode, component], log)).toEqual(renderOf([codeMode, component], log))
   })

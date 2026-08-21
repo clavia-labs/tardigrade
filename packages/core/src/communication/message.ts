@@ -12,7 +12,8 @@ export const MessageReceived = Schema.Struct({
   sender: Schema.optional(Schema.String),
   from: Schema.optional(Schema.String),
   replyTo: Schema.optional(Schema.String),
-  output: Schema.optional(Schema.Unknown),
+  // The turn's declared output contract carries its schema identity and JSON Schema.
+  output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
   outcome: Schema.optional(Schema.Literals(["completed", "failed"])),
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),

@@ -1,5 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnTerminalOf } from "@clavia/tardigrade-code/turns"
+import { canonicalOf, declarationForTurn, type OutputContract } from "./output"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
 // platform's call and resume read it to answer the spawning code. Pure over the log, so a
@@ -31,4 +32,33 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | 
     return { kind: "requesting", callId: String(p.callId), reason: String(p.reason ?? ""), amount: Number(p.amount ?? 0) }
   }
   return undefined
+}
+
+// outputOf reads a completed turn's result under the contract that turn declared. It returns undefined for a pending or failed turn and throws when the declaration or stored result cannot satisfy the supplied contract (boundary.test.ts, "a turn that declared nothing is never reinterpreted"; runtime/infer.ts, completionOf).
+export const outputOf = <T>(
+  contract: OutputContract<T>,
+  log: ReadonlyArray<Event>,
+  turn: string
+): T | undefined => {
+  const terminal = turnTerminalOf(log, turn)
+  if (terminal === undefined || terminal.type !== "TurnCompleted") return undefined
+  const declared = declarationForTurn(log, turn)
+  if (declared.kind !== "contract") {
+    throw new Error(
+      `turn ${turn} did not declare the contract "${contract.name}", so its result is not a value of that contract` +
+        (declared.kind === "invalid" ? `: ${declared.errors.join("; ")}` : "")
+    )
+  }
+  if (canonicalOf(declared.contract) !== canonicalOf(contract)) {
+    throw new Error(
+      `turn ${turn} declared the contract "${declared.contract.name}", which is not the contract "${contract.name}" this read holds`
+    )
+  }
+  const decoded = declared.contract.decode(JSON.parse(String((terminal as { output?: unknown }).output)))
+  if ("errors" in decoded) {
+    throw new Error(
+      `turn ${turn} completed with a result that misses the contract "${contract.name}":\n${decoded.errors.map((e) => `- ${e}`).join("\n")}`
+    )
+  }
+  return decoded.value as T
 }

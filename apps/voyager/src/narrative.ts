@@ -39,6 +39,8 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
   BudgetExhausted: AWAIT,
   ToolReturned: DONE,
   TurnCompleted: DONE,
+  OutputRejected: BROKEN,
+  OutputRetryRequested: AWAIT,
   TurnFailed: BROKEN
 }
 
@@ -141,6 +143,12 @@ export const summaryOf = (
       return line([str(event.name), preview(event.arguments, chars, jsonDepth)], chars)
     case "BlockedOn":
       return line([`awaiting ${str(event.awaiting) ?? ""}`], chars)
+    case "OutputRejected": {
+      const errors = Array.isArray(event.errors) ? (event.errors as ReadonlyArray<unknown>) : []
+      return line([str(event.contract) ?? "", `${errors.length} ${errors.length === 1 ? "reason" : "reasons"}`, str(errors[0])], chars)
+    }
+    case "OutputRetryRequested":
+      return line([str(event.by) ?? "", str(event.feedback) ?? ""], chars)
     case "TurnCompleted":
       return line([preview(event.output, chars, jsonDepth)], chars)
     case "TurnFailed":
@@ -206,17 +214,19 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   MessageReceived: ["id", "from", "replyTo", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
-  ModelCalled: ["callId", "ordinal", "epoch", ...STAMP],
+  ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
   TextReturned: [...STAMP, "text"],
-  ToolCalled: ["callId", "name", ...STAMP, "arguments", "usage"],
+  ToolCalled: ["callId", "name", "mode", ...STAMP, "arguments", "usage", "endpoint"],
   ToolReturned: ["callId", ...STAMP, "result"],
   CodeDispatched: ["execId", ...STAMP, "code"],
   CodeSettled: ["execId", ...STAMP, "result", "error", "logs"],
   PackageCalled: ["callId", "name", ...STAMP, "arguments"],
   PackageReturned: ["callId", ...STAMP, "result"],
   BlockedOn: ["callId", "awaiting", ...STAMP],
-  TurnCompleted: ["epoch", ...STAMP, "output", "usage"],
-  TurnFailed: ["epoch", "cause", "attempts", "attemptKey", ...STAMP, "error", "usage", "policy"],
+  OutputRejected: ["contract", "fingerprint", "attempt", "epoch", "mode", ...STAMP, "errors", "text", "usage", "endpoint"],
+  OutputRetryRequested: ["rejection", "by", "epoch", ...STAMP, "feedback", "decision"],
+  TurnCompleted: ["epoch", "attemptKey", "mode", ...STAMP, "output", "usage", "endpoint"],
+  TurnFailed: ["epoch", "cause", "attempts", "attemptKey", "mode", ...STAMP, "error", "usage", "policy", "endpoint"],
   TurnResumed: ["failedEpoch", "epoch", ...STAMP],
   ReplyDelivered: ["to", ...STAMP],
   BudgetExhausted: ["budget", "used", ...STAMP],

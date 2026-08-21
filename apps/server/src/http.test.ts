@@ -68,7 +68,8 @@ describe("config", () => {
       baseUrl: undefined,
       apiKey: undefined,
       id: undefined,
-      provider: undefined
+      provider: undefined,
+      output: undefined
     })
   })
 
