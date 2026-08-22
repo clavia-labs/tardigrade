@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.1](https://github.com/clavia-labs/tardigrade/compare/v0.5.0...v0.5.1) (2026-08-22)
+
+
+### Bug Fixes
+
+* **ci:** close release race ([#210](https://github.com/clavia-labs/tardigrade/issues/210)) ([768377c](https://github.com/clavia-labs/tardigrade/commit/768377cc98f6532a6ff26b21c96f42af11fd8d78))
+* **ci:** report release checks ([#212](https://github.com/clavia-labs/tardigrade/issues/212)) ([c91f7fa](https://github.com/clavia-labs/tardigrade/commit/c91f7fa22331951931818267d6196063b94c0f61))
+* **ci:** scope release discovery ([#211](https://github.com/clavia-labs/tardigrade/issues/211)) ([53c3a8a](https://github.com/clavia-labs/tardigrade/commit/53c3a8a736e279e34f6a22f4300635cb1bbc3213))
+* **ci:** verify candidate tree ([#207](https://github.com/clavia-labs/tardigrade/issues/207)) ([f500555](https://github.com/clavia-labs/tardigrade/commit/f5005556ce9da93476badd549ddf6ff17de314d8))
+
 ## [0.5.0](https://github.com/clavia-labs/tardigrade/compare/v0.5.0-rc...v0.5.0) (2026-08-22)
 
 
