@@ -1,4 +1,5 @@
 import type { Effect } from "effect"
+import type { Component, ViewAlgebra } from "@clavia/tardigrade-core/component"
 import type { Park } from "./errors"
 
 // DoorRequest is a request through a connection's door: method, a RELATIVE path (the door
@@ -83,6 +84,21 @@ export const ANNOTATION_DEFAULTS: Required<MethodAnnotations> = {
   openWorldHint: true
 }
 
+// CodeView is the package scope a code component offers to code mode. Package order is visible
+// in the model's scope description and duplicate names fail when code mode derives the view.
+export interface CodeView {
+  readonly packages: ReadonlyArray<Package<unknown>>
+}
+
+// CODE_VIEW_ALGEBRA composes package scopes in component order.
+export const CODE_VIEW_ALGEBRA: ViewAlgebra<CodeView> = {
+  empty: { packages: [] },
+  combine: (left, right) => ({ packages: [...left.packages, ...right.packages] })
+}
+
+// CodeComponent derives package scope and package-level work from the log.
+export interface CodeComponent<R = never> extends Component<CodeView, R> {}
+
 // annotationsOf resolves one method's annotations over the dangerous defaults. It reads the name
 // table only, so a package's requirements are irrelevant to it: `unknown` is the shape every
 // `Package<R>` widens to.
@@ -91,13 +107,10 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
   ...pkg.annotations?.[method]
 })
 
-// Package is one named unit of an actor's world face, the dual of an AgentComponent on its model
-// face (packages/agent/src/runtime/agent.ts). A component derives what the model is offered
-// (`tools`, `system`) and what settles its calls (`serve`); a package declares what code is
-// offered (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls
-// methods as `zohorecruit.insert_record(args)`. The platform binds the methods to providers;
-// tests bind fakes. An MCP server becomes a package through one adapter, never a second
-// concept.
+// Package is a leaf CodeComponent on an actor's world face. It declares what code is offered
+// (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls methods as
+// `zohorecruit.insert_record(args)`. The platform binds the methods to providers; tests bind
+// fakes. An MCP adapter produces the same package shape.
 //
 // `ctx.callId` is the call's recorded pair key. A method that sends a message across actors
 // uses it as the message id, so a replayed call carries the same id and the receiver absorbs
@@ -107,15 +120,15 @@ export const annotationsOf = (pkg: Package<unknown>, method: string): Required<M
 // deliberately outside Package: it belongs to the host boundary and gets its own concept once a
 // consumer exists.
 //
-// Which packages an assembly passes is component scoping: a task that must never send messages
-// is given no sending package, and the code cannot name what the assembly did not pass. The
-// powerless default is the empty array (execute.ts, codeReactor).
+// Which package components an assembly passes is component scoping: a task that cannot send
+// messages is given no sending package, and the code cannot name what the assembly did not pass.
+// The powerless default is the empty array (execute.ts, codeReactor).
 //
 // `R` is what a package's methods need from the environment, the dual of `AgentComponent<R>` on the
 // model face. A package that reaches for a service names it in its type, and the reactor that
 // runs the package declares the union of what its packages need (execute.ts, codeReactorFor); a
 // package that reaches for nothing is `Package<never>` and runs anywhere.
-export interface Package<R = never> {
+export interface Package<R = never> extends CodeComponent<R> {
   readonly name: string
   readonly description: string
   // Method docs, two levels: describe({name}) lists names and one-liners; describe({name,
@@ -132,6 +145,22 @@ export interface Package<R = never> {
   readonly methods: Readonly<
     Record<string, (args: unknown, ctx: { readonly callId: string }) => Effect.Effect<unknown, Park, R>>
   >
+}
+
+// PackageDefinition is the leaf declaration accepted by definePackage.
+export type PackageDefinition<R = never> = Omit<Package<R>, "derive" | "keys">
+
+// definePackage makes a package declaration a leaf code component.
+export const definePackage = <R>(definition: PackageDefinition<R>): Package<R> => {
+  let pkg: Package<R>
+  pkg = {
+    ...definition,
+    derive: () => ({
+      view: { packages: [pkg as Package<unknown>] },
+      transitions: []
+    })
+  }
+  return pkg
 }
 
 // PackageRequirements extracts one package's R, so a mixed list infers the union of what its

@@ -6,7 +6,7 @@ import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/ev
 import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import { checkInput, renderSignature } from "./contract"
-import type { Package } from "./packages"
+import { definePackage, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
@@ -144,7 +144,7 @@ const memoryLog = (initial: ReadonlyArray<Event>) =>
   )
 
 let ran: Array<unknown> = []
-const notesLike: Package = {
+const notesLike: Package = definePackage({
   name: "notes",
   description: "a package with one declared method and one undeclared",
   annotations: {
@@ -156,7 +156,7 @@ const notesLike: Package = {
     put: (args) => Effect.sync(() => (ran.push(args), { ok: true })),
     free: (args) => Effect.sync(() => (ran.push(args), { ok: "unchecked" }))
   }
-}
+})
 
 const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ran = []

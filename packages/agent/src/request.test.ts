@@ -16,7 +16,7 @@ const SCOUT = output({
   }
 })
 
-const CODE = renderOf([codeMode, nativeOutput], [])
+const CODE = renderOf([codeMode(), nativeOutput], [])
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -135,7 +135,7 @@ describe("modelRequest tool and prompt policy", () => {
   // binding decides whether the model ever reads it (platform/model/src/output.ts, outputSystemFor).
   test("a mounted fallback rides the request, and adds nothing to the base prompt", () => {
     const bare = modelRequest(head([], true), CODE)
-    const repaired = renderOf([codeMode, outputRepairFor({ attempts: 1 })], head([], true))
+    const repaired = renderOf([codeMode(), outputRepairFor({ attempts: 1 })], head([], true))
     const req = modelRequest(head([], true), repaired)
     expect(req.output?.kind === "contract" && req.output.fallback).toEqual({
       kind: "repair",

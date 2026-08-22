@@ -121,7 +121,7 @@ const instructions = system(
 const releaseAnalyst = actor(infer([
   instructions, // the agent's system prompt
   deploys,     // recent_deploys and its paired handler
-  codeMode,    // durable JavaScript execution
+  codeMode(),  // durable JavaScript execution over an empty package scope
   budget,      // a per-turn code budget
   compaction,  // bounded model context
   reply,       // results for parent agents
@@ -130,6 +130,8 @@ const releaseAnalyst = actor(infer([
 ```
 
 `infer` composes its children, preserves their transitions, and adds inference and tool routing over their final view. `actor` adapts the root component to reconciliation and carries its service requirements into the host type. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+
+`codeMode([...components])` applies the same structure to the code surface. Each package factory returns a leaf `CodeComponent`. Code mode composes their package views and transitions, then exposes the combined scope through one `execute` tool. Use `definePackage({...})` for a custom leaf. Use `composeComponents(name, CODE_VIEW_ALGEBRA, children)` when one code component groups other code components.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 

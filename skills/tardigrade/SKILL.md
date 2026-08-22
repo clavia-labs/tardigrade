@@ -12,7 +12,7 @@ tdg init researcher
 cd researcher
 ```
 
-Edit `actor.ts`. Keep `actorName` stable because build, push, run, and stored traces use it as the actor identity. Put the agent's role and expected answer in `actorInstructions`. Add or remove packages in `codeModeFor` only when the task needs different capabilities.
+Edit `actor.ts`. Keep `actorName` stable because build, push, run, and stored traces use it as the actor identity. Put the agent's role and expected answer in `actorInstructions`. Add or remove package components in `codeMode([...components])` only when the task needs different capabilities.
 
 Build the source, push the same actor into the local registry, and start the local server from the actor directory:
 

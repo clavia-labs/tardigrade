@@ -122,6 +122,14 @@ export {
   DEFAULT_FETCH_BODY_CHARS,
   type FetchPolicy
 } from "@clavia/tardigrade-code/fetch"
+export {
+  CODE_VIEW_ALGEBRA,
+  definePackage,
+  type CodeComponent,
+  type CodeView,
+  type Package,
+  type PackageDefinition
+} from "@clavia/tardigrade-code/packages"
 
 // The component assembly: code mode is the default, and an agent measured against a fixed tool
 // list mounts its own (runtime/agent.ts).
@@ -140,7 +148,7 @@ export {
   type OutputFragment,
   type Rendered
 } from "./runtime/agent"
-export { codeMode, codeModeFor, CODE_SYSTEM, codeSystemFor } from "./components/code"
+export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./components/code"
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export { budget, budgetFor } from "./components/budget"

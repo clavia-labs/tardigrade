@@ -4,7 +4,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { send, settleActor, transition } from "@clavia/tardigrade-core/actor"
-import type { Package } from "@clavia/tardigrade-code/packages"
+import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
 import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
@@ -19,7 +19,7 @@ import type { OutputFallback } from "./output"
 import {
   actor,
   budget,
-  codeModeFor,
+  codeMode,
   compaction,
   fingerprintOf,
   infer,
@@ -40,7 +40,7 @@ import {
 // The default assembly over a stated scope. The infer root contains model inference, call routing,
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actor(infer([codeModeFor({ packages }), reply, budget, compaction, nativeOutput]))
+  actor(infer([codeMode(packages), reply, budget, compaction, nativeOutput]))
 const rlmAgent = agentWith([])
 const rootReactor = rlmAgent.reactors[0]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -76,7 +76,7 @@ const jsSandbox = Layer.succeed(Sandbox, {
     })
 })
 
-const zoho = (spies: { insert: number; search: number }): Package => ({
+const zoho = (spies: { insert: number; search: number }): Package => definePackage({
   name: "zohorecruit",
   description: "the ATS",
   methods: {
@@ -450,7 +450,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  actor(infer([codeModeFor({ packages: [] }), reply, budget, compaction, outputRepairFor(policy)]))
+  actor(infer([codeMode(), reply, budget, compaction, outputRepairFor(policy)]))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -862,7 +862,7 @@ describe("the repair implementation", () => {
   })
 
   test("two components declaring an output strategy collide at construction", () => {
-    expect(() => actor(infer([codeModeFor({ packages: [] }), outputRepair, outputValidateOnce]))).toThrow(
+    expect(() => actor(infer([codeMode(), outputRepair, outputValidateOnce]))).toThrow(
       "output strategy declared by components output.repair and output.validate-once"
     )
   })
@@ -945,7 +945,7 @@ describe("the mind on a native surface", () => {
 })
 
 describe("the validate-once implementation", () => {
-  const validateOnceAgent = actor(infer([codeModeFor({ packages: [] }), reply, budget, compaction, outputValidateOnce]))
+  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction, outputValidateOnce]))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0
@@ -1084,7 +1084,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actor(infer([codeModeFor({ packages: [] }), reply, houseStyle({ asks: 2 })]))
+    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 2 })]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })
@@ -1130,7 +1130,7 @@ describe("a domain-specific implementation", () => {
     }
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actor(infer([codeModeFor({ packages: [] }), silent])), {
+        yield* receive(actor(infer([codeMode(), silent])), {
           id: "m1",
           text: "decompose this topic",
           output: SCOUT
@@ -1152,7 +1152,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actor(infer([codeModeFor({ packages: [] }), reply, houseStyle({ asks: 1 })]))
+    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 1 })]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })

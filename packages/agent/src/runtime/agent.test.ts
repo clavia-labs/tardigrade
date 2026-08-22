@@ -6,11 +6,16 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Facets } from "@clavia/tardigrade-core/facets"
-import { Self } from "@clavia/tardigrade-core/actor"
-import { actor } from "@clavia/tardigrade-core/component"
-import type { Package } from "@clavia/tardigrade-code/packages"
+import { Self, transition } from "@clavia/tardigrade-core/actor"
+import { actor, composeComponents } from "@clavia/tardigrade-core/component"
+import {
+  CODE_VIEW_ALGEBRA,
+  definePackage,
+  type CodeComponent,
+  type Package
+} from "@clavia/tardigrade-code/packages"
 import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentView } from "./agent"
-import { CODE_SYSTEM, codeMode, codeModeFor } from "../components/code"
+import { CODE_SYSTEM, codeMode } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
 import { reply } from "../components/reply"
@@ -194,7 +199,7 @@ describe("infer component", () => {
   })
 
   test("compactionFor's context reaches the render, so the guard and the request hold one policy", () => {
-    const render = renderOf([codeMode, compactionFor({ messageRenderCap: 1234 }), nativeOutput], [])
+    const render = renderOf([codeMode(), compactionFor({ messageRenderCap: 1234 }), nativeOutput], [])
     expect(render.context).toEqual({ messageRenderCap: 1234 })
   })
 
@@ -212,7 +217,7 @@ describe("infer component", () => {
   })
 
   test("renderOf composes system fragments and tools in mount order", () => {
-    const render = renderOf([codeMode, echoTable, nativeOutput], [])
+    const render = renderOf([codeMode(), echoTable, nativeOutput], [])
     expect(render.tools.map((t) => t.name)).toEqual(["execute", "echo"])
     expect(render.system.indexOf("execute")).toBeLessThan(render.system.indexOf("echo"))
   })
@@ -256,36 +261,81 @@ describe("infer component", () => {
       "catalog",
       (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [], output: [] })
     )
-    expect(renderOf([codeMode, component, nativeOutput], log)).toEqual(renderOf([codeMode, component, nativeOutput], log))
+    expect(renderOf([codeMode(), component, nativeOutput], log)).toEqual(renderOf([codeMode(), component, nativeOutput], log))
   })
 
-  test("codeModeFor takes a system fragment, and the bare component renders the exported default", () => {
-    const overridden = renderOf([codeModeFor({ system: (events) => `the packages in scope are:\n${events.length}` }), nativeOutput], [{ type: "PackageInstalled" }])
+  test("codeMode takes a system fragment, and the empty scope renders the exported default", () => {
+    const overridden = renderOf([codeMode([], { system: (events) => `the packages in scope are:\n${events.length}` }), nativeOutput], [{ type: "PackageInstalled" }])
     expect(overridden.system).toBe("the packages in scope are:\n1")
-    expect(renderOf([codeMode, nativeOutput], []).system).toBe(CODE_SYSTEM)
+    expect(renderOf([codeMode(), nativeOutput], []).system).toBe(CODE_SYSTEM)
   })
 
   test("a mounted package names itself in the system fragment", () => {
     // The model is told what the code can name, from the same values the code reactor mounts:
     // one line per package, `name: description` (components/code.ts, codeSystemFor).
-    const notes: Package = {
+    const notes: Package = definePackage({
       name: "notes",
       description: "the team's notes",
       methods: { put: () => Effect.succeed(null) }
-    }
-    const { system } = renderOf([codeModeFor({ packages: [notes] }), nativeOutput], [])
+    })
+    const { system } = renderOf([codeMode([notes]), nativeOutput], [])
     expect(system).toContain("notes: the team's notes")
     expect(system).not.toContain("none")
     // An explicit fragment still wins over the derivation.
-    expect(renderOf([codeModeFor({ system: "my own scope", packages: [notes] }), nativeOutput], []).system).toBe("my own scope")
+    expect(renderOf([codeMode([notes], { system: "my own scope" }), nativeOutput], []).system).toBe("my own scope")
+  })
+
+  test("codeMode composes nested code components and preserves their work", () => {
+    const notes = definePackage({
+      name: "notes",
+      description: "the team's notes",
+      methods: { read: () => Effect.succeed(null) }
+    })
+    const search = definePackage({
+      name: "search",
+      description: "the team's index",
+      methods: { find: () => Effect.succeed(null) }
+    })
+    const upkeep: CodeComponent = {
+      name: "upkeep",
+      keys: {
+        prefixes: ["up:"],
+        keyOf: (event) => event.type === "CodeUpkeepCompleted" ? `up:${String(event.id)}` : undefined
+      },
+      derive: () => ({
+        view: { packages: [] },
+        transitions: [
+          transition({
+            key: "up:daily",
+            input: undefined,
+            act: () => Effect.succeed([{ type: "CodeUpkeepCompleted", id: "daily" }])
+          })
+        ]
+      })
+    }
+    const nested = composeComponents("knowledge", CODE_VIEW_ALGEBRA, [notes, upkeep, search])
+    const component = codeMode([nested])
+    const derived = component.derive([])
+
+    expect(derived.view.system[0]).toContain("notes: the team's notes\nsearch: the team's index")
+    expect(derived.transitions.map((candidate) => candidate.key)).toEqual(["up:daily"])
+    expect(component.keys?.keyOf({ type: "CodeUpkeepCompleted", id: "daily" })).toBe("up:daily")
+  })
+
+  test("codeMode rejects duplicate package names inside nested code components", () => {
+    const left = definePackage({ name: "notes", description: "left", methods: {} })
+    const right = definePackage({ name: "notes", description: "right", methods: {} })
+    const nested = composeComponents("duplicate", CODE_VIEW_ALGEBRA, [left, right])
+
+    expect(() => codeMode([nested])).toThrow('package "notes" declared twice')
   })
 
   test("a mounted package's requirements ride the component's type", () => {
-    // Compile-time only: `packages` arrives as an option property, and the const type parameter
-    // still infers the tuple, so R is the spill store plus exactly what the listed packages
-    // require. A widened `ReadonlyArray<Package<Ticker>>` would fail the empty-scope assertions
-    // below (components/code.ts, codeModeFor).
-    const ticker: Package<Ticker> = {
+    // Compile-time only: the const type parameter infers the component tuple, so R is the spill
+    // store plus exactly what the listed packages require. A widened
+    // `ReadonlyArray<Package<Ticker>>` would fail the empty-scope assertions below
+    // (components/code.ts, codeMode).
+    const ticker: Package<Ticker> = definePackage({
       name: "ticker",
       description: "the clock",
       methods: {
@@ -294,14 +344,14 @@ describe("infer component", () => {
             return { tick: yield* Ticker }
           })
       }
-    }
-    const scoped: AgentComponent<KeyValueStore.KeyValueStore | Ticker> = codeModeFor({ packages: [ticker] })
+    })
+    const scoped: AgentComponent<KeyValueStore.KeyValueStore | Ticker> = codeMode([ticker])
     // The union is exactly that: too wide (P falling back to Package<unknown>) fails the line
     // above, and too narrow (P collapsing to the empty tuple) fails the line below.
     // @ts-expect-error a component that requires Ticker cannot pass as one that does not
-    const narrowed: AgentComponent<KeyValueStore.KeyValueStore> = codeModeFor({ packages: [ticker] })
-    const empty: AgentComponent<KeyValueStore.KeyValueStore> = codeModeFor({})
-    const bare: AgentComponent<KeyValueStore.KeyValueStore> = codeModeFor()
+    const narrowed: AgentComponent<KeyValueStore.KeyValueStore> = codeMode([ticker])
+    const empty: AgentComponent<KeyValueStore.KeyValueStore> = codeMode([])
+    const bare: AgentComponent<KeyValueStore.KeyValueStore> = codeMode()
     expect([scoped.name, narrowed.name, empty.name, bare.name]).toEqual(["code", "code", "code", "code"])
   })
 })

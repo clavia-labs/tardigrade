@@ -90,11 +90,11 @@ Every agent assembly selects one output strategy component. `nativeOutput` selec
 import { actor, codeMode, infer, nativeOutput, outputRepairFor, reply } from "tardie"
 import { infer as modelInfer } from "tardie/model"
 
-const nativeOnly = actor(infer([codeMode, reply, nativeOutput]))
+const nativeOnly = actor(infer([codeMode(), reply, nativeOutput]))
 const nativeModel = modelInfer({ ...modelConfig, output: { guarantee: "native", withTools: true } })
 // nativeModel provides Infer and NativeOutputSupport.
 
-const portable = actor(infer([codeMode, reply, outputRepairFor({ attempts: 1 })]))
+const portable = actor(infer([codeMode(), reply, outputRepairFor({ attempts: 1 })]))
 const unprovenModel = modelInfer({ ...modelConfig, output: { guarantee: "none" } })
 // portable requires Infer. unprovenModel provides it.
 // A host that binds nativeOnly to unprovenModel has a missing NativeOutputSupport type error.
@@ -143,10 +143,10 @@ output({
 `outputValidateOnce` asks for JSON in the fallback prompt and validates one response. A mismatch ends the turn with `output_validation_failed`. It performs no correction attempt.
 
 ```ts
-import { actor, codeModeFor, infer, outputValidateOnce, reply } from "tardie"
+import { actor, codeMode, infer, outputValidateOnce, reply } from "tardie"
 
 const agent = actor(infer([
-  codeModeFor({ packages: [] }),
+  codeMode(),
   reply,
   outputValidateOnce
 ]))
@@ -157,10 +157,10 @@ const agent = actor(infer([
 `outputRepairFor` records an invalid response and asks again with the validation errors. Its policy is explicit:
 
 ```ts
-import { actor, codeModeFor, infer, outputRepairFor, reply } from "tardie"
+import { actor, codeMode, infer, outputRepairFor, reply } from "tardie"
 
 const agent = actor(infer([
-  codeModeFor({ packages: [] }),
+  codeMode(),
   reply,
   outputRepairFor({ attempts: 2, projectHistory: true })
 ]))
@@ -235,7 +235,7 @@ A delegated fallback can run domain validation before it requests another attemp
 Code executed by the model can request structured output from a child agent. Register known contracts with `agentsPackage`:
 
 ```ts
-codeModeFor({ packages: [agentsPackage({ outputs: { review: REVIEW } })] })
+codeMode([agentsPackage({ outputs: { review: REVIEW } })])
 ```
 
 The model-written code names the registered contract:

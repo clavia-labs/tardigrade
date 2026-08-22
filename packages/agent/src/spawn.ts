@@ -2,7 +2,7 @@ import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
-import type { Package } from "@clavia/tardigrade-code/packages"
+import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
 import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { replyId } from "@clavia/tardigrade-core/communication/message"
@@ -89,7 +89,7 @@ export const agentsPackage = (
   const defaultBudget = budgetPolicyOf(options.budget).defaultToolBudget
   const outputs = options.outputs ?? {}
   const declared_ = Object.keys(outputs)
-  return {
+  return definePackage({
     name: "agents",
     description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable run can ask for more budget at its wall; continue() answers the ask.",
     annotations: {
@@ -291,7 +291,7 @@ export const agentsPackage = (
           return shape(answer, address, turn, declared.contract)
         })
     }
-  }
+  })
 }
 
 // outputAsked resolves what a code body asked the child to answer in. A name is a contract the

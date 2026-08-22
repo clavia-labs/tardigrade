@@ -17,7 +17,7 @@ import { compaction } from "./compaction"
 import { reply } from "./reply"
 import { nativeOutput } from "./native-output"
 
-const rootReactor = actor(infer([codeMode, reply, budget, compaction, nativeOutput])).reactors[0]!
+const rootReactor = actor(infer([codeMode(), reply, budget, compaction, nativeOutput])).reactors[0]!
 
 // The rest of the agent's environment, which every reactor's `act` is typed against whether or not
 // it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model

@@ -323,7 +323,7 @@ export const projection = <Params extends Schema.Struct.Fields, Result extends S
 
 // The two names a projection may not claim. The log is not a projection of itself: `events` is the
 // log read back and `stream` is the same log followed, and both are the platform's own guarantee
-// rather than anything an actor derives (projectionsOf refuses either, the way agentRuntime refuses a
+// rather than anything an actor derives (projectionsOf refuses either, the way infer refuses a
 // duplicate tool).
 export const RESERVED_PROJECTIONS: ReadonlyArray<string> = ["events", "stream"]
 
