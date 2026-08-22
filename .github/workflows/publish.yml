@@ -83,7 +83,8 @@ jobs:
           CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
         run: |
           git fetch --no-tags origin "$CANDIDATE_HEAD"
-          git merge --no-commit --no-ff "$CANDIDATE_HEAD"
+          candidate_tree=$(git merge-tree --write-tree HEAD "$CANDIDATE_HEAD")
+          git read-tree --reset -u "$candidate_tree"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
