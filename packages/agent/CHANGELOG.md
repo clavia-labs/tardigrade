@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.5.0](https://github.com/clavia-labs/tardigrade/compare/v0.5.0-rc...v0.5.0) (2026-08-22)
+
+
+### Features
+
+* promote release trunk ([c41ee98](https://github.com/clavia-labs/tardigrade/commit/c41ee98b77a7b20b5986adae5aa42733f77873c2))
+
+
+### Bug Fixes
+
+* **agent:** expose report settlement ([#204](https://github.com/clavia-labs/tardigrade/issues/204)) ([fb9b43c](https://github.com/clavia-labs/tardigrade/commit/fb9b43c1d95f29f68c0c192f8da44f07fce0652a))
+* **agent:** stop reply chains ([#199](https://github.com/clavia-labs/tardigrade/issues/199)) ([c89cb71](https://github.com/clavia-labs/tardigrade/commit/c89cb71f5a0e446cdecbaf161ebbaf9a93eaa03e))
+* **ci:** build candidate tree ([#203](https://github.com/clavia-labs/tardigrade/issues/203)) ([b0ab214](https://github.com/clavia-labs/tardigrade/commit/b0ab214f96b2508ce204f7a34f6cee939c7d9880))
+* **ci:** pin release candidate ([#202](https://github.com/clavia-labs/tardigrade/issues/202)) ([96cc008](https://github.com/clavia-labs/tardigrade/commit/96cc00840d962c02b4af16dab126a69c4db31c12))
+
 ## [0.5.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.4.0...v0.5.0-rc) (2026-08-21)
 
 
