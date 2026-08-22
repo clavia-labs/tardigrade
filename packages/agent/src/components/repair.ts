@@ -68,18 +68,18 @@ export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallb
 // outputRepair is the component under the default policy.
 export const outputRepair: OutputFallbackComponent = outputRepairFor()
 
-// FAIL_FAST_FALLBACK validates one result and schedules no correction.
-export const FAIL_FAST_FALLBACK: OutputFallback = { kind: "local", name: "fail-fast" }
+// VALIDATE_ONCE_FALLBACK validates one result and schedules no correction.
+export const VALIDATE_ONCE_FALLBACK: OutputFallback = { kind: "local", name: "validate-once" }
 
-// outputFailFast contributes the fail-fast fallback and its contract instruction (turn.test.ts, "the fail-fast implementation").
-export const outputFailFast: OutputFallbackComponent = defineOutputFallback({
-  name: "output.fail-fast",
+// outputValidateOnce contributes one local validation and its contract instruction (turn.test.ts, "the validate-once implementation").
+export const outputValidateOnce: OutputFallbackComponent = defineOutputFallback({
+  name: "output.validate-once",
   derive: (log: ReadonlyArray<Event>) => ({
     view: {
       system: [],
       tools: [],
       context: [],
-      output: [{ component: "output.fail-fast", kind: "fallback", fallback: FAIL_FAST_FALLBACK, ...declaredSystem(log) }]
+      output: [{ component: "output.validate-once", kind: "fallback", fallback: VALIDATE_ONCE_FALLBACK, ...declaredSystem(log) }]
     },
     transitions: []
   })

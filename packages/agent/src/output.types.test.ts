@@ -191,19 +191,19 @@ export const rejects = (): void => {
 // is a policy that reads as sensible and is not one.
 export const modes = (): void => {
   accepts<OutputMode>({ kind: "native", name: "native" })
-  accepts<OutputMode>({ kind: "local", name: "fail-fast" })
+  accepts<OutputMode>({ kind: "local", name: "validate-once" })
   accepts<OutputMode>({ kind: "repair", name: "repair", attempts: 2, projectHistory: true })
   accepts<OutputMode>({ kind: "delegated", name: "mine", projectHistory: false })
   // @ts-expect-error the native implementation has one durable identity
   accepts<OutputMode>({ kind: "native", name: "provider-native" })
-  // @ts-expect-error the local implementation is the exported fail-fast behavior
+  // @ts-expect-error the local implementation is the exported validate-once behavior
   accepts<OutputMode>({ kind: "local", name: "local" })
   // @ts-expect-error the framework repair behavior has one durable identity
   accepts<OutputMode>({ kind: "repair", name: "retry", attempts: 2, projectHistory: true })
   // @ts-expect-error a native mode has no correction bound to state
   accepts<OutputMode>({ kind: "native", name: "native", attempts: 100, projectHistory: true })
   // @ts-expect-error a local mode has no history to project: it never corrects
-  accepts<OutputMode>({ kind: "local", name: "fail-fast", projectHistory: true })
+  accepts<OutputMode>({ kind: "local", name: "validate-once", projectHistory: true })
   // @ts-expect-error the framework loop states its bound
   accepts<OutputMode>({ kind: "repair", name: "repair", projectHistory: true })
   // @ts-expect-error a delegated mode owns its own bound, so it states none here

@@ -7,15 +7,16 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
-import { actorOf } from "@clavia/tardigrade-core/component"
+import { actor } from "@clavia/tardigrade-core/component"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import { agentRuntime, defineOutputFallback, renderOf, type AgentComponent, type AgentView } from "./agent"
+import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentView } from "./agent"
 import { CODE_SYSTEM, codeMode, codeModeFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
 import { reply } from "../components/reply"
 import { toolList } from "../components/tool-list"
 import { nativeOutput } from "../components/native-output"
+import { system } from "../components/system"
 import { receive } from "../turn"
 import { Infer, NativeOutputSupport, type InferRequest } from "./infer"
 
@@ -68,9 +69,9 @@ const viewComponent = (
   derive: (log) => ({ view: typeof view === "function" ? view(log) : view, transitions: [] })
 })
 
-describe("agent runtime", () => {
+describe("infer component", () => {
   test("an assembly must declare one output strategy", () => {
-    expect(() => actorOf(agentRuntime(), [echoTable])).toThrow("must declare one output strategy")
+    expect(() => actor(infer([echoTable]))).toThrow("must declare one output strategy")
   })
 
   test("a marked output fallback must be present for every log", () => {
@@ -79,7 +80,7 @@ describe("agent runtime", () => {
       tools: [],
       context: [],
       output: log.length === 0
-        ? [{ component: "changing-output", kind: "fallback", fallback: { kind: "local", name: "fail-fast" } }]
+        ? [{ component: "changing-output", kind: "fallback", fallback: { kind: "local", name: "validate-once" } }]
         : []
     })))
     expect(() => changing.derive([{ type: "Ready" }])).toThrow("must declare one applicable fallback for every log")
@@ -98,7 +99,7 @@ describe("agent runtime", () => {
         )
       }
     })
-    const agent = actorOf(agentRuntime(), [echoTable, reply, budget, compaction, nativeOutput])
+    const agent = actor(infer([echoTable, reply, budget, compaction, nativeOutput]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -125,7 +126,7 @@ describe("agent runtime", () => {
         )
       }
     })
-    const agent = actorOf(agentRuntime(), [echoTable, reply, nativeOutput])
+    const agent = actor(infer([echoTable, reply, nativeOutput]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -139,7 +140,7 @@ describe("agent runtime", () => {
   })
 
   test("two components declaring one tool name collide at construction", () => {
-    expect(() => actorOf(agentRuntime(), [echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput])).toThrow(
+    expect(() => actor(infer([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput]))).toThrow(
       'tool "echo" declared more than once'
     )
   })
@@ -156,9 +157,9 @@ describe("agent runtime", () => {
         output: []
       })
     )
-    const agent = actorOf(agentRuntime(), [echoTable, later, nativeOutput])
+    const agent = actor(infer([echoTable, later, nativeOutput]))
 
-    expect(agent.reactors).toHaveLength(3)
+    expect(agent.reactors).toHaveLength(1)
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 
@@ -183,7 +184,7 @@ describe("agent runtime", () => {
     })
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actorOf(agentRuntime(), [ephemeral, nativeOutput]), { id: "m1", text: "go" })
+        yield* receive(actor(infer([ephemeral, nativeOutput])), { id: "m1", text: "go" })
         return yield* readLog
       }),
       Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
@@ -236,6 +237,17 @@ describe("agent runtime", () => {
     expect(render.system).toContain("packages: github, slack")
     // A constant fragment stays what it says, beside the derived one.
     expect(render.system).toContain("echo")
+  })
+
+  test("system contributes static or projected instructions as a component", () => {
+    const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
+    const render = renderOf([
+      system("review the repository"),
+      system((events) => `recorded events: ${events.length}`),
+      nativeOutput
+    ], log)
+
+    expect(render.system).toBe("review the repository\nrecorded events: 1")
   })
 
   test("renderOf over one log is deterministic", () => {

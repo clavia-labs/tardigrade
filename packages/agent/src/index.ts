@@ -61,11 +61,11 @@ export {
 export {
   outputRepair,
   outputRepairFor,
-  outputFailFast,
+  outputValidateOnce,
   outputSystemFor,
   repairFallback,
   repairPolicyOf,
-  FAIL_FAST_FALLBACK,
+  VALIDATE_ONCE_FALLBACK,
   DEFAULT_REPAIR_POLICY,
   type RepairPolicy
 } from "./components/repair"
@@ -127,7 +127,7 @@ export {
 // list mounts its own (runtime/agent.ts).
 export {
   AGENT_VIEW_ALGEBRA,
-  agentRuntime,
+  infer,
   defineOutputFallback,
   renderOf,
   type AgentComponent,
@@ -141,17 +141,17 @@ export {
   type Rendered
 } from "./runtime/agent"
 export { codeMode, codeModeFor, CODE_SYSTEM, codeSystemFor } from "./components/code"
+export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export { budget, budgetFor } from "./components/budget"
 export { compaction, compactionFor } from "./components/compaction"
 export { reply } from "./components/reply"
 export {
-  actorOf,
+  actor,
   composeComponents,
   reactorOf,
   type Component,
   type ComponentRequirements,
-  type ComponentRuntime,
   type Derivation,
   type ViewAlgebra
 } from "@clavia/tardigrade-core/component"

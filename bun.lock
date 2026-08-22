@@ -114,6 +114,9 @@
       "dependencies": {
         "effect": "4.0.0-rc.110",
       },
+      "devDependencies": {
+        "fast-check": "^4.9.0",
+      },
     },
     "packages/host": {
       "name": "@clavia/tardigrade-host",

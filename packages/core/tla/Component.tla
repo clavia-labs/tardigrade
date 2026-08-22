@@ -1,6 +1,6 @@
 ---------------------------- MODULE Component ----------------------------
-(* A component derives a view and transitions from one log. The agent runtime
-   interprets one kind of view as tool bindings. A binding
+(* A component derives a view and transitions from one log. The infer root
+   interprets its composed child view as tool bindings. A binding
    pairs a visible tool with its handler, but pairing at one log does not by
    itself keep the tool routable after ToolCalled extends that log.
 

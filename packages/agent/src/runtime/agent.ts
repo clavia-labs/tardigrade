@@ -2,9 +2,10 @@ import type { Reactor, Transition } from "@clavia/tardigrade-core/actor"
 import {
   composeComponents,
   type Component,
-  type ComponentRuntime,
+  type ComponentRequirements,
   type ViewAlgebra
 } from "@clavia/tardigrade-core/component"
+import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/event-log"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { ToolSpec } from "../request"
@@ -53,7 +54,7 @@ export interface FallbackOutputFragment {
 
 export type OutputFragment = NativeOutputFragment | FallbackOutputFragment
 
-// AgentView is the view an agent runtime interprets. Arrays retain component order and
+// AgentView is the view the infer root interprets. Arrays retain component order and
 // postpone collision policy until the complete derivation is available.
 export interface AgentView {
   readonly system: ReadonlyArray<string>
@@ -62,7 +63,7 @@ export interface AgentView {
   readonly output: ReadonlyArray<OutputFragment>
 }
 
-// AgentComponent is a core component whose view is interpreted by the agent runtime.
+// AgentComponent is a core component whose view is interpreted by its infer root.
 export type AgentComponent<R = never> = Component<AgentView, R>
 
 const OutputFallbackMarker: unique symbol = Symbol("agent/OutputFallbackComponent")
@@ -198,27 +199,53 @@ export const renderOf = <const Cs extends ReadonlyArray<AgentComponent<never> | 
 ): Rendered =>
   renderView(viewFrom(components, log))
 
-// agentRuntime interprets AgentView as inference and tool-routing reactors. actorOf supplies the
-// composed view projection and adds each component's own transition projection.
-export const agentRuntime = (
-  policy: Partial<InferPolicy> = {}
-): ComponentRuntime<AgentView, AgentR> => ({
-  name: "agent",
-  algebra: AGENT_VIEW_ALGEBRA,
-  keys: [messageKeys, agentKeys],
-  reactors: <C>(viewOf: (log: ReadonlyArray<Event>) => AgentView): ReadonlyArray<Reactor<AgentR | C>> => {
-    const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => checkedTools(viewOf(log).tools)
-    const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
-      toolsOf(offerLogFor(log, call))
-    const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
-      const tool = offeredTools(log, call).find((candidate) => candidate.spec.name === call.name)
-      return tool?.serve(call, log, answer) as ReadonlyArray<Transition<never, AgentR | C>> | undefined
-    }
-
-    renderView(viewOf([]))
-    return [
-      inferReactorFor(policy, (log) => renderView(viewOf(log))) as Reactor<AgentR | C>,
-      toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
-    ]
+const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
+  const fragments = [messageKeys, agentKeys, ...(children === undefined ? [] : [children])]
+  return {
+    prefixes: fragments.flatMap((fragment) => fragment.prefixes),
+    keyOf: composeKeys(...fragments)
   }
-})
+}
+
+// infer composes an agent's child components and adds the model loop over their final view.
+// Inference and dispatch derive from the same child projection, so a tool remains routed against
+// the view that offered it while every child transition remains part of the root derivation.
+export const infer = <
+  const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
+>(
+  components: Cs,
+  policy: Partial<InferPolicy> = {}
+): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
+  type ComponentR = ComponentRequirements<Cs[number]>
+  type R = AgentR | ComponentR
+  const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
+  const viewOf = (log: ReadonlyArray<Event>): AgentView => combined.derive(log).view
+
+  const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => checkedTools(viewOf(log).tools)
+  const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
+    toolsOf(offerLogFor(log, call))
+  const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
+    const tool = offeredTools(log, call).find((candidate) => candidate.spec.name === call.name)
+    return tool?.serve(call, log, answer) as ReadonlyArray<Transition<never, R>> | undefined
+  }
+
+  renderView(viewOf([]))
+  const inference = inferReactorFor(policy, (log) => renderView(viewOf(log))) as Reactor<R>
+  const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
+
+  return {
+    name: "infer",
+    keys: rootKeys(combined.keys),
+    derive: (log) => {
+      const children = combined.derive(log)
+      return {
+        view: children.view,
+        transitions: [
+          ...inference(log),
+          ...dispatch(log),
+          ...children.transitions
+        ]
+      }
+    }
+  }
+}

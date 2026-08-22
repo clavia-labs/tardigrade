@@ -17,17 +17,17 @@ import { turnFailed } from "./events"
 import type { AgentComponent } from "./runtime/agent"
 import type { OutputFallback } from "./output"
 import {
-  actorOf,
-  agentRuntime,
+  actor,
   budget,
   codeModeFor,
   compaction,
   fingerprintOf,
+  infer,
   nativeOutput,
   output,
-  outputFailFast,
+  outputValidateOnce,
   repairFallback,
-  FAIL_FAST_FALLBACK,
+  VALIDATE_ONCE_FALLBACK,
   NATIVE_MODE,
   outputOf,
   outputRepair,
@@ -37,15 +37,12 @@ import {
   toolList
 } from "./index"
 
-// The default assembly over a stated scope, and its runtime reactors, reconstructed the way
-// agentRuntime mounts them: reactors[0] is the infer loop, reactors[1] is the call router. The
-// packages are values the assembly passes, so a test that needs one names it here
-// (components/code.ts, codeModeFor).
+// The default assembly over a stated scope. The infer root contains model inference, call routing,
+// and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actorOf(agentRuntime(), [codeModeFor({ packages }), reply, budget, compaction, nativeOutput])
+  actor(infer([codeModeFor({ packages }), reply, budget, compaction, nativeOutput]))
 const rlmAgent = agentWith([])
-const inferReactor = rlmAgent.reactors[0]!
-const toolsReactor = rlmAgent.reactors[1]!
+const rootReactor = rlmAgent.reactors[0]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
 // and the turn completes. The sandbox test binding runs real JS with the package objects in
 // scope; no isolation is needed to test the machinery.
@@ -166,8 +163,7 @@ describe("the agent with execute as the only tool", () => {
     expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
-    expect(inferReactor(events)).toHaveLength(0)
-    expect(toolsReactor(events)).toHaveLength(0)
+    expect(rootReactor(events)).toHaveLength(0)
   })
 
   test("a spilled settle answers with its pointer, never an empty result", async () => {
@@ -191,7 +187,7 @@ describe("the agent with execute as the only tool", () => {
       }
     ]
     const events = await run(readLog, memoryLog(spilled))
-    const [answer] = toolsReactor(events)
+    const [answer] = rootReactor(events)
     expect(answer).toBeDefined()
     // Every reactor's `act` is typed against the agent's whole environment, so a settle that only
     // reads the log still states it. Providing it is what proves the settle never reaches for the
@@ -454,7 +450,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, budget, compaction, outputRepairFor(policy)])
+  actor(infer([codeModeFor({ packages: [] }), reply, budget, compaction, outputRepairFor(policy)]))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -866,8 +862,8 @@ describe("the repair implementation", () => {
   })
 
   test("two components declaring an output strategy collide at construction", () => {
-    expect(() => actorOf(agentRuntime(), [codeModeFor({ packages: [] }), outputRepair, outputFailFast])).toThrow(
-      "output strategy declared by components output.repair and output.fail-fast"
+    expect(() => actor(infer([codeModeFor({ packages: [] }), outputRepair, outputValidateOnce]))).toThrow(
+      "output strategy declared by components output.repair and output.validate-once"
     )
   })
 
@@ -890,14 +886,14 @@ describe("the repair implementation", () => {
         transitions: []
       })
     }
-    expect(() => actorOf(agentRuntime(), [malformed])).toThrow("output fallback declared by component output.malformed")
+    expect(() => actor(infer([malformed]))).toThrow("output fallback declared by component output.malformed")
   })
 })
 
 describe("the mind on a native surface", () => {
   test("a turn completes with no budget, code, or compaction reactors", async () => {
     const reads: string[] = []
-    const mind = actorOf(agentRuntime(), [
+    const mind = actor(infer([
       toolList([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
@@ -910,8 +906,8 @@ describe("the mind on a native surface", () => {
       ]),
       reply,
       nativeOutput
-    ])
-    expect(mind.reactors).toHaveLength(3)
+    ]))
+    expect(mind.reactors).toHaveLength(1)
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,
@@ -948,8 +944,8 @@ describe("the mind on a native surface", () => {
   })
 })
 
-describe("the fail-fast implementation", () => {
-  const failFastAgent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, budget, compaction, outputFailFast])
+describe("the validate-once implementation", () => {
+  const validateOnceAgent = actor(infer([codeModeFor({ packages: [] }), reply, budget, compaction, outputValidateOnce]))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0
@@ -963,7 +959,7 @@ describe("the fail-fast implementation", () => {
           // with nothing mounted (request.ts, OutputRequest).
           expect(request.output?.system).toContain('conforming to the schema "scout"')
           expect(request.system).not.toContain("scout")
-          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: FAIL_FAST_FALLBACK })
+          return Effect.succeed({ kind: "complete" as const, output: BAD_ANSWER, mode: VALIDATE_ONCE_FALLBACK })
         }
       }),
       jsSandbox,
@@ -971,7 +967,7 @@ describe("the fail-fast implementation", () => {
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(failFastAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        yield* receive(validateOnceAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
         return yield* readLog
       }),
       layers
@@ -989,13 +985,13 @@ describe("the fail-fast implementation", () => {
     const layers = Layer.mergeAll(
       memoryLog(),
       KeyValueStore.layerMemory,
-      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: FAIL_FAST_FALLBACK }) }),
+      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: JSON.stringify(GOOD_ANSWER), mode: VALIDATE_ONCE_FALLBACK }) }),
       jsSandbox,
       noRouter
     )
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(failFastAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
+        yield* receive(validateOnceAgent, { id: "m1", text: "decompose this topic", output: SCOUT })
         return yield* readLog
       }),
       layers
@@ -1088,7 +1084,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, houseStyle({ asks: 2 })])
+    const agent = actor(infer([codeModeFor({ packages: [] }), reply, houseStyle({ asks: 2 })]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })
@@ -1134,7 +1130,7 @@ describe("a domain-specific implementation", () => {
     }
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actorOf(agentRuntime(), [codeModeFor({ packages: [] }), silent]), {
+        yield* receive(actor(infer([codeModeFor({ packages: [] }), silent])), {
           id: "m1",
           text: "decompose this topic",
           output: SCOUT
@@ -1156,7 +1152,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actorOf(agentRuntime(), [codeModeFor({ packages: [] }), reply, houseStyle({ asks: 1 })])
+    const agent = actor(infer([codeModeFor({ packages: [] }), reply, houseStyle({ asks: 1 })]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })

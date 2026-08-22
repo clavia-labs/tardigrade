@@ -456,7 +456,7 @@ type NoCorrections = { readonly attempts?: never }
 type NoHistory = { readonly projectHistory?: never }
 
 export type OutputFallback =
-  | ({ readonly kind: "local"; readonly name: "fail-fast" } & NoCorrections & NoHistory)
+  | ({ readonly kind: "local"; readonly name: "validate-once" } & NoCorrections & NoHistory)
   | {
       readonly kind: "repair"
       readonly name: "repair"
@@ -507,7 +507,10 @@ export const modeOf = (value: unknown): OutputMode | undefined => {
     return name === "native" && hasOnly(["kind", "name"]) ? { kind: "native", name } : undefined
   }
   if (kind === "local") {
-    return name === "fail-fast" && hasOnly(["kind", "name"]) ? { kind: "local", name } : undefined
+    if (!hasOnly(["kind", "name"])) return undefined
+    if (name === "validate-once") return { kind: "local", name }
+    // modeOf accepts fail-fast as the durable spelling of the validate-once policy.
+    return name === "fail-fast" ? { kind: "local", name: "validate-once" } : undefined
   }
   const projectHistory = carried["projectHistory"]
   if (kind === "delegated") {

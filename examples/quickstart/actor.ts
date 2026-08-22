@@ -1,6 +1,5 @@
 import {
-  actorOf,
-  agentRuntime,
+  actor,
   agentsPackage,
   budget,
   codeModeFor,
@@ -8,8 +7,10 @@ import {
   defineActor,
   fetchPackage,
   filesPackage,
-  outputFailFast,
+  infer,
+  outputValidateOnce,
   reply,
+  system,
   workspacePackage
 } from "tardie"
 
@@ -26,19 +27,11 @@ Delegate independent research when it helps.
 Return a concise answer with concrete findings.
 `.trim()
 
-const instructions = {
-  name: "instructions",
-  derive: () => ({
-    view: { system: [actorInstructions], tools: [], context: [], output: [] },
-    transitions: []
-  })
-}
-
 export default defineActor({
   name: actorName,
-  // actorOf carries component and output requirements into the host type.
-  actor: actorOf(agentRuntime(), [
-    instructions,
+  // actor carries component and output requirements into the host type.
+  actor: actor(infer([
+    system(actorInstructions),
     // codeModeFor gives the model one code tool over the packages listed here.
     codeModeFor({
       // packages grant access to local files, HTTP, child agents, and saved tool results.
@@ -50,7 +43,7 @@ export default defineActor({
     budget,
     // compaction summarizes older context when a long turn outgrows its context window.
     compaction,
-    // outputFailFast handles structured results on endpoints with no native guarantee without retrying.
-    outputFailFast
-  ])
+    // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
+    outputValidateOnce
+  ]))
 })
