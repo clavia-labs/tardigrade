@@ -14,12 +14,19 @@ export const MessageReceived = Schema.Struct({
   replyTo: Schema.optional(Schema.String),
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
+  // outcome marks a terminal report whose reaction turn settles locally without sending a reply (packages/agent/src/components/reply.test.ts, "terminal reports cannot start reply chains").
   outcome: Schema.optional(Schema.Literals(["completed", "failed"])),
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
   at: Schema.Finite
 })
 export type MessageReceived = typeof MessageReceived.Type
+
+// terminalReportOutcomeOf returns the terminal-report discriminator carried by a message.
+export const terminalReportOutcomeOf = (
+  message: { readonly outcome?: unknown }
+): "completed" | "failed" | undefined =>
+  message.outcome === "completed" || message.outcome === "failed" ? message.outcome : undefined
 
 // messageKeys derives the core's own dedup key: a MessageReceived names its occurrence by id. The fragment lives beside the event it keys, the owner of the derivation.
 export const messageKeys: KeyFragment = {

@@ -1,4 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/event"
+import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
 import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./components/compaction"
 import {
   correctionText,
@@ -121,12 +122,16 @@ const feedbackFor = (
 const userMessageOf = (e: Event, policy: ContextPolicy): AgentMessage => {
   const v = e as Record<string, unknown>
   const text = String(v.text ?? "")
+  const rendered =
+    text.length > policy.messageRenderCap
+      ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
+      : text
+  const report = terminalReportOutcomeOf(v)
   return {
     role: "user",
-    content:
-      text.length > policy.messageRenderCap
-        ? `${text.slice(0, policy.messageRenderCap)}…[truncated at ${policy.messageRenderCap} of ${text.length} chars; read the full message with logs.events on this facet, id ${String(v.id)}]`
-        : text
+    content: report === undefined
+      ? rendered
+      : `[Terminal report: ${report}. Your answer to this report stays in this thread and is not sent back to its sender.]\n${rendered}`
   }
 }
 

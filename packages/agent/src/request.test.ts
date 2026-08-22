@@ -91,6 +91,18 @@ describe("renderMessages", () => {
     const whole = renderMessages(trajectory)
     expect(whole[0]!.content).toBe("y".repeat(50))
   })
+
+  test("terminal reports disclose local settlement", () => {
+    for (const outcome of ["completed", "failed"] as const) {
+      const messages = renderMessages([
+        { type: "MessageReceived", id: "run-worker.reply", text: "world built", outcome, at: 0 }
+      ])
+      expect(messages[0]).toEqual({
+        role: "user",
+        content: `[Terminal report: ${outcome}. Your answer to this report stays in this thread and is not sent back to its sender.]\nworld built`
+      })
+    }
+  })
 })
 
 describe("modelRequest tool and prompt policy", () => {
