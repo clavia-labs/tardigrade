@@ -222,7 +222,7 @@ describe("resuming a turn", () => {
         Schema.Struct({
           turn: Schema.String,
           status: Schema.Literals(["pending", "completed", "failed", "parked"]),
-          epoch: Schema.Number,
+          epoch: Schema.Finite,
           output: Schema.optionalKey(Schema.String),
           error: Schema.optionalKey(Schema.String)
         })

@@ -53,26 +53,26 @@ type Reactor = (events: Event[]) => Transition[]
 ```
 ### Component
 
-A component derives information and transitions from the same log. Information is available to a consumer such as the agent runtime, while transitions go to actor reconciliation. Either side may be empty.
+A component derives a view and transitions from the same log. The view is available to a consumer such as the agent runtime, while transitions go to actor reconciliation. Either side may be empty.
 
 ```ts
-type Derivation<I> = {
-  info: I
+type Derivation<V> = {
+  view: V
   transitions: Transition[]
 }
 
-type Component<I> = {
+type Component<V> = {
   name: string
-  derive: (events: Event[]) => Derivation<I>
+  derive: (events: Event[]) => Derivation<V>
 }
 ```
 
-Components compose when their information type has an explicit combination rule. Transitions concatenate in component order. The information rule states how values combine, including ordering and collision policy.
+Components compose when their view type has an explicit combination rule. Transitions concatenate in component order. The view rule states how values combine, including ordering and collision policy.
 
 ```ts
-type InfoAlgebra<I> = {
-  empty: I
-  combine: (left: I, right: I) => I
+type ViewAlgebra<V> = {
+  empty: V
+  combine: (left: V, right: V) => V
 }
 ```
 ### Actor
@@ -92,9 +92,9 @@ const send = async (actor: Actor, event: Event): Promise<void>
 ```mermaid
 flowchart TB
   log[("event log")] -->|"events"| component["component"]
-  component -->|"info = f(log)"| info["information"]
+  component -->|"view = f(log)"| view["view"]
   component -->|"transitions = f(log)"| transitions["transitions"]
-  info --> consumer["consumer"]
+  view --> consumer["consumer"]
   transitions -->|"keys the log does not record"| act["act(input)"]
   act -->|"events, keyed record last"| log
 ```
@@ -195,7 +195,7 @@ const agent: Actor = { reactors: [infer, tools, compaction] }
 await send(agent, { type: "MessageReceived", text: "What changed in the deploy?" })
 ```
 
-This example constructs the low-level actor directly. The agent package groups related information and transitions into components, composes their information with an `InfoAlgebra`, and adapts their transitions into the same reactor list.
+This example constructs the low-level actor directly. The agent package groups related views and transitions into components, composes their views with a `ViewAlgebra`, and adapts their transitions into the same reactor list.
 #### Architecture
 The agent, as the loop: one log, three reactors deriving from it, fires landing back in it.
 
@@ -207,5 +207,4 @@ flowchart TB
   tools -->|"ToolReturned"| log
   compaction -->|"CompactionCompleted"| log
 ```
-
 

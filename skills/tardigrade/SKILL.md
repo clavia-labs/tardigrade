@@ -1,6 +1,6 @@
 ---
 name: tardigrade
-description: Create, author, build, push, run, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with actor.ts, the local actor registry, a Tardigrade run, or GEPA harness optimization from run traces.
+description: Create, migrate, author, build, push, run, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with an existing agent harness, actor.ts, the local actor registry, a Tardigrade run, or GEPA harness optimization from run traces.
 ---
 
 # Tardigrade
@@ -37,6 +37,12 @@ tdg run "Investigate the failure" --actor researcher --url http://localhost:4241
 ```
 
 Use `--json` when another program consumes command output. Human output includes workflow guidance and trace links.
+
+## Migrate an existing harness
+
+When the task moves an existing agent application to Tardigrade, read [the migration guide](../../docs/how-to/migrate.md) before editing. Inventory the existing loop, tools, policies, output, persistence, API, client, history, and deployment configuration. Capture one matched baseline, preserve behavior through the first pass, import complete history through the host seed path, and verify the result with the existing tests and a local Tardigrade run.
+
+Finish with the Voyager trace URL, a concise change summary, and before-and-after harness lines, dependencies, model tokens, cost, and latency. Calculate percentage changes only for comparable values and label unavailable metrics.
 
 ## Improve a harness
 

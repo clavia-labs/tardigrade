@@ -2,13 +2,13 @@ import { Clock, Effect } from "effect"
 import { transition, type Reactor, type Transition } from "@clavia/tardigrade-core/actor"
 import { budgetRequested, toolReturned } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { turnView } from "@clavia/tardigrade-code/turns"
 import { budgetSpent } from "../components/budget"
-import { answerErrors, outputSchemaOf, repairText } from "../contract"
 // The tools reactor: the agent's side of the tool table. The policy here is the same whatever
-// the tools are: the answer contract, the escalation ask, the budget wall, and the unknown-tool
-// error. The work tools themselves come from the mounted components (runtime/agent.ts), so an
-// agent measured against a fixed tool table mounts `toolList` and keeps every behavior here.
+// the tools are: the escalation ask, the budget wall, and the unknown-tool error. The work tools
+// themselves come from the mounted components (runtime/agent.ts), so an agent measured against a
+// fixed tool table mounts `toolList` and keeps every behavior here. A turn's declared output
+// contract never reaches this reactor: the final response is the model's own, and no tool
+// stands for it (src/output.ts).
 //
 
 // PendingCall is the call being served: the head unanswered `ToolCalled`.
@@ -84,7 +84,7 @@ const decisionFor = (
 // Every branch here is component-independent policy; a tool binding decides only how a
 // work call becomes events.
 // toolsReactorFrom is the policy over a routed serve and a derived tool list: the component
-// assembly's entry (runtime/agent.ts), where the tools are information derived from the log.
+// assembly's entry (runtime/agent.ts), where the tools belong to the view derived from the log.
 export const toolsReactorFrom = <R = never>(
   serve: Serve<R>,
   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
@@ -130,12 +130,6 @@ export const toolsReactorFrom = <R = never>(
           })
       })
     ]
-  }
-  // The answer tool only reaches here when its arguments missed the turn's schema: returning
-  // the reasons puts the model back in thinking with its own errors to read.
-  if (call.name === "answer") {
-    const errors = answerErrors(outputSchemaOf(turnView(log)), call.arguments)
-    return [answering({ error: repairText(errors.length > 0 ? errors : ["the answer tool was called with no arguments"]) })]
   }
   // The budget gate: the wall on the turn refuses the work and keeps what the model has. It
   // precedes the serve so a spent turn cannot dispatch, whatever a component would have done.

@@ -1,6 +1,13 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./components/compaction"
-import { outputSchemaOf } from "./contract"
+import {
+  correctionText,
+  declaredOutputOf,
+  modeOf,
+  projectedOutput,
+  type OutputContract,
+  type OutputFallback
+} from "./output"
 import { budgetSpent, canRequestBudget } from "./components/budget"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
@@ -27,19 +34,38 @@ export interface AgentMessage {
   readonly toolCallId?: string
 }
 
+// OutputRequest is the turn's declared final response: the contract, and the implementation that
+// must obtain it. It rides the request as itself rather than as a tool, so a binding maps it onto
+// the provider's own response-format surface (platform/model/src/output.ts, outputSchemaFor).
+//
+// `invalid` is the turn that declared an output no contract can be built from. It is on the
+// request rather than absent from it, because a request with no output reads as a turn that
+// wanted prose, and this one wanted something nobody can serve (output.ts, DeclaredOutput).
+export type OutputRequest =
+  | {
+      readonly kind: "contract"
+      readonly contract: OutputContract
+      // What the turn does when native structured output is unavailable for this call, and the
+      // prompt that fallback needs. Absent means the assembly selected native output, so a call
+      // the provider cannot serve fails before it spends. The binding decides which strategy the
+      // attempt runs as, and the fallback's prompt reaches the model only then
+      // (platform/model/src/output.ts, outputModeOf).
+      readonly fallback?: OutputFallback
+      readonly fallbackSystem?: string
+    }
+  | {
+      readonly kind: "invalid"
+      readonly errors: ReadonlyArray<string>
+      readonly fallback?: OutputFallback
+    }
+
 export interface ModelRequest {
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
   readonly tools: ReadonlyArray<ToolSpec>
+  // Present when the turn declared a contract. Absent turns end in prose.
+  readonly output?: OutputRequest
 }
-
-// answerTool renders the turn's declared output schema as a tool. Calling it ends the turn, and
-// its arguments are the structured answer, parsed JSON by construction.
-const answerTool = (schema: unknown): ToolSpec => ({
-  name: "answer",
-  description: "Deliver the final answer for this turn. The arguments ARE the answer.",
-  inputSchema: schema
-})
 
 // REQUEST_BUDGET_TOOL is offered only at the wall, and only when the brief made the turn
 // escalatable. The model calls it to ask its parent for more tool calls instead of answering.
@@ -61,18 +87,33 @@ const REQUEST_BUDGET_TOOL: ToolSpec = {
 
 // SYSTEM frames the turn around whatever surface is in play: the surface states how the model
 // acts, and the frame states how a turn ends. The two are separate so a surface swap rewrites
-// only its own half.
+// only its own half. The frame says nothing about the shape of the answer: a turn that declares
+// an output contract gets that shape from the provider's own response format, and a framework
+// sentence about it would be one more instruction to disagree with the schema
+// (request.test.ts, "the frame never mentions the contract, declared or not").
 const SYSTEM = (surface: string): string =>
-  `You are an agent. ${surface}\nWhen the work is done, reply in plain text: that reply is your final answer and ends the turn. Reply plainly without calling a tool when no action is needed.`
-
-const ANSWER_NUDGE =
-  "This turn declares an output schema. Finish by calling the answer tool: its arguments are your final answer and MUST conform to its schema. Never answer in prose."
+  `You are an agent. ${surface}\nWhen the work is done, reply directly: that reply is your final answer and ends the turn. Reply without calling a tool when no action is needed.`
 
 const BUDGET_NUDGE =
   "Your tool budget for this turn is spent, so the work tools are gone. Finish now: answer with your best result from what you have already gathered."
 
 const ESCALATE_NUDGE =
   "If the work genuinely needs more and the extra spend is worth it, you may call request_budget with a reason and an amount instead of answering. Ask only when it changes the result; otherwise answer now."
+
+// feedbackFor is what the model reads back after a rejection, and undefined when nobody has
+// decided to ask again yet. The framework repair loop's own text is written here because that
+// loop is the reactor's; every other implementation supplies its own through
+// `OutputRetryRequested`.
+const feedbackFor = (
+  rejection: Record<string, unknown>,
+  decided: ReadonlyMap<string, string>
+): string | undefined => {
+  const decision = decided.get(String(rejection["attempt"]))
+  if (decision !== undefined) return decision
+  const mode = modeOf(rejection["mode"])
+  if (mode?.kind !== "repair") return undefined
+  return correctionText((rejection["errors"] ?? []) as ReadonlyArray<string>)
+}
 
 // A truncation names the cap it cut at as well as the size it cut from: the model reads why the
 // text stops, and a consumer who moved the cap sees the new number in the request itself
@@ -99,26 +140,41 @@ const userMessageOf = (e: Event, policy: ContextPolicy): AgentMessage => {
 //
 // `policy` sets the truncation caps. It must be the policy the compaction reactor took, or the
 // guard fires against a size this render never sends (compaction.ts, ContextPolicy).
+//
+// A repair exchange renders as the reply the model gave and the feedback it was given back. The
+// feedback belongs to whoever decided to ask again: the framework loop writes `correctionText`,
+// and a delegated implementation writes its own on `OutputRetryRequested`, so the core never speaks for
+// a component (output.ts, OutputFallback; request.test.ts, "a delegated implementation
+// writes its own feedback"). A rejection nobody has answered renders alone.
+//
+// The projection runs first, so a corrected exchange whose recorded policy projects history is
+// gone before anything here reads the trajectory (output.ts, projectedOutput).
 export const renderMessages = (
   trajectory: ReadonlyArray<Event>,
   policy: Partial<ContextPolicy> = {}
 ): ReadonlyArray<AgentMessage> => {
   const resolved = contextPolicyOf(policy)
   const messages: AgentMessage[] = []
-  const checkpoint = checkpointOf(trajectory)
-  const from = keepFromIndex(trajectory, checkpoint.keepFrom)
+  const projected = projectedOutput(trajectory)
+  const checkpoint = checkpointOf(projected)
+  const from = keepFromIndex(projected, checkpoint.keepFrom)
   const terminated = new Set(
-    trajectory
+    projected
       .filter((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
       .map((e) => String((e as { turn?: unknown }).turn))
   )
-  const openHead = trajectory.findIndex(
+  const decided = new Map(
+    projected
+      .filter((e) => e.type === "OutputRetryRequested")
+      .map((e) => [String((e as { rejection?: unknown }).rejection), String((e as { feedback?: unknown }).feedback)])
+  )
+  const openHead = projected.findIndex(
     (e) => e.type === "MessageReceived" && !terminated.has(String((e as { id?: unknown }).id))
   )
-  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(trajectory[openHead]!, resolved))
+  if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
   let pendingText: string | null = null
-  for (const e of trajectory.slice(from)) {
+  for (const e of projected.slice(from)) {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "MessageReceived": {
@@ -150,6 +206,12 @@ export const renderMessages = (
         })
         break
       }
+      case "OutputRejected": {
+        messages.push({ role: "assistant", content: String(v.text ?? "") })
+        const feedback = feedbackFor(v, decided)
+        if (feedback !== undefined) messages.push({ role: "user", content: feedback })
+        break
+      }
       case "TurnCompleted": {
         messages.push({ role: "assistant", content: String(v.output ?? "") })
         break
@@ -165,27 +227,52 @@ export const renderMessages = (
   return messages
 }
 
-// modelRequest folds two policies over the surface's tool table. A declared output schema adds
-// the answer tool and its nudge. A spent budget drops the work tools and adds the budget nudge,
-// so the model can only answer. Both are pure projections of the log, and neither knows what the
-// work tools are.
+// modelRequest folds the turn's policies over the surface's tool table. A spent budget drops the
+// work tools and adds the budget nudge, so the model can only answer. A declared output contract
+// rides the request as itself: it adds no tool, no tool choice, and no sentence to the base
+// prompt, because the binding sends it on the provider's own response-format surface
+// (request.test.ts, "a contract is never a tool, a tool choice, or a sentence in the prompt").
 //
 // `context` sets what the render truncates. It rides the same rule the surface does: the actor's
 // compaction reactor must hold the same policy, so the caller that states one here states it
 // there too (compaction.ts, ContextPolicy).
 export const modelRequest = (
   trajectory: ReadonlyArray<Event>,
-  render: { readonly system: string; readonly tools: ReadonlyArray<ToolSpec> },
+  render: {
+    readonly system: string
+    readonly tools: ReadonlyArray<ToolSpec>
+    readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+  },
   context: Partial<ContextPolicy> = {}
 ): ModelRequest => {
-  const schema = outputSchemaOf(trajectory)
+  const declared = declaredOutputOf(trajectory)
+  const fallback = render.output
   const spent = budgetSpent(trajectory)
   const canRequest = canRequestBudget(trajectory)
   const work = spent ? [] : render.tools
-  const withAnswer = schema === undefined ? work : [...work, answerTool(schema)]
-  const tools = canRequest ? [...withAnswer, REQUEST_BUDGET_TOOL] : withAnswer
-  const framed = SYSTEM(render.system)
-  const base = schema === undefined ? framed : `${framed}\n${ANSWER_NUDGE}`
+  const tools = canRequest ? [...work, REQUEST_BUDGET_TOOL] : work
+  const base = SYSTEM(render.system)
   const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
-  return { system: spent ? `${base}\n${budgetLine}` : base, messages: renderMessages(trajectory, context), tools }
+  return {
+    system: spent ? `${base}\n${budgetLine}` : base,
+    messages: renderMessages(trajectory, context),
+    tools,
+    ...(declared.kind === "none"
+      ? {}
+      : {
+          output:
+            declared.kind === "contract"
+              ? ({
+                  kind: "contract",
+                  contract: declared.contract,
+                  ...(fallback === undefined ? {} : { fallback: fallback.fallback }),
+                  ...(fallback?.system === undefined ? {} : { fallbackSystem: fallback.system })
+                } as const)
+              : ({
+                  kind: "invalid",
+                  errors: declared.errors,
+                  ...(fallback === undefined ? {} : { fallback: fallback.fallback })
+                } as const)
+        })
+  }
 }

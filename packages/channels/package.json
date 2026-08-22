@@ -1,0 +1,41 @@
+{
+  "name": "@clavia/tardigrade-channels",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "External channel providers for tardigrade.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/channels"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-host": "workspace:*",
+    "effect": "4.0.0-rc.110"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

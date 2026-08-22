@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.5.0-rc](https://github.com/clavia-labs/tardigrade/compare/v0.4.0...v0.5.0-rc) (2026-08-21)
+
+
+### Features
+
+* add linked channels ([#191](https://github.com/clavia-labs/tardigrade/issues/191)) ([304ee54](https://github.com/clavia-labs/tardigrade/commit/304ee54dd8cf35fe880bfb4e338845541e6c8eae))
+* name component output view ([#189](https://github.com/clavia-labs/tardigrade/issues/189)) ([a74da0b](https://github.com/clavia-labs/tardigrade/commit/a74da0b708b984dbafa3d19051e0ae87ed79b40a))
+* prefer native output ([#192](https://github.com/clavia-labs/tardigrade/issues/192)) ([784caf9](https://github.com/clavia-labs/tardigrade/commit/784caf94cbb5cfb5950d20efa87d67ac3f3a2fd0))
+
 ## [0.4.0](https://github.com/clavia-labs/tardigrade/compare/v0.4.0-rc...v0.4.0) (2026-08-21)
 
 

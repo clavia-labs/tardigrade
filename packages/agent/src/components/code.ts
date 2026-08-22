@@ -80,10 +80,11 @@ export const codeModeFor = <
     name: "code",
     keys: codeKeys,
     derive: (log) => ({
-      info: {
+      view: {
         system: [typeof options.system === "function" ? options.system(log) : options.system ?? codeSystemFor(packages as ReadonlyArray<Package<unknown>>)],
         tools: [{ spec: EXECUTE_TOOL, serve: (call, current, answer) => serveCode(current, call, answer) }],
-        context: []
+        context: [],
+        output: []
       },
       transitions: reactor(log)
     })

@@ -4,21 +4,23 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { actorOf } from "@clavia/tardigrade-core/component"
 import type { Package } from "@clavia/tardigrade-code/packages"
-import { agentRuntime, renderOf, type AgentComponent, type AgentInfo } from "./agent"
+import { agentRuntime, defineOutputFallback, renderOf, type AgentComponent, type AgentView } from "./agent"
 import { CODE_SYSTEM, codeMode, codeModeFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
 import { reply } from "../components/reply"
 import { toolList } from "../components/tool-list"
-import { receive, type AgentR } from "../turn"
-import { Infer, type InferRequest } from "./infer"
+import { nativeOutput } from "../components/native-output"
+import { receive } from "../turn"
+import { Infer, NativeOutputSupport, type InferRequest } from "./infer"
 
-// The component assembly end to end: the render the model sees is the composed information
-// derivation, and a call routes through the same derived tool binding.
+// The component assembly end to end: the render the model sees is the composed view, and a call
+// routes through the same derived tool binding.
 
 // Ticker is a service no assembled agent provides, so a component that requires it is
 // distinguishable at compile time from one that does not.
@@ -43,7 +45,8 @@ const noRouter = Layer.mergeAll(
     call: () => Effect.succeed({ error: "no router bound" }),
     resume: () => Effect.succeed({ error: "no router bound" })
   }),
-  Layer.succeed(Self, "test-agent")
+  Layer.succeed(Self, parseActorAddress("test-agent")),
+  Layer.succeed(NativeOutputSupport, { withTools: true })
 )
 
 const readLog = Effect.flatMap(EventLog, (log) => log.read)
@@ -57,15 +60,31 @@ const echoTable = toolList([
   }
 ])
 
-const informationComponent = (
+const viewComponent = (
   name: string,
-  info: AgentInfo | ((log: ReadonlyArray<Event>) => AgentInfo)
+  view: AgentView | ((log: ReadonlyArray<Event>) => AgentView)
 ): AgentComponent => ({
   name,
-  derive: (log) => ({ info: typeof info === "function" ? info(log) : info, transitions: [] })
+  derive: (log) => ({ view: typeof view === "function" ? view(log) : view, transitions: [] })
 })
 
 describe("agent runtime", () => {
+  test("an assembly must declare one output strategy", () => {
+    expect(() => actorOf(agentRuntime(), [echoTable])).toThrow("must declare one output strategy")
+  })
+
+  test("a marked output fallback must be present for every log", () => {
+    const changing = defineOutputFallback(viewComponent("changing-output", (log) => ({
+      system: [],
+      tools: [],
+      context: [],
+      output: log.length === 0
+        ? [{ component: "changing-output", kind: "fallback", fallback: { kind: "local", name: "fail-fast" } }]
+        : []
+    })))
+    expect(() => changing.derive([{ type: "Ready" }])).toThrow("must declare one applicable fallback for every log")
+  })
+
   test("the render is the composed derivation, and the request carries it to the model", async () => {
     const seen: InferRequest[] = []
     const mind = Layer.succeed(Infer, {
@@ -79,7 +98,7 @@ describe("agent runtime", () => {
         )
       }
     })
-    const agent = actorOf(agentRuntime(), [echoTable, reply, budget, compaction])
+    const agent = actorOf(agentRuntime(), [echoTable, reply, budget, compaction, nativeOutput])
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -106,7 +125,7 @@ describe("agent runtime", () => {
         )
       }
     })
-    const agent = actorOf(agentRuntime(), [echoTable, reply])
+    const agent = actorOf(agentRuntime(), [echoTable, reply, nativeOutput])
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -120,37 +139,39 @@ describe("agent runtime", () => {
   })
 
   test("two components declaring one tool name collide at construction", () => {
-    expect(() => actorOf(agentRuntime(), [echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }])])).toThrow(
+    expect(() => actorOf(agentRuntime(), [echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput])).toThrow(
       'tool "echo" declared more than once'
     )
   })
 
   test("a duplicate tool derived after construction fails for that log", () => {
-    const later = informationComponent(
+    const later = viewComponent(
       "later",
       (log) => ({
         system: [],
         tools: log.some((event) => event.type === "Ready")
           ? [{ spec: { name: "echo", description: "later", inputSchema: {} }, serve: (_call, _log, answer) => [answer({})] }]
           : [],
-        context: []
+        context: [],
+        output: []
       })
     )
-    const agent = actorOf(agentRuntime(), [echoTable, later])
+    const agent = actorOf(agentRuntime(), [echoTable, later, nativeOutput])
 
     expect(agent.reactors).toHaveLength(3)
-    expect(() => renderOf([echoTable, later], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
+    expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 
-  test("a tool remains routable from the information that offered its call", async () => {
-    const ephemeral = informationComponent(
+  test("a tool remains routable from the view that offered its call", async () => {
+    const ephemeral = viewComponent(
       "ephemeral",
       (log) => ({
         system: [],
         tools: log.some((event) => event.type === "ToolCalled")
           ? []
           : [{ spec: { name: "once", description: "one call", inputSchema: {} }, serve: (_call, _log, answer) => [answer("served")] }],
-        context: []
+        context: [],
+        output: []
       })
     )
     const mind = Layer.succeed(Infer, {
@@ -162,7 +183,7 @@ describe("agent runtime", () => {
     })
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actorOf(agentRuntime(), [ephemeral]), { id: "m1", text: "go" })
+        yield* receive(actorOf(agentRuntime(), [ephemeral, nativeOutput]), { id: "m1", text: "go" })
         return yield* readLog
       }),
       Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
@@ -172,25 +193,25 @@ describe("agent runtime", () => {
   })
 
   test("compactionFor's context reaches the render, so the guard and the request hold one policy", () => {
-    const render = renderOf<AgentR>([codeMode, compactionFor({ messageRenderCap: 1234 })], [])
+    const render = renderOf([codeMode, compactionFor({ messageRenderCap: 1234 }), nativeOutput], [])
     expect(render.context).toEqual({ messageRenderCap: 1234 })
   })
 
   test("different values for one context field fail with both component names", () => {
-    const left = informationComponent("left", {
-      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }]
+    const left = viewComponent("left", {
+      system: [], tools: [], context: [{ component: "left", policy: { messageRenderCap: 10 } }], output: []
     })
-    const right = informationComponent("right", {
-      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }]
+    const right = viewComponent("right", {
+      system: [], tools: [], context: [{ component: "right", policy: { messageRenderCap: 20 } }], output: []
     })
 
-    expect(() => renderOf([left, right], [])).toThrow(
+    expect(() => renderOf([left, right, nativeOutput], [])).toThrow(
       'context field "messageRenderCap" declared by components left and right'
     )
   })
 
   test("renderOf composes system fragments and tools in mount order", () => {
-    const render = renderOf([codeMode, echoTable], [])
+    const render = renderOf([codeMode, echoTable, nativeOutput], [])
     expect(render.tools.map((t) => t.name)).toEqual(["execute", "echo"])
     expect(render.system.indexOf("execute")).toBeLessThan(render.system.indexOf("echo"))
   })
@@ -198,18 +219,19 @@ describe("agent runtime", () => {
   test("a system fragment is a projection: it reads the log renderOf was handed", () => {
     const seen: ReadonlyArray<Event>[] = []
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }, { type: "PackageInstalled", name: "slack" }]
-    const catalog = informationComponent(
+    const catalog = viewComponent(
       "catalog",
       (events: ReadonlyArray<Event>) => {
         seen.push(events)
         return {
           system: [`packages: ${events.map((e) => String((e as { name?: unknown }).name)).join(", ")}`],
           tools: [],
-          context: []
+          context: [],
+          output: []
         }
       }
     )
-    const render = renderOf([catalog, echoTable], log)
+    const render = renderOf([catalog, echoTable, nativeOutput], log)
     expect(seen).toEqual([log])
     expect(render.system).toContain("packages: github, slack")
     // A constant fragment stays what it says, beside the derived one.
@@ -218,17 +240,17 @@ describe("agent runtime", () => {
 
   test("renderOf over one log is deterministic", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
-    const component = informationComponent(
+    const component = viewComponent(
       "catalog",
-      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [] })
+      (events: ReadonlyArray<Event>) => ({ system: [`count: ${events.length}`], tools: [], context: [], output: [] })
     )
-    expect(renderOf([codeMode, component], log)).toEqual(renderOf([codeMode, component], log))
+    expect(renderOf([codeMode, component, nativeOutput], log)).toEqual(renderOf([codeMode, component, nativeOutput], log))
   })
 
   test("codeModeFor takes a system fragment, and the bare component renders the exported default", () => {
-    const overridden = renderOf([codeModeFor({ system: (events) => `the packages in scope are:\n${events.length}` })], [{ type: "PackageInstalled" }])
+    const overridden = renderOf([codeModeFor({ system: (events) => `the packages in scope are:\n${events.length}` }), nativeOutput], [{ type: "PackageInstalled" }])
     expect(overridden.system).toBe("the packages in scope are:\n1")
-    expect(renderOf([codeMode], []).system).toBe(CODE_SYSTEM)
+    expect(renderOf([codeMode, nativeOutput], []).system).toBe(CODE_SYSTEM)
   })
 
   test("a mounted package names itself in the system fragment", () => {
@@ -239,11 +261,11 @@ describe("agent runtime", () => {
       description: "the team's notes",
       methods: { put: () => Effect.succeed(null) }
     }
-    const { system } = renderOf([codeModeFor({ packages: [notes] })], [])
+    const { system } = renderOf([codeModeFor({ packages: [notes] }), nativeOutput], [])
     expect(system).toContain("notes: the team's notes")
     expect(system).not.toContain("none")
     // An explicit fragment still wins over the derivation.
-    expect(renderOf([codeModeFor({ system: "my own scope", packages: [notes] })], []).system).toBe("my own scope")
+    expect(renderOf([codeModeFor({ system: "my own scope", packages: [notes] }), nativeOutput], []).system).toBe("my own scope")
   })
 
   test("a mounted package's requirements ride the component's type", () => {

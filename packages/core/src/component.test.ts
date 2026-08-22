@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { transition } from "./actor"
-import { actorOf, composeComponents, reactorOf, type Component, type ComponentRuntime, type InfoAlgebra } from "./component"
+import { actorOf, composeComponents, reactorOf, type Component, type ComponentRuntime, type ViewAlgebra } from "./component"
 import type { Event } from "./event"
 
 interface Facts {
   readonly names: ReadonlyArray<string>
 }
 
-const facts: InfoAlgebra<Facts> = {
+const facts: ViewAlgebra<Facts> = {
   empty: { names: [] },
   combine: (left, right) => ({ names: [...left.names, ...right.names] })
 }
@@ -16,7 +16,7 @@ const facts: InfoAlgebra<Facts> = {
 const component = (name: string, event: string): Component<Facts> => ({
   name,
   derive: (log) => ({
-    info: { names: log.some((entry) => entry.type === event) ? [name] : [] },
+    view: { names: log.some((entry) => entry.type === event) ? [name] : [] },
     transitions: log.some((entry) => entry.type === event)
       ? [transition({ key: name, input: name, act: () => Effect.succeed([]) })]
       : []
@@ -24,23 +24,23 @@ const component = (name: string, event: string): Component<Facts> => ({
 })
 
 describe("components", () => {
-  test("composition combines information and concatenates transitions in component order", () => {
+  test("composition combines views and concatenates transitions in component order", () => {
     const left = component("left", "Ready")
     const right = component("right", "Ready")
     const log: ReadonlyArray<Event> = [{ type: "Ready" }]
     const composed = composeComponents("both", facts, [left, right])
 
-    expect(composed.derive(log).info).toEqual({ names: ["left", "right"] })
+    expect(composed.derive(log).view).toEqual({ names: ["left", "right"] })
     expect(composed.derive(log).transitions.map((owed) => owed.key)).toEqual(["left", "right"])
   })
 
-  test("the empty composition derives the algebra's empty information and no work", () => {
+  test("the empty composition derives the algebra's empty view and no work", () => {
     const composed = composeComponents("empty", facts, [])
 
-    expect(composed.derive([])).toEqual({ info: facts.empty, transitions: [] })
+    expect(composed.derive([])).toEqual({ view: facts.empty, transitions: [] })
   })
 
-  test("composition is associative for information and transition order", () => {
+  test("composition is associative for view and transition order", () => {
     const left = component("left", "Ready")
     const middle = component("middle", "Ready")
     const right = component("right", "Ready")
@@ -54,7 +54,7 @@ describe("components", () => {
       composeComponents("middle-right", facts, [middle, right])
     ]).derive(log)
 
-    expect(leftGrouped.info).toEqual(rightGrouped.info)
+    expect(leftGrouped.view).toEqual(rightGrouped.view)
     expect(leftGrouped.transitions.map((owed) => owed.key)).toEqual(
       rightGrouped.transitions.map((owed) => owed.key)
     )
@@ -73,7 +73,7 @@ describe("components", () => {
     const keyed = (name: string): Component<Facts> => ({
       name,
       keys: { prefixes: ["x:"], keyOf: () => undefined },
-      derive: () => ({ info: facts.empty, transitions: [] })
+      derive: () => ({ view: facts.empty, transitions: [] })
     })
 
     expect(() => composeComponents("collision", facts, [keyed("left"), keyed("right")])).toThrow(
@@ -81,15 +81,15 @@ describe("components", () => {
     )
   })
 
-  test("actorOf gives composed information to its runtime and component work to reconciliation", () => {
+  test("actorOf gives the composed view to its runtime and component work to reconciliation", () => {
     const seen: Facts[] = []
     const runtime: ComponentRuntime<Facts> = {
       name: "facts",
       algebra: facts,
       keys: [],
-      reactors: (infoOf) => [
+      reactors: (viewOf) => [
         (log) => {
-          seen.push(infoOf(log))
+          seen.push(viewOf(log))
           return []
         }
       ]

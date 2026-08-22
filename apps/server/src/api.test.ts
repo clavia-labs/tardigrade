@@ -99,6 +99,8 @@ const until = async <A>(what: string, poll: () => Promise<A | undefined>, ms = 1
   }
 }
 
+const get = (base: string, path: string) => fetch(`${base}${path}`)
+
 const post = (base: string, path: string, body?: unknown) =>
   fetch(`${base}${path}`, {
     method: "POST",
@@ -216,8 +218,8 @@ describe("actors", () => {
             id: "m1",
             text: "inspect"
           })
-          const actors = await (await fetch(`${base}/v1/actors`)).json()
-          const events = await (await fetch(`${base}/v1/actors/reviewer/threads/review/events`)).json()
+          const actors = await (await get(base, "/v1/actors")).json()
+          const events = await (await get(base, "/v1/actors/reviewer/threads/review/events")).json()
           return { pushStatus: pushed.status, summary, accepted: await accepted.json(), actors, events }
         })
       }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)

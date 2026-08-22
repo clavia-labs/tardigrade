@@ -1,0 +1,169 @@
+{
+  // The Effect lint policy. Every project extends it through tsconfig.base.json, and the gate finds
+  // every tsconfig in each workspace (tools/gate.ts, lint:effect). `tsc --noEmit` ignores plugins,
+  // so a type error and an Effect finding stay separate answers.
+  //
+  // Every rule the plugin ships is named here with the severity this repository holds it to.
+  // tools/effect-lint-policy.ts compares this map with the installed catalog, so an upgrade that
+  // adds or removes a rule fails until this policy answers for it. `error` is a correctness claim,
+  // `warning` is a simplification, and the gate fails on both (`--strict`). `off` carries the reason
+  // it is off. A source exception uses `// @effect-diagnostics-next-line <rule>:off` with its reason
+  // at the expression it covers.
+  //
+  // `@effect/language-service` is the plugin's name, not a dependency: `@effect/tsgo` carries the
+  // diagnostics, and knip is told both names for that reason (knip.json, ignoreDependencies). An
+  // editor running stock tsserver needs the standalone plugin installed to read this file.
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": true,
+        "diagnosticSeverity": {
+          // Correctness. Each of these describes code that does something other than what it reads
+          // as: an effect that never runs, a requirement nobody provides, a handler that cannot fire.
+          "catchUnfailableEffect": "error",
+          "classSelfMismatch": "error",
+          "duplicatePackage": "error",
+          "effectFnIife": "error",
+          "effectFnImplicitAny": "error",
+          "effectGenUsesAdapter": "error",
+          "effectInFailure": "error",
+          "effectInVoidSuccess": "error",
+          "floatingEffect": "error",
+          "floatingEffectInVitest": "error",
+          "genericEffectServices": "error",
+          "layerMergeAllWithDependencies": "error",
+          "lazyPromiseInEffectSync": "error",
+          "missingEffectContext": "error",
+          "missingEffectError": "error",
+          "missingEffectServiceDependency": "error",
+          "missingLayerContext": "error",
+          "missingReturnYieldStar": "error",
+          "missingStarInYieldEffectGen": "error",
+          "multipleEffectProvide": "error",
+          "nonObjectEffectServiceType": "error",
+          "outdatedApi": "error",
+          "overriddenSchemaConstructor": "error",
+          "promiseInEffectSuccess": "error",
+          "returnEffectInGen": "error",
+          "runEffectInsideEffect": "error",
+          "schemaLiteralNonFinite": "error",
+          "schemaOpaqueInstanceMember": "error",
+          "scopeInLayerEffect": "error",
+          "unsafeEffectTypeAssertion": "error",
+
+          // Determinism. A replayed body re-runs from the top and must take the same path to each
+          // call, so a wall clock, a random draw, or a socket reached from inside Effect code is a
+          // replay hazard rather than a style choice. Model-authored code already gets this
+          // guarantee by shimming the same ambients (packages/code/src/sandbox.ts, Ambient;
+          // defaults.test.ts, "replay-stable ambients"), and the framework's own code holds itself
+          // to it here. Most ambient rules outside Effect code are in the `off` block below because
+          // a build script and a browser are not replayed. globalRandom stays on across helper calls.
+          "cryptoRandomUUIDInEffect": "error",
+          "globalDateInEffect": "error",
+          "globalFetchInEffect": "error",
+          "globalRandom": "error",
+          "globalRandomInEffect": "error",
+          "globalTimersInEffect": "error",
+          "processEnvInEffect": "error",
+
+          // Typed failures. An untagged error merges with every other untagged error in the failure
+          // channel, which is the one place this framework promises a caller can tell them apart.
+          "anyUnknownInErrorContext": "warning",
+          "globalErrorInEffectCatch": "warning",
+          "globalErrorInEffectFailure": "warning",
+          "unknownInEffectCatch": "warning",
+
+          // Schema. A schema is the contract an event is written and read through, so a domain it
+          // states loosely is a decode that fails later, on replay, holding the log.
+          "instanceOfSchema": "warning",
+          "newSchemaClass": "warning",
+          "preferSchemaTypeProperty": "warning",
+          "preferTypedSchemaDecoder": "warning",
+          "redundantSchemaTagIdentifier": "warning",
+          "schemaNumber": "warning",
+          "schemaStructWithTag": "warning",
+          "schemaSyncInEffect": "warning",
+          "schemaUnionOfLiterals": "warning",
+
+          // Simplification. The shorter form the framework already ships, said the shorter way.
+          "abortControllerInEffect": "warning",
+          "catchAllToMapError": "warning",
+          "catchChainToFirstSuccessOf": "warning",
+          "catchTagToCatchReason": "warning",
+          "catchToIgnore": "warning",
+          "catchToOrElseSucceed": "warning",
+          "effectDoNotation": "warning",
+          "effectFnOpportunity": "warning",
+          "effectMapFlatten": "warning",
+          "effectMapVoid": "warning",
+          "effectSucceedWithVoid": "warning",
+          "flatMapToMap": "warning",
+          "globalConsoleInEffect": "warning",
+          "lazyEffect": "warning",
+          "leakingRequirements": "warning",
+          "multipleCatchTag": "warning",
+          "nestedEffectGenYield": "warning",
+          "preferUnsafeConstructor": "warning",
+          "redundantMapError": "warning",
+          "redundantOrDie": "warning",
+          "serviceNotAsClass": "warning",
+          "syncToSucceed": "warning",
+          "tryCatchInEffectGen": "warning",
+          "unnecessaryEffectGen": "warning",
+          "unnecessaryFailYieldableError": "warning",
+          "unnecessaryPipe": "warning",
+          "unnecessaryPipeChain": "warning",
+          "unnecessaryTypeofType": "warning",
+
+          // Off, and why. Each of these is a defensible rule that asks for something this repository
+          // has decided against, so leaving it on would mean suppressing it at every site instead.
+          // A decision recorded once here is a decision a reader can find and change.
+
+          // The host, the client, and an actor's own `act` are Promise surfaces on purpose: a
+          // caller holding a thread does not have to hold an Effect runtime (packages/host/src/
+          // host.ts, drive and wake; docs/quickstart.md).
+          "asyncFunction": "off",
+          "newPromise": "off",
+          // Exported functions take their arguments directly. There is no data-last overload to
+          // pair with, and adding one to every export would double the surface to no reader's gain.
+          "missingPipeableSignature": "off",
+          "missedPipeableOpportunity": "off",
+          // Service keys are named for the framework, not for the package path that happens to hold
+          // them: `tardigrade/Self` outlives a file move, `@clavia/tardigrade-core/actor/Self` does
+          // not.
+          "deterministicKeys": "off",
+          // The event log is JSON by contract. It is read by `clickhouse local`, by a SQLite
+          // client, and by anything else that opens the file, so the bytes are the interface and a
+          // codec would hide it (platform/bun/src/host.ts).
+          "preferSchemaOverJson": "off",
+          // Composing every layer at one entry point is what the hosts do; the sites this flags are
+          // those entry points.
+          "strictEffectProvide": "off",
+          // A platform package binds the runtime it is named for, so importing `node:fs` there is
+          // the job rather than a lapse.
+          "nodeBuiltinImport": "off",
+          // What a class extends is not what the rule above is about. The failure channel is held
+          // by `globalErrorInEffectFailure`, `globalErrorInEffectCatch`, and `unknownInEffectCatch`,
+          // which stay on. An error thrown across a Promise boundary to a JavaScript caller never
+          // reaches that channel, and it is an `Error` because that is what a caller catches
+          // (packages/client/src/problem.ts, ProblemError).
+          "extendsNativeError": "off",
+          // The clock, the environment, and the network, outside Effect code. Build scripts, the
+          // browser bundle, and terminal rendering are not replayed, and the `InEffect` halves above
+          // already hold the paths that are. Randomness stays on everywhere because a helper called
+          // from Effect code must take the Random service explicitly.
+          "cryptoRandomUUID": "off",
+          "globalConsole": "off",
+          "globalDate": "off",
+          "globalFetch": "off",
+          "globalTimers": "off",
+          "processEnv": "off",
+          // Formatting rules with no Effect content. oxlint owns that layer.
+          "strictBooleanExpressions": "off",
+          "unnecessaryArrowBlock": "off"
+        }
+      }
+    ]
+  }
+}

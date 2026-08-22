@@ -26,7 +26,13 @@ import {
 
 const KEY = "sk-do-not-print-me"
 
-const answers: SetupAnswers = { baseUrl: "https://api.example.com/v1", id: "a-model", apiKey: KEY }
+const answers: SetupAnswers = {
+  baseUrl: "https://api.example.com/v1",
+  id: "a-model",
+  apiKey: KEY,
+  output: "native",
+  outputWithTools: "true"
+}
 
 let home = ""
 
@@ -116,7 +122,9 @@ describe("writeSetup", () => {
       baseUrl: "https://api.example.com/v1",
       apiKey: KEY,
       id: "a-model",
-      provider: "bedrock"
+      provider: "bedrock",
+      output: "native",
+      outputWithTools: "true"
     })
   })
 
@@ -149,7 +157,25 @@ describe("writeSetup", () => {
       baseUrl: "https://api.example.com/v1",
       apiKey: KEY,
       id: "a-model",
-      provider: "bedrock"
+      provider: "bedrock",
+      output: "native",
+      outputWithTools: "true"
+    })
+  })
+
+  test("a setup with no native guarantee writes the whole alternative", async () => {
+    const path = await write({
+      baseUrl: answers.baseUrl,
+      id: answers.id,
+      apiKey: answers.apiKey,
+      ...(answers.provider === undefined ? {} : { provider: answers.provider }),
+      output: "none"
+    })
+    expect(parseFileConfig(await readFile(path, "utf8")).model).toEqual({
+      baseUrl: "https://api.example.com/v1",
+      apiKey: KEY,
+      id: "a-model",
+      output: "none"
     })
   })
 })
@@ -168,6 +194,9 @@ describe("what setup prints", () => {
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.apiKey).toBe("stored")
     expect(json.provider).toBe("bedrock")
+    expect(json.output).toBe("native")
+    expect(json.outputWithTools).toBe(true)
+    expect(summary).toContain("output native (with tools)")
   })
 })
 

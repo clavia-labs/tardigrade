@@ -165,13 +165,14 @@ const executeRecorded = <R = never>(
                   return { parked: false, result }
                 }
               }
-              // A non-Park failure or defect in the fn is TRANSIENCE (an RPC hiccup, a reset
-              // stub), and it takes the park branch: nothing recorded beyond the send, the
-              // body's promise never settles, the next attempt asks again. It must never
-              // become a rejection the body can catch: a rejection is an input that exists
-              // nowhere in the log, so replay would depend on infrastructure luck
-              // (execute.test.ts, "transience never reaches the body"; the 2026-08-16
-              // run-d7b8b037-183 drift). A method's real failure is an {error} RESULT.
+              // A defect in the fn is TRANSIENCE (an RPC hiccup, a reset stub), and it takes the
+              // park branch: nothing recorded beyond the send, the body's promise never settles,
+              // the next attempt asks again. It must never become a rejection the body can catch:
+              // a rejection is an input that exists nowhere in the log, so replay would depend on
+              // infrastructure luck (execute.test.ts, "transience never reaches the body"; the
+              // 2026-08-16 run-d7b8b037-183 drift). A method's real failure is an {error} RESULT,
+              // and its declared error channel carries `Park` alone (packages.ts, Package), so a
+              // failure that is not a park cannot arrive here to be caught.
               const parkOut = (awaiting?: string): Effect.Effect<CallOutcome, never, never> =>
                 Effect.gen(function* () {
                   parked = true
@@ -183,7 +184,6 @@ const executeRecorded = <R = never>(
               const attempt = yield* fn(args, { callId }).pipe(
                 Effect.map((result): CallOutcome => ({ parked: false, result })),
                 Effect.catchTag("Park", (p) => parkOut(p.awaiting)),
-                Effect.catch(() => parkOut()),
                 Effect.catchDefect(() => parkOut())
               )
               if (attempt.parked) return attempt

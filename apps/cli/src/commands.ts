@@ -50,7 +50,7 @@ export const problemLine = (error: ProblemError): string => {
 // leaves the exit code non-zero, so a caller sees the server's sentence rather than a stack trace
 // (commands.test.ts, "a problem document prints its title, status, and detail").
 const userErrorOf = (cause: unknown): CliError.UserError =>
-  new CliError.UserError({
+  CliError.UserError.make({
     cause,
     userMessage: cause instanceof ProblemError ? problemLine(cause) : String(cause)
   })
@@ -122,10 +122,8 @@ const settle = (
       const view = views.find((candidate) => candidate.turn === turn)
       if (view !== undefined && view.status !== "pending") return view
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
-        return yield* Effect.fail(
-          userErrorOf(
-            `turn ${turn} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
-          )
+        return yield* userErrorOf(
+          `turn ${turn} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
         )
       }
       yield* Effect.sleep(pollMillis)
@@ -147,7 +145,7 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
     const home = homeOf(cli.env)
-    if (home === undefined) return yield* Effect.fail(userErrorOf(HOME_MISSING))
+    if (home === undefined) return yield* userErrorOf(HOME_MISSING)
     const file = yield* readFileConfig(cli.env)
     const answers = yield* Effect.mapError(setupPrompt(file.model === undefined ? {} : { current: file.model }), userErrorOf)
     const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
@@ -348,7 +346,7 @@ export const devCommand = Command.make("dev", {
       }),
       catch: userErrorOf
     })
-    yield* Effect.mapError(Layer.launch(layer), userErrorOf)
+    return yield* Effect.mapError(Layer.launch(layer), userErrorOf)
   })).pipe(
       Command.withDescription(
         "Boot the API and serve the built UI at one URL, ungated on loopback. One process, one port: the API paths are the server's own and everything else is the UI."
@@ -391,7 +389,7 @@ export const runCommand = Command.make("run", {
         : turnLines(accepted.thread, view)
     )
     if (view.status !== SETTLED) {
-      return yield* Effect.fail(userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`))
+      return yield* userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`)
     }
   })).pipe(
     Command.withDescription(

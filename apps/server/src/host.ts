@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer } from "effect"
+import { Clock, Context, Data, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { createHash } from "node:crypto"
@@ -8,6 +8,8 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
+import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
+import type { Provider } from "@clavia/tardigrade-host/communication/provider"
 import {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
@@ -41,10 +43,18 @@ export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
 export const idOf = (lane: string): string | undefined =>
   lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
 
+// ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
+// artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
+// validation `Error` apart from a filesystem one by its message (api.ts, pushActor).
+export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
+  readonly message: string
+  readonly cause: unknown
+}> {}
+
 export interface ActorThreads {
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
-  readonly list: () => Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
+  readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
 
@@ -63,7 +73,7 @@ export class Threads extends Context.Service<
     readonly settled: ActorThreads["settled"]
     readonly actors?: Effect.Effect<ReadonlyArray<ActorSummary>>
     readonly actor?: (name: string) => ActorThreads | undefined
-    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, Error>
+    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
   }
 >()("tardigrade/server/Threads") {}
 
@@ -78,12 +88,20 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
   config.model.baseUrl !== undefined && config.model.apiKey !== undefined && config.model.id !== undefined
 
 const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
-  const { apiKey, baseUrl, id, provider } = config.model
+  const { apiKey, baseUrl, id, provider, output } = config.model
   if (!modelIsConfigured(config) || baseUrl === undefined || apiKey === undefined || id === undefined) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
-  return infer({ baseUrl, apiKey, model: id, ...(provider === undefined ? {} : { provider }) })
+  return infer({
+    baseUrl,
+    apiKey,
+    model: id,
+    ...(provider === undefined ? {} : { provider }),
+    // The capability is the operator's whole statement, passed through as declared. Nothing here
+    // fills a field it did not state (platform/model/src/output.ts, capabilityOf).
+    ...(output === undefined ? {} : { output })
+  })
 }
 
 // The lane environment: everything the assembly needs that the bun host does not bind. The model
@@ -103,6 +121,8 @@ export interface ThreadsOptions {
   // derivation whole, which is how a test runs a scripted mind with no credentials
   // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
   readonly infer?: Layer.Layer<Infer>
+  // providers interpret replies whose durable inbound link targets an external provider instance.
+  readonly providers?: ReadonlyArray<Provider>
   // actorRefresh watches the actor root and reconciles its artifacts after the stated debounce.
   // Absent keeps a hosted server's registry fixed except for PUT /v1/actors; tdg dev supplies it.
   readonly actorRefresh?: {
@@ -114,6 +134,8 @@ export interface ThreadsOptions {
 interface ActorRuntime {
   readonly summary: ActorSummary
   readonly threads: ActorThreads
+  readonly commit: (id: string, event: Event) => Effect.Effect<void>
+  readonly schedule: Effect.Effect<void>
   readonly resting: () => Promise<boolean>
   readonly dirty: () => number
   readonly close: () => Promise<void>
@@ -147,12 +169,14 @@ const runtimeOf = async (
   summary: ActorSummary,
   actor: Actor<ServerR>,
   log: string,
-  lane: ReturnType<typeof layerLane>
+  lane: ReturnType<typeof layerLane>,
+  providers: ReadonlyArray<Provider>
 ): Promise<ActorRuntime> => {
   const host: BunHost = await createBunHost<ServerR>({
     log,
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
     layersFor: () => lane,
+    providers,
     keyOf: (event) => actor.keyOf?.(event)
   })
   let driving: Promise<void> | undefined
@@ -191,29 +215,36 @@ const runtimeOf = async (
   )
   await host.recover()
   const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
+  const commit = (id: string, event: Event) =>
+    Effect.gen(function*() {
+      const at = yield* Clock.currentTimeMillis
+      const stamped = event.at === undefined ? { ...event, at } : event
+      yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
+    })
   const threads: ActorThreads = {
     append: (id, event) =>
       Effect.gen(function*() {
-        const at = yield* Clock.currentTimeMillis
-        const stamped = event.at === undefined ? { ...event, at } : event
-        yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
+        yield* commit(id, event)
         request()
       }),
     events: read,
-    list: () =>
-      Effect.gen(function*() {
-        const lanes = yield* Effect.promise(() => host.lanes())
-        const ids = lanes.flatMap((candidate) => {
-          const id = idOf(candidate)
-          return id === undefined ? [] : [id]
-        })
-        return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
-      }),
+    list: Effect.gen(function*() {
+      const lanes = yield* Effect.promise(() => host.lanes())
+      const ids = lanes.flatMap((candidate) => {
+        const id = idOf(candidate)
+        return id === undefined ? [] : [id]
+      })
+      return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
+    }),
     settled
   }
   return {
     summary,
     threads,
+    commit,
+    schedule: Effect.sync(() => {
+      request()
+    }),
     resting: () => host.resting(),
     dirty: () => (driving === undefined ? 0 : follow ? 2 : 1),
     close: async () => {
@@ -255,7 +286,7 @@ const make = (options: ThreadsOptions) =>
       return result
     }
     const open = async (summary: ActorSummary, actor: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
-      const runtime = await runtimeOf(summary, actor, log, lane)
+      const runtime = await runtimeOf(summary, actor, log, lane, options.providers ?? [])
       runtimes.set(summary.name, runtime)
       return runtime
     }
@@ -329,7 +360,7 @@ const make = (options: ThreadsOptions) =>
 
     const selected = (name: string): ActorThreads | undefined => runtimes.get(name)?.threads
     const primary = selected(RESERVED_ACTOR)!
-    const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, Error> =>
+    const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, ActorPushRefused> =>
       Effect.tryPromise({
         try: () => exclusive(async () => {
           const manifest = artifact.manifest as ActorArtifactManifest
@@ -370,7 +401,7 @@ const make = (options: ThreadsOptions) =>
             throw error
           }
         }),
-        catch: (error) => error instanceof Error ? error : new Error(String(error))
+        catch: (error) => new ActorPushRefused({ message: error instanceof Error ? error.message : String(error), cause: error })
       })
 
     const service: Context.Service.Shape<typeof Threads> = {
@@ -380,14 +411,24 @@ const make = (options: ThreadsOptions) =>
       push,
       settled: Effect.forEach(runtimes.values(), (runtime) => runtime.threads.settled, { discard: true })
     }
+    const ingress = ingressFrom((name) => {
+      const runtime = runtimes.get(name)
+      return runtime === undefined ? undefined : {
+        commit: runtime.commit,
+        schedule: runtime.schedule
+      }
+    })
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
       resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
       dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
     }
-    return Context.make(Threads, service).pipe(Context.add(DriverGauge, gauge))
+    return Context.make(Threads, service).pipe(
+      Context.add(Ingress, ingress),
+      Context.add(DriverGauge, gauge)
+    )
   })
 
 // layerThreads is the host, the assembly, and the driver: the Threads the routes consume and the
 // DriverGauge /healthz reads, built once and closed with the scope.
-export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | DriverGauge, never, ServerConfig> =>
+export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig> =>
   Layer.effectContext(make(options))

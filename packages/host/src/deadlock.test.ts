@@ -5,6 +5,8 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
 
 // The deadlock sentinel against toy reactors, package-pure. Each lane's
 // body: on its brief, declare an await on its partner; on its await's
@@ -51,13 +53,16 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             // Answer whoever awaits me, then settle.
-            yield* router.deliver(`mem:${input.partner}`, {
+            yield* router.deliver(
+              linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${input.partner}`)),
+              {
               type: "MessageReceived",
               id: `${input.partner}.await.reply`,
               outcome: "completed",
               text: "done",
               at: 2
-            } as Event)
+              } as Event
+            )
             return [{ type: "Settled", at: 3 } as Event]
           })
       })

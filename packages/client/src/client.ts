@@ -191,19 +191,20 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
   // the API's middleware asks a client for. RequestProblems asks for nothing, so nothing is left to
   // provide; the compiler proves that for a stated declaration and cannot for a generic one, which
   // is what the annotation states here rather than at every call site.
-  const api = Effect.runSync(
-    (HttpApiClient.make(apiOf(options.projections ?? ({} as P)), {
-      baseUrl,
-      ...(token === undefined
-        ? {}
-        : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-    }).pipe(
-      Effect.provide(FetchHttpClient.layer),
-      options.fetch === undefined
-        ? (self) => self
-        : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-    ) as Effect.Effect<DerivedApi<P>>)
+  const derived = HttpApiClient.make(apiOf(options.projections ?? ({} as P)), {
+    baseUrl,
+    ...(token === undefined
+      ? {}
+      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
+  }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+    options.fetch === undefined
+      ? (self) => self
+      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
   )
+  // derived has no requirements for every concrete declaration, which a generic P cannot reduce.
+  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
+  const api = Effect.runSync(derived as Effect.Effect<DerivedApi<P>>)
   // The actor this client addresses. One name today, because the server compiles one assembly in
   // and reserves that name for it (contract.ts, RESERVED_ACTOR); it is an option rather than a
   // literal at each call so a deploy that serves more than one is a client option, not a rewrite.
@@ -224,6 +225,8 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
         )
       })
     }
+    // call erases the selected endpoint failure before run converts it to ProblemError.
+    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
     return await run(call({ params: { actor, id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
@@ -272,6 +275,8 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
     // those keys, so the lookup cannot miss. The types are recovered on the way out because an
     // index into a mapped record of endpoint methods is not one the compiler can narrow per call.
     projection: (thread, name, query) =>
+      // ProjectionCall erases the selected endpoint failure before run converts it to ProblemError.
+      // @effect-diagnostics-next-line anyUnknownInErrorContext:off
       run((api.projections as Record<string, ProjectionCall>)[name]!({
         params: { actor, id: thread },
         query: query ?? {}

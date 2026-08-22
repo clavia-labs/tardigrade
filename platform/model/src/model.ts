@@ -1,15 +1,24 @@
-import { Effect, Layer } from "effect"
+import { Clock, Effect, Layer, Random } from "effect"
 import { StreamProcessor, type ModelMessage, type ProcessorResult, type StreamChunk, type Tool, type ToolCall } from "@tanstack/ai"
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import { Infer, type InferRequest } from "tardie"
-import type { Action } from "tardie/events"
+import { Infer, NativeOutputSupport, type InferRequest } from "tardie"
+import type { Action, AttemptEndpoint } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { answerErrors, outputSchemaOf } from "tardie/contract"
-import { modelRequest, type AgentMessage, type ToolSpec } from "tardie/request"
+import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/request"
+import {
+  capabilityOf,
+  converseOutputConfig,
+  converseStopClass,
+  compatibleResponseFormat,
+  outputModeOf,
+  fallbackSystemFor,
+  type OutputCapability
+} from "./output"
+import { NATIVE_MODE, type OutputMode } from "tardie/output"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
@@ -124,27 +133,16 @@ const toTool = (t: ToolSpec): Tool => ({
   inputSchema: t.inputSchema as NonNullable<Tool["inputSchema"]>
 })
 
-// The decode: the processed stream becomes one Action. A tool call acts; plain text completes;
-// an empty response enters the provider failure path.
-export const actionOf = (result: ProcessorResult, schema?: unknown): Action => {
+// The decode: the processed stream becomes one Action. A tool call acts; the final response
+// completes and carries its text verbatim, whether that text is prose or the JSON a native
+// schema constrained it to; an empty response enters the provider failure path.
+//
+// Nothing here judges the response against a contract. The turn's contract is the actor's, and
+// the actor validates every completion before it records a terminal (tardie, runtime/infer.ts,
+// completionOf), so a strict provider is checked once rather than trusted twice.
+export const actionOf = (result: ProcessorResult): Action => {
   const calls = result.toolCalls ?? []
   const text = (result.content ?? "").trim()
-  // An answer call ends the turn with its arguments as the structured output, but only when
-  // those arguments satisfy the schema this turn declared. A tool call is well-formed long
-  // before it is correct: a model can put a stringified array where an array belongs. An answer
-  // that misses goes back as a call, and the tools reactor returns the reasons.
-  const answered = calls.find((c) => c.function.name === "answer")
-  if (answered !== undefined) {
-    let parsed: unknown
-    try {
-      parsed = JSON.parse(answered.function.arguments)
-    } catch {
-      parsed = undefined
-    }
-    const errors = answerErrors(schema, parsed)
-    if (errors.length === 0) return { kind: "complete", output: answered.function.arguments }
-    return { kind: "call", callId: answered.id, name: "answer", arguments: parsed, ...(text === "" ? {} : { text }) }
-  }
   const call = calls.find((c) => c.function.name === "execute") ?? calls[0]
   if (call !== undefined) {
     let args: unknown
@@ -161,14 +159,33 @@ export const actionOf = (result: ProcessorResult, schema?: unknown): Action => {
       ...(text === "" ? {} : { text })
     }
   }
-  // Prose terminates a turn that declared nothing. Under a schema it cannot: the answer has a
-  // declared shape, and text is not it, so the turn goes back for a real answer.
-  if (text !== "") {
-    if (schema === undefined) return { kind: "complete", output: text }
-    return { kind: "call", callId: `${result.toolCalls?.[0]?.id ?? "answer"}/prose`, name: "answer", arguments: undefined, text }
+  if (text !== "") return { kind: "complete", output: text }
+  // A provider that declined leaves neither: content_filter is the finish reason that says so,
+  // and a refusal a retry of the same request would only earn again (docs/output.md, "Failure
+  // classes").
+  if (result.finishReason === "content_filter") {
+    throw new RefusedError("the provider refused to answer this request")
   }
   throw new Error("the model produced neither text nor a tool call")
 }
+
+// RefusedError marks the one failure the retry ladder must not climb: a provider that declined.
+class RefusedError extends Error {
+  readonly refused = true
+}
+
+// ViolatedError marks a provider breaking a native strict guarantee on its own wire, which
+// Converse says outright (output.ts, converseStopClass). The compatible leg reports the same
+// class through local validation instead (tardie, runtime/infer.ts, completionOf).
+class ViolatedError extends Error {
+  readonly violated = true
+}
+
+const isRefused = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { refused?: unknown }).refused === true
+
+const isViolation = (e: unknown): boolean =>
+  typeof e === "object" && e !== null && (e as { violated?: unknown }).violated === true
 
 const noopLogger = new Proxy({}, { get: () => () => {} }) as never
 
@@ -189,15 +206,27 @@ export interface ModelConfig {
   // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
   // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
   readonly stream?: Partial<StreamBounds>
+  // What this endpoint and model promise about a declared output contract. Absent means no
+  // promise: a turn that declares a contract fails before spend unless its assembly provides a
+  // fallback. A provider name never supplies this value (src/output.ts, capabilityOf).
+  readonly output?: OutputCapability
   // What the model costs, when a catalog or a caller has said. A billed figure from the
   // provider is preferred; this table fills only a cost the provider omitted
   // (packages/agent/src/usage.ts, priced). Cached prompt tokens price at the full input rate.
   readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
+  // retryAfterJitterMs adds a random wait to a provider's Retry-After value. Absent, DEFAULT_RETRY_AFTER_JITTER_MS.
+  readonly retryAfterJitterMs?: number
   readonly fetch?: FetchImpl // test seam
   readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
 }
+
+type NativeOutputProvided<C extends ModelConfig> = [C] extends [
+  { readonly output: { readonly guarantee: "native"; readonly withTools: true } }
+]
+  ? NativeOutputSupport
+  : never
 
 // Throttle-shaped failures need delayed retries because fan-out can trip a gateway's rate limit.
 // The reactor has no timer vocabulary, so the model binding owns these waits inside one act.
@@ -209,6 +238,7 @@ export interface ModelConfig {
 // trouble. `bounded()` below throws plain `Error`s for the same shape of failure (a stream that
 // never starts or stalls), so the message is checked too.
 export const DEFAULT_THROTTLE_RETRY_DELAYS_MS: ReadonlyArray<number> = [2_000, 8_000, 30_000]
+export const DEFAULT_RETRY_AFTER_JITTER_MS = 1_000
 
 const isThrottleShaped = (e: unknown): boolean => {
   const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
@@ -222,7 +252,7 @@ const isThrottleShaped = (e: unknown): boolean => {
 
 // Full jitter (AWS's term for it): a uniform draw between 0 and the base, so many attempts
 // throttled at the same instant do not retry in lockstep and re-trip the same limit together.
-const jittered = (baseMs: number): number => Math.random() * baseMs
+const jittered = (baseMs: number, nextRandom: () => number): number => nextRandom() * baseMs
 
 // retryAfterMsOf reads the provider's own wait from a thrown failure, in both forms the
 // specification allows (a count of seconds, or a date to wait until). The adapters differ in
@@ -251,20 +281,22 @@ export const retryAfterMsOf = (e: unknown, now: number): number | undefined => {
 }
 
 // throttleDelayMs decides one in-flight wait: the provider's stated Retry-After when it fits
-// the ladder's own ceiling (plus up to a second of jitter, so a herd released together does not
-// re-trip the limit), the jittered ladder otherwise, and undefined for a stated wait past the
-// ceiling. A stated wait past the ceiling ends the bounded retry set.
+// the ladder's own ceiling (plus the stated jitter, so a herd released together does not re-trip
+// the limit), the jittered ladder otherwise, and undefined for a stated wait past the ceiling. A
+// stated wait past the ceiling ends the bounded retry set.
 export const throttleDelayMs = (
   e: unknown,
   attempt: number,
   now: number,
-  delays: ReadonlyArray<number> = DEFAULT_THROTTLE_RETRY_DELAYS_MS
+  nextRandom: () => number,
+  delays: ReadonlyArray<number> = DEFAULT_THROTTLE_RETRY_DELAYS_MS,
+  retryAfterJitterMs: number = DEFAULT_RETRY_AFTER_JITTER_MS
 ): number | undefined => {
   if (attempt >= delays.length) return undefined
   const ceiling = delays[delays.length - 1]!
   const stated = retryAfterMsOf(e, now)
-  if (stated !== undefined) return stated > ceiling ? undefined : stated + Math.random() * 1_000
-  return jittered(delays[attempt]!)
+  if (stated !== undefined) return stated > ceiling ? undefined : stated + nextRandom() * retryAfterJitterMs
+  return jittered(delays[attempt]!, nextRandom)
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms))
@@ -339,7 +371,21 @@ const bedrockHandler = (config: ModelConfig, bounds: StreamBounds): SmithyHandle
   }
 }
 
-const bedrockAdapter = (config: ModelConfig, maxTokens: number, bounds: StreamBounds) => {
+// bedrockAdapter subclasses the Converse adapter for the two things the wire needs and the
+// adapter does not do on its own: the gateway's own authorization, and the output ceiling.
+//
+// `output` is the third. The adapter's own structured-output path forces a tool and reads its
+// arguments back, which is the protocol this framework removed; Converse has a native surface
+// (`outputConfig.textFormat`, @aws-sdk/client-bedrock-runtime), so the schema goes there and the
+// response arrives as ordinary text content the stream processor already accumulates.
+export const bedrockAdapter = (
+  config: ModelConfig,
+  maxTokens: number,
+  bounds: StreamBounds,
+  output?: OutputRequest,
+  mode: OutputMode = NATIVE_MODE,
+  stops: { stopReason?: string } = {}
+) => {
   const handler = bedrockHandler(config, bounds)
   const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
   return new (class extends BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]> {
@@ -356,12 +402,17 @@ const bedrockAdapter = (config: ModelConfig, maxTokens: number, bounds: StreamBo
       // being retried twice, once inside the SDK on its own schedule and once outside on ours.
       return { ...super.buildClientConfig(resolved, resolvedRegion, endpoint), requestHandler: handler, maxAttempts: 1 }
     }
-    protected override buildInput(options: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildInput"]>[0]) {
+    public override buildInput(options: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildInput"]>[0]) {
       const input = super.buildInput(options) as BedrockRuntime.ConverseStreamCommandInput
-      // Converse truncates at its own small default otherwise, and a truncated stream ends an
-      // `answer` tool call with EMPTY arguments: a whole generated code body silently gone.
+      // Converse truncates at its own small default otherwise, and a truncated stream ends a
+      // tool call with EMPTY arguments: a whole generated code body silently gone.
       input.inferenceConfig = { ...input.inferenceConfig, maxTokens }
+      const outputConfig = output === undefined ? undefined : converseOutputConfig(output, mode)
+      if (outputConfig !== undefined) input.outputConfig = { ...input.outputConfig, ...outputConfig }
       return input
+    }
+    protected override async sendStream(input: BedrockRuntime.ConverseStreamCommandInput) {
+      return tapStopReason(await super.sendStream(input), stops)
     }
   })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
 }
@@ -409,6 +460,10 @@ interface Wire {
   readonly usage?: unknown
   readonly provider?: string
   readonly model?: string
+  // A structured-output refusal arrives as `choices[].delta.refusal` with an ordinary `stop`
+  // finish reason, and the adapter's processor keeps neither. The raw body is the only place it
+  // survives, so it is read here (model.test.ts, "a refusal on the wire").
+  readonly refusal?: string
 }
 
 // captureWire reads the last `usage` object (and provenance) off an SSE (or JSON) body. The
@@ -426,17 +481,34 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     // the live branch already failed; bytes read so far may still hold a usage chunk
   }
   const text = new TextDecoder().decode(concatBytes(chunks))
-  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => ({
-    ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
-    ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
-    ...(typeof parsed.model === "string" ? { model: parsed.model } : {})
-  })
+  const refusalOf = (parsed: { choices?: ReadonlyArray<{ delta?: { refusal?: unknown }; message?: { refusal?: unknown } }> }): string | undefined => {
+    for (const choice of parsed.choices ?? []) {
+      const refusal = choice.delta?.refusal ?? choice.message?.refusal
+      if (typeof refusal === "string" && refusal !== "") return refusal
+    }
+    return undefined
+  }
+  const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
+    const refusal = refusalOf(parsed as never)
+    return {
+      ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
+      ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
+      ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
+      ...(refusal === undefined ? {} : { refusal })
+    }
+  }
   let last: Wire = {}
   for (const line of text.split(/\r?\n/)) {
     const payload = line.startsWith("data:") ? line.slice(5).trim() : ""
     if (payload === "" || payload === "[DONE]") continue
     try {
-      last = { ...last, ...wireOf(JSON.parse(payload) as never) }
+      const next = wireOf(JSON.parse(payload) as never)
+      // Refusal deltas arrive in pieces, like content: each chunk carries the next fragment.
+      last = {
+        ...last,
+        ...next,
+        ...(next.refusal === undefined ? {} : { refusal: `${last.refusal ?? ""}${next.refusal}` })
+      }
     } catch {
       // a keep-alive or a malformed line is not usage
     }
@@ -490,8 +562,46 @@ const stampOf = (config: ModelConfig) => ({
   model: config.model
 })
 
+// endpointOf is who served an attempt, recorded whether or not the endpoint reported a single
+// token. The configured pair is always present, so a replay can say which model supplied a
+// native guarantee even for an endpoint that bills nothing; a router that names the upstream it
+// served from adds the observed pair beside it (tardie, src/events.ts, Endpoint).
+const endpointOf = (config: ModelConfig, wire: Wire | undefined): AttemptEndpoint => ({
+  ...stampOf(config),
+  ...(wire?.provider === undefined ? {} : { routedProvider: wire.provider }),
+  ...(wire?.model === undefined ? {} : { routedModel: wire.model })
+})
+
+const served = (action: Action, endpoint: AttemptEndpoint): Action => ({ ...action, endpoint })
+
+// tapStopReason keeps the raw Converse stop reason the adapter's processor folds away, so a
+// guardrail refusal and a malformed structured response are told apart from an ordinary stop
+// (output.ts, converseStopClass).
+export const tapStopReason = <T>(
+  stream: AsyncIterable<T>,
+  into: { stopReason?: string }
+): AsyncIterable<T> => ({
+  async *[Symbol.asyncIterator]() {
+    for await (const event of stream) {
+      const stop = (event as { messageStop?: { stopReason?: unknown } }).messageStop?.stopReason
+      if (typeof stop === "string") into.stopReason = stop
+      yield event
+    }
+  }
+})
+
 const usageOn = (e: unknown): Usage | undefined =>
   e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
+
+const endpointOn = (e: unknown): AttemptEndpoint | undefined =>
+  e !== null && typeof e === "object" && "endpoint" in e ? (e as { endpoint?: AttemptEndpoint }).endpoint : undefined
+
+const carriesEndpoint = (e: unknown): boolean => endpointOn(e) !== undefined
+
+// failed attaches an attempt's spend and endpoint to a failure the loop above classifies, so the
+// two survive the throw the way a truncation's own do.
+const failed = <E extends Error>(error: E, usage: Usage | undefined, endpoint: AttemptEndpoint): E =>
+  Object.assign(error, { usage, endpoint })
 
 const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined => {
   if (parts.length === 0) return undefined
@@ -505,7 +615,8 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
   }
 }
 
-export const infer = (config: ModelConfig) => {
+// infer provides NativeOutputSupport in its layer type only for a statically known native capability that accepts tools.
+export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer | NativeOutputProvided<C>> => {
   assertSupportedBun()
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
@@ -514,8 +625,20 @@ export const infer = (config: ModelConfig) => {
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
-  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, stream: bounds }
-  const attemptOnce = async (request: InferRequest, key: string | undefined, maxTokens: number, rung: number, stats: { finish?: string }): Promise<Action> => {
+  const retryAfterJitterMs = config.retryAfterJitterMs ?? DEFAULT_RETRY_AFTER_JITTER_MS
+  const failurePolicy = { throttleRetryDelaysMs: throttleDelays, retryAfterJitterMs, stream: bounds }
+  const attemptOnce = async (
+    req: ModelRequest,
+    mode: OutputMode,
+    key: string | undefined,
+    maxTokens: number,
+    rung: number,
+    stats: { finish?: string }
+  ): Promise<Action> => {
+    // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
+    // recorded fact rather than re-deciding from a capability that may have changed since
+    // (tardie, runtime/infer.ts, completionOf).
+    const stamped = (action: Action): Action => (req.output === undefined ? action : { ...action, mode })
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
     // response, and the ladder would climb nowhere (the removed driver learned this). Rung zero
@@ -526,9 +649,10 @@ export const infer = (config: ModelConfig) => {
     }
     const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
+    const stops: { stopReason?: string } = {}
     const adapter =
       config.provider === "bedrock"
-        ? bedrockAdapter(config, maxTokens, bounds)
+        ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops)
         : openaiCompatibleText(config.model, {
             name: "tardigrade",
             baseURL: config.baseUrl,
@@ -539,56 +663,115 @@ export const infer = (config: ModelConfig) => {
             maxRetries: 0,
             fetch: fetcher
           })
-    // The actor decides the request, render included; the platform maps it to the wire and
-    // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
-    const req = modelRequest(request.trajectory, request, request.context ?? {})
-    const schema = outputSchemaOf(request.trajectory) // the answer parser needs the turn's declared shape
+    // The declared contract rides each wire's own surface: `response_format` through the
+    // compatible leg's provider-options seam, and `outputConfig` through the Converse leg's
+    // buildInput above. Both are absent under an implementation that asked for no guarantee, so
+    // no endpoint is handed a schema it never promised to keep.
+    const responseFormat = config.provider === "bedrock" ? undefined : compatibleResponseFormat(req.output, mode)
+    // The fallback's own instruction rides the request and reaches the model only on an attempt
+    // running as that fallback, so a native attempt sends exactly the base prompt.
+    const fallbackSystem = fallbackSystemFor(req.output, mode)
     const stream = adapter.chatStream({
       model: config.model,
       messages: req.messages.map(toMessage) as never,
       tools: req.tools.map(toTool) as never,
-      systemPrompts: [req.system],
-      // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
-      // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
-      // is a provider default nobody chose.
-      modelOptions: { max_tokens: maxTokens } as never,
+      systemPrompts: fallbackSystem === undefined ? [req.system] : [req.system, fallbackSystem],
+      modelOptions: {
+        // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
+        // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
+        // is a provider default nobody chose.
+        max_tokens: maxTokens,
+        ...(responseFormat === undefined ? {} : { response_format: responseFormat })
+      } as never,
       logger: noopLogger
     } as never)
-    const spendOf = async (): Promise<Usage | undefined> => {
+    // The wire is read once and answers two questions: what the attempt spent, and who served
+    // it. The endpoint stands whether or not any spend was reported, so an endpoint that bills
+    // nothing is still named in the log (tardie, src/events.ts, Endpoint).
+    const settle = async (): Promise<{ readonly usage: Usage | undefined; readonly endpoint: AttemptEndpoint; readonly wire: Wire | undefined }> => {
       const wire = await sink.promise
       // Wire-reported provenance wins: a router that names the upstream it served from records
       // the true split; the configured stamp covers a wire that stays silent.
-      return usageFrom([wire?.usage, held.tokens], config.pricing, {
+      const usage = usageFrom([wire?.usage, held.tokens], config.pricing, {
         ...stampOf(config),
         ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
         ...(wire?.model === undefined ? {} : { model: wire.model })
       })
+      return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
       const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
-      const usage = await spendOf()
-      stats.finish = result.finishReason ?? "stop"
-      if (result.finishReason === "length") throw new TruncatedError(maxTokens, usage)
-      return withSpend(actionOf(result, schema), usage)
+      const { usage, endpoint, wire } = await settle()
+      stats.finish = stops.stopReason ?? result.finishReason ?? "stop"
+      const converse = converseStopClass(stops.stopReason)
+      if (result.finishReason === "length" || converse === "truncated") throw new TruncatedError(maxTokens, usage)
+      // A structured-output refusal reaches the compatible wire as a `refusal` delta under an
+      // ordinary stop, and the Converse wire as its own stop reason. Neither survives the shared
+      // processor, so both are read here rather than from the decoded result.
+      if (wire?.refusal !== undefined) throw failed(new RefusedError(`the provider refused to answer this request: ${wire.refusal}`), usage, endpoint)
+      if (converse === "refused") throw failed(new RefusedError("the provider refused to answer this request"), usage, endpoint)
+      if (converse === "violation") {
+        throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
+      }
+      return stamped(served(withSpend(actionOf(result), usage), endpoint))
     } catch (e) {
       await sink.reader?.cancel().catch(() => undefined)
-      if (isTruncated(e)) throw e
-      const usage = await spendOf()
-      if (usage === undefined) throw e
-      if (e !== null && typeof e === "object") throw Object.assign(e, { usage })
-      throw Object.assign(new Error(String(e)), { usage })
+      // A truncation already carries its own spend; every other failure gets the attempt's spend
+      // and endpoint attached here so both survive the throw.
+      if (isTruncated(e) || carriesEndpoint(e)) throw e
+      const { usage, endpoint } = await settle()
+      if (e !== null && typeof e === "object") throw Object.assign(e, { usage, endpoint })
+      throw Object.assign(new Error(String(e)), { usage, endpoint })
     }
   }
-  return Layer.succeed(Infer, {
-    react: (request: InferRequest, key?: string) =>
-      Effect.gen(function* () {
-        const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
-        const stats: { finish?: string; rung: number; waits: number; attempts: number } = {
-          rung: 0,
-          waits: 0,
-          attempts: 0
+  const layer = Layer.succeed(Infer, {
+    react: Effect.fn("llm.react", {
+      kind: "client",
+      attributes: {
+        "gen_ai.operation.name": "chat",
+        "gen_ai.request.model": config.model,
+        "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
+      }
+    })(function* (request: InferRequest, key?: string) {
+      // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it
+      // reads it from the Clock the caller supplied rather than the global one, so a test drives
+      // the ladder without waiting on real time (model.test.ts, "infer: throttle-shaped retry").
+      const clock = yield* Clock.Clock
+      const random = yield* Random.Random
+      const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
+      const stats: { finish?: string; rung: number; waits: number; attempts: number } = {
+        rung: 0,
+        waits: 0,
+        attempts: 0
+      }
+      // The actor decides the request, render included; the platform maps it to the wire and
+      // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
+      const req = modelRequest(request.trajectory, request, request.context ?? {})
+      // The contract's preflight runs before the first socket: an endpoint that cannot promise
+      // the declared schema, or a schema outside the profile both wires send unchanged, ends
+      // the turn having spent nothing (src/output.ts, outputPreflight).
+      const selected = outputModeOf(req, config)
+      if ("errors" in selected) {
+        const action: Action = {
+          kind: "fail",
+          error: selected.errors.join("\n"),
+          endpoint: endpointOf(config, undefined),
+          failure: {
+            cause: "output_unsupported",
+            attempts: 0,
+            policy: { provider: config.provider, model: config.model, output: capabilityOf(config) }
+          }
         }
-        const action = yield* Effect.promise<Action>(async () => {
+        yield* Effect.annotateCurrentSpan("gen_ai.output.supported", false)
+        return action
+      }
+      const mode = selected.mode
+      if (req.output?.kind === "contract") {
+        yield* Effect.annotateCurrentSpan("gen_ai.output.contract", req.output.contract.name)
+        yield* Effect.annotateCurrentSpan("gen_ai.output.mode", mode.name)
+        yield* Effect.annotateCurrentSpan("gen_ai.output.native", mode.kind === "native")
+      }
+      const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         const parts: Usage[] = []
         let missed = false
@@ -600,11 +783,16 @@ export const infer = (config: ModelConfig) => {
           try {
             stats.rung = rung
             stats.attempts += 1
-            const action = await attemptOnce(request, key, ladder[rung]!, rung, stats)
+            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats)
             remember(action.usage, true)
-            return withSpend(action, spentOf(parts, missed))
+            return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
           } catch (e) {
             const usage = isTruncated(e) ? e.usage : usageOn(e)
+            const endpoint = endpointOn(e) ?? endpointOf(config, undefined)
+            const ends = (action: Action): Action => {
+              const billed = served(withSpend(action, spentOf(parts, missed)), endpoint)
+              return req.output === undefined ? billed : { ...billed, mode }
+            }
             remember(usage, isTruncated(e) || usage !== undefined)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
@@ -613,76 +801,89 @@ export const infer = (config: ModelConfig) => {
               }
               // The top rung still truncates: the turn fails loudly instead of shipping half an
               // answer, and the error names the remedy.
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `${e.message}; the answer does not fit the largest ceiling, so the task must produce less at once`,
+                failure: { cause: "truncated", attempts: stats.attempts, policy: { maxTokensLadder: ladder } }
+              })
+            }
+            // A refusal is the provider declining this request. The same request retried earns
+            // the same refusal, so the ladder stops here and the turn records why.
+            if (isRefused(e)) {
+              return ends({
+                kind: "fail",
+                error: e instanceof Error ? e.message : String(e),
+                failure: { cause: "refused", attempts: stats.attempts }
+              })
+            }
+            // The endpoint said outright that it could not produce the output it was constrained
+            // to. Retrying asks the same endpoint for the same broken promise.
+            if (isViolation(e)) {
+              return ends({
+                kind: "fail",
+                error: e instanceof Error ? e.message : String(e),
+                failure: { cause: "output_contract_violation", attempts: stats.attempts }
+              })
             }
             if (!isThrottleShaped(e)) {
               const message = e instanceof Error ? e.message : String(e)
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
-                  failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `model inference failed after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                failure: { cause: "inference_error", attempts: stats.attempts, policy: failurePolicy }
+              })
             }
-            const delay = throttleDelayMs(e, attempt, Date.now(), throttleDelays)
+            const delay = throttleDelayMs(
+              e,
+              attempt,
+              clock.currentTimeMillisUnsafe(),
+              () => random.nextDoubleUnsafe(),
+              throttleDelays,
+              retryAfterJitterMs
+            )
             if (delay === undefined) {
               const message = e instanceof Error ? e.message : String(e)
-              return withSpend(
-                {
-                  kind: "fail",
-                  error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
-                  failure: {
-                    cause: "inference_attempts_exhausted",
-                    attempts: stats.attempts,
-                    policy: failurePolicy
-                  }
-                },
-                spentOf(parts, missed)
-              )
+              return ends({
+                kind: "fail",
+                error: `model inference retries exhausted after ${stats.attempts} attempt${stats.attempts === 1 ? "" : "s"}: ${message}`,
+                failure: {
+                  cause: "inference_attempts_exhausted",
+                  attempts: stats.attempts,
+                  policy: failurePolicy
+                }
+              })
             }
             stats.waits += 1
             await sleep(delay)
           }
         }
-        })
-        // The wide-span discipline: everything a failure query filters by rides the one span.
-        // Names follow the GenAI semantic conventions where they exist (registry, 2026).
-        yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
-        yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
-        yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
-        yield* Effect.annotateCurrentSpan("retry.attempts", stats.attempts)
-        if (action.usage !== undefined) {
-          // The usage stamp may carry wire-reported provenance; the span follows the same rule.
-          if (action.usage.provider !== undefined) {
-            yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
-          }
-          yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
-          yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
-          if (action.usage.costUsd !== undefined) {
-            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
-            if (action.usage.costSource !== undefined) {
-              yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
-            }
+      })
+      // The wide-span discipline: everything a failure query filters by rides the one span.
+      // Names follow the GenAI semantic conventions where they exist (registry, 2026).
+      yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])
+      yield* Effect.annotateCurrentSpan("retry.rung", stats.rung)
+      yield* Effect.annotateCurrentSpan("retry.throttle_waits", stats.waits)
+      yield* Effect.annotateCurrentSpan("retry.attempts", stats.attempts)
+      if (action.usage !== undefined) {
+        // The usage stamp may carry wire-reported provenance; the span follows the same rule.
+        if (action.usage.provider !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
+        }
+        yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
+        yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+        if (action.usage.costUsd !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
+          if (action.usage.costSource !== undefined) {
+            yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
           }
         }
-        return action
-      }).pipe(
-        Effect.withSpan("llm.react", {
-          kind: "client",
-          attributes: {
-            "gen_ai.operation.name": "chat",
-            "gen_ai.request.model": config.model,
-            "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
-          }
-        })
-      )
+      }
+      return action
+    })
   })
+  return (
+    config.output?.guarantee === "native" && config.output.withTools
+      ? Layer.mergeAll(layer, Layer.succeed(NativeOutputSupport, { withTools: true }))
+      : layer
+  ) as Layer.Layer<Infer | NativeOutputProvided<C>>
 }

@@ -10,6 +10,7 @@ import {
   compaction,
   fetchPackage,
   filesPackage,
+  outputFailFast,
   reply,
   workspacePackage
 } from "tardie"
@@ -24,9 +25,11 @@ import { inboundOf } from "./projections"
 // what the events mean, and that is the assembly that emitted them. The platform holds the log and
 // mounts what is declared here by name (packages/client/src/contract.ts, apiOf).
 
-// The assembly, one for every lane: code mode with four packages in scope, plus the three policy
+// The assembly, one for every lane: code mode with four packages in scope, plus the four policy
 // components. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,
 // "Explicitly out of scope for v1").
+//
+// outputFailFast makes the server's handling explicit when its run-time model configuration supplies no native type proof.
 //
 // What the four packages add up to is what this actor can reach. `agents` fans work out to children
 // and `workspace` reads what a result spilled, both inside the log. `files` reads and writes under
@@ -34,15 +37,13 @@ import { inboundOf } from "./projections"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export const assemblyOf = () =>
-  actorOf(
-    agentRuntime(),
-    [
-      codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
-      reply,
-      budget,
-      compaction
-    ]
-  )
+  actorOf(agentRuntime(), [
+    codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
+    reply,
+    budget,
+    compaction,
+    outputFailFast
+  ])
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a
 // package added above lands in the host's obligation and a host that binds nothing for it fails to

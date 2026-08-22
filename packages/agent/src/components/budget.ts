@@ -36,8 +36,9 @@ export const budgetOf = (view: ReadonlyArray<Event>, policy: Partial<BudgetPolic
   return base + granted
 }
 
-// usedOf counts the tool calls the turn has spent. Only `execute` spends: `answer` and
-// `request_budget` are the turn's exits, so they never draw the budget down.
+// usedOf counts the tool calls the turn has spent. Only `execute` spends: `request_budget` is
+// the turn's escalation, so it never draws the budget down, and the final response is no tool
+// call at all (src/output.ts).
 export const usedOf = (view: ReadonlyArray<Event>): number =>
   view.filter((e) => e.type === "ToolCalled" && String((e as { name?: unknown }).name) === "execute").length
 
@@ -63,7 +64,7 @@ export const worldOf = (view: ReadonlyArray<Event>): string | undefined => {
 }
 
 // BudgetPhase is the budget state of the current turn, read from the most recent lifecycle
-// marker scanning back. It is pure and scoped to the current turn like `outputSchemaOf`, so an
+// marker scanning back. It is pure and scoped to the current turn like `contractOf`, so an
 // earlier turn's wall does not leak. `exhausted`: the wall is up and the turn may still ask.
 // `denied`: the ask was refused, so the turn must answer. `spending`: a grant reopened the
 // budget, or none was ever spent.
@@ -131,13 +132,13 @@ export const budgetReactorFor = (policy: Partial<BudgetPolicy> = {}): Reactor<ne
 // budgetReactor is that reactor on the default ceiling.
 export const budgetReactor: Reactor<never> = budgetReactorFor()
 
-// budgetFor derives budget transitions and contributes no agent information.
+// budgetFor derives budget transitions and contributes an empty agent view.
 export const budgetFor = (policy: Partial<BudgetPolicy>): AgentComponent => {
   const reactor = budgetReactorFor(policy)
   return {
     name: "budget",
     derive: (log) => ({
-      info: { system: [], tools: [], context: [] },
+      view: { system: [], tools: [], context: [], output: [] },
       transitions: reactor(log)
     })
   }

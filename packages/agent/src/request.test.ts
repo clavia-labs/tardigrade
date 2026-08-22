@@ -3,9 +3,20 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { codeMode, renderOf, toolList } from "./index"
+import { canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, toolList } from "./index"
 
-const CODE = renderOf([codeMode], [])
+// One declared contract, used wherever a turn needs one.
+const SCOUT = output({
+  name: "scout",
+  schema: {
+    type: "object",
+    properties: { a: { type: "string" } },
+    required: ["a"],
+    additionalProperties: false
+  }
+})
+
+const CODE = renderOf([codeMode, nativeOutput], [])
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -83,28 +94,62 @@ describe("renderMessages", () => {
 })
 
 describe("modelRequest tool and prompt policy", () => {
-  const head = (extra: Event[] = [], output?: unknown): Event[] => [
-    { type: "MessageReceived", id: "m1", text: "go", ...(output === undefined ? {} : { output }), at: 0 },
+  const head = (extra: Event[] = [], declared = false): Event[] => [
+    { type: "MessageReceived", id: "m1", text: "go", ...(declared ? { output: { name: SCOUT.name, schema: SCOUT.schema } } : {}), at: 0 },
     ...extra
   ]
 
-  test("with no schema, offers execute; with a schema, offers execute and answer", () => {
+  test("a contract is never a tool, a tool choice, or a sentence in the prompt", () => {
     expect(modelRequest(head(), CODE).tools.map((t) => t.name)).toEqual(["execute"])
-    const schema = { type: "object", properties: { a: { type: "string" } } }
-    expect(modelRequest(head([], schema), CODE).tools.map((t) => t.name)).toEqual(["execute", "answer"])
+    const req = modelRequest(head([], true), CODE)
+    expect(req.tools.map((t) => t.name)).toEqual(["execute"])
+    expect(req.output?.kind).toBe("contract")
+    expect(req.output?.kind === "contract" && canonicalOf(req.output.contract)).toBe(canonicalOf(SCOUT))
+    // Nothing is mounted, so the request declares no fallback at all.
+    expect(req.output?.kind === "contract" && req.output.fallback).toBeUndefined()
+    expect(req.output?.kind === "contract" && req.output.fallbackSystem).toBeUndefined()
+    expect(req.system).not.toContain("scout")
+    expect(req.system).not.toContain("schema")
+  })
+
+  test("the frame never mentions the contract, declared or not", () => {
+    for (const declared of [false, true]) {
+      expect(modelRequest(head([], declared), CODE).system).toContain("that reply is your final answer")
+    }
+  })
+
+  // A mounted fallback is a policy for a call native output cannot serve, and it stays dormant
+  // otherwise: its instruction rides the output request rather than the base prompt, so the
+  // binding decides whether the model ever reads it (platform/model/src/output.ts, outputSystemFor).
+  test("a mounted fallback rides the request, and adds nothing to the base prompt", () => {
+    const bare = modelRequest(head([], true), CODE)
+    const repaired = renderOf([codeMode, outputRepairFor({ attempts: 1 })], head([], true))
+    const req = modelRequest(head([], true), repaired)
+    expect(req.output?.kind === "contract" && req.output.fallback).toEqual({
+      kind: "repair",
+      name: "repair",
+      attempts: 1,
+      projectHistory: true
+    })
+    expect(req.output?.kind === "contract" && req.output.fallbackSystem).toContain('conforming to the schema "scout"')
+    // Mounting it changed neither the prompt nor the conversation.
+    expect(req.system).toBe(bare.system)
+    expect(req.system).not.toContain("scout")
+    expect(req.messages).toEqual(bare.messages)
   })
 
   test("once the budget is spent, execute is dropped and the nudge is added", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }])
     const req = modelRequest(spent, CODE)
-    expect(req.tools.map((t) => t.name)).toEqual([]) // no work tool, no schema, so the model answers in prose
+    expect(req.tools.map((t) => t.name)).toEqual([])
     expect(req.system).toContain("tool budget for this turn is spent")
   })
 
-  test("spent with a schema leaves only the answer tool", () => {
-    const schema = { type: "object", properties: { a: { type: "string" } } }
-    const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], schema)
-    expect(modelRequest(spent, CODE).tools.map((t) => t.name)).toEqual(["answer"])
+  test("the wall drops the work tools and leaves the contract standing", () => {
+    const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
+    const req = modelRequest(spent, CODE)
+    expect(req.tools.map((t) => t.name)).toEqual([])
+    expect(req.output?.kind === "contract" && req.output.contract.name).toBe("scout")
   })
 
   test("a spent wall from an earlier turn does not drop execute in a fresh turn", () => {
@@ -116,6 +161,110 @@ describe("modelRequest tool and prompt policy", () => {
     ]
     expect(modelRequest(trajectory, CODE).tools.map((t) => t.name)).toEqual(["execute"])
   })
+
+  // A declaration nobody can serve rides the request as a verdict rather than as an absence: a
+  // request with no output reads as a turn that wanted prose, and this one wanted something else
+  // (output.ts, DeclaredOutput; platform/model/src/output.ts, outputPreflight).
+  test("an output declaration that is not a contract rides the request as invalid", () => {
+    const raw: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 0 }]
+    const req = modelRequest(raw, CODE)
+    expect(req.output?.kind).toBe("invalid")
+    expect(req.output?.kind === "invalid" && req.output.errors.join(" ")).toContain("is not a contract")
+  })
+})
+
+describe("the repair exchange in the render", () => {
+  const repair = (projectHistory: boolean) => ({
+    kind: "repair" as const,
+    name: "repair",
+    attempts: 2,
+    projectHistory
+  })
+  const rejection = (turn: string, at: number, projectHistory = true): Event => ({
+    type: "OutputRejected",
+    contract: "scout",
+    attempt: `${turn}/infer/0`,
+    text: '{"a":1}',
+    errors: ["/a: expected string"],
+    mode: repair(projectHistory),
+    turn,
+    at
+  })
+
+  test("an owed correction renders as the reply and the framework's reasons", () => {
+    const trajectory: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", at: 0 }, rejection("m1", 1)]
+    const messages = renderMessages(trajectory)
+    expect(messages.map((m) => m.role)).toEqual(["user", "assistant", "user"])
+    expect(messages[1]!.content).toBe('{"a":1}')
+    expect(String(messages[2]!.content)).toContain("/a: expected string")
+  })
+
+  // The generic correction sentence belongs to the framework loop alone. A component that mounts
+  // a delegated implementation decides its own feedback, and nothing is written on its behalf
+  // (output.ts, OutputFallback; runtime/infer.ts, openRejection).
+  test("a delegated implementation writes its own feedback, and the framework writes none", () => {
+    const delegated: Event = {
+      type: "OutputRejected",
+      contract: "scout",
+      attempt: "m1/infer/0",
+      text: '{"a":1}',
+      errors: ["/a: expected string"],
+      mode: { kind: "delegated", name: "house-style", projectHistory: true },
+      turn: "m1",
+      at: 1
+    }
+    const owed = renderMessages([{ type: "MessageReceived", id: "m1", text: "go", at: 0 }, delegated])
+    // Nobody has decided yet, so the rejected reply stands alone with no framework sentence.
+    expect(owed.map((m) => m.role)).toEqual(["user", "assistant"])
+    const decided = renderMessages([
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      delegated,
+      {
+        type: "OutputRetryRequested",
+        rejection: "m1/infer/0",
+        feedback: "House style: dates are ISO 8601.",
+        by: "house-style",
+        turn: "m1",
+        at: 2
+      }
+    ])
+    expect(decided.map((m) => m.role)).toEqual(["user", "assistant", "user"])
+    expect(decided[2]!.content).toBe("House style: dates are ISO 8601.")
+    expect(String(decided[2]!.content)).not.toContain("Reply again with JSON")
+  })
+
+  test("a corrected exchange compacts out of the render, and stays in the log", () => {
+    const trajectory: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      rejection("m1", 1),
+      { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 2 },
+      { type: "MessageReceived", id: "m2", text: "next", at: 3 }
+    ]
+    // The turn reads as though the model answered correctly the first time.
+    expect(renderMessages(trajectory).map((m) => m.content)).toEqual(["go", '{"a":"one"}', "next"])
+    // The rejection is still a fact of the log; only the render dropped it.
+    expect(trajectory.some((e) => e.type === "OutputRejected")).toBe(true)
+  })
+
+  // The projection reads the policy recorded on the rejection, so what an old turn means cannot
+  // change when a deployment mounts a different one (output.ts, projectedOutput).
+  test("a rejection recorded under a policy that keeps history keeps rendering", () => {
+    const trajectory: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      rejection("m1", 1, false),
+      { type: "TurnCompleted", output: '{"a":"one"}', turn: "m1", at: 2 }
+    ]
+    expect(renderMessages(trajectory).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
+  })
+
+  test("a failed turn keeps its rejection: it is what explains the failure", () => {
+    const trajectory: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      rejection("m1", 1),
+      { type: "TurnFailed", error: "spent", turn: "m1", at: 2 }
+    ]
+    expect(renderMessages(trajectory).map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"])
+  })
 })
 
 describe("the tool surface decides the tool table", () => {
@@ -124,12 +273,13 @@ describe("the tool surface decides the tool table", () => {
       toolList([
         { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
         { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
-      ])
+      ]),
+      nativeOutput
     ],
     []
   )
-  const head = (extra: Event[] = [], output?: unknown): Event[] => [
-    { type: "MessageReceived", id: "m1", text: "go", ...(output === undefined ? {} : { output }), at: 0 },
+  const head = (extra: Event[] = [], declared = false): Event[] => [
+    { type: "MessageReceived", id: "m1", text: "go", ...(declared ? { output: { name: SCOUT.name, schema: SCOUT.schema } } : {}), at: 0 },
     ...extra
   ]
 
@@ -141,11 +291,12 @@ describe("the tool surface decides the tool table", () => {
   })
 
   test("every policy still folds over a swapped surface", () => {
-    const schema = { type: "object", properties: { a: { type: "string" } } }
-    expect(modelRequest(head([], schema), LAB).tools.map((t) => t.name)).toEqual(["read", "grep", "answer"])
-    const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], schema)
-    // The wall drops the work tools whatever they are, and leaves the answer contract standing.
-    expect(modelRequest(spent, LAB).tools.map((t) => t.name)).toEqual(["answer"])
+    expect(modelRequest(head([], true), LAB).tools.map((t) => t.name)).toEqual(["read", "grep"])
+    const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
+    // The wall drops the work tools whatever they are, and leaves the contract standing.
+    expect(modelRequest(spent, LAB).tools.map((t) => t.name)).toEqual([])
+    const spentReq = modelRequest(spent, LAB)
+    expect(spentReq.output?.kind === "contract" && spentReq.output.contract.name).toBe("scout")
     expect(modelRequest(spent, LAB).system).toContain("tool budget for this turn is spent")
   })
 

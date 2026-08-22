@@ -90,7 +90,7 @@ const mailbox = actor<Infer | EventLog>([compactionReactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>) => {
-    const ref = Effect.runSync(Ref.make<ReadonlyArray<Event>>(initial))
+    const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     const layers = Layer.mergeAll(
       Layer.succeed(
@@ -145,5 +145,67 @@ describe("the compaction pass", () => {
     expect(keepFromIndex(second.log, checkpoint.keepFrom)).toBeGreaterThan(
       keepFromIndex(first.log, checkpointOf(first.log).keepFrom)
     )
+  })
+})
+
+// One projection serves the render, the measure, and the brief. A corrected exchange the model
+// no longer reads must not weigh on the guard that spends money, and must not leak its rejected
+// reply into a summary a later turn does read (src/output.ts, projectedOutput).
+describe("a projected repair is invisible to compaction as well as to the render", () => {
+  const REPAIR = { kind: "repair", name: "repair", attempts: 2, projectHistory: true }
+  const rejected = (turn: string, at: number, implementation: unknown = REPAIR): Event => ({
+    type: "OutputRejected",
+    contract: "scout",
+    attempt: `${turn}/infer/0`,
+    text: "x".repeat(4_000),
+    errors: ["/a: expected string"],
+    mode: implementation,
+    turn,
+    at
+  })
+
+  test("the measure counts an owed correction and drops a corrected one", () => {
+    const owed: ReadonlyArray<Event> = [rejected("m1", 1)]
+    expect(estimateTokens(owed)).toBeGreaterThan(900)
+    const corrected: ReadonlyArray<Event> = [rejected("m1", 1), { type: "TurnCompleted", output: "{}", turn: "m1", at: 2 }]
+    expect(estimateTokens(corrected)).toBeLessThan(10)
+    // A policy that keeps history keeps its weight too.
+    const kept: ReadonlyArray<Event> = [
+      rejected("m1", 1, { kind: "repair", name: "repair", attempts: 2, projectHistory: false }),
+      { type: "TurnCompleted", output: "{}", turn: "m1", at: 2 }
+    ]
+    expect(estimateTokens(kept)).toBeGreaterThan(900)
+  })
+
+  test("the summary brief never carries a corrected reply, and the log still does", async () => {
+    const briefs: string[] = []
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "x".repeat(80_000) }, turn: "m1", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: "ok", turn: "m1", at: 2 },
+      rejected("m1", 3),
+      { type: "TurnCompleted", output: "{}", turn: "m1", at: 4 },
+      { type: "MessageReceived", id: "m2", text: "next", at: 5 },
+      { type: "ToolCalled", callId: "c2", name: "execute", arguments: { code: "return 2" }, turn: "m2", at: 6 },
+      { type: "ToolReturned", callId: "c2", result: "ok", turn: "m2", at: 7 }
+    ]
+    const events = await Effect.runPromise(
+      Effect.all(compactionReactor(log).map((t) => t.act(t.input as never))).pipe(
+        Effect.provide(
+          Layer.succeed(Infer, {
+            react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
+              briefs.push(String((trajectory[0] as { text?: unknown }).text))
+              return Effect.succeed({ kind: "complete" as const, output: "summarized" })
+            }
+          })
+        )
+      ) as unknown as Effect.Effect<ReadonlyArray<ReadonlyArray<Event>>>
+    )
+    expect(events.flat().some((e) => e.type === "CompactionCompleted")).toBe(true)
+    expect(briefs).toHaveLength(1)
+    expect(briefs[0]).not.toContain("agent (refused")
+    expect(briefs[0]).not.toContain("xxxx")
+    // The rejection is still a fact of the log; only every reader of the projection dropped it.
+    expect(log.some((e) => e.type === "OutputRejected")).toBe(true)
   })
 })

@@ -134,6 +134,27 @@ describe("the config file", () => {
     })
   })
 
+  // The capability is the operator's whole statement: a native guarantee has to say whether it
+  // survives beside a tool list, because a turn that offers tools and declares a contract sends
+  // both on one call (platform/model/src/output.ts, outputModeOf).
+  test("the output capability resolves in the same order every value does", async () => {
+    await put(JSON.stringify({ model: { output: "native", outputWithTools: "true" } }))
+    const file = await read({ HOME: home })
+    expect(resolveServer({}, {}, file).model.output).toEqual({ guarantee: "native", withTools: true })
+    expect(resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "none" }, file).model.output).toEqual({ guarantee: "none" })
+    expect(resolveServer({}, {}, {}).model.output).toBeUndefined()
+  })
+
+  test("a capability nobody stated whole refuses to resolve, rather than leaving one field guessed", async () => {
+    await put(JSON.stringify({ model: { output: "probably" } }))
+    const file = await read({ HOME: home })
+    expect(() => resolveServer({}, {}, file)).toThrow("model output guarantee must be one of")
+    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "maybe" }, {})).toThrow("model output guarantee must be one of")
+    // A native guarantee with no tool-combination answer is half a statement.
+    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "native" }, {})).toThrow("survives beside a tool list")
+    expect(() => resolveServer({}, { MODEL_OUTPUT_WITH_TOOLS: "true" }, {})).toThrow("with no guarantee")
+  })
+
   test("the file is the third source for the model, and the environment beats it", async () => {
     await put(JSON.stringify({ model: { baseUrl: "https://file.example.com", apiKey: "file-key", id: "file-model" } }))
     const file = await read({ HOME: home })
@@ -142,7 +163,8 @@ describe("the config file", () => {
       baseUrl: "https://file.example.com",
       apiKey: "file-key",
       id: "file-model",
-      provider: undefined
+      provider: undefined,
+      output: undefined
     })
     const overridden = resolveServer({}, { MODEL_ID: "env-model" }, file)
     expect(overridden.model.id).toBe("env-model")

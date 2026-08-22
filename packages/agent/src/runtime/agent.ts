@@ -1,8 +1,14 @@
 import type { Reactor, Transition } from "@clavia/tardigrade-core/actor"
-import { composeComponents, type Component, type ComponentRuntime, type InfoAlgebra } from "@clavia/tardigrade-core/component"
+import {
+  composeComponents,
+  type Component,
+  type ComponentRuntime,
+  type ViewAlgebra
+} from "@clavia/tardigrade-core/component"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { ToolSpec } from "../request"
+import { fallbackOf, type OutputFallback } from "../output"
 import { agentKeys } from "../events"
 import { inferReactorFor, type InferPolicy } from "./infer"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
@@ -27,26 +33,86 @@ export interface ContextFragment {
   readonly policy: Partial<ContextPolicy>
 }
 
-// AgentInfo is the information an agent runtime interprets. Arrays retain component order and
+// NativeOutputFragment selects provider-native structured output without a fallback.
+export interface NativeOutputFragment {
+  readonly component: string
+  readonly kind: "native"
+}
+
+// FallbackOutputFragment selects provider-native structured output with a fallback for calls the
+// provider cannot serve natively (src/output.ts, OutputFallback).
+export interface FallbackOutputFragment {
+  readonly component: string
+  readonly kind: "fallback"
+  readonly fallback: OutputFallback
+  // The prompt this fallback needs when it runs. It reaches the model only on an attempt whose
+  // mode is this fallback, so a native attempt reads exactly what it would read with nothing
+  // mounted (request.ts, OutputRequest; platform/model/src/model.ts).
+  readonly system?: string
+}
+
+export type OutputFragment = NativeOutputFragment | FallbackOutputFragment
+
+// AgentView is the view an agent runtime interprets. Arrays retain component order and
 // postpone collision policy until the complete derivation is available.
-export interface AgentInfo {
+export interface AgentView {
   readonly system: ReadonlyArray<string>
   readonly tools: ReadonlyArray<AgentTool<unknown>>
   readonly context: ReadonlyArray<ContextFragment>
+  readonly output: ReadonlyArray<OutputFragment>
 }
 
-// AgentComponent is a core component whose information is interpreted by the agent runtime.
-export type AgentComponent<R = never> = Component<AgentInfo, R>
+// AgentComponent is a core component whose view is interpreted by the agent runtime.
+export type AgentComponent<R = never> = Component<AgentView, R>
 
-// AGENT_INFO_ALGEBRA preserves every information contribution in component order. renderOf
+const OutputFallbackMarker: unique symbol = Symbol("agent/OutputFallbackComponent")
+
+// OutputFallbackComponent marks a component whose fallback strategy is present for every rendered turn.
+export type OutputFallbackComponent<R = never> = AgentComponent<R> & { readonly [OutputFallbackMarker]: true }
+
+// defineOutputFallback validates and marks a component that always contributes one fallback.
+export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFallbackComponent<R> => {
+  const derive: AgentComponent<R>["derive"] = (log) => {
+    const derived = component.derive(log)
+    const output = derived.view.output
+    if (output.length !== 1 || output[0]?.kind !== "fallback" || fallbackOf(output[0].fallback) === undefined) {
+      throw new Error(`output fallback component ${component.name} must declare one applicable fallback for every log`)
+    }
+    return derived
+  }
+  derive([])
+  return { ...component, derive, [OutputFallbackMarker]: true }
+}
+
+// AGENT_VIEW_ALGEBRA preserves every view contribution in component order. renderOf
 // applies the agent-specific collision and rendering rules to the combined value.
-export const AGENT_INFO_ALGEBRA: InfoAlgebra<AgentInfo> = {
-  empty: { system: [], tools: [], context: [] },
+export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
+  empty: { system: [], tools: [], context: [], output: [] },
   combine: (left, right) => ({
     system: [...left.system, ...right.system],
     tools: [...left.tools, ...right.tools],
-    context: [...left.context, ...right.context]
+    context: [...left.context, ...right.context],
+    output: [...left.output, ...right.output]
   })
+}
+
+// outputFrom resolves the output strategy the assembly declares. A turn has one final response,
+// so an absent or second declaration is an assembly error.
+const outputFrom = (fragments: ReadonlyArray<OutputFragment>): OutputFragment => {
+  const first = fragments[0]
+  if (first === undefined) throw new Error("agent assembly must declare one output strategy")
+  const second = fragments[1]
+  if (second !== undefined) {
+    throw new Error(`output strategy declared by components ${first.component} and ${second.component}`)
+  }
+  if (first.kind === "native") return first
+  const fallback = fallbackOf(first.fallback)
+  if (fallback === undefined) {
+    throw new Error(
+      `output fallback declared by component ${first.component} is not applicable: ${JSON.stringify(first.fallback)}`
+    )
+  }
+  return { ...first, fallback }
 }
 
 const contextOf = (fragments: ReadonlyArray<ContextFragment>): Partial<ContextPolicy> => {
@@ -74,8 +140,11 @@ const checkedTools = (tools: ReadonlyArray<AgentTool<unknown>>): ReadonlyArray<A
   return tools
 }
 
-const infoFrom = <R>(components: ReadonlyArray<AgentComponent<R>>, log: ReadonlyArray<Event>): AgentInfo =>
-  composeComponents("agent.info", AGENT_INFO_ALGEBRA, components).derive(log).info
+const viewFrom = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>>(
+  components: Cs,
+  log: ReadonlyArray<Event>
+): AgentView =>
+  composeComponents("agent.view", AGENT_VIEW_ALGEBRA, components).derive(log).view
 
 // offerLogFor returns the prefix from which inference offered a pending call's tools. ModelCalled
 // is appended before inference, so the preceding prefix is exactly the log passed to render
@@ -95,31 +164,50 @@ const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArra
   return log
 }
 
-const renderInfo = (
-  info: AgentInfo
-): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } => ({
-  system: info.system.filter((fragment) => fragment !== "").join("\n"),
-  tools: checkedTools(info.tools).map((tool) => tool.spec),
-  context: contextOf(info.context)
-})
+// Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
+// policy, and the fallback for a declared output contract native output cannot serve. `output` is
+// absent when the assembly selects native output.
+export interface Rendered {
+  readonly system: string
+  readonly tools: ReadonlyArray<ToolSpec>
+  readonly context: Partial<ContextPolicy>
+  readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+}
 
-// renderOf derives the model request from the same component information that routing reads.
-export const renderOf = <R>(
-  components: ReadonlyArray<AgentComponent<R>>,
+const renderView = (view: AgentView): Rendered => {
+  const fragment = outputFrom(view.output)
+  return {
+    system: view.system.filter((piece) => piece !== "").join("\n"),
+    tools: checkedTools(view.tools).map((tool) => tool.spec),
+    context: contextOf(view.context),
+    ...(fragment.kind === "native"
+      ? {}
+      : {
+          output: {
+            fallback: fragment.fallback,
+            ...(fragment.system === undefined || fragment.system === "" ? {} : { system: fragment.system })
+          }
+        })
+  }
+}
+
+// renderOf derives the model request from the same component view that routing reads.
+export const renderOf = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>>(
+  components: Cs,
   log: ReadonlyArray<Event>
-): { readonly system: string; readonly tools: ReadonlyArray<ToolSpec>; readonly context: Partial<ContextPolicy> } =>
-  renderInfo(infoFrom(components, log))
+): Rendered =>
+  renderView(viewFrom(components, log))
 
-// agentRuntime interprets AgentInfo as inference and tool-routing reactors. actorOf supplies the
-// composed information projection and adds each component's own transition projection.
+// agentRuntime interprets AgentView as inference and tool-routing reactors. actorOf supplies the
+// composed view projection and adds each component's own transition projection.
 export const agentRuntime = (
   policy: Partial<InferPolicy> = {}
-): ComponentRuntime<AgentInfo, AgentR> => ({
+): ComponentRuntime<AgentView, AgentR> => ({
   name: "agent",
-  algebra: AGENT_INFO_ALGEBRA,
+  algebra: AGENT_VIEW_ALGEBRA,
   keys: [messageKeys, agentKeys],
-  reactors: <C>(infoOf: (log: ReadonlyArray<Event>) => AgentInfo): ReadonlyArray<Reactor<AgentR | C>> => {
-    const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => checkedTools(infoOf(log).tools)
+  reactors: <C>(viewOf: (log: ReadonlyArray<Event>) => AgentView): ReadonlyArray<Reactor<AgentR | C>> => {
+    const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => checkedTools(viewOf(log).tools)
     const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
       toolsOf(offerLogFor(log, call))
     const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
@@ -127,9 +215,9 @@ export const agentRuntime = (
       return tool?.serve(call, log, answer) as ReadonlyArray<Transition<never, AgentR | C>> | undefined
     }
 
-    renderInfo(infoOf([]))
+    renderView(viewOf([]))
     return [
-      inferReactorFor(policy, (log) => renderInfo(infoOf(log))) as Reactor<AgentR | C>,
+      inferReactorFor(policy, (log) => renderView(viewOf(log))) as Reactor<AgentR | C>,
       toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
     ]
   }

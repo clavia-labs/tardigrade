@@ -18,7 +18,7 @@ import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 const layerThreadsEmpty = Layer.succeed(Threads)({
   append: () => Effect.void,
   events: () => Effect.succeed([]),
-  list: () => Effect.succeed([]),
+  list: Effect.succeed([]),
   settled: Effect.void
 })
 

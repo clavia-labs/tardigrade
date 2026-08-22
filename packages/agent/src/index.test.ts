@@ -7,11 +7,11 @@ import { jsSandboxFor } from "@clavia/tardigrade-code/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/workspace"
 import { createHost, type Host, type LaneEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./events"
-import { Infer, type InferRequest } from "./runtime/infer"
+import { Infer, NativeOutputSupport, type InferRequest } from "./runtime/infer"
 import { boundaryOf } from "./boundary"
 import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
-import { actorOf, agentRuntime, budgetFor, codeModeFor, compactionFor, reply, toolList, type AgentComponent } from "./index"
+import { actorOf, agentRuntime, budgetFor, codeModeFor, compactionFor, nativeOutput, reply, toolList, type AgentComponent } from "./index"
 import type { RlmR } from "./turn"
 
 const ROOT_LANE = "ag.root"
@@ -25,6 +25,8 @@ type Mind = (request: InferRequest, key?: string) => Promise<Action>
 
 type Settled = { readonly turn: string; readonly output?: string; readonly error?: string }
 
+type TestR = RlmR | NativeOutputSupport
+
 // work is the default work surface these tests assemble against: code mode with the spawn and
 // workspace packages in scope. The packages are values, so the same list mounts on any host.
 const work = () => codeModeFor({ packages: [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })] })
@@ -32,14 +34,15 @@ const work = () => codeModeFor({ packages: [agentsPackage({ budget: {} }), works
 // hosted binds one assembled actor to an in-process host and drives the root lane. It is the
 // test's own driver: deliver a brief, drive to quiescence, read the boundary the settle left.
 // A caller with its own host does the same three things (host.ts, Host).
-const hosted = (assembled: Actor<RlmR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
-  const layersFor = (_lane: string): LaneEnv<RlmR> =>
+const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
+  const layersFor = (_lane: string): LaneEnv<TestR> =>
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, { react: (request: InferRequest, key?: string) => Effect.promise(() => mind(request, key)) })
+      Layer.succeed(Infer, { react: (request: InferRequest, key?: string) => Effect.promise(() => mind(request, key)) }),
+      Layer.succeed(NativeOutputSupport, { withTools: true })
     )
-  const host: Host = createHost<RlmR>({
+  const host: Host = createHost<TestR>({
     principal: "mem",
     actorFor: (lane: string) => (lane.startsWith("ag.") ? assembled : undefined),
     layersFor
@@ -73,7 +76,7 @@ const hosted = (assembled: Actor<RlmR>, mind: Mind, log: ReadonlyArray<Event> = 
 // in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
 const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
-  hosted(actorOf(agentRuntime({}), [...components, reply, budgetFor({}), compactionFor({})]), mind, log)
+  hosted(actorOf(agentRuntime({}), [...components, reply, budgetFor({}), compactionFor({}), nativeOutput]), mind, log)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {

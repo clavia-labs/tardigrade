@@ -15,9 +15,9 @@ A durable and modular agent harness built for self-improvement.
 ### A harness made for self-improvement
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives the component tree as a function of state (`UI = f(state)`). Tardigrade derives information and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
+We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
 
-$$\lbrace\mathrm{information},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
+$$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Why Tardigrade
 
@@ -29,17 +29,9 @@ $$\lbrace\mathrm{information},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 ## Quickstart
 
-### For agents
+Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later. If you are using a coding agent, the [Tardigrade skill](skills/tardigrade/SKILL.md) can help.
 
-Copy this prompt into your coding agent, or install the [Tardigrade skill](skills/tardigrade/SKILL.md):
-
-```text
-Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local actor. Share its Voyager trace URL.
-```
-
-### For developers
-
-Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later.
+If you have an existing agent application, follow the [migration guide](docs/how-to/migrate.md) to move its harness, history, API, client, and deployment configuration.
 
 ```bash
 bun add -g tardie
@@ -78,7 +70,7 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-An agent is made of components. A component derives information and owed transitions from the log. Agent information includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
+An agent is made of components. A component derives a view and owed transitions from the log. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
 import type { AgentComponent } from "tardie"
@@ -86,7 +78,7 @@ import type { AgentComponent } from "tardie"
 const deploys: AgentComponent = {
   name: "deploys",
   derive: () => ({
-    info: {
+    view: {
       system: ["Inspect recent deployments when a release may explain an incident."],
       tools: [{
         spec: {
@@ -98,7 +90,8 @@ const deploys: AgentComponent = {
           answer([{ service: "api", revision: "a17c", summary: "Add rate limiting" }])
         ]
       }],
-      context: []
+      context: [],
+      output: []
     },
     transitions: []
   })
@@ -109,9 +102,9 @@ const deploys: AgentComponent = {
 
 The call follows one route:
 
-1. The component adds `recent_deploys` to its derived information.
+1. The component adds `recent_deploys` to its derived view.
 2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The shared runtime finds the paired handler in the information that offered the call and asks it to serve against the current log.
+3. The shared runtime finds the paired handler in the view that offered the call and asks it to serve against the current log.
 4. Tardigrade records `ToolReturned`. The next model request includes the result.
 
 ### Compose an agent
@@ -119,21 +112,33 @@ The call follows one route:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actorOf, agentRuntime, budget, codeMode, compaction, reply } from "tardie"
+import { actorOf, agentRuntime, budget, codeMode, compaction, outputFailFast, reply, type AgentComponent } from "tardie"
 
-const releaseAnalyst = actorOf(
-  agentRuntime(),
-  [
-    deploys,     // recent_deploys and its paired handler
-    codeMode,    // durable JavaScript execution
-    budget,      // a per-turn code budget
-    compaction,  // bounded model context
-    reply        // results for parent agents
-  ]
-)
+const instructions: AgentComponent = {
+  name: "release-analyst.instructions",
+  derive: () => ({
+    view: {
+      system: ["You are a release analyst. Identify risky changes and recommend the safest next action."],
+      tools: [],
+      context: [],
+      output: []
+    },
+    transitions: []
+  })
+}
+
+const releaseAnalyst = actorOf(agentRuntime(), [
+  instructions, // the agent's system prompt
+  deploys,     // recent_deploys and its paired handler
+  codeMode,    // durable JavaScript execution
+  budget,      // a per-turn code budget
+  compaction,  // bounded model context
+  reply,       // results for parent agents
+  outputFailFast // structured results without a retry fallback
+])
 ```
 
-`actorOf` combines the components under `agentRuntime`. The runtime interprets their information as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`actorOf` combines the components and carries their service requirements into the host type. `agentRuntime` interprets their view as inference and tool routing, while the core actor reconciles their transitions. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 
@@ -202,6 +207,7 @@ Effects have at-least-once execution. Each keyed result is recorded once. Provid
 ## Learn more
 
 - [Quickstart](docs/quickstart.md): build the event loop and its agent components from first principles.
+- [Structured output](docs/output.md): declare a typed result and read its value.
 - [HTTP server](docs/how-to/server.md)
 - [CLI](docs/how-to/cli.md)
 - [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.

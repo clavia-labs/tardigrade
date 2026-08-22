@@ -1,4 +1,5 @@
 import { availableParallelism } from "node:os"
+import { basename, relative } from "node:path"
 import { fileURLToPath } from "node:url"
 
 type Task = {
@@ -9,7 +10,7 @@ type Task = {
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
-const packages = ["core", "code", "agent", "host", "client"]
+const packages = ["core", "code", "agent", "host", "channels", "client"]
 const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun"]
 const appPkg = (name: string) => `${root}apps/${name}`
@@ -18,10 +19,46 @@ const apps = ["cli", "server", "voyager"]
 // can resolve and emit them.
 const bundled = ["voyager"]
 
+const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
+  [...new Bun.Glob("tsconfig*.json").scanSync({ cwd: directory, absolute: true, onlyFiles: true })]
+    .filter((path) => basename(path) !== "tsconfig.base.json" && basename(path) !== "tsconfig.effect.json")
+    .sort()
+
+const effectProjects = [
+  ...tsconfigsIn(root),
+  ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
+  ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
+  ...apps.flatMap((name) => tsconfigsIn(appPkg(name)))
+]
+
+const effectTaskId = (project: string): string => {
+  const path = relative(root, project).replaceAll("\\", "/")
+  if (path === "tsconfig.json") return "lint:effect:tools"
+  return `lint:effect:${path
+    .replace(/\/tsconfig(?:\.([^.]+))?\.json$/, (_match, variant: string | undefined) => variant === undefined ? "" : `:${variant}`)
+    .replaceAll("/", ":")}`
+}
+
+// effectLint runs the Effect rules at the severities tsconfig.effect.json states. `--strict` makes
+// warnings fail, and one process per project lets the gate run the checks in parallel.
+const effectLint = (project: string): ReadonlyArray<string> => [
+  "bun",
+  "--bun",
+  "node_modules/.bin/effect-tsgo",
+  "diagnostics",
+  "--strict",
+  "--format",
+  "text",
+  "--project",
+  project
+]
+
 const tasks: ReadonlyArray<Task> = [
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
   // Prose carries house rules the code linter does not know, so it has its own check.
   { id: "lint:docs", cmd: ["bun", "run", "tools/docs-lint.ts"] },
+  { id: "lint:effect:policy", cmd: ["bun", "run", "tools/effect-lint-policy.ts"] },
+  ...effectProjects.map((project) => ({ id: effectTaskId(project), cmd: effectLint(project) })),
   // Root tsconfig covers tools/*.ts; each package typechecks itself against the shared base.
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),

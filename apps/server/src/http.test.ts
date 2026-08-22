@@ -23,7 +23,7 @@ setDefaultTimeout(BOOT_MS)
 const layerThreadsEmpty = Layer.succeed(Threads)({
   append: () => Effect.void,
   events: () => Effect.succeed([]),
-  list: () => Effect.succeed([]),
+  list: Effect.succeed([]),
   settled: Effect.void
 })
 
@@ -68,7 +68,8 @@ describe("config", () => {
       baseUrl: undefined,
       apiKey: undefined,
       id: undefined,
-      provider: undefined
+      provider: undefined,
+      output: undefined
     })
   })
 

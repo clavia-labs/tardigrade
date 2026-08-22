@@ -15,11 +15,11 @@ const call = async (
   args: unknown,
   store: KeyValueStore.KeyValueStore
 ) =>
-  Effect.runPromise(
+  (await Effect.runPromise(
     pkg.methods[method]!(args, { callId: "c1" }).pipe(
       Effect.provideService(KeyValueStore.KeyValueStore, store)
-    ) as Effect.Effect<Record<string, unknown>>
-  )
+    )
+  )) as Record<string, unknown>
 
 // A store built straight from the memory layer, seeded through the spill path so the manifest is
 // the one grep reads.
@@ -32,7 +32,7 @@ const seeded = (values: Readonly<Record<string, string>>, store?: KeyValueStore.
       store === undefined
         ? Effect.provide(KeyValueStore.layerMemory)
         : Effect.provideService(KeyValueStore.KeyValueStore, store)
-    ) as Effect.Effect<KeyValueStore.KeyValueStore>
+    )
   )
 
 // A second backend with no shared code with the memory layer: a Map behind makeStringOnly. W6's

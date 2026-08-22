@@ -1,15 +1,39 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
+import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { actorOf } from "@clavia/tardigrade-core/component"
+import { Self } from "@clavia/tardigrade-core/actor"
+import { Facets } from "@clavia/tardigrade-core/facets"
+import { Router } from "@clavia/tardigrade-core/router"
+import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { Infer } from "../turn"
+import { NativeOutputSupport } from "../runtime/infer"
 import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
 import { agentRuntime } from "../runtime/agent"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { reply } from "./reply"
+import { nativeOutput } from "./native-output"
 
-const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction]).reactors[1]!
+const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction, nativeOutput]).reactors[1]!
+
+// The rest of the agent's environment, which every reactor's `act` is typed against whether or not
+// it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model
+// is asked, no actor is addressed, and no store is read (turn.test.ts, noRouter).
+const rest = Layer.mergeAll(
+  KeyValueStore.layerMemory,
+  Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
+  Layer.succeed(Router, {
+    deliver: () => Effect.void,
+    call: () => Effect.succeed({ error: "no router bound" }),
+    resume: () => Effect.succeed({ error: "no router bound" })
+  }),
+  Layer.succeed(Self, parseActorAddress("test-agent")),
+  Layer.succeed(NativeOutputSupport, { withTools: true }),
+  Layer.succeed(Infer, { react: () => Effect.die("the tools gate never asks the model") })
+)
 
 // A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
 // except the last), then any extra events appended after.
@@ -32,7 +56,7 @@ const fire = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> =>
   }))
   const derived = budgetReactor(events)
   if (derived.length > 0) {
-    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
+    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)))
     events.push(...out)
   }
   return events.slice(log.length)
@@ -104,7 +128,9 @@ describe("the tools gate reacts to BudgetExhausted", () => {
     }))
     const derived = toolsReactor(events)
     if (derived.length > 0) {
-      const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)) as Effect.Effect<ReadonlyArray<Event>>)
+      const out = await Effect.runPromise(
+        derived[0]!.act(derived[0]!.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
+      )
       events.push(...out)
     }
     return events.slice(log.length)
@@ -131,12 +157,14 @@ const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, tur
 const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
 
 describe("the escalation lifecycle", () => {
-  test("usedOf counts only execute; answer and request_budget are free", () => {
+  test("usedOf counts only execute; the turn's exits are free", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", budget: 5, at: 0 },
       { type: "ToolCalled", callId: "e1", name: "execute", arguments: {}, turn: "m1", at: 1 },
       { type: "ToolCalled", callId: "rb1", name: "request_budget", arguments: {}, turn: "m1", at: 2 },
-      { type: "ToolCalled", callId: "a1", name: "answer", arguments: {}, turn: "m1", at: 3 }
+      // A rejected final response is no tool call at all, so it draws nothing down
+      // (src/output.ts, OutputFallback).
+      { type: "OutputRejected", contract: "scout", attempt: "m1/infer/1", text: "{}", errors: ["/: bad"], turn: "m1", at: 3 }
     ]
     expect(usedOf(log)).toBe(1)
   })
