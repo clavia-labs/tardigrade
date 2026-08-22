@@ -34,9 +34,10 @@ const owedTurn = (
   readonly replyTo?: string
   readonly text: string
   readonly outcome: "completed" | "failed"
+  readonly terminalReport: boolean
 } => {
   const view = replyView(log)
-  const inbound = view[0] as { id?: unknown; link?: unknown; replyTo?: unknown } | undefined
+  const inbound = view[0] as { id?: unknown; link?: unknown; replyTo?: unknown; outcome?: unknown } | undefined
   const id = String(inbound?.id)
   const terminal = turnTerminalOf(log, id) as
     | { output?: unknown; error?: unknown }
@@ -52,13 +53,16 @@ const owedTurn = (
     ...(inbound.replyTo === undefined ? {} : { replyTo: String(inbound.replyTo) }),
     text: terminal.error === undefined ? String(terminal.output) : `error: ${String(terminal.error)}`,
     // The outcome rides as a typed field, so a reader never sniffs the text for failure.
-    outcome: terminal.error === undefined ? "completed" : "failed"
+    outcome: terminal.error === undefined ? "completed" : "failed",
+    terminalReport: inbound.outcome === "completed" || inbound.outcome === "failed"
   }
 }
 
 // replyReactor derives one reply per turn: rd:<turn> is the key, the finished turn's terminal is
 // the input. The delivery is at-least-once inside the act; the receiver dedups the reply by its
-// message id, and the local record commits the key.
+// message id, and the local record commits the key. A terminal report carries `outcome` and
+// settles locally because another report would let two agents acknowledge each other without end
+// (reply.test.ts, "terminal reports cannot start reply chains").
 export const replyReactor: Reactor<Router | Self> = (log) => {
   if (replyView(log).length === 0) return []
   const turn = owedTurn(log)
@@ -69,6 +73,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
       act: (input) =>
         Effect.gen(function* () {
           const at = yield* Clock.currentTimeMillis
+          if (input.terminalReport) return [replyDelivered({ turn: input.id, at })]
           const self = yield* Self
           const event = replyEvent({
             id: input.id,

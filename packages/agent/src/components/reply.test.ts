@@ -6,6 +6,27 @@ import { Self } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyReactor } from "./reply"
 
+const fireReply = async (log: ReadonlyArray<Event>, self: { readonly actor: string; readonly thread: string }) => {
+  const sent: Array<{ readonly link: unknown; readonly event: Event }> = []
+  const transition = replyReactor(log)[0]!
+  const layers = Layer.mergeAll(
+    Layer.succeed(Router, {
+      deliver: (link, event) => Effect.sync(() => sent.push({ link, event })),
+      call: () => Effect.succeed({ error: "unused" }),
+      resume: () => Effect.succeed({ error: "unused" })
+    }),
+    Layer.succeed(Self, self),
+    Layer.succeed(EventLog, withWatermark({
+      append: () => Effect.void,
+      read: Effect.succeed(log)
+    }))
+  )
+  const returned = await Effect.runPromise(
+    transition.act(transition.input).pipe(Effect.provide(layers))
+  )
+  return { returned, sent }
+}
+
 describe("replyReactor", () => {
   test("reverses the provider link persisted with the inbound message", async () => {
     const inbound: Event = {
@@ -22,24 +43,7 @@ describe("replyReactor", () => {
       inbound,
       { type: "TurnCompleted", turn: "m1", output: "fixed", at: 2 }
     ]
-    const sent: Array<{ readonly link: unknown; readonly event: Event }> = []
-    const transition = replyReactor(log)[0]!
-    const layers = Layer.mergeAll(
-      Layer.succeed(Router, {
-        deliver: (link, event) => Effect.sync(() => sent.push({ link, event })),
-        call: () => Effect.succeed({ error: "unused" }),
-        resume: () => Effect.succeed({ error: "unused" })
-      }),
-      Layer.succeed(Self, { actor: "support", thread: "incident" }),
-      Layer.succeed(EventLog, withWatermark({
-        append: () => Effect.void,
-        read: Effect.succeed(log)
-      }))
-    )
-
-    const returned = await Effect.runPromise(
-      transition.act(transition.input).pipe(Effect.provide(layers))
-    )
+    const { returned, sent } = await fireReply(log, { actor: "support", thread: "incident" })
 
     expect(sent[0]?.link).toEqual({
       source: { actor: "support", thread: "incident" },
@@ -57,5 +61,47 @@ describe("replyReactor", () => {
       to: "telegram-support",
       turn: "m1"
     })
+  })
+
+  describe("terminal reports cannot start reply chains", () => {
+    for (const outcome of ["completed", "failed"] as const) {
+      test(outcome, async () => {
+        const terminal: Event = outcome === "completed"
+          ? { type: "TurnCompleted", turn: "run-worker", output: "world built", at: 2 }
+          : { type: "TurnFailed", turn: "run-worker", error: "worker failed", at: 2 }
+        const first = await fireReply([
+          {
+            type: "MessageReceived",
+            id: "run-worker",
+            text: "build the world",
+            link: {
+              source: { actor: "factory", thread: "main" },
+              target: { actor: "factory", thread: "worker" }
+            },
+            at: 1
+          },
+          terminal
+        ], { actor: "factory", thread: "worker" })
+        const report = first.sent[0]
+        if (report === undefined) throw new Error("the worker did not send its terminal report")
+
+        expect(report.event).toMatchObject({
+          type: "MessageReceived",
+          id: "run-worker.reply",
+          outcome
+        })
+
+        const second = await fireReply([
+          { ...report.event, link: report.link } as Event,
+          { type: "TurnCompleted", turn: "run-worker.reply", output: "acknowledged", at: 3 }
+        ], { actor: "factory", thread: "main" })
+
+        expect(second.sent).toEqual([])
+        expect(second.returned).toEqual([
+          expect.objectContaining({ type: "ReplyDelivered", turn: "run-worker.reply" })
+        ])
+        expect(second.returned[0]).not.toHaveProperty("to")
+      })
+    }
   })
 })
