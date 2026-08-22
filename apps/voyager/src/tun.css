@@ -1550,6 +1550,11 @@ textarea {
   font-size: var(--text-read);
 }
 
+.quickstart-grid {
+  display: grid;
+  gap: var(--space-3);
+}
+
 .quickstart-card {
   overflow: hidden;
   border: 1px solid var(--hair);

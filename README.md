@@ -31,6 +31,8 @@ $$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
 Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or later. If you are using a coding agent, the [Tardigrade skill](skills/tardigrade/SKILL.md) can help.
 
+If you have an existing agent application, follow the [migration guide](docs/how-to/migrate.md) to move its harness, history, API, client, and deployment configuration.
+
 ```bash
 bun add -g tardie
 tdg init researcher
