@@ -3,7 +3,7 @@ import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { replyDelivered } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { replyEvent } from "@clavia/tardigrade-core/communication/message"
+import { replyEvent, terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
 import { turnTerminalOf, replyView } from "@clavia/tardigrade-code/turns"
 import type { AgentComponent } from "../runtime/agent"
 import { linkOf, reverseLink, type Link } from "@clavia/tardigrade-core/communication/link"
@@ -54,7 +54,7 @@ const owedTurn = (
     text: terminal.error === undefined ? String(terminal.output) : `error: ${String(terminal.error)}`,
     // The outcome rides as a typed field, so a reader never sniffs the text for failure.
     outcome: terminal.error === undefined ? "completed" : "failed",
-    terminalReport: inbound.outcome === "completed" || inbound.outcome === "failed"
+    terminalReport: terminalReportOutcomeOf(inbound) !== undefined
   }
 }
 
