@@ -23,6 +23,7 @@ env:
   RC_TYPE: rc
   RC_NPM_TAG: next
   RELEASE_PR_BRANCH_PREFIX: release-please--
+  RELEASE_PR_AUTHOR: github-actions[bot]
   RELEASE_PR_LABEL: "autorelease: pending"
   RELEASE_PR_PAGE_SIZE: 100
   STABLE_NPM_TAG: latest
@@ -42,21 +43,23 @@ jobs:
       candidate_base: ${{ github.sha }}
       candidate_head: ${{ steps.candidate.outputs.head }}
       release_created: ${{ steps.release.outputs.release_created }}
+      release_sha: ${{ steps.release.outputs.sha }}
     steps:
       - name: Verify stable candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          releases=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls?per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.merged_at != null and .base.ref == "main" and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)))]')
+          releases=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg author "$RELEASE_PR_AUTHOR" --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.merged_at != null and .user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
           count=$(jq length <<< "$releases")
           if (( count > 1 )); then
-            echo "::error::Commit ${GITHUB_SHA} belongs to ${count} merged Release Please PRs."
+            echo "::error::Found ${count} merged Release Please PRs awaiting release."
             exit 1
           fi
           if (( count == 0 )); then
             exit 0
           fi
-          stable_tree=$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}" --jq .tree.sha)
+          release_sha=$(jq -r '.[0].merge_commit_sha' <<< "$releases")
+          stable_tree=$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${release_sha}" --jq .tree.sha)
           candidate_tree=$(npm view "${PUBLISHED_PACKAGE}@${RC_NPM_TAG}" tardigrade.sourceTree)
           if [ "$candidate_tree" != "$stable_tree" ]; then
             echo "::error::npm ${RC_NPM_TAG} was built from ${candidate_tree:-no recorded tree}; stable is ${stable_tree}."
@@ -73,7 +76,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          candidates=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
+          candidates=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg author "$RELEASE_PR_AUTHOR" --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
           count=$(jq length <<< "$candidates")
           if (( count > 1 )); then
             echo "::error::Found ${count} open Release Please PRs against main."
@@ -134,6 +137,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.release_sha || github.sha }}
       - name: Read stable tree
         id: stable-tree
         run: echo "sha=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
