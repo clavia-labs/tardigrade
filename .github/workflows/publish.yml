@@ -21,6 +21,9 @@ concurrency:
 env:
   RC_TYPE: rc
   RC_NPM_TAG: next
+  RELEASE_PR_BRANCH_PREFIX: release-please--
+  RELEASE_PR_LABEL: "autorelease: pending"
+  RELEASE_PR_PAGE_SIZE: 100
   STABLE_NPM_TAG: latest
 
 permissions:
@@ -35,7 +38,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      candidate_base: ${{ github.sha }}
+      candidate_head: ${{ steps.candidate.outputs.head }}
       release_created: ${{ steps.release.outputs.release_created }}
     steps:
       - uses: googleapis/release-please-action@v5
@@ -45,15 +49,24 @@ jobs:
           config-file: release-please-config.json
       - name: Pin release candidate
         id: candidate
-        if: steps.release.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
-        run: echo "sha=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${RELEASE_PR_NUMBER}" --jq .head.sha)" >> "$GITHUB_OUTPUT"
+        run: |
+          candidates=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
+          count=$(jq length <<< "$candidates")
+          if (( count > 1 )); then
+            echo "::error::Found ${count} open Release Please PRs against main."
+            exit 1
+          fi
+          if (( count == 0 )); then
+            exit 0
+          fi
+          echo "head=$(jq -r '.[0].head.sha' <<< "$candidates")" >> "$GITHUB_OUTPUT"
+          echo "pr=$(jq -r '.[0].number' <<< "$candidates")" >> "$GITHUB_OUTPUT"
 
   publish-candidate:
     needs: release-please
-    if: needs.release-please.outputs.candidate_sha != ''
+    if: needs.release-please.outputs.candidate_head != ''
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -63,7 +76,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.candidate_sha }}
+          fetch-depth: 0
+          ref: ${{ needs.release-please.outputs.candidate_base }}
+      - name: Apply release candidate
+        env:
+          CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
+        run: |
+          git fetch --no-tags origin "$CANDIDATE_HEAD"
+          git merge --no-commit --no-ff "$CANDIDATE_HEAD"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
