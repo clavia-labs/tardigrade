@@ -46,9 +46,10 @@ export type OutputRequest =
       readonly kind: "contract"
       readonly contract: OutputContract
       // What the turn does when native structured output is unavailable for this call, and the
-      // prompt that fallback needs. Absent means the assembly declared none, so such a call fails
-      // before it spends. The binding decides which of the two the attempt runs as, and the
-      // fallback's prompt reaches the model only then (platform/model/src/output.ts, outputModeOf).
+      // prompt that fallback needs. Absent means the assembly selected native output, so a call
+      // the provider cannot serve fails before it spends. The binding decides which strategy the
+      // attempt runs as, and the fallback's prompt reaches the model only then
+      // (platform/model/src/output.ts, outputModeOf).
       readonly fallback?: OutputFallback
       readonly fallbackSystem?: string
     }

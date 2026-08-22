@@ -46,7 +46,7 @@ export interface InferRequest {
   // the same numbers the compaction guard fires on (components/compaction.ts, compactionFor).
   readonly context?: Partial<ContextPolicy>
   // What the turn does when native structured output is unavailable for this call, and the
-  // prompt that fallback needs. Absent means the assembly declared none.
+  // prompt that fallback needs. Absent means the assembly selected native output.
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
@@ -67,7 +67,7 @@ export class Infer extends Context.Service<
   { readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action> }
 >()("agent/Infer") {}
 
-// NativeOutputSupport is compile-time evidence that an injected Infer binding declares native structured output beside tools. The agent runtime does not read this service; the host type requires it when an assembly declares no fallback (runtime/agent.ts, agentOf).
+// NativeOutputSupport is compile-time evidence that an injected Infer binding declares native structured output beside tools. nativeOutput carries this requirement into the host type (components/native-output.ts).
 export class NativeOutputSupport extends Context.Service<
   NativeOutputSupport,
   { readonly withTools: true }

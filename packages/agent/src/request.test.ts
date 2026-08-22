@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { canonicalOf, codeMode, output, outputRepairFor, renderOf, toolList } from "./index"
+import { canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, toolList } from "./index"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -16,7 +16,7 @@ const SCOUT = output({
   }
 })
 
-const CODE = renderOf([codeMode], [])
+const CODE = renderOf([codeMode, nativeOutput], [])
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -273,7 +273,8 @@ describe("the tool surface decides the tool table", () => {
       toolList([
         { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
         { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
-      ])
+      ]),
+      nativeOutput
     ],
     []
   )

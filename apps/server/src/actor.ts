@@ -2,7 +2,8 @@ import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
-  agentOf,
+  actorOf,
+  agentRuntime,
   agentsPackage,
   budget,
   codeModeFor,
@@ -36,7 +37,7 @@ import { inboundOf } from "./projections"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export const assemblyOf = () =>
-  agentOf([
+  actorOf(agentRuntime(), [
     codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
     reply,
     budget,

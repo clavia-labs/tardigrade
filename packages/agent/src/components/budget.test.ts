@@ -15,8 +15,9 @@ import { agentRuntime } from "../runtime/agent"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { reply } from "./reply"
+import { nativeOutput } from "./native-output"
 
-const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction]).reactors[1]!
+const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction, nativeOutput]).reactors[1]!
 
 // The rest of the agent's environment, which every reactor's `act` is typed against whether or not
 // it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model

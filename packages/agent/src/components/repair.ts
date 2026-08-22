@@ -58,7 +58,7 @@ export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallb
         system: [],
         tools: [],
         context: [],
-        output: [{ component: "output.repair", fallback, ...declaredSystem(log) }]
+        output: [{ component: "output.repair", kind: "fallback", fallback, ...declaredSystem(log) }]
       },
       transitions: []
     })
@@ -79,7 +79,7 @@ export const outputFailFast: OutputFallbackComponent = defineOutputFallback({
       system: [],
       tools: [],
       context: [],
-      output: [{ component: "output.fail-fast", fallback: FAIL_FAST_FALLBACK, ...declaredSystem(log) }]
+      output: [{ component: "output.fail-fast", kind: "fallback", fallback: FAIL_FAST_FALLBACK, ...declaredSystem(log) }]
     },
     transitions: []
   })

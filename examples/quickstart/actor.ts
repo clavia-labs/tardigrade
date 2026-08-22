@@ -1,5 +1,6 @@
 import {
-  agentOf,
+  actorOf,
+  agentRuntime,
   agentsPackage,
   budget,
   codeModeFor,
@@ -35,8 +36,8 @@ const instructions = {
 
 export default defineActor({
   name: actorName,
-  // agentOf carries component and output requirements into the host type.
-  actor: agentOf([
+  // actorOf carries component and output requirements into the host type.
+  actor: actorOf(agentRuntime(), [
     instructions,
     // codeModeFor gives the model one code tool over the packages listed here.
     codeModeFor({

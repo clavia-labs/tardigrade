@@ -3,6 +3,7 @@ import { Clock, Effect, Random } from "effect"
 import { StopReason } from "@aws-sdk/client-bedrock-runtime"
 import {
   codeMode,
+  nativeOutput,
   output,
   outputFrom,
   outputRepairFor,
@@ -13,7 +14,7 @@ import {
 } from "tardie"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
-const surfaceRender = renderOf([codeMode], [])
+const surfaceRender = renderOf([codeMode, nativeOutput], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, ...surfaceRender })
 import { Infer } from "tardie"
 import {
@@ -314,7 +315,10 @@ describe("infer end to end", () => {
       ...(options.capability === undefined ? {} : { output: options.capability }),
       fetch: fetchImpl
     })
-    const render = renderOf(options.fallback === undefined ? [codeMode] : [codeMode, options.fallback], declared())
+    const render = renderOf(
+      options.fallback === undefined ? [codeMode, nativeOutput] : [codeMode, options.fallback],
+      declared()
+    )
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react({ trajectory: declared(), ...render })).pipe(
         Effect.provide(layer)
