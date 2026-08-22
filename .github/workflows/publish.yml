@@ -45,12 +45,26 @@ jobs:
       release_created: ${{ steps.release.outputs.release_created }}
       release_sha: ${{ steps.release.outputs.sha }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - name: Verify stable candidate
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          releases=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg author "$RELEASE_PR_AUTHOR" --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.merged_at != null and .user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
-          count=$(jq length <<< "$releases")
+          current_version=$(jq -r '.["."]' .release-please-manifest.json)
+          release_tag="v${current_version}"
+          release_list=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -r --arg author "$RELEASE_PR_AUTHOR" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '.[] | select(.merged_at != null and .user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix))) | .merge_commit_sha')
+          pending_shas=()
+          while read -r release_sha; do
+            if [ -z "$release_sha" ]; then
+              continue
+            fi
+            if git merge-base --is-ancestor "$release_sha" HEAD && ! git merge-base --is-ancestor "$release_sha" "$release_tag"; then
+              pending_shas+=("$release_sha")
+            fi
+          done <<< "$release_list"
+          count=${#pending_shas[@]}
           if (( count > 1 )); then
             echo "::error::Found ${count} merged Release Please PRs awaiting release."
             exit 1
@@ -58,7 +72,7 @@ jobs:
           if (( count == 0 )); then
             exit 0
           fi
-          release_sha=$(jq -r '.[0].merge_commit_sha' <<< "$releases")
+          release_sha=${pending_shas[0]}
           stable_tree=$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${release_sha}" --jq .tree.sha)
           candidate_tree=$(npm view "${PUBLISHED_PACKAGE}@${RC_NPM_TAG}" tardigrade.sourceTree)
           if [ "$candidate_tree" != "$stable_tree" ]; then
