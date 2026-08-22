@@ -31,7 +31,11 @@ CI runs `bun install --frozen-lockfile` and then the same `bun run gate`. There 
 
 ## PR expectations
 
-- `next` is the default integration branch. Feature and fix PRs target `next`. Promotion PRs merge `next` into `main` for stable releases.
+- `main` is the default branch and the integration trunk. Feature and fix PRs target `main`.
 - PR titles are validated in CI as Conventional Commits: `type(scope): message`. One commit is one conceptual move. Squash merging uses that title as the default commit title. The [validation workflow](.github/workflows/conventional-commits.yml) defines the accepted types. `feat`, `fix`, and `perf` titles bump the next release; `docs`, `chore`, `ci`, and `test` do not.
 - The PR body is read cold. State the change and the reason, then one bullet per conceptual change, then how you verified it.
 - Read [AGENTS.md](AGENTS.md) first. It carries the house rules for TypeScript, the architecture invariants, and the writing style, and reviewers hold PRs to them.
+
+## Releases
+
+Release Please keeps a release PR current with the version and changelog for the next stable release. Each revision of that PR is tested and published from its pinned commit as `<version>-rc.<run number>` under the npm `next` tag. Merging the release PR creates the stable tag and publishes `<version>` under the npm `latest` tag. A normal merge to `main` only updates the release PR.

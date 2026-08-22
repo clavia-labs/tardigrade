@@ -1,12 +1,12 @@
 name: publish
 
-# release-please opens RC release PRs on next and stable release PRs on main.
-# Merging a release PR tags the commit and publishes through OIDC. The workflow
-# filename is part of the npm trust pin. bun publish does not speak OIDC, so
-# tools/publish.ts packs with bun and uploads with npm.
+# release-please keeps a stable release PR current on main. Each revision of that PR is published
+# as an RC. Merging it tags and publishes the stable version through OIDC. The workflow filename is
+# part of the npm trust pin. bun publish does not speak OIDC, so tools/publish.ts packs with bun and
+# uploads with npm.
 on:
   push:
-    branches: [main, next]
+    branches: [main]
   workflow_dispatch:
     inputs:
       dry-run:
@@ -17,6 +17,11 @@ on:
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
+
+env:
+  RC_TYPE: rc
+  RC_NPM_TAG: next
+  STABLE_NPM_TAG: latest
 
 permissions:
   contents: write
@@ -30,28 +35,53 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     outputs:
-      releases_created: ${{ steps.release.outputs.releases_created }}
+      candidate_sha: ${{ steps.candidate.outputs.sha }}
+      release_created: ${{ steps.release.outputs.release_created }}
     steps:
-      - uses: actions/checkout@v7
-        if: github.ref_name == 'next'
-        with:
-          fetch-depth: 0
-      - name: Check stable release sync
-        if: github.ref_name == 'next'
-        run: |
-          if ! git merge-base --is-ancestor origin/main HEAD; then
-            echo "::error::Sync the stable release from main into next before creating another RC."
-            exit 1
-          fi
       - uses: googleapis/release-please-action@v5
         id: release
         with:
-          target-branch: ${{ github.ref_name }}
-          config-file: ${{ github.ref_name == 'next' && 'release-please-config.next.json' || 'release-please-config.json' }}
+          target-branch: main
+          config-file: release-please-config.json
+      - name: Pin release candidate
+        id: candidate
+        if: steps.release.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_PR_NUMBER: ${{ fromJSON(steps.release.outputs.pr).number }}
+        run: echo "sha=$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${RELEASE_PR_NUMBER}" --jq .head.sha)" >> "$GITHUB_OUTPUT"
 
-  publish:
+  publish-candidate:
     needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.releases_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    if: needs.release-please.outputs.candidate_sha != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.release-please.outputs.candidate_sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: canary
+      - run: bun install --frozen-lockfile
+      - run: bun run gate
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          registry-url: "https://registry.npmjs.org"
+      - name: Read candidate version
+        id: candidate
+        run: echo "version=$(jq -r .version package.json)-${RC_TYPE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+      - name: Publish candidate
+        run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG}
+
+  publish-stable:
+    needs: release-please
+    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -70,4 +100,4 @@ jobs:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
       - name: Publish
-        run: bun run tools/publish.ts --tag ${{ github.ref_name == 'next' && 'next' || 'latest' }} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}
+        run: bun run tools/publish.ts --tag ${STABLE_NPM_TAG} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}

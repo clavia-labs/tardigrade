@@ -136,7 +136,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
 
 const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
 const publicSource = packages.find((source) => source.namespace === "agent")!
-const version = (await readPkg(".")).version
+const version = option("--version") ?? (await readPkg(".")).version
 const prerelease = version.includes("-")
 const distTag = option("--tag") ?? (prerelease ? DEFAULT_PRERELEASE_NPM_TAG : DEFAULT_STABLE_NPM_TAG)
 if (prerelease && distTag === DEFAULT_STABLE_NPM_TAG) {
