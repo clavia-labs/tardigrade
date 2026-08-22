@@ -11,7 +11,7 @@ import { Infer, NativeOutputSupport, type InferRequest } from "./runtime/infer"
 import { boundaryOf } from "./boundary"
 import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
-import { actor, budgetFor, codeModeFor, compactionFor, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
+import { actor, budgetFor, codeMode, compactionFor, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
 import type { RlmR } from "./turn"
 
 const ROOT_LANE = "ag.root"
@@ -29,7 +29,7 @@ type TestR = RlmR | NativeOutputSupport
 
 // work is the default work surface these tests assemble against: code mode with the spawn and
 // workspace packages in scope. The packages are values, so the same list mounts on any host.
-const work = () => codeModeFor({ packages: [agentsPackage({ budget: {} }), workspacePackage({ policy: {} })] })
+const work = () => codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })])
 
 // hosted binds one assembled actor to an in-process host and drives the root lane. It is the
 // test's own driver: deliver a brief, drive to quiescence, read the boundary the settle left.

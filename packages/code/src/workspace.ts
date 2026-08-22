@@ -1,6 +1,6 @@
 import { Context, Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import type { Package } from "./packages"
+import { definePackage, type Package } from "./packages"
 import { hydrate, refs } from "./store"
 
 // The workspace package: the model's own view of the store its spilled values live in (store.ts).
@@ -84,7 +84,7 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
       properties: { rows: { type: "array" }, truncated: { type: "boolean" }, error: { type: "string" } }
     }
   }
-  return {
+  return definePackage({
     name: "workspace",
     description:
       runner === undefined
@@ -178,7 +178,7 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
           return { matches, ...(truncated ? { truncated } : {}) }
         })
     }
-  }
+  })
 }
 
 // workspaceFor builds the package from the lane's own bindings: the SQL surface, if the platform

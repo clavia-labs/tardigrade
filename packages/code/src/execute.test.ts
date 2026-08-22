@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { settleActor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import type { Package } from "./packages"
+import { definePackage, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
@@ -46,7 +46,7 @@ const memoryLog = (initial: ReadonlyArray<Event>) =>
 
 // A read, a closed-world write, an open-world write, and a method that declares nothing: the four
 // cells the router rule distinguishes.
-const worldPackage: Package = {
+const worldPackage: Package = definePackage({
   name: "world",
   description: "a package standing in for one owned surface and one open one",
   annotations: {
@@ -60,7 +60,7 @@ const worldPackage: Package = {
     openWrite: () => Effect.succeed({ ok: "openWrite" }),
     mystery: () => Effect.succeed({ ok: "mystery" })
   }
-}
+})
 
 const code = `
   const a = await world.read({})
@@ -88,7 +88,7 @@ describe("transience never reaches the body", () => {
   // next attempt drifted). The failing call parks instead; the next attempt asks again.
   test("a transiently failing call parks and the re-drive gets the real answer", async () => {
     let attempts = 0
-    const flakyPackage: Package = {
+    const flakyPackage: Package = definePackage({
       name: "flaky",
       description: "fails once, then answers",
       annotations: { read: { readOnlyHint: true, openWorldHint: true } },
@@ -99,7 +99,7 @@ describe("transience never reaches the body", () => {
             return attempts === 1 ? Effect.die(new Error("transient RPC reset")) : Effect.succeed({ ok: "real" })
           })
       }
-    }
+    })
     // The body's catch is the trap: if transience rejects, the fallback becomes data.
     const code = `
       const a = await flaky.read({}).catch(() => ({ fell: "back" }))
@@ -239,7 +239,7 @@ describe("a package's requirements ride its type", () => {
   // context (execute.ts, executeRecorded).
   class Ticker extends Context.Service<Ticker, string>()("code/test/Ticker") {}
 
-  const tickerPackage: Package<Ticker> = {
+  const tickerPackage: Package<Ticker> = definePackage({
     name: "ticker",
     description: "answers with the value the environment bound",
     annotations: { now: { readOnlyHint: true, openWorldHint: false } },
@@ -249,7 +249,7 @@ describe("a package's requirements ride its type", () => {
           return { tick: yield* Ticker }
         })
     }
-  }
+  })
 
   test("a package method reads its service through the funnel", async () => {
     const log: Event[] = [

@@ -2,7 +2,7 @@ import {
   actor,
   agentsPackage,
   budget,
-  codeModeFor,
+  codeMode,
   compaction,
   defineActor,
   fetchPackage,
@@ -32,11 +32,11 @@ export default defineActor({
   // actor carries component and output requirements into the host type.
   actor: actor(infer([
     system(actorInstructions),
-    // codeModeFor gives the model one code tool over the packages listed here.
-    codeModeFor({
-      // packages grant access to local files, HTTP, child agents, and saved tool results.
-      packages: [filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()]
-    }),
+    // codeMode gives the model one code tool over the components listed here.
+    codeMode([
+      // Package components grant access to local files, HTTP, child agents, and saved tool results.
+      filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
+    ]),
     // reply returns a finished turn to the actor that delegated it.
     reply,
     // budget stops work tools when the turn reaches its tool-call limit.

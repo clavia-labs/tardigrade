@@ -14,7 +14,7 @@ import {
 } from "tardie"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
-const surfaceRender = renderOf([codeMode, nativeOutput], [])
+const surfaceRender = renderOf([codeMode(), nativeOutput], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, ...surfaceRender })
 import { Infer } from "tardie"
 import {
@@ -316,7 +316,7 @@ describe("infer end to end", () => {
       fetch: fetchImpl
     })
     const render = renderOf(
-      options.fallback === undefined ? [codeMode, nativeOutput] : [codeMode, options.fallback],
+      options.fallback === undefined ? [codeMode(), nativeOutput] : [codeMode(), options.fallback],
       declared()
     )
     const action = (await Effect.runPromise(

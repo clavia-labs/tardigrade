@@ -1,10 +1,16 @@
 import { Clock, Effect } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { transition, type Transition } from "@clavia/tardigrade-core/actor"
+import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/component"
 import type { Event } from "@clavia/tardigrade-core/event"
+import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/event-log"
 import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/events"
 import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execute"
-import type { Package, PackageRequirements } from "@clavia/tardigrade-code/packages"
+import {
+  CODE_VIEW_ALGEBRA,
+  type CodeComponent,
+  type Package
+} from "@clavia/tardigrade-code/packages"
 import type { AgentComponent } from "../runtime/agent"
 import type { Answer, PendingCall } from "../runtime/tools"
 import type { ToolSpec } from "../request"
@@ -64,31 +70,55 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
   ]
 }
 
-// codeModeFor derives the execute tool and code transitions from the same log and package scope.
-export const codeModeFor = <
-  const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>> = readonly []
->(
-  options: {
-    readonly policy?: Partial<CodePolicy>
-    readonly system?: string | ((log: ReadonlyArray<Event>) => string)
-    readonly packages?: P
-  } = {}
-): AgentComponent<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => {
-  const packages = (options.packages ?? []) as unknown as P
-  const reactor = codeReactorFor(options.policy ?? {}, packages)
+export interface CodeModeOptions {
+  readonly policy?: Partial<CodePolicy>
+  readonly system?: string | ((log: ReadonlyArray<Event>) => string)
+}
+
+const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
+  const fragments = [codeKeys, ...(children === undefined ? [] : [children])]
   return {
-    name: "code",
-    keys: codeKeys,
-    derive: (log) => ({
-      view: {
-        system: [typeof options.system === "function" ? options.system(log) : options.system ?? codeSystemFor(packages as ReadonlyArray<Package<unknown>>)],
-        tools: [{ spec: EXECUTE_TOOL, serve: (call, current, answer) => serveCode(current, call, answer) }],
-        context: [],
-        output: []
-      },
-      transitions: reactor(log)
-    })
+    prefixes: fragments.flatMap((fragment) => fragment.prefixes),
+    keyOf: composeKeys(...fragments)
   }
 }
 
-export const codeMode: AgentComponent<KeyValueStore.KeyValueStore> = codeModeFor()
+// codeMode composes code components and exposes their package scope through one execute tool.
+export const codeMode = <
+  const Cs extends ReadonlyArray<CodeComponent<never> | CodeComponent<unknown>> = readonly []
+>(
+  components: Cs = [] as unknown as Cs,
+  options: CodeModeOptions = {}
+): AgentComponent<KeyValueStore.KeyValueStore | ComponentRequirements<Cs[number]>> => {
+  type ComponentR = ComponentRequirements<Cs[number]>
+  type R = KeyValueStore.KeyValueStore | ComponentR
+  const combined = composeComponents("code.children", CODE_VIEW_ALGEBRA, components) as CodeComponent<ComponentR>
+  const packagesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Package<ComponentR>> =>
+    combined.derive(log).view.packages as unknown as ReadonlyArray<Package<ComponentR>>
+
+  codeReactorFor(options.policy ?? {}, packagesOf([]))
+  return {
+    name: "code",
+    keys: rootKeys(combined.keys),
+    derive: (log) => {
+      const children = combined.derive(log)
+      const packages = children.view.packages
+      const execution = codeReactorFor(
+        options.policy ?? {},
+        packages as unknown as ReadonlyArray<Package<ComponentR>>
+      )
+      return {
+        view: {
+          system: [typeof options.system === "function" ? options.system(log) : options.system ?? codeSystemFor(packages)],
+          tools: [{ spec: EXECUTE_TOOL, serve: (call, current, answer) => serveCode(current, call, answer) }],
+          context: [],
+          output: []
+        },
+        transitions: [
+          ...(execution(log) as ReadonlyArray<Transition<never, R>>),
+          ...(children.transitions as ReadonlyArray<Transition<never, R>>)
+        ]
+      }
+    }
+  }
+}

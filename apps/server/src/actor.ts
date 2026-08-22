@@ -5,7 +5,7 @@ import {
   actor,
   agentsPackage,
   budget,
-  codeModeFor,
+  codeMode,
   compaction,
   fetchPackage,
   filesPackage,
@@ -38,7 +38,7 @@ import { inboundOf } from "./projections"
 // and this build has no place to ask an operator whether one command is allowed.
 export const assemblyOf = () =>
   actor(infer([
-    codeModeFor({ packages: [agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()] }),
+    codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
     compaction,

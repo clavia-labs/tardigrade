@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
-import type { Package } from "./packages"
+import { definePackage, type Package } from "./packages"
 
 // The fetch package: one HTTP request, made through `HttpClient` rather than through a global
 // fetch. The service is the same one the derived client speaks (packages/client), so a consumer
@@ -106,7 +106,7 @@ export const fetchPackage = (options: FetchOptions = {}): Package<HttpClient.Htt
       error: { type: "string" }
     }
   }
-  return {
+  return definePackage({
     name: "fetch",
     description:
       "HTTP requests to any host. fetch.get reads a URL; fetch.request sends any method with headers and a body. The answer carries the status, the response headers, and the body as text.",
@@ -161,5 +161,5 @@ export const fetchPackage = (options: FetchOptions = {}): Package<HttpClient.Htt
           return send(policy, method, a.url, headersOf(a.headers), body)
         })
     }
-  }
+  })
 }

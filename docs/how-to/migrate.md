@@ -25,7 +25,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | --- | --- |
 | `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, actor: actor(infer([...])) })` |
 | System instructions | `system(...)` |
-| Tool declarations and handlers | Packages mounted through `codeModeFor`, or fixed tools mounted through `toolList` |
+| Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
 | `stopWhen`, maximum steps, and retry options | `budgetFor`, `infer` policy, and domain components with explicit policy values |
 | `prepareStep` and dynamic context | A component whose `derive(log)` changes its view from recorded events |
 | Message arrays and conversation storage | One append-only event log per thread |
@@ -46,7 +46,7 @@ Edit the generated `agents/agent/actor.ts`. Keep the actor name stable across bu
 
 Move static system text into `system(...)`. Pass a log projection to `system` when the prompt depends on recorded events. Keep application data out of the prompt when a scoped package can read it on demand.
 
-Use a package through `codeModeFor` when its methods are ordinary operations that the model can combine, filter, or repeat in JavaScript. This exposes one `execute` tool to the model and keeps package methods behind the code surface. Use `toolList` when a provider-visible tool call, approval step, or exact tool schema is part of the application contract.
+Use a package component through `codeMode([...components])` when its methods are ordinary operations that the model can combine, filter, or repeat in JavaScript. This exposes one `execute` tool to the model and keeps package methods behind the code surface. Use `toolList` when a provider-visible tool call, approval step, or exact tool schema is part of the application contract.
 
 Preserve tool names, descriptions, input checks, authorization, side-effect rules, and result shapes during the first pass. Convert Zod or framework-specific schemas to the JSON Schema accepted by Tardigrade. Wrap asynchronous handlers in Effect and turn expected failures into serializable results that the model can act on.
 

@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { Path } from "effect/Path"
-import type { Package } from "./packages"
+import { definePackage, type Package } from "./packages"
 
 // The files package: a directory the code may read and write, and nothing outside it. The methods
 // are built on `FileSystem` and `Path` rather than on a runtime's own file API, so the package is a
@@ -80,7 +80,7 @@ export interface FilesOptions {
 export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | Path> => {
   const policy = filesPolicyOf(options.policy)
   const root = policy.root
-  return {
+  return definePackage({
     name: "files",
     description:
       "The files under one root directory. files.read and files.list see what is there, files.search finds text across it, and files.write puts a file back. Every path is relative to the root and a path outside it is refused.",
@@ -264,5 +264,5 @@ export const filesPackage = (options: FilesOptions = {}): Package<FileSystem | P
           }).pipe(Effect.catch((error) => Effect.succeed({ error: failure(error) })))
         })
     }
-  }
+  })
 }
