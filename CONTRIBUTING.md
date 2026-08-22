@@ -38,4 +38,4 @@ CI runs `bun install --frozen-lockfile` and then the same `bun run gate`. There 
 
 ## Releases
 
-Release Please keeps a release PR current with the version and changelog for the next stable release. Each revision is combined with a pinned `main` commit, tested, and published as `<version>-rc.<run number>` under the npm `next` tag. Merging the release PR creates the stable tag and publishes `<version>` under the npm `latest` tag. A normal merge to `main` only updates the release PR.
+Release Please keeps a release PR current with the version and changelog for the next stable release. Each revision is combined with a pinned `main` commit, tested, and published as `<version>-rc.<run number>` under the npm `next` tag. The package records the combined git tree. Merging the release PR creates the stable tag, and the stable publish proceeds only when npm `next` records the same tree. The stable version then publishes under the npm `latest` tag. A normal merge to `main` only updates the release PR.

@@ -19,6 +19,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  PUBLISHED_PACKAGE: tardie
   RC_TYPE: rc
   RC_NPM_TAG: next
   RELEASE_PR_BRANCH_PREFIX: release-please--
@@ -79,12 +80,14 @@ jobs:
           fetch-depth: 0
           ref: ${{ needs.release-please.outputs.candidate_base }}
       - name: Apply release candidate
+        id: candidate-tree
         env:
           CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
         run: |
           git fetch --no-tags origin "$CANDIDATE_HEAD"
           candidate_tree=$(git merge-tree --write-tree HEAD "$CANDIDATE_HEAD")
           git read-tree --reset -u "$candidate_tree"
+          echo "sha=$candidate_tree" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
@@ -98,7 +101,7 @@ jobs:
         id: candidate
         run: echo "version=$(jq -r .version package.json)-${RC_TYPE}.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
       - name: Publish candidate
-        run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG}
+        run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
 
   publish-stable:
     needs: release-please
@@ -111,6 +114,9 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v7
+      - name: Read stable tree
+        id: stable-tree
+        run: echo "sha=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
@@ -120,5 +126,16 @@ jobs:
         with:
           node-version: "24"
           registry-url: "https://registry.npmjs.org"
+      - name: Verify release candidate
+        if: github.event_name != 'workflow_dispatch' || !inputs.dry-run
+        env:
+          STABLE_TREE: ${{ steps.stable-tree.outputs.sha }}
+        run: |
+          candidate_tree=$(npm view "${PUBLISHED_PACKAGE}@${RC_NPM_TAG}" tardigrade.sourceTree)
+          if [ "$candidate_tree" != "$STABLE_TREE" ]; then
+            echo "::error::npm ${RC_NPM_TAG} was built from ${candidate_tree:-no recorded tree}; stable is ${STABLE_TREE}."
+            exit 1
+          fi
+          echo "npm ${RC_NPM_TAG} matches stable tree ${STABLE_TREE}."
       - name: Publish
-        run: bun run tools/publish.ts --tag ${STABLE_NPM_TAG} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}
+        run: bun run tools/publish.ts --tag ${STABLE_NPM_TAG} --source-tree ${{ steps.stable-tree.outputs.sha }} ${{ github.event_name == 'workflow_dispatch' && inputs.dry-run && '--dry-run' || '' }}

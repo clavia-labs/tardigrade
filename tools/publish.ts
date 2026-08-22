@@ -137,6 +137,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
 const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
 const publicSource = packages.find((source) => source.namespace === "agent")!
 const version = option("--version") ?? (await readPkg(".")).version
+const sourceTree = option("--source-tree")
 const prerelease = version.includes("-")
 const distTag = option("--tag") ?? (prerelease ? DEFAULT_PRERELEASE_NPM_TAG : DEFAULT_STABLE_NPM_TAG)
 if (prerelease && distTag === DEFAULT_STABLE_NPM_TAG) {
@@ -205,6 +206,7 @@ try {
         : repository,
     bugs: publicSource.pkg.bugs,
     publishConfig: publicSource.pkg.publishConfig,
+    ...(sourceTree === undefined ? {} : { tardigrade: { sourceTree } }),
     files: ["src", STAGED_ASSETS, STAGED_EXAMPLES],
     engines: publicSource.pkg.engines,
     type: "module",
