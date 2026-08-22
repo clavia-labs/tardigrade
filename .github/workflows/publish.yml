@@ -43,6 +43,26 @@ jobs:
       candidate_head: ${{ steps.candidate.outputs.head }}
       release_created: ${{ steps.release.outputs.release_created }}
     steps:
+      - name: Verify stable candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh api "repos/${GITHUB_REPOSITORY}/commits/${GITHUB_SHA}/pulls?per_page=${RELEASE_PR_PAGE_SIZE}" | jq -c --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.merged_at != null and .base.ref == "main" and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)))]')
+          count=$(jq length <<< "$releases")
+          if (( count > 1 )); then
+            echo "::error::Commit ${GITHUB_SHA} belongs to ${count} merged Release Please PRs."
+            exit 1
+          fi
+          if (( count == 0 )); then
+            exit 0
+          fi
+          stable_tree=$(gh api "repos/${GITHUB_REPOSITORY}/git/commits/${GITHUB_SHA}" --jq .tree.sha)
+          candidate_tree=$(npm view "${PUBLISHED_PACKAGE}@${RC_NPM_TAG}" tardigrade.sourceTree)
+          if [ "$candidate_tree" != "$stable_tree" ]; then
+            echo "::error::npm ${RC_NPM_TAG} was built from ${candidate_tree:-no recorded tree}; stable is ${stable_tree}."
+            exit 1
+          fi
+          echo "npm ${RC_NPM_TAG} matches stable tree ${stable_tree}."
       - uses: googleapis/release-please-action@v5
         id: release
         with:
