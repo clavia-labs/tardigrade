@@ -69,6 +69,7 @@ export {
   DEFAULT_REPAIR_POLICY,
   type RepairPolicy
 } from "./components/repair"
+export { nativeOutput } from "./components/native-output"
 export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export { replyReactor } from "./components/reply"
@@ -126,7 +127,6 @@ export {
 // list mounts its own (runtime/agent.ts).
 export {
   AGENT_VIEW_ALGEBRA,
-  agentOf,
   agentRuntime,
   defineOutputFallback,
   renderOf,
@@ -134,6 +134,8 @@ export {
   type AgentView,
   type AgentTool,
   type ContextFragment,
+  type NativeOutputFragment,
+  type FallbackOutputFragment,
   type OutputFallbackComponent,
   type OutputFragment,
   type Rendered

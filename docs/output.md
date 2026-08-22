@@ -60,7 +60,7 @@ The binding selects a mode for each call:
 | --- | --- |
 | Native output supports the call | Native |
 | Native output does not support the call and the agent mounts a fallback | The mounted fallback |
-| Native output does not support the call and the agent mounts no fallback | `output_unsupported` before the provider request |
+| Native output does not support the call and the selected strategy has no fallback | `output_unsupported` before the provider request |
 
 A mounted fallback does not disable native output. When native mode is available, fallback prompt text is omitted from the request.
 
@@ -75,31 +75,33 @@ Provider references:
 
 `Infer` is the injected Effect service. A model layer created by `infer(...)` provides it, and the agent runtime requests it for each attempt.
 
-`outputRepairFor(...)` is a typed agent component. It contributes an `OutputFallback` and the fallback prompt. `outputFailFast` and delegated fallbacks use the same component marker.
+Every agent assembly selects one output strategy component. `nativeOutput` selects provider-native output. `outputRepairFor(...)`, `outputFailFast`, and delegated fallbacks contribute an `OutputFallback` and any fallback prompt.
 
-`agentOf` reads that marker when it computes the assembled actor's Effect requirements:
+`actorOf` combines the runtime and component requirements:
 
-| Components | Required model services |
+| Output strategy | Required model services |
 | --- | --- |
-| No output fallback | `Infer` and `NativeOutputSupport` |
+| `nativeOutput` | `Infer` and `NativeOutputSupport` |
 | Repair, fail-fast, or delegated fallback | `Infer` |
 
 `infer(...)` provides `NativeOutputSupport` only when its statically known configuration declares `{ guarantee: "native", withTools: true }`.
 
 ```ts
-const nativeOnly = agentOf([codeMode, reply])
+import { actorOf, agentRuntime, codeMode, nativeOutput, outputRepairFor, reply } from "tardie"
+
+const nativeOnly = actorOf(agentRuntime(), [codeMode, reply, nativeOutput])
 const nativeModel = infer({ ...modelConfig, output: { guarantee: "native", withTools: true } })
 // nativeModel provides Infer and NativeOutputSupport.
 
-const portable = agentOf([codeMode, reply, outputRepairFor({ attempts: 1 })])
+const portable = actorOf(agentRuntime(), [codeMode, reply, outputRepairFor({ attempts: 1 })])
 const unprovenModel = infer({ ...modelConfig, output: { guarantee: "none" } })
 // portable requires Infer. unprovenModel provides it.
 // A host that binds nativeOnly to unprovenModel has a missing NativeOutputSupport type error.
 ```
 
-The host fails type checking when it connects a native-only agent to a statically unsupported model layer. This check covers the declared configuration and program wiring. TypeScript cannot verify a remote endpoint. A configuration widened to `ModelConfig` or read from the environment supplies no static proof until application code narrows it, so the usual dynamic host mounts an explicit fallback. A `withTools: false` declaration also supplies no proof because `agentOf` does not encode an empty tool surface in its type. `outputPreflight` checks each actual call before the provider request. Local validation catches an endpoint that breaks its declaration after the request.
+The host fails type checking when it connects a native-only agent to a statically unsupported model layer. This check covers the declared configuration and program wiring. TypeScript cannot verify a remote endpoint. A configuration widened to `ModelConfig` or read from the environment supplies no static proof until application code narrows it, so the usual dynamic host selects an explicit fallback. A `withTools: false` declaration also supplies no proof because `nativeOutput` does not encode an empty tool surface in its type. `outputPreflight` checks each actual call before the provider request. Local validation catches an endpoint that breaks its declaration after the request.
 
-Actor artifacts and server environment variables meet after TypeScript has run. The built-in server and generated actor template mount `outputFailFast` explicitly. A custom artifact that omits a fallback relies on the server's per-call preflight and native capability declaration.
+Actor artifacts and server environment variables meet after TypeScript has run. The built-in server and generated actor template select `outputFailFast` explicitly. A custom artifact that selects `nativeOutput` relies on the server's per-call preflight and native capability declaration.
 
 TypeScript also checks the schema profile for schema literals, derives the result type, and checks the closed `OutputFallback` union. `outputRepairFor` accepts `Partial<RepairPolicy>`, so policy field names and value types are checked at the call site. Construction rejects invalid numeric bounds, invalid booleans, malformed custom fallbacks, and multiple fallback components.
 
@@ -140,7 +142,9 @@ output({
 `outputFailFast` asks for JSON in the fallback prompt and validates one response. A mismatch ends the turn with `output_validation_failed`. It performs no correction attempt.
 
 ```ts
-const agent = agentOf([
+import { actorOf, agentRuntime, codeModeFor, outputFailFast, reply } from "tardie"
+
+const agent = actorOf(agentRuntime(), [
   codeModeFor({ packages: [] }),
   reply,
   outputFailFast
@@ -152,9 +156,9 @@ const agent = agentOf([
 `outputRepairFor` records an invalid response and asks again with the validation errors. Its policy is explicit:
 
 ```ts
-import { agentOf, codeModeFor, outputRepairFor, reply } from "tardie"
+import { actorOf, agentRuntime, codeModeFor, outputRepairFor, reply } from "tardie"
 
-const agent = agentOf([
+const agent = actorOf(agentRuntime(), [
   codeModeFor({ packages: [] }),
   reply,
   outputRepairFor({ attempts: 2, projectHistory: true })
@@ -184,6 +188,7 @@ const houseStyle = defineOutputFallback({
       output: [
         {
           component: "output.house-style",
+          kind: "fallback",
           fallback: { kind: "delegated", name: "house-style", projectHistory: true },
           system: "Reply with JSON matching the house schema."
         }

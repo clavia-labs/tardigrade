@@ -1,9 +1,7 @@
-import type { Actor, Reactor, Transition } from "@clavia/tardigrade-core/actor"
+import type { Reactor, Transition } from "@clavia/tardigrade-core/actor"
 import {
-  actorOf,
   composeComponents,
   type Component,
-  type ComponentRequirements,
   type ComponentRuntime,
   type ViewAlgebra
 } from "@clavia/tardigrade-core/component"
@@ -12,7 +10,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import type { ToolSpec } from "../request"
 import { fallbackOf, type OutputFallback } from "../output"
 import { agentKeys } from "../events"
-import { inferReactorFor, type InferPolicy, type NativeOutputSupport } from "./infer"
+import { inferReactorFor, type InferPolicy } from "./infer"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "../turn"
@@ -35,18 +33,25 @@ export interface ContextFragment {
   readonly policy: Partial<ContextPolicy>
 }
 
-// OutputFragment names one component's output fallback contribution: what a turn does when
-// native structured output is unavailable for the call. An assembly that mounts none has no
-// fallback, so such a turn fails before it spends; two that disagree throw, because a turn has
-// one final response and one way to fall back (src/output.ts, OutputFallback).
-export interface OutputFragment {
+// NativeOutputFragment selects provider-native structured output without a fallback.
+export interface NativeOutputFragment {
   readonly component: string
+  readonly kind: "native"
+}
+
+// FallbackOutputFragment selects provider-native structured output with a fallback for calls the
+// provider cannot serve natively (src/output.ts, OutputFallback).
+export interface FallbackOutputFragment {
+  readonly component: string
+  readonly kind: "fallback"
   readonly fallback: OutputFallback
   // The prompt this fallback needs when it runs. It reaches the model only on an attempt whose
   // mode is this fallback, so a native attempt reads exactly what it would read with nothing
   // mounted (request.ts, OutputRequest; platform/model/src/model.ts).
   readonly system?: string
 }
+
+export type OutputFragment = NativeOutputFragment | FallbackOutputFragment
 
 // AgentView is the view an agent runtime interprets. Arrays retain component order and
 // postpone collision policy until the complete derivation is available.
@@ -62,7 +67,7 @@ export type AgentComponent<R = never> = Component<AgentView, R>
 
 const OutputFallbackMarker: unique symbol = Symbol("agent/OutputFallbackComponent")
 
-// OutputFallbackComponent marks a component whose fallback is present for every rendered turn. agentOf uses the marker to remove the NativeOutputSupport requirement.
+// OutputFallbackComponent marks a component whose fallback strategy is present for every rendered turn.
 export type OutputFallbackComponent<R = never> = AgentComponent<R> & { readonly [OutputFallbackMarker]: true }
 
 // defineOutputFallback validates and marks a component that always contributes one fallback.
@@ -70,7 +75,7 @@ export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFal
   const derive: AgentComponent<R>["derive"] = (log) => {
     const derived = component.derive(log)
     const output = derived.view.output
-    if (output.length !== 1 || fallbackOf(output[0]?.fallback) === undefined) {
+    if (output.length !== 1 || output[0]?.kind !== "fallback" || fallbackOf(output[0].fallback) === undefined) {
       throw new Error(`output fallback component ${component.name} must declare one applicable fallback for every log`)
     }
     return derived
@@ -91,16 +96,16 @@ export const AGENT_VIEW_ALGEBRA: ViewAlgebra<AgentView> = {
   })
 }
 
-// fallbackFrom resolves the one output fallback the assembly declares. A turn has one final
-// response, so a second declaration is an assembly error even when the two agree: a reader of the
-// mount list must be able to name the fallback from it.
-const fallbackFrom = (fragments: ReadonlyArray<OutputFragment>): OutputFragment | undefined => {
+// outputFrom resolves the output strategy the assembly declares. A turn has one final response,
+// so an absent or second declaration is an assembly error.
+const outputFrom = (fragments: ReadonlyArray<OutputFragment>): OutputFragment => {
   const first = fragments[0]
-  if (first === undefined) return undefined
+  if (first === undefined) throw new Error("agent assembly must declare one output strategy")
   const second = fragments[1]
   if (second !== undefined) {
-    throw new Error(`output fallback declared by components ${first.component} and ${second.component}`)
+    throw new Error(`output strategy declared by components ${first.component} and ${second.component}`)
   }
+  if (first.kind === "native") return first
   const fallback = fallbackOf(first.fallback)
   if (fallback === undefined) {
     throw new Error(
@@ -135,7 +140,10 @@ const checkedTools = (tools: ReadonlyArray<AgentTool<unknown>>): ReadonlyArray<A
   return tools
 }
 
-const viewFrom = <R>(components: ReadonlyArray<AgentComponent<R>>, log: ReadonlyArray<Event>): AgentView =>
+const viewFrom = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>>(
+  components: Cs,
+  log: ReadonlyArray<Event>
+): AgentView =>
   composeComponents("agent.view", AGENT_VIEW_ALGEBRA, components).derive(log).view
 
 // offerLogFor returns the prefix from which inference offered a pending call's tools. ModelCalled
@@ -158,7 +166,7 @@ const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArra
 
 // Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
 // policy, and the fallback for a declared output contract native output cannot serve. `output` is
-// absent when the assembly declares no fallback.
+// absent when the assembly selects native output.
 export interface Rendered {
   readonly system: string
   readonly tools: ReadonlyArray<ToolSpec>
@@ -167,12 +175,12 @@ export interface Rendered {
 }
 
 const renderView = (view: AgentView): Rendered => {
-  const fragment = fallbackFrom(view.output)
+  const fragment = outputFrom(view.output)
   return {
     system: view.system.filter((piece) => piece !== "").join("\n"),
     tools: checkedTools(view.tools).map((tool) => tool.spec),
     context: contextOf(view.context),
-    ...(fragment === undefined
+    ...(fragment.kind === "native"
       ? {}
       : {
           output: {
@@ -184,14 +192,17 @@ const renderView = (view: AgentView): Rendered => {
 }
 
 // renderOf derives the model request from the same component view that routing reads.
-export const renderOf = <R>(components: ReadonlyArray<AgentComponent<R>>, log: ReadonlyArray<Event>): Rendered =>
+export const renderOf = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>>(
+  components: Cs,
+  log: ReadonlyArray<Event>
+): Rendered =>
   renderView(viewFrom(components, log))
 
 // agentRuntime interprets AgentView as inference and tool-routing reactors. actorOf supplies the
 // composed view projection and adds each component's own transition projection.
 export const agentRuntime = (
   policy: Partial<InferPolicy> = {}
-): ComponentRuntime<AgentView, AgentR | NativeOutputSupport> => ({
+): ComponentRuntime<AgentView, AgentR> => ({
   name: "agent",
   algebra: AGENT_VIEW_ALGEBRA,
   keys: [messageKeys, agentKeys],
@@ -211,21 +222,3 @@ export const agentRuntime = (
     ]
   }
 })
-
-type OutputRequirement<Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>> = Extract<
-  Cs[number],
-  OutputFallbackComponent<unknown>
-> extends never
-  ? NativeOutputSupport
-  : never
-
-// agentOf assembles an agent and carries its output requirement into the host environment. An assembly without a marked fallback requires NativeOutputSupport from its model layer.
-export const agentOf = <
-  const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
->(
-  components: Cs,
-  policy: Partial<InferPolicy> = {}
-): Actor<AgentR | ComponentRequirements<Cs[number]> | OutputRequirement<Cs>> =>
-  actorOf(agentRuntime(policy), components) as Actor<
-    AgentR | ComponentRequirements<Cs[number]> | OutputRequirement<Cs>
-  >

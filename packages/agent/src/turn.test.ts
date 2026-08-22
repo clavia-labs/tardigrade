@@ -23,6 +23,7 @@ import {
   codeModeFor,
   compaction,
   fingerprintOf,
+  nativeOutput,
   output,
   outputFailFast,
   repairFallback,
@@ -41,7 +42,7 @@ import {
 // packages are values the assembly passes, so a test that needs one names it here
 // (components/code.ts, codeModeFor).
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actorOf(agentRuntime(), [codeModeFor({ packages }), reply, budget, compaction])
+  actorOf(agentRuntime(), [codeModeFor({ packages }), reply, budget, compaction, nativeOutput])
 const rlmAgent = agentWith([])
 const inferReactor = rlmAgent.reactors[0]!
 const toolsReactor = rlmAgent.reactors[1]!
@@ -864,9 +865,9 @@ describe("the repair implementation", () => {
     })
   })
 
-  test("two components declaring a fallback collide at construction", () => {
+  test("two components declaring an output strategy collide at construction", () => {
     expect(() => actorOf(agentRuntime(), [codeModeFor({ packages: [] }), outputRepair, outputFailFast])).toThrow(
-      "output fallback declared by components output.repair and output.fail-fast"
+      "output strategy declared by components output.repair and output.fail-fast"
     )
   })
 
@@ -881,6 +882,7 @@ describe("the repair implementation", () => {
           output: [
             {
               component: "output.malformed",
+              kind: "fallback",
               fallback: { kind: "delegated", name: "", projectHistory: true } as never
             }
           ]
@@ -906,7 +908,8 @@ describe("the mind on a native surface", () => {
           }
         }
       ]),
-      reply
+      reply,
+      nativeOutput
     ])
     expect(mind.reactors).toHaveLength(3)
     const layers = Layer.mergeAll(
@@ -1020,7 +1023,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => ({
       system: [],
       tools: [],
       context: [],
-      output: [{ component: "output.house-style", fallback: HOUSE_STYLE }]
+      output: [{ component: "output.house-style", kind: "fallback" as const, fallback: HOUSE_STYLE }]
     }
     if (owed === undefined) return { view, transitions: [] }
     const spent = rejections.length
@@ -1125,7 +1128,7 @@ describe("a domain-specific implementation", () => {
     const silent: AgentComponent = {
       name: "output.silent",
       derive: () => ({
-        view: { system: [], tools: [], context: [], output: [{ component: "output.silent", fallback: HOUSE_STYLE }] },
+        view: { system: [], tools: [], context: [], output: [{ component: "output.silent", kind: "fallback", fallback: HOUSE_STYLE }] },
         transitions: []
       })
     }

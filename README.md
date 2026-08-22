@@ -112,9 +112,9 @@ The call follows one route:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { agentOf, budget, codeMode, compaction, outputFailFast, reply } from "tardie"
+import { actorOf, agentRuntime, budget, codeMode, compaction, outputFailFast, reply } from "tardie"
 
-const releaseAnalyst = agentOf([
+const releaseAnalyst = actorOf(agentRuntime(), [
   deploys,     // recent_deploys and its paired handler
   codeMode,    // durable JavaScript execution
   budget,      // a per-turn code budget
@@ -124,7 +124,7 @@ const releaseAnalyst = agentOf([
 ])
 ```
 
-`agentOf` combines the components and carries their service requirements into the host type. The runtime interprets their view as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`actorOf` combines the components and carries their service requirements into the host type. `agentRuntime` interprets their view as inference and tool routing, while the core actor reconciles their transitions. The model sees `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 

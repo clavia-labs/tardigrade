@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
-  agentOf,
+  actorOf,
+  agentRuntime,
+  nativeOutput,
   outputRepair,
   type AgentComponent,
   type NativeOutputSupport,
@@ -18,8 +20,8 @@ const empty: AgentComponent = {
   })
 }
 
-const nativeOnly = agentOf([empty])
-const repaired = agentOf([empty, outputRepair])
+const nativeOnly = actorOf(agentRuntime(), [empty, nativeOutput])
+const repaired = actorOf(agentRuntime(), [empty, outputRepair])
 
 type Requirements<A> = A extends Actor<infer R> ? R : never
 type RequiresNative<A> = NativeOutputSupport extends Requirements<A> ? true : false
@@ -30,12 +32,12 @@ export const outputRequirements = (): void => {
   accepts<RequiresNative<typeof repaired>>(false)
 }
 
-// fallbackBrand proves that only defineOutputFallback and the built-in fallback constructors can discharge the native requirement.
+// fallbackBrand proves that only defineOutputFallback and the built-in fallback constructors can mark a fallback strategy.
 export const fallbackBrand = (): void => {
   // @ts-expect-error a plain component has not been checked as an always-present output fallback
   accepts<OutputFallbackComponent>(empty)
 }
 
-test("agentOf carries the output requirement without changing the runtime shape", () => {
+test("output strategy components carry their requirements without changing the runtime shape", () => {
   expect(nativeOnly.reactors).toHaveLength(repaired.reactors.length)
 })
