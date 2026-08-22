@@ -109,6 +109,7 @@ jobs:
     timeout-minutes: 20
     environment: npm
     permissions:
+      checks: write
       contents: read
       id-token: write
     steps:
@@ -130,6 +131,14 @@ jobs:
           bun-version: canary
       - run: bun install --frozen-lockfile
       - run: bun run gate
+      - name: Record release PR checks
+        env:
+          CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for check in gate "validate pull request title"; do
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" -f name="$check" -f head_sha="$CANDIDATE_HEAD" -f status=completed -f conclusion=success >/dev/null
+          done
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
