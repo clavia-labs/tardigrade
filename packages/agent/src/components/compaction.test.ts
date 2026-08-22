@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { send, actor } from "@clavia/tardigrade-core/actor"
+import { actorFromReactors, send } from "@clavia/tardigrade-core/actor"
 import { Infer } from "../runtime/infer"
 import { composeKeys } from "@clavia/tardigrade-core/event-log"
 import { messageKeys } from "@clavia/tardigrade-core/message"
@@ -86,7 +86,7 @@ describe("the compaction measure and guard", () => {
   })
 })
 
-const mailbox = actor<Infer | EventLog>([compactionReactor], agentActorKeys)
+const mailbox = actorFromReactors<Infer | EventLog>([compactionReactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>) => {

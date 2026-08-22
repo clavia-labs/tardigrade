@@ -332,6 +332,8 @@ describe("the history projection", () => {
       projectHistory: true
     })
     expect(modeOf({ kind: "native", name: "native" })).toEqual({ kind: "native", name: "native" })
+    expect(modeOf({ kind: "local", name: "validate-once" })).toEqual({ kind: "local", name: "validate-once" })
+    expect(modeOf({ kind: "local", name: "fail-fast" })).toEqual({ kind: "local", name: "validate-once" })
     expect(modeOf({ kind: "repair", name: "repair", attempts: -1 })).toBeUndefined()
     expect(modeOf({ kind: "repair", name: "repair", attempts: 2, projectHistory: "yes" })).toBeUndefined()
     expect(modeOf({ kind: "repair", name: "retry", attempts: 2, projectHistory: true })).toBeUndefined()

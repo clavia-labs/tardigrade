@@ -23,13 +23,13 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, actor: agentOf(...) })` |
-| System instructions | An `AgentComponent` that contributes `view.system` |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, actor: actor(infer([...])) })` |
+| System instructions | `system(...)` |
 | Tool declarations and handlers | Packages mounted through `codeModeFor`, or fixed tools mounted through `toolList` |
-| `stopWhen`, maximum steps, and retry options | `budgetFor`, `agentOf` inference policy, and domain components with explicit policy values |
+| `stopWhen`, maximum steps, and retry options | `budgetFor`, `infer` policy, and domain components with explicit policy values |
 | `prepareStep` and dynamic context | A component whose `derive(log)` changes its view from recorded events |
 | Message arrays and conversation storage | One append-only event log per thread |
-| Structured output | `output(...)` plus `outputFailFast` or `outputRepairFor(...)` |
+| Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
 | Lifecycle callbacks and telemetry | Recorded events, Voyager, usage projections, and host telemetry |
 | AI SDK UI stream protocol | `makeClient().append()` plus the durable event stream from `follow()` |
 
@@ -44,7 +44,7 @@ Edit the generated `agents/agent/actor.ts`. Keep the actor name stable across bu
 
 ### Instructions and tools
 
-Move static system text into an instructions component. A prompt that depends on the conversation becomes a component that derives its system fragment from the log. Keep application data out of the prompt when a scoped package can read it on demand.
+Move static system text into `system(...)`. Pass a log projection to `system` when the prompt depends on recorded events. Keep application data out of the prompt when a scoped package can read it on demand.
 
 Use a package through `codeModeFor` when its methods are ordinary operations that the model can combine, filter, or repeat in JavaScript. This exposes one `execute` tool to the model and keeps package methods behind the code surface. Use `toolList` when a provider-visible tool call, approval step, or exact tool schema is part of the application contract.
 
@@ -54,9 +54,9 @@ Move related tools to code packages only when the decision rule above applies. M
 
 ### Policies and output
 
-State every policy that affects behavior. `budgetFor({ defaultToolBudget })` limits `execute` calls, so it is not a direct replacement for a model-step limit that counts completions and native tools. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `agentOf`, and use `compactionFor(...)` when the application needs context thresholds that differ from `DEFAULT_CONTEXT_POLICY`.
+State every policy that affects behavior. `budgetFor({ defaultToolBudget })` limits `execute` calls, so it is not a direct replacement for a model-step limit that counts completions and native tools. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compactionFor(...)` when the application needs context thresholds that differ from `DEFAULT_CONTEXT_POLICY`.
 
-Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputFailFast` when an invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
+Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
 
 ### Model binding
 

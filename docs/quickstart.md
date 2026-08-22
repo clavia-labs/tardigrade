@@ -53,7 +53,7 @@ type Reactor = (events: Event[]) => Transition[]
 ```
 ### Component
 
-A component derives a view and transitions from the same log. The view is available to a consumer such as the agent runtime, while transitions go to actor reconciliation. Either side may be empty.
+A component derives a view and transitions from the same log. A component may compose child components, interpret their combined view, and preserve their transitions. Either side may be empty.
 
 ```ts
 type Derivation<V> = {
@@ -77,7 +77,7 @@ type ViewAlgebra<V> = {
 ```
 ### Actor
 
-An actor is one event log and the reactors over it. The log is mailbox and state at once: a send lands as an event, reactors derive what it enables, fires append the results, and the new events enable the next round. Settling ends when no reactor enables a transition. `reactorOf(component)` adapts a component's transition projection to this unchanged runtime.
+An actor is one event log and the root components over it. The log is mailbox and state at once: a send lands as an event, components derive what it enables, fires append the results, and the new events enable the next round. Settling ends when no component enables a transition. `actor(...components)` adapts each root transition projection to a reactor and combines its committing keys.
 ```ts
 // An Actor is the single writer of one log and the reactors over it. The
 // platform serializes sends per actor, so appends never race
@@ -207,4 +207,3 @@ flowchart TB
   tools -->|"ToolReturned"| log
   compaction -->|"CompactionCompleted"| log
 ```
-

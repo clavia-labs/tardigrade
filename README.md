@@ -104,7 +104,7 @@ The call follows one route:
 
 1. The component adds `recent_deploys` to its derived view.
 2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The shared runtime finds the paired handler in the view that offered the call and asks it to serve against the current log.
+3. The infer root finds the paired handler in the view that offered the call and asks it to serve against the current log.
 4. Tardigrade records `ToolReturned`. The next model request includes the result.
 
 ### Compose an agent
@@ -112,33 +112,24 @@ The call follows one route:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actorOf, agentRuntime, budget, codeMode, compaction, outputFailFast, reply, type AgentComponent } from "tardie"
+import { actor, budget, codeMode, compaction, infer, outputValidateOnce, reply, system } from "tardie"
 
-const instructions: AgentComponent = {
-  name: "release-analyst.instructions",
-  derive: () => ({
-    view: {
-      system: ["You are a release analyst. Identify risky changes and recommend the safest next action."],
-      tools: [],
-      context: [],
-      output: []
-    },
-    transitions: []
-  })
-}
+const instructions = system(
+  "You are a release analyst. Identify risky changes and recommend the safest next action."
+)
 
-const releaseAnalyst = actorOf(agentRuntime(), [
+const releaseAnalyst = actor(infer([
   instructions, // the agent's system prompt
   deploys,     // recent_deploys and its paired handler
   codeMode,    // durable JavaScript execution
   budget,      // a per-turn code budget
   compaction,  // bounded model context
   reply,       // results for parent agents
-  outputFailFast // structured results without a retry fallback
-])
+  outputValidateOnce // validates one structured result without correction
+]))
 ```
 
-`actorOf` combines the components and carries their service requirements into the host type. `agentRuntime` interprets their view as inference and tool routing, while the core actor reconciles their transitions. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`infer` composes its children, preserves their transitions, and adds inference and tool routing over their final view. `actor` adapts the root component to reconciliation and carries its service requirements into the host type. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
 
 This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
 

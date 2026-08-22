@@ -73,35 +73,36 @@ Provider references:
 
 ## Dependency injection and type checks
 
-`Infer` is the injected Effect service. A model layer created by `infer(...)` provides it, and the agent runtime requests it for each attempt.
+`Infer` is the injected Effect service. A model layer created by `modelInfer(...)` provides it, and the infer root requests it for each attempt.
 
-Every agent assembly selects one output strategy component. `nativeOutput` selects provider-native output. `outputRepairFor(...)`, `outputFailFast`, and delegated fallbacks contribute an `OutputFallback` and any fallback prompt.
+Every agent assembly selects one output strategy component. `nativeOutput` selects provider-native output. `outputRepairFor(...)`, `outputValidateOnce`, and delegated fallbacks contribute an `OutputFallback` and any fallback prompt.
 
-`actorOf` combines the runtime and component requirements:
+`infer` combines its child requirements with the model loop, and `actor` carries the root requirements to the host:
 
 | Output strategy | Required model services |
 | --- | --- |
 | `nativeOutput` | `Infer` and `NativeOutputSupport` |
-| Repair, fail-fast, or delegated fallback | `Infer` |
+| Validate-once, repair, or delegated fallback | `Infer` |
 
-`infer(...)` provides `NativeOutputSupport` only when its statically known configuration declares `{ guarantee: "native", withTools: true }`.
+`modelInfer(...)` provides `NativeOutputSupport` only when its statically known configuration declares `{ guarantee: "native", withTools: true }`.
 
 ```ts
-import { actorOf, agentRuntime, codeMode, nativeOutput, outputRepairFor, reply } from "tardie"
+import { actor, codeMode, infer, nativeOutput, outputRepairFor, reply } from "tardie"
+import { infer as modelInfer } from "tardie/model"
 
-const nativeOnly = actorOf(agentRuntime(), [codeMode, reply, nativeOutput])
-const nativeModel = infer({ ...modelConfig, output: { guarantee: "native", withTools: true } })
+const nativeOnly = actor(infer([codeMode, reply, nativeOutput]))
+const nativeModel = modelInfer({ ...modelConfig, output: { guarantee: "native", withTools: true } })
 // nativeModel provides Infer and NativeOutputSupport.
 
-const portable = actorOf(agentRuntime(), [codeMode, reply, outputRepairFor({ attempts: 1 })])
-const unprovenModel = infer({ ...modelConfig, output: { guarantee: "none" } })
+const portable = actor(infer([codeMode, reply, outputRepairFor({ attempts: 1 })]))
+const unprovenModel = modelInfer({ ...modelConfig, output: { guarantee: "none" } })
 // portable requires Infer. unprovenModel provides it.
 // A host that binds nativeOnly to unprovenModel has a missing NativeOutputSupport type error.
 ```
 
 The host fails type checking when it connects a native-only agent to a statically unsupported model layer. This check covers the declared configuration and program wiring. TypeScript cannot verify a remote endpoint. A configuration widened to `ModelConfig` or read from the environment supplies no static proof until application code narrows it, so the usual dynamic host selects an explicit fallback. A `withTools: false` declaration also supplies no proof because `nativeOutput` does not encode an empty tool surface in its type. `outputPreflight` checks each actual call before the provider request. Local validation catches an endpoint that breaks its declaration after the request.
 
-Actor artifacts and server environment variables meet after TypeScript has run. The built-in server and generated actor template select `outputFailFast` explicitly. A custom artifact that selects `nativeOutput` relies on the server's per-call preflight and native capability declaration.
+Actor artifacts and server environment variables meet after TypeScript has run. The built-in server and generated actor template select `outputValidateOnce` explicitly. A custom artifact that selects `nativeOutput` relies on the server's per-call preflight and native capability declaration.
 
 TypeScript also checks the schema profile for schema literals, derives the result type, and checks the closed `OutputFallback` union. `outputRepairFor` accepts `Partial<RepairPolicy>`, so policy field names and value types are checked at the call site. Construction rejects invalid numeric bounds, invalid booleans, malformed custom fallbacks, and multiple fallback components.
 
@@ -137,18 +138,18 @@ output({
 
 `outputProfileErrors` applies the same rules to unknown values at run time. Tardigrade applies no fixed schema-depth limit to either check. The TypeScript compiler can still reach its own instantiation limit on an unusually deep literal.
 
-## Fail-fast fallback
+## Validate-once fallback
 
-`outputFailFast` asks for JSON in the fallback prompt and validates one response. A mismatch ends the turn with `output_validation_failed`. It performs no correction attempt.
+`outputValidateOnce` asks for JSON in the fallback prompt and validates one response. A mismatch ends the turn with `output_validation_failed`. It performs no correction attempt.
 
 ```ts
-import { actorOf, agentRuntime, codeModeFor, outputFailFast, reply } from "tardie"
+import { actor, codeModeFor, infer, outputValidateOnce, reply } from "tardie"
 
-const agent = actorOf(agentRuntime(), [
+const agent = actor(infer([
   codeModeFor({ packages: [] }),
   reply,
-  outputFailFast
-])
+  outputValidateOnce
+]))
 ```
 
 ## Repair fallback
@@ -156,13 +157,13 @@ const agent = actorOf(agentRuntime(), [
 `outputRepairFor` records an invalid response and asks again with the validation errors. Its policy is explicit:
 
 ```ts
-import { actorOf, agentRuntime, codeModeFor, outputRepairFor, reply } from "tardie"
+import { actor, codeModeFor, infer, outputRepairFor, reply } from "tardie"
 
-const agent = actorOf(agentRuntime(), [
+const agent = actor(infer([
   codeModeFor({ packages: [] }),
   reply,
   outputRepairFor({ attempts: 2, projectHistory: true })
-])
+]))
 ```
 
 `attempts` is the maximum number of correction requests for one turn epoch. A value of `2` permits at most three model calls: the initial call and two corrections. Exhaustion ends with `output_repairs_exhausted`. `DEFAULT_REPAIR_POLICY` provides the exported defaults, and `outputRepairFor` accepts overrides.
@@ -207,7 +208,7 @@ const houseStyle = defineOutputFallback({
 | --- | --- |
 | `output_unsupported` | The call has no usable native capability or fallback, the schema is outside the profile, or the declaration is invalid. This is detected before the provider request. |
 | `output_contract_violation` | An endpoint declared native strict output and returned a value that failed local validation. |
-| `output_validation_failed` | A fail-fast fallback returned a value that failed validation. |
+| `output_validation_failed` | A validate-once fallback returned a value that failed validation. |
 | `output_repairs_exhausted` | The repair fallback used every configured correction attempt. |
 | `refused` | The provider refused the request. |
 | `truncated` | The response reached the configured output ceiling. |

@@ -1,4 +1,4 @@
-import { actor, type Actor, type Reactor, type Transition } from "./actor"
+import { actorFromReactors, type Actor, type Reactor, type Transition } from "./actor"
 import type { Event } from "./event"
 import { composeKeys, type KeyFragment } from "./event-log"
 
@@ -23,16 +23,6 @@ export interface Component<V, R = never> {
 export interface ViewAlgebra<V> {
   readonly empty: V
   readonly combine: (left: V, right: V) => V
-}
-
-// ComponentRuntime interprets a composed view as reactors and supplies the key fragments
-// for its protocol. The reactor factory is polymorphic in component requirements because an
-// interpreter may route work whose environment is declared by the component that contributed it.
-export interface ComponentRuntime<V, R = never> {
-  readonly name: string
-  readonly algebra: ViewAlgebra<V>
-  readonly keys: ReadonlyArray<KeyFragment>
-  readonly reactors: <C>(viewOf: (log: ReadonlyArray<Event>) => V) => ReadonlyArray<Reactor<R | C>>
 }
 
 // ComponentRequirements extracts a component's environment so composition carries the union of every
@@ -78,24 +68,14 @@ export const composeComponents = <
 export const reactorOf = <V, R>(component: Component<V, R>): Reactor<R> =>
   (log) => component.derive(log).transitions
 
-// actorOf composes components under one view runtime and adapts their transitions to the
-// existing actor reconciler. Runtime keys compose beside component keys with the same collision
-// rule as composeKeys.
-export const actorOf = <
-  V,
-  RuntimeR,
-  const Cs extends ReadonlyArray<Component<V, never> | Component<V, unknown>>
->(
-  runtime: ComponentRuntime<V, RuntimeR>,
-  components: Cs
-): Actor<RuntimeR | ComponentRequirements<Cs[number]>> => {
-  type ComponentR = ComponentRequirements<Cs[number]>
-  type R = RuntimeR | ComponentR
-  const combined = composeComponents(runtime.name, runtime.algebra, components) as Component<V, R>
-  const viewOf = (log: ReadonlyArray<Event>): V => combined.derive(log).view
-  const reactors = runtime.reactors<ComponentR>(viewOf) as ReadonlyArray<Reactor<R>>
-  return actor(
-    [...reactors, reactorOf(combined)],
-    composeKeys(...runtime.keys, ...(combined.keys === undefined ? [] : [combined.keys]))
-  )
+// actor composes root components at the execution boundary. Composite components own their
+// view algebra; the actor preserves root order, adapts each transition projection to a reactor,
+// and combines every committing key fragment for reconciliation.
+export const actor = <
+  const Cs extends ReadonlyArray<Component<unknown, never> | Component<unknown, unknown>>
+>(...components: Cs): Actor<ComponentRequirements<Cs[number]>> => {
+  type R = ComponentRequirements<Cs[number]>
+  const members = components as ReadonlyArray<Component<unknown, R>>
+  const keys = members.flatMap((component) => component.keys === undefined ? [] : [component.keys])
+  return actorFromReactors(members.map(reactorOf), composeKeys(...keys))
 }

@@ -9,7 +9,7 @@ import {
   outputRepairFor,
   renderOf,
   repairFallback,
-  FAIL_FAST_FALLBACK,
+  VALIDATE_ONCE_FALLBACK,
   NATIVE_MODE
 } from "tardie"
 
@@ -132,8 +132,8 @@ describe("the output mode one attempt runs in", () => {
   test("no native capability runs the declared fallback, and fails without one", () => {
     const config = { model: "m" }
     expect(outputModeOf({ output: withRepair, tools: [] }, config)).toEqual({ mode: REPAIR })
-    const failFast = { ...contract, fallback: FAIL_FAST_FALLBACK }
-    expect(outputModeOf({ output: failFast, tools: [] }, config)).toEqual({ mode: FAIL_FAST_FALLBACK })
+    const validateOnce = { ...contract, fallback: VALIDATE_ONCE_FALLBACK }
+    expect(outputModeOf({ output: validateOnce, tools: [] }, config)).toEqual({ mode: VALIDATE_ONCE_FALLBACK })
     const selected = outputModeOf({ output: contract, tools: [] }, config)
     expect("errors" in selected && selected.errors.join(" ")).toContain("declares no structured output capability")
     const declaredNone = outputModeOf({ output: contract, tools: [] }, { model: "m", output: { guarantee: "none" } })

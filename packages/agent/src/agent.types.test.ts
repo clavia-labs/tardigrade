@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
-  actorOf,
-  agentRuntime,
+  actor,
+  infer,
   nativeOutput,
   outputRepair,
   type AgentComponent,
@@ -20,8 +20,8 @@ const empty: AgentComponent = {
   })
 }
 
-const nativeOnly = actorOf(agentRuntime(), [empty, nativeOutput])
-const repaired = actorOf(agentRuntime(), [empty, outputRepair])
+const nativeOnly = actor(infer([empty, nativeOutput]))
+const repaired = actor(infer([empty, outputRepair]))
 
 type Requirements<A> = A extends Actor<infer R> ? R : never
 type RequiresNative<A> = NativeOutputSupport extends Requirements<A> ? true : false

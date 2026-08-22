@@ -3,7 +3,7 @@ import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { actorOf } from "@clavia/tardigrade-core/component"
+import { actor } from "@clavia/tardigrade-core/component"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Router } from "@clavia/tardigrade-core/router"
@@ -11,13 +11,13 @@ import { parseActorAddress } from "@clavia/tardigrade-core/communication/address
 import { Infer } from "../turn"
 import { NativeOutputSupport } from "../runtime/infer"
 import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { agentRuntime } from "../runtime/agent"
+import { infer } from "../runtime/agent"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { reply } from "./reply"
 import { nativeOutput } from "./native-output"
 
-const toolsReactor = actorOf(agentRuntime(), [codeMode, reply, budget, compaction, nativeOutput]).reactors[1]!
+const rootReactor = actor(infer([codeMode, reply, budget, compaction, nativeOutput])).reactors[0]!
 
 // The rest of the agent's environment, which every reactor's `act` is typed against whether or not
 // it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model
@@ -126,7 +126,7 @@ describe("the tools gate reacts to BudgetExhausted", () => {
       append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
       read: Effect.sync(() => events as ReadonlyArray<Event>)
     }))
-    const derived = toolsReactor(events)
+    const derived = rootReactor(events)
     if (derived.length > 0) {
       const out = await Effect.runPromise(
         derived[0]!.act(derived[0]!.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))

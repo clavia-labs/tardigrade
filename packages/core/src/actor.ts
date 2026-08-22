@@ -55,7 +55,8 @@ export interface Actor<R = never> {
   readonly keyOf: (e: Event) => string | undefined
 }
 
-export const actor = <R = never>(
+// actorFromReactors constructs the reconciler surface from low-level transition projections.
+export const actorFromReactors = <R = never>(
   reactors: ReadonlyArray<Reactor<R>>,
   keyOf: (e: Event) => string | undefined
 ): Actor<R> => ({ reactors, keyOf })

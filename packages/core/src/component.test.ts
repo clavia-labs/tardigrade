@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { transition } from "./actor"
-import { actorOf, composeComponents, reactorOf, type Component, type ComponentRuntime, type ViewAlgebra } from "./component"
+import { actor, composeComponents, reactorOf, type Component, type ViewAlgebra } from "./component"
 import type { Event } from "./event"
 
 interface Facts {
@@ -81,24 +81,11 @@ describe("components", () => {
     )
   })
 
-  test("actorOf gives the composed view to its runtime and component work to reconciliation", () => {
-    const seen: Facts[] = []
-    const runtime: ComponentRuntime<Facts> = {
-      name: "facts",
-      algebra: facts,
-      keys: [],
-      reactors: (viewOf) => [
-        (log) => {
-          seen.push(viewOf(log))
-          return []
-        }
-      ]
-    }
-    const assembled = actorOf(runtime, [component("left", "Ready"), component("right", "Ready")])
+  test("actor adapts root components to reactors in component order", () => {
+    const assembled = actor(component("left", "Ready"), component("right", "Ready"))
     const log: ReadonlyArray<Event> = [{ type: "Ready" }]
 
     expect(assembled.reactors).toHaveLength(2)
     expect(assembled.reactors.flatMap((reactor) => reactor(log)).map((owed) => owed.key)).toEqual(["left", "right"])
-    expect(seen).toEqual([{ names: ["left", "right"] }])
   })
 })
