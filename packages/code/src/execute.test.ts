@@ -272,7 +272,8 @@ describe("the pointer's note", () => {
       docs: {
         read: {
           description: "reads a file",
-          input: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+          input: { type: "object", properties: { path: { type: "string" } }, required: ["path"] },
+          output: { type: "object", properties: { ok: { type: "boolean" } } }
         }
       },
       methods: { read: () => Effect.succeed({ ok: true }) }
@@ -289,7 +290,8 @@ describe("the pointer's note", () => {
       docs: {
         read: {
           description: "reads a ref",
-          input: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] }
+          input: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] },
+          output: { type: "object", properties: { ok: { type: "boolean" } } }
         }
       },
       methods: { read: () => Effect.succeed({ ok: true }) }

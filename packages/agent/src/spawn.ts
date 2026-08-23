@@ -69,6 +69,29 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
+const continuationHandleSchema = {
+  type: "object",
+  properties: {
+    address: { type: "string" },
+    turn: { type: "string" },
+    round: { type: "integer" },
+    request: { type: "string" }
+  },
+  required: ["address", "turn", "round", "request"]
+}
+
+const foregroundBoundarySchema = {
+  type: "object",
+  properties: {
+    output: {},
+    error: { type: "string" },
+    requesting: { type: "boolean" },
+    reason: { type: "string" },
+    amount: { type: "number" },
+    handle: continuationHandleSchema
+  }
+}
+
 // sibling is the default placement: the child is a facet of the parent's own principal, named `ag.<callId>`. The address selects the target while ThreadCreated records its lineage (spawn.test.ts, "the default placement is the host's own sibling address"; tla/runtime/Thread.tla, CreationFirst).
 const sibling = (callId: string, self: ActorId): ActorId =>
   actorIdOf(self.actor, `ag.${callId}`)
@@ -107,7 +130,14 @@ export const agentsPackage = (
           },
           required: ["text"]
         },
-        output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
+        output: {
+          type: "object",
+          properties: {
+            ...foregroundBoundarySchema.properties,
+            dispatched: { type: "boolean" },
+            callId: { type: "string" }
+          }
+        }
       },
       result: {
         description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. An answer comes back parsed when that run declared a contract, which is read from the run itself.",
@@ -116,19 +146,22 @@ export const agentsPackage = (
           properties: { id: { type: "string", description: "the callId a background run answered" } },
           required: ["id"]
         },
-        output: { type: "object", properties: { output: { description: "the agent's answer; parsed when a schema was given" } } }
+        output: {
+          type: "object",
+          properties: { output: {}, error: { type: "string" } }
+        }
       },
       continue: {
         description: "Resolve a budget request from an escalatable run. Pass the request's `handle` and a `grant` of extra tool calls; a grant of 0 or less denies, and the agent finishes with what it has. A grant draws the run's shared budget, so a spent budget denies whatever you pass. Returns the agent's next boundary: another request, or its final answer, in the same shape run() returns.",
         input: {
           type: "object",
           properties: {
-            handle: { type: "object", description: "the handle from a requesting run: where the child is, and which turn" },
+            handle: continuationHandleSchema,
             grant: { type: "integer", description: "extra tool calls to grant, a whole number of calls; 0 or less denies" }
           },
           required: ["handle", "grant"]
         },
-        output: { type: "object", properties: { output: { description: "the agent's answer, or a further request" } } }
+        output: foregroundBoundarySchema
       }
     },
     methods: {
