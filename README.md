@@ -10,10 +10,10 @@
 
 [![npm version](https://img.shields.io/npm/v/tardie.svg)](https://www.npmjs.com/package/tardie)
 
-A durable and modular agent harness built for self-improvement.
+A framework for composing intelligence, inspired by react.
 
 ### A harness made for self-improvement
-As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
+As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more declarative, composable, and easy to author.
 
 We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
 
