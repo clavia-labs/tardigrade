@@ -1,7 +1,13 @@
 import { Effect } from "effect"
 import { FileSystem } from "effect/FileSystem"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
-import { outputCapabilityOf, readConfig, type Env, type ServerConfigValue } from "@clavia/tardigrade-server/config"
+import {
+  maxConcurrentLanesOf,
+  outputCapabilityOf,
+  readConfig,
+  type Env,
+  type ServerConfigValue
+} from "@clavia/tardigrade-server/config"
 
 // Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
 // the command line, then the environment, then the file `tdg setup` wrote, then the exported
@@ -125,6 +131,7 @@ export interface ServerFlags {
   readonly db?: string | undefined
   readonly actors?: string | undefined
   readonly actorData?: string | undefined
+  readonly maxConcurrentLanes?: number | undefined
 }
 
 // resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
@@ -147,6 +154,7 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     db: text(flags.db) ?? base.db,
     actors: text(flags.actors) ?? base.actors,
     actorData: text(flags.actorData) ?? base.actorData,
+    maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
     token: undefined,
     model: {
       baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),

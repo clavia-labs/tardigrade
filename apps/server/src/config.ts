@@ -1,4 +1,10 @@
 import { Context, Layer } from "effect"
+import {
+  DEFAULT_MAX_CONCURRENT_LANES,
+  driverPolicyOf
+} from "@clavia/tardigrade-host/driver"
+
+export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
 // The server's configuration is the environment and nothing else (apps-server-spec.md,
 // "Conventions"). One operator, one store, one process, so there is no config file to reconcile
@@ -46,6 +52,7 @@ export interface ServerConfigValue {
   readonly db: string
   readonly actors: string
   readonly actorData: string
+  readonly maxConcurrentLanes: number
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
   // makes a bearer token required on every route except /healthz (http.ts).
   readonly token: string | undefined
@@ -102,12 +109,28 @@ const port = (env: Env): number => {
   return value
 }
 
+// maxConcurrentLanesOf validates the host-wide count used by configuration flags and environment
+// resolution.
+export const maxConcurrentLanesOf = (value: number): number =>
+  driverPolicyOf({ maxConcurrentLanes: value }).maxConcurrentLanes
+
+const maxConcurrentLanes = (env: Env): number => {
+  const raw = text(env, "TARDIGRADE_MAX_CONCURRENT_LANES")
+  if (raw === undefined) return DEFAULT_MAX_CONCURRENT_LANES
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`TARDIGRADE_MAX_CONCURRENT_LANES must be a positive integer, got ${JSON.stringify(raw)}`)
+  }
+  return maxConcurrentLanesOf(value)
+}
+
 // readConfig resolves the environment into the value the process runs on.
 export const readConfig = (env: Env): ServerConfigValue => ({
   port: port(env),
   db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
   actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
   actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
+  maxConcurrentLanes: maxConcurrentLanes(env),
   token: text(env, "TARDIGRADE_TOKEN"),
   model: {
     baseUrl: text(env, "MODEL_BASE_URL"),

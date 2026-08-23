@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
@@ -18,6 +18,14 @@ import { threadCreated } from "@clavia/tardigrade-core/thread"
 const RALLY = 6
 
 const str = (v: unknown): string => String(v ?? "")
+
+const signal = (): { readonly promise: Promise<void>; readonly send: () => void } => {
+  let send!: () => void
+  const promise = new Promise<void>((resolve) => {
+    send = resolve
+  })
+  return { promise, send }
+}
 
 // The rally's key table: the inbound by id (msg:), the answer by the inbound it answers (an:).
 const rallyKeys = (e: Event): string | undefined => {
@@ -69,6 +77,56 @@ const rally = () => {
 }
 
 describe("the host", () => {
+  test("settles distinct lanes up to the configured capacity", async () => {
+    const release = signal()
+    const twoStarted = signal()
+    let active = 0
+    let peak = 0
+    let started = 0
+    const actor: Actor = {
+      keyOf: (event) => event.type === "Done" ? `done:${str((event as { id?: unknown }).id)}` : undefined,
+      reactors: [(events) =>
+        events
+          .filter((event) => event.type === "MessageReceived")
+          .map((event) => {
+            const id = str((event as { id?: unknown }).id)
+            return transition({
+              key: `done:${id}`,
+              input: id,
+              act: (input: string) => Effect.promise(async () => {
+                active += 1
+                peak = Math.max(peak, active)
+                started += 1
+                if (started === 2) twoStarted.send()
+                await release.promise
+                active -= 1
+                return [{ type: "Done", id: input, at: 1 } as Event]
+              })
+            })
+          })]
+    }
+    const host = createHost({
+      actorFor: () => actor,
+      driver: { maxConcurrentLanes: 2 },
+      keyOf: actor.keyOf
+    })
+    for (const lane of ["a", "b", "c"]) {
+      host.commitRoot(`mem:${lane}`, { type: "MessageReceived", id: lane, at: 0 } as Event)
+    }
+
+    const driving = host.drive()
+    await twoStarted.promise
+    expect(active).toBe(2)
+    expect(host.resting()).toBe(false)
+    release.send()
+    await driving
+
+    expect(peak).toBe(2)
+    expect(host.resting()).toBe(true)
+    expect(["a", "b", "c"].map((lane) => host.read(lane).some((event) => event.type === "Done")))
+      .toEqual([true, true, true])
+  })
+
   test("one serve drives the whole rally to quiescence", async () => {
     const host = rally()
     host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)

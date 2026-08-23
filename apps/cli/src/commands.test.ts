@@ -163,6 +163,7 @@ describe("parsing", () => {
     expect(devHelp).toContain("--open")
     expect(devHelp).toContain("--no-open")
     expect(devHelp).toContain("--min-port")
+    expect(devHelp).toContain("--max-concurrent-lanes")
     const pushHelp = (await drive(["push", "--help"])).lines.join("\n")
     expect(pushHelp).toContain("--target")
     expect(pushHelp).toContain("local")

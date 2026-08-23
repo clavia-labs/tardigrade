@@ -276,6 +276,10 @@ export const devCommand = Command.make("dev", {
     Flag.withDescription("The directory holding pushed actor databases. Defaults to TARDIGRADE_ACTOR_DATA."),
     Flag.optional
   ),
+  maxConcurrentLanes: Flag.integer("max-concurrent-lanes").pipe(
+    Flag.withDescription("The maximum actor lanes settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_LANES."),
+    Flag.optional
+  ),
   actorRefreshMillis: Flag.integer("actor-refresh-ms").pipe(
     Flag.withDescription("Milliseconds to wait after a local actor change before refreshing the registry."),
     Flag.withDefault(DEFAULT_ACTOR_REFRESH_MILLIS)
@@ -297,7 +301,8 @@ export const devCommand = Command.make("dev", {
         port: Option.getOrUndefined(flags.port),
         db: stated(flags.db),
         actors: stated(flags.actors),
-        actorData: stated(flags.actorData)
+        actorData: stated(flags.actorData),
+        maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
       }, cli.env, file),
       catch: userErrorOf
     })
@@ -320,7 +325,8 @@ export const devCommand = Command.make("dev", {
             port: Option.getOrUndefined(flags.port),
             db: stated(flags.db),
             actors: stated(flags.actors),
-            actorData: stated(flags.actorData)
+            actorData: stated(flags.actorData),
+            maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
           }, cli.env, written),
           catch: userErrorOf
         })
