@@ -102,7 +102,7 @@ export const agentsPackage = (
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             model: { type: "string", enum: ["haiku", "sonnet", "opus"], description: "which model runs the agent; default sonnet" },
-            budget: { type: "number", description: "max tool calls before the agent must answer; keeps a research agent bounded" },
+            budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
           },
           required: ["text"]
@@ -124,7 +124,7 @@ export const agentsPackage = (
           type: "object",
           properties: {
             handle: { type: "object", description: "the handle from a requesting run: where the child is, and which turn" },
-            grant: { type: "number", description: "extra tool calls to grant; 0 or less denies" }
+            grant: { type: "integer", description: "extra tool calls to grant, a whole number of calls; 0 or less denies" }
           },
           required: ["handle", "grant"]
         },
@@ -134,7 +134,7 @@ export const agentsPackage = (
     methods: {
       run: (args, ctx) =>
         Effect.gen(function* () {
-          // The three cross-lane privileges, read where the work happens: deliver, identity,
+          // The three cross-lane privileges, read where the work happens: send, identity,
           // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
           const source = yield* Self
@@ -163,9 +163,17 @@ export const agentsPackage = (
           // The model name rides the brief's envelope: the child's log records the choice, so its
           // Infer resolves it from trajectory and replay agrees by construction.
           const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" ? a.model : undefined
-          // The tool-call budget rides the brief like the model does; the child's budget reactor reads
-          // it from its own trajectory. A run without a stated budget wants the per-agent default.
-          const want = typeof a?.budget === "number" && a.budget > 0 ? Math.floor(a.budget) : defaultBudget
+          // asked is the tool-call budget carried on the brief. It accepts a whole positive count
+          // because rounding could turn a requested child into an exhausted run (spawn.test.ts,
+          // "a fractional budget"). An absent budget takes the per-agent default.
+          const asked = a?.budget
+          let want = defaultBudget
+          if (asked !== undefined) {
+            if (typeof asked !== "number" || !Number.isInteger(asked) || asked < 1) {
+              return { error: `agents.run takes budget as a whole number of tool calls, at least 1; got ${JSON.stringify(asked)}` }
+            }
+            want = asked
+          }
           // Draw from the run's single budget before the child spawns, so the whole tree is bounded by
           // it whatever the fan-out. A partial budget grants what is left; a spent budget grants 0, and
           // then no agent spawns, which is how the tree stops. The draw is keyed on this call's id, so
@@ -248,7 +256,7 @@ export const agentsPackage = (
           if (reply !== undefined) return shape(answerOf(reply), address, id, declared.contract)
           return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(id, 0) })
         }),
-      // Resume a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
+      // Continue a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
       // or a spent run budget, denies and the child finishes. The grant draws the run's budget like a
       // fresh spawn does, so escalation stays inside the same whole-run bound. Returns the child's next
       // boundary, another request or its final answer, in the same shape `run` returns.
@@ -260,10 +268,16 @@ export const agentsPackage = (
           const handle = a?.handle as { address?: unknown; turn?: unknown; round?: unknown; request?: unknown } | undefined
           const address = String(handle?.address ?? "")
           const turn = String(handle?.turn ?? "")
-          const round = Number(handle?.round)
-          const request = String(handle?.request ?? "")
-          if (address === "" || turn === "" || !Number.isSafeInteger(round) || round < 0 || request === "") {
+          const round = handle?.round
+          const request = typeof handle?.request === "string" ? handle.request : ""
+          if (address === "" || turn === "" || typeof round !== "number" || !Number.isSafeInteger(round) || round < 0 || request === "") {
             return { error: "agents.continue needs { handle, grant }; the handle comes from a run that is requesting" }
+          }
+          // grant accepts a whole count of calls because rounding could deny a request the parent
+          // tried to grant (spawn.test.ts, "a fractional grant").
+          const grant = a?.grant
+          if (typeof grant !== "number" || !Number.isInteger(grant)) {
+            return { error: `agents.continue takes grant as a whole number of tool calls; got ${JSON.stringify(grant)}` }
           }
           // The contract comes from the child's own brief, like `result`, so a rewritten handle
           // cannot make an answer structured that never was.
@@ -272,8 +286,7 @@ export const agentsPackage = (
           if ("error" in declared) return declared
           const already = yield* awaitedBoundary(source, turn, round + 1)
           if (already !== undefined) return shape(answerOf(already), address, turn, declared.contract)
-          const want = typeof a?.grant === "number" ? Math.floor(a.grant) : 0
-          const granted = want > 0 ? yield* Effect.promise(() => reserve(ctx.callId, want)) : 0
+          const granted = grant > 0 ? yield* Effect.promise(() => reserve(ctx.callId, grant)) : 0
           const at = yield* Clock.currentTimeMillis
           const decision = granted > 0
             ? budgetGranted({ amount: granted, callId: request, turn, at })

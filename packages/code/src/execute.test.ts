@@ -232,6 +232,72 @@ describe("the spill bound", () => {
   })
 })
 
+describe("the pointer's note", () => {
+  // The note is policy (store.ts, SpillPolicy): every bounded result tells the model how to read
+  // the value back, so the words must name a call the mounted scope answers.
+  const drive = (log: Event[], reactor: typeof codeReactor) =>
+    Effect.runPromise(
+      Effect.gen(function* () {
+        yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        return yield* Effect.flatMap(EventLog, (l) => l.read)
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
+        ReadonlyArray<Event>
+      >
+    )
+  const bigLog = (): Event[] => [
+    { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+    { type: "CodeDispatched", execId: "e1", code: 'return "q".repeat(60)', turn: "t1", at: 2 }
+  ]
+
+  test("a scope with no workspace package gets a note with no verb", async () => {
+    const events = await drive(bigLog(), codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }, []))
+    const settle = events.find((e) => e.type === "CodeSettled") as { note?: string }
+    expect(settle.note).toContain("ref 'e1.result'")
+    expect(settle.note).not.toContain("workspace.read")
+  })
+
+  test("a stated note overrides the derived one", async () => {
+    const events = await drive(
+      bigLog(),
+      codeReactorFor({ spill: { spillBytes: 10, previewChars: 4, note: (ref) => `files.open({ref: '${ref}'})` } }, [])
+    )
+    const settle = events.find((e) => e.type === "CodeSettled") as { note?: string }
+    expect(settle.note).toBe("files.open({ref: 'e1.result'})")
+  })
+
+  test("a workspace whose read takes no ref refuses at construction", () => {
+    const shadow: Package = definePackage({
+      name: "workspace",
+      description: "a path-only reader standing where the spill reader is expected",
+      docs: {
+        read: {
+          description: "reads a file",
+          input: { type: "object", properties: { path: { type: "string" } }, required: ["path"] }
+        }
+      },
+      methods: { read: () => Effect.succeed({ ok: true }) }
+    })
+    expect(() => codeReactorFor({}, [shadow])).toThrow(/spill pointer/)
+    // A stated note lifts the refusal: the consumer then owns the words.
+    expect(() => codeReactorFor({ spill: { note: (ref) => ref } }, [shadow])).not.toThrow()
+  })
+
+  test("a workspace without the advertised grep refuses at construction", () => {
+    const shadow: Package = definePackage({
+      name: "workspace",
+      description: "a reader without search",
+      docs: {
+        read: {
+          description: "reads a ref",
+          input: { type: "object", properties: { ref: { type: "string" } }, required: ["ref"] }
+        }
+      },
+      methods: { read: () => Effect.succeed({ ok: true }) }
+    })
+    expect(() => codeReactorFor({}, [shadow])).toThrow(/workspace\.grep/)
+  })
+})
+
 describe("a package's requirements ride its type", () => {
   // A package that reaches for a service names it in its type, and the reactor that runs the
   // package declares the same requirement, so the environment that drives the lane must provide

@@ -8,7 +8,15 @@ import { annotationsOf, type Package, type PackageRequirements } from "./package
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, type Bindings } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
-import { hydrate, spill as spillTo, spillPointer, spillPolicyOf, type SpillPolicy } from "./store"
+import {
+  BARE_SPILL_NOTE,
+  hydrate,
+  spill as spillTo,
+  spillPointer,
+  spillPolicyOf,
+  WORKSPACE_SPILL_NOTE,
+  type SpillPolicy
+} from "./store"
 import { callId as callIdOf } from "./ids"
 import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
@@ -196,7 +204,7 @@ const executeRecorded = <R = never>(
                 yield* log.append([
                   packageReturned({
                     callId,
-                    ...spillPointer(callId, json.length, json.slice(0, spill.previewChars)),
+                    ...spillPointer(callId, json.length, json.slice(0, spill.previewChars), spill.note),
                     ...stamp,
                     at: answeredAt
                   })
@@ -265,7 +273,13 @@ const executeRecorded = <R = never>(
         const ref = `${execId}.result`
         yield* Effect.orDie(spillTo(ref, json))
         return [
-          codeSettled({ execId, ...spillPointer(ref, json.length, json.slice(0, spill.previewChars)), ...logs, ...stamp, at })
+          codeSettled({
+            execId,
+            ...spillPointer(ref, json.length, json.slice(0, spill.previewChars), spill.note),
+            ...logs,
+            ...stamp,
+            at
+          })
         ]
       }
       return [codeSettled({ execId, result: outcome.result, ...logs, ...stamp, at })]
@@ -302,9 +316,29 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     if (named.has(pkg.name)) throw new Error(`package "${pkg.name}" declared twice`)
     named.add(pkg.name)
   }
+  // codeReactorFor refuses a default pointer note unless the workspace package answers every
+  // advertised call. A scope with no workspace package gets the bare note. A stated note is the
+  // consumer's contract (execute.test.ts, "the pointer's note").
+  const workspace = (packages as ReadonlyArray<Package<unknown>>).find((pkg) => pkg.name === "workspace")
+  if (policy.spill?.note === undefined && workspace !== undefined) {
+    const answers = (method: string, fields: ReadonlyArray<string>): boolean => {
+      const properties = (workspace.docs?.[method]?.input as
+        | { properties?: Readonly<Record<string, unknown>> }
+        | undefined)?.properties
+      return typeof workspace.methods[method] === "function" && (properties === undefined || fields.every((field) => properties[field] !== undefined))
+    }
+    if (!answers("read", ["ref"]) || !answers("grep", ["pattern", "ref"])) {
+      throw new Error(
+        'package "workspace" cannot answer the spill pointer: a bounded result tells the model `workspace.read({ref})` and `workspace.grep({pattern, ref})`. Provide both methods with matching input contracts, mount the package under another name, or state the pointer through the spill policy note (CodePolicy.spill.note).'
+      )
+    }
+  }
   type R = PackageRequirements<P[number]>
   const mounted = packages as unknown as ReadonlyArray<Package<R>>
-  const spill = spillPolicyOf(policy.spill)
+  const spill = spillPolicyOf({
+    ...policy.spill,
+    note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
+  })
   return (events) => {
     const owed = workOwed(events)
     if (owed === undefined) return []

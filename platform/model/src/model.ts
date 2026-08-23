@@ -78,6 +78,10 @@ export const DEFAULT_STREAM_BOUNDS: StreamBounds = {
   totalMs: 300_000
 }
 
+// MAX_TIMER_DELAY_MS is the largest delay Bun accepts without clamping it to 1ms
+// (model.test.ts, "stream bounds").
+export const MAX_TIMER_DELAY_MS = 2_147_483_647
+
 const bounded = (stream: AsyncIterable<StreamChunk>, bounds: StreamBounds): AsyncIterable<StreamChunk> => ({
   async *[Symbol.asyncIterator]() {
     const startedAt = Date.now()
@@ -623,6 +627,13 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
     idleMs: config.stream?.idleMs ?? DEFAULT_STREAM_BOUNDS.idleMs,
     totalMs: config.stream?.totalMs ?? DEFAULT_STREAM_BOUNDS.totalMs
+  }
+  // bounds rejects values Bun would clamp to 1ms, which would report healthy providers as timed
+  // out (model.test.ts, "stream bounds").
+  for (const [name, ms] of Object.entries(bounds)) {
+    if (!Number.isFinite(ms) || ms <= 0 || ms > MAX_TIMER_DELAY_MS) {
+      throw new Error(`stream ${name} must be a finite positive count of milliseconds no greater than ${MAX_TIMER_DELAY_MS}; got ${ms}`)
+    }
   }
   const throttleDelays = config.throttleRetryDelaysMs ?? DEFAULT_THROTTLE_RETRY_DELAYS_MS
   const retryAfterJitterMs = config.retryAfterJitterMs ?? DEFAULT_RETRY_AFTER_JITTER_MS

@@ -65,27 +65,41 @@ export const refs = (): Effect.Effect<
 > => Effect.map(Effect.flatMap(KeyValueStore.KeyValueStore, (store) => store.get(WORKSPACE_REFS)), decodeRefs)
 
 // SpillPolicy is the bound and what a bounded value shows: a JSON value longer than `spillBytes`
-// goes to the store and the event keeps a pointer with the first `previewChars` of it. The reactor
-// that applies it takes an override (execute.ts, codeReactorFor), because the right bound is the
-// consumer's context window and storage, not this module's guess.
+// goes to the store and the event keeps a pointer with the first `previewChars` of it. `note`
+// renders the pointer's call to action. The reactor that applies the policy takes an override
+// (execute.ts, codeReactorFor), because the consumer owns the context window, storage, and verbs
+// in scope (execute.test.ts, "the pointer's note").
 export interface SpillPolicy {
   readonly spillBytes: number
   readonly previewChars: number
+  readonly note: (ref: string) => string
 }
 
-export const DEFAULT_SPILL_POLICY: SpillPolicy = { spillBytes: 8_192, previewChars: 500 }
+// WORKSPACE_SPILL_NOTE names the workspace package's read and grep verbs (workspace.ts).
+// codeReactorFor refuses a scope where this note would lie
+// (execute.ts; workspace.test.ts, "the default pointer note names verbs this package answers").
+export const WORKSPACE_SPILL_NOTE = (ref: string): string =>
+  `full value: workspace.read({ref: '${ref}'}), search it: workspace.grep({pattern, ref: '${ref}'})`
+
+// BARE_SPILL_NOTE states the ref and no verb, for a scope that mounts no workspace package: a
+// pointer must never name a call the scope cannot answer (execute.test.ts, "the pointer's note").
+export const BARE_SPILL_NOTE = (ref: string): string =>
+  `full value stored under ref '${ref}'; this scope mounts no reader for it, so work from the preview`
+
+export const DEFAULT_SPILL_POLICY: SpillPolicy = { spillBytes: 8_192, previewChars: 500, note: WORKSPACE_SPILL_NOTE }
 
 export const spillPolicyOf = (policy: Partial<SpillPolicy> = {}): SpillPolicy => ({
   spillBytes: policy.spillBytes ?? DEFAULT_SPILL_POLICY.spillBytes,
-  previewChars: policy.previewChars ?? DEFAULT_SPILL_POLICY.previewChars
+  previewChars: policy.previewChars ?? DEFAULT_SPILL_POLICY.previewChars,
+  note: policy.note ?? DEFAULT_SPILL_POLICY.note
 })
 
 // spillPointer is the pointer a bounded value leaves behind. `size` is the whole value's length, so
 // the reader sees how much the preview left out. The field is named `tmp` because it is the
 // recorded event's own shape, which replay and every consumer read by that name.
-export const spillPointer = (ref: string, size: number, preview: string) => ({
+export const spillPointer = (ref: string, size: number, preview: string, note: (ref: string) => string = WORKSPACE_SPILL_NOTE) => ({
   tmp: ref,
   size,
   preview,
-  note: `full value: workspace.read({ref: '${ref}'}), search it: workspace.grep({pattern, ref: '${ref}'})`
+  note: note(ref)
 })
