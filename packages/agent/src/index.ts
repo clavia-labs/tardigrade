@@ -85,6 +85,7 @@ export {
   sumUsage,
   ZERO_USAGE,
   type Usage,
+  type ProviderUsageReport,
   type CostSource,
   type ModelPricing
 } from "./usage"

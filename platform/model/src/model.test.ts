@@ -26,6 +26,7 @@ import {
   modelIdOf,
   infer,
   retryAfterMsOf,
+  tapConverseUsage,
   tapStopReason,
   throttleDelayMs
 } from "./model"
@@ -219,6 +220,27 @@ describe("the Converse output surface", () => {
     for await (const event of tapStopReason(events, stops)) seen.push(event)
     expect(seen).toHaveLength(2)
     expect(stops.stopReason).toBe("guardrail_intervened")
+  })
+
+  test("the Converse usage tap keeps the raw provider metrics", async () => {
+    const metrics = {
+      inputTokens: 40,
+      outputTokens: 8,
+      totalTokens: 48,
+      cacheReadInputTokens: 24,
+      cacheWriteInputTokens: 4
+    }
+    const reported: { usage?: unknown } = {}
+    const events = {
+      async *[Symbol.asyncIterator]() {
+        yield { messageStart: { role: "assistant" } }
+        yield { metadata: { usage: metrics } }
+      }
+    }
+    const seen: Array<unknown> = []
+    for await (const event of tapConverseUsage(events, reported)) seen.push(event)
+    expect(seen).toHaveLength(2)
+    expect(reported.usage).toEqual(metrics)
   })
 })
 
@@ -522,6 +544,14 @@ describe("infer: cost provenance", () => {
   const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
 
   test("a billed cost is provider, an omitted cost is table or unknown", async () => {
+    const rawUsage = {
+      prompt_tokens: 10,
+      completion_tokens: 4,
+      total_tokens: 14,
+      prompt_tokens_details: { cached_tokens: 4 },
+      completion_tokens_details: { reasoning_tokens: 2 },
+      cost: 0
+    }
     const billed = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
@@ -530,8 +560,9 @@ describe("infer: cost provenance", () => {
             apiKey: "k",
             model: "test-model",
             provider: "openai",
-            pricing: table,
-            fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4, cost: 0 })])) as unknown as typeof globalThis.fetch
+            pricing: { ...table, cachedPromptUsdPerToken: 0.0001 },
+            fetch: (async () =>
+              sse([{ ...okText[0], usage: null }, okText[1], usageChunk(rawUsage)])) as unknown as typeof globalThis.fetch
           })
         )
       ) as Effect.Effect<Action>
@@ -542,10 +573,16 @@ describe("infer: cost provenance", () => {
       usage: {
         promptTokens: 10,
         completionTokens: 4,
+        totalTokens: 14,
+        cachedPromptTokens: 4,
+        reasoningTokens: 2,
         costUsd: 0,
         costSource: "provider",
+        reportedCostUsd: 0,
+        estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
         provider: "openai",
-        model: "test-model"
+        model: "test-model",
+        providerReports: [{ provider: "openai", model: "test-model", providerSpecific: rawUsage }]
       }
     })
 
@@ -568,8 +605,16 @@ describe("infer: cost provenance", () => {
       completionTokens: 4,
       costUsd: 10 * 0.001 + 4 * 0.002,
       costSource: "table",
+      estimatedCostUsd: 10 * 0.001 + 4 * 0.002,
       provider: "openai",
-      model: "test-model"
+      model: "test-model",
+      providerReports: [
+        {
+          provider: "openai",
+          model: "test-model",
+          providerSpecific: { prompt_tokens: 10, completion_tokens: 4 }
+        }
+      ]
     })
 
     const unknown = await Effect.runPromise(
@@ -585,6 +630,41 @@ describe("infer: cost provenance", () => {
       ) as Effect.Effect<Action>
     )
     expect(unknown).toMatchObject({ kind: "complete", output: "ok" })
+  })
+
+  test("multiple wire usage objects remain one lossless physical report", async () => {
+    const detailed = {
+      prompt_tokens: 10,
+      completion_tokens: 4,
+      total_tokens: 14,
+      prompt_tokens_details: { cached_tokens: 4 },
+      completion_tokens_details: { reasoning_tokens: 2 }
+    }
+    const billed = { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14, cost: 0 }
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
+      ).pipe(
+        Effect.provide(
+          infer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "test-model",
+            provider: "openai",
+            pricing: { ...table, cachedPromptUsdPerToken: 0.0001 },
+            fetch: (async () =>
+              sse([...okText, usageChunk(detailed), usageChunk(billed)])) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(action.usage).toMatchObject({
+      cachedPromptTokens: 4,
+      reasoningTokens: 2,
+      reportedCostUsd: 0,
+      estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
+      providerReports: [{ provider: "openai", model: "test-model", providerSpecific: [detailed, billed] }]
+    })
   })
 })
 
@@ -907,7 +987,25 @@ describe("truncation", () => {
     expect(action).toMatchObject({
       kind: "complete",
       output: "the whole answer",
-      usage: { promptTokens: 20, completionTokens: 32772, costUsd: 6, costSource: "provider" }
+      usage: {
+        promptTokens: 20,
+        completionTokens: 32772,
+        costUsd: 6,
+        costSource: "provider",
+        reportedCostUsd: 6,
+        providerReports: [
+          {
+            provider: "openai",
+            model: "m",
+            providerSpecific: { prompt_tokens: 10, completion_tokens: 32768, cost: 5 }
+          },
+          {
+            provider: "openai",
+            model: "m",
+            providerSpecific: { prompt_tokens: 10, completion_tokens: 4, cost: 1 }
+          }
+        ]
+      }
     })
   })
 

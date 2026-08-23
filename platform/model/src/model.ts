@@ -1,5 +1,13 @@
 import { Clock, Effect, Layer, Random } from "effect"
-import { StreamProcessor, type ModelMessage, type ProcessorResult, type StreamChunk, type Tool, type ToolCall } from "@tanstack/ai"
+import {
+  StreamProcessor,
+  type ModelMessage,
+  type ProcessorResult,
+  type StreamChunk,
+  type TokenUsage,
+  type Tool,
+  type ToolCall
+} from "@tanstack/ai"
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
@@ -214,9 +222,8 @@ export interface ModelConfig {
   // promise: a turn that declares a contract fails before spend unless its assembly provides a
   // fallback. A provider name never supplies this value (src/output.ts, capabilityOf).
   readonly output?: OutputCapability
-  // What the model costs, when a catalog or a caller has said. A billed figure from the
-  // provider is preferred; this table fills only a cost the provider omitted
-  // (packages/agent/src/usage.ts, priced). Cached prompt tokens price at the full input rate.
+  // pricing projects an estimate beside any provider-reported bill. Reported cache buckets
+  // require their own stated rates (packages/agent/src/usage.ts, priced).
   readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
@@ -388,7 +395,8 @@ export const bedrockAdapter = (
   bounds: StreamBounds,
   output?: OutputRequest,
   mode: OutputMode = NATIVE_MODE,
-  stops: { stopReason?: string } = {}
+  stops: { stopReason?: string } = {},
+  reported: { usage?: unknown } = {}
 ) => {
   const handler = bedrockHandler(config, bounds)
   const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
@@ -416,7 +424,8 @@ export const bedrockAdapter = (
       return input
     }
     protected override async sendStream(input: BedrockRuntime.ConverseStreamCommandInput) {
-      return tapStopReason(await super.sendStream(input), stops)
+      const stream = await super.sendStream(input)
+      return tapStopReason(tapConverseUsage(stream, reported), stops)
     }
   })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
 }
@@ -462,6 +471,7 @@ type BodyReader = {
 // configured stamp: it is observed, never declared.
 interface Wire {
   readonly usage?: unknown
+  readonly usageReports?: ReadonlyArray<unknown>
   readonly provider?: string
   readonly model?: string
   // A structured-output refusal arrives as `choices[].delta.refusal` with an ordinary `stop`
@@ -495,7 +505,7 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
   const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
     const refusal = refusalOf(parsed as never)
     return {
-      ...(parsed.usage === undefined ? {} : { usage: parsed.usage }),
+      ...(parsed.usage === undefined || parsed.usage === null ? {} : { usage: parsed.usage }),
       ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
       ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
       ...(refusal === undefined ? {} : { refusal })
@@ -507,10 +517,13 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     if (payload === "" || payload === "[DONE]") continue
     try {
       const next = wireOf(JSON.parse(payload) as never)
+      const usageReports =
+        next.usage === undefined ? last.usageReports : [...(last.usageReports ?? []), next.usage]
       // Refusal deltas arrive in pieces, like content: each chunk carries the next fragment.
       last = {
         ...last,
         ...next,
+        ...(usageReports === undefined ? {} : { usageReports }),
         ...(next.refusal === undefined ? {} : { refusal: `${last.refusal ?? ""}${next.refusal}` })
       }
     } catch {
@@ -520,7 +533,8 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
   if (Object.keys(last).length > 0) return last
   try {
     const wire = wireOf(JSON.parse(text) as never)
-    return Object.keys(wire).length > 0 ? wire : undefined
+    if (Object.keys(wire).length === 0) return undefined
+    return wire.usage === undefined ? wire : { ...wire, usageReports: [wire.usage] }
   } catch {
     return undefined
   }
@@ -547,11 +561,11 @@ const withCapture = (
 
 const tapTokens = (
   stream: AsyncIterable<StreamChunk>,
-  into: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } }
+  into: { tokens?: TokenUsage }
 ): AsyncIterable<StreamChunk> => ({
   async *[Symbol.asyncIterator]() {
     for await (const chunk of stream) {
-      const tokens = (chunk as { usage?: { promptTokens: number; completionTokens: number; cost?: number } }).usage
+      const tokens = (chunk as { usage?: TokenUsage }).usage
       if (tokens !== undefined) into.tokens = tokens
       yield chunk
     }
@@ -594,6 +608,21 @@ export const tapStopReason = <T>(
   }
 })
 
+// tapConverseUsage preserves the SDK's provider metrics before the shared adapter drops cache
+// details (model.test.ts, "the Converse usage tap keeps the raw provider metrics").
+export const tapConverseUsage = <T>(
+  stream: AsyncIterable<T>,
+  into: { usage?: unknown }
+): AsyncIterable<T> => ({
+  async *[Symbol.asyncIterator]() {
+    for await (const event of stream) {
+      const usage = (event as { metadata?: { usage?: unknown } }).metadata?.usage
+      if (usage !== undefined) into.usage = usage
+      yield event
+    }
+  }
+})
+
 const usageOn = (e: unknown): Usage | undefined =>
   e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
 
@@ -614,8 +643,15 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
   return {
     promptTokens: summed.promptTokens,
     completionTokens: summed.completionTokens,
+    ...(summed.totalTokens === undefined ? {} : { totalTokens: summed.totalTokens }),
+    ...(summed.cachedPromptTokens === undefined ? {} : { cachedPromptTokens: summed.cachedPromptTokens }),
+    ...(summed.cacheWritePromptTokens === undefined
+      ? {}
+      : { cacheWritePromptTokens: summed.cacheWritePromptTokens }),
+    ...(summed.reasoningTokens === undefined ? {} : { reasoningTokens: summed.reasoningTokens }),
     ...(summed.provider === undefined ? {} : { provider: summed.provider }),
-    ...(summed.model === undefined ? {} : { model: summed.model })
+    ...(summed.model === undefined ? {} : { model: summed.model }),
+    ...(summed.providerReports === undefined ? {} : { providerReports: summed.providerReports })
   }
 }
 
@@ -658,12 +694,13 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
       promise: Promise.resolve(undefined)
     }
-    const held: { tokens?: { readonly promptTokens: number; readonly completionTokens: number; readonly cost?: number } } = {}
+    const reported: { usage?: unknown } = {}
+    const held: { tokens?: TokenUsage } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
     const stops: { stopReason?: string } = {}
     const adapter =
       config.provider === "bedrock"
-        ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops)
+        ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops, reported)
         : openaiCompatibleText(config.model, {
             name: "tardigrade",
             baseURL: config.baseUrl,
@@ -703,11 +740,21 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
       const wire = await sink.promise
       // Wire-reported provenance wins: a router that names the upstream it served from records
       // the true split; the configured stamp covers a wire that stays silent.
-      const usage = usageFrom([wire?.usage, held.tokens], config.pricing, {
-        ...stampOf(config),
-        ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
-        ...(wire?.model === undefined ? {} : { model: wire.model })
-      })
+      const providerMetrics = wire?.usageReports ?? (reported.usage === undefined ? [] : [reported.usage])
+      const usage = usageFrom(
+        [...providerMetrics, held.tokens],
+        config.pricing,
+        {
+          ...stampOf(config),
+          ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
+          ...(wire?.model === undefined ? {} : { model: wire.model })
+        },
+        providerMetrics.length === 0
+          ? undefined
+          : providerMetrics.length === 1
+            ? providerMetrics[0]
+            : providerMetrics
+      )
       return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
@@ -882,11 +929,26 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
         }
         yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
         yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+        if (action.usage.cachedPromptTokens !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.cache_read.input_tokens", action.usage.cachedPromptTokens)
+        }
+        if (action.usage.cacheWritePromptTokens !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.cache_creation.input_tokens", action.usage.cacheWritePromptTokens)
+        }
+        if (action.usage.reasoningTokens !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.reasoning.output_tokens", action.usage.reasoningTokens)
+        }
         if (action.usage.costUsd !== undefined) {
           yield* Effect.annotateCurrentSpan("gen_ai.usage.cost", action.usage.costUsd)
           if (action.usage.costSource !== undefined) {
             yield* Effect.annotateCurrentSpan("gen_ai.usage.cost_source", action.usage.costSource)
           }
+        }
+        if (action.usage.reportedCostUsd !== undefined) {
+          yield* Effect.annotateCurrentSpan("tardigrade.usage.reported_cost", action.usage.reportedCostUsd)
+        }
+        if (action.usage.estimatedCostUsd !== undefined) {
+          yield* Effect.annotateCurrentSpan("tardigrade.usage.estimated_cost", action.usage.estimatedCostUsd)
         }
       }
       return action
