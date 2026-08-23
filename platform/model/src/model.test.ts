@@ -1033,3 +1033,19 @@ describe("declared limits", () => {
     expect(timeout).toBe(600_000)
   })
 })
+
+describe("stream bounds", () => {
+  test("an invalid bound refuses at construction", () => {
+    // A value outside Bun's timer range would clamp to 1ms and read as provider trouble
+    // (model.ts, infer).
+    expect(() =>
+      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { totalMs: Infinity } })
+    ).toThrow(/finite positive/)
+    expect(() =>
+      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { idleMs: 0 } })
+    ).toThrow(/finite positive/)
+    expect(() =>
+      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { firstChunkMs: 2_147_483_648 } })
+    ).toThrow(/2147483647/)
+  })
+})

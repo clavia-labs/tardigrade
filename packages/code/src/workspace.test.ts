@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import { spill } from "./store"
+import { spill, WORKSPACE_SPILL_NOTE } from "./store"
 import { DEFAULT_WORKSPACE_POLICY, WORKSPACE_SQL_DESCRIPTION, workspacePackage, type SqlRunner } from "./workspace"
 
 // The model's view of the store: a bounded slice of one value, a search across all of them, and a
@@ -154,5 +154,21 @@ describe("backend independence", () => {
     for (const args of [{ pattern: "NEEDLE" }, { pattern: '"note":"wideé"' }]) {
       expect(await call(pkg, "grep", args, other)).toEqual(await call(pkg, "grep", args, memory))
     }
+  })
+})
+
+describe("the pointer's pairing", () => {
+  test("the default pointer note names verbs this package answers", () => {
+    // The note every bounded result carries (store.ts, WORKSPACE_SPILL_NOTE) names this
+    // package's own verbs by ref; a drift between the two sends the model to a call the scope
+    // cannot answer (execute.ts, codeReactorFor).
+    const note = WORKSPACE_SPILL_NOTE("e1.result")
+    const pkg = workspacePackage()
+    expect(note).toContain("workspace.read({ref: 'e1.result'})")
+    expect(note).toContain("workspace.grep(")
+    expect(typeof pkg.methods["read"]).toBe("function")
+    expect(typeof pkg.methods["grep"]).toBe("function")
+    const declared = (pkg.docs?.["read"]?.input as { properties?: Record<string, unknown> } | undefined)?.properties
+    expect(declared?.["ref"]).toBeDefined()
   })
 })

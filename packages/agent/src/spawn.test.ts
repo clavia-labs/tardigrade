@@ -124,6 +124,36 @@ describe("agentsPackage", () => {
     )
     expect(answer).toEqual({ error: "nope" })
   })
+
+  test("a fractional budget is refused with its unit, never floored to zero", async () => {
+    // The budget is a count of tool calls. 0.7 floored would draw zero and read as an exhausted
+    // run, so the unit error goes back to the caller before any draw or delivery (spawn.ts, run).
+    const sent: Array<Sent> = []
+    const draws: number[] = []
+    const pkg = agentsPackage({
+      reserve: async (_id, want) => {
+        draws.push(want)
+        return want
+      }
+    })
+    const answer = await Effect.runPromise(
+      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(answer).toEqual({ error: "agents.run takes budget as a whole number of tool calls, at least 1; got 0.7" })
+    expect(draws.length).toBe(0)
+    expect(sent.length).toBe(0)
+  })
+
+  test("a fractional grant is refused, never floored into a denial", async () => {
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage()
+    const answer = await Effect.runPromise(
+      pkg.methods.continue!({ handle: { address: "mem:ag.c9", turn: "c9" }, grant: 0.5 }, { callId: "c10" }).pipe(
+        Effect.provide(env("mem:ag.root", sent))
+      )
+    )
+    expect(answer).toEqual({ error: "agents.continue takes grant as a whole number of tool calls; got 0.5" })
+  })
 })
 
 // The contracts a host declares for its children. A name resolves to one of these; anything else
