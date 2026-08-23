@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { createHost } from "../host"
 
@@ -26,13 +27,13 @@ describe("host providers", () => {
     await Effect.runPromise(
       Effect.gen(function* () {
         const router = yield* Router
-        yield* router.deliver(
+        yield* router.send(envelopeOf(
           {
             source: { actor: "support", thread: "incident" },
             target: { provider: "telegram-support", chat: "-100123", topic: 42 }
           },
           message
-        )
+        ))
       }).pipe(Effect.provide(host.router))
     )
 
@@ -47,13 +48,13 @@ describe("host providers", () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
         const router = yield* Router
-        yield* router.deliver(
+        yield* router.send(envelopeOf(
           {
             source: { actor: "support", thread: "incident" },
             target: { provider: "missing" }
           },
           message
-        )
+        ))
       }).pipe(Effect.provide(host.router))
     )
 

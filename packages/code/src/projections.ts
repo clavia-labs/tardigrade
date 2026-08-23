@@ -1,8 +1,8 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 
 // The code lane's projections: pure functions over the event SET, the TypeScript half of
-// tla/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
-// tla/Projection.tla); order survives only as data an event carries. The alphabet these read
+// tla/runtime/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
+// tla/runtime/Projection.tla); order survives only as data an event carries. The alphabet these read
 // is six events: CodeDispatched, PackageCalled, PackageReturned, BlockedOn, MessageReceived,
 // CodeSettled. "Running" is runtime-local to the driver, never derived from the log. "Parked"
 // is never a state, only evidence: a `BlockedOn { callId, awaiting }` says one attempt observed

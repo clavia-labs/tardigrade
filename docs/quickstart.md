@@ -34,7 +34,7 @@ A transition defines a valid state change. On a high level, it takes in state an
 
 ```ts
 // key and input are projections of the event set, so a retried fire is the
-// same work, absorbed by its key (tla/Reactor.tla, CommitOne). act may be
+// same work, absorbed by its key (tla/runtime/Reconcile.tla, CommitOne). act may be
 // nondeterministic.
 type Transition<T, E extends Event = Event> = {
   key: string
@@ -47,7 +47,7 @@ type Transition<T, E extends Event = Event> = {
 A reactor derives the transitions the log enables. It takes the event log and returns the transitions whose work is due; the runtime fires each transition whose key the log does not record and appends the results, keyed record last.
 ```ts
 // A Reactor derives the transitions the log enables. It must ignore event
-// order (tla/Projection.tla, ViewFaithful). The runtime fires each key the
+// order (tla/runtime/Projection.tla, ViewFaithful). The runtime fires each key the
 // log does not record and appends the results, keyed record last.
 type Reactor = (events: Event[]) => Transition[]
 ```
@@ -81,7 +81,7 @@ An actor is one event log and the root components over it. The log is mailbox an
 ```ts
 // An Actor is the single writer of one log and the reactors over it. The
 // platform serializes sends per actor, so appends never race
-// (tla/Projection.tla).
+// (tla/runtime/Projection.tla).
 type Actor = { reactors: Reactor[] }
 
 // send appends one event and settles the actor.

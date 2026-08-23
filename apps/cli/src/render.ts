@@ -44,10 +44,11 @@ export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
   threads.length === 0
     ? "no threads"
     : table(
-      ["THREAD", "STATUS", "EVENTS", "LAST", "PARENT"],
+      ["THREAD", "STATUS", "DEPTH", "EVENTS", "LAST", "PARENT"],
       threads.map((thread) => [
         thread.id,
         thread.status,
+        String(thread.depth),
         String(thread.events),
         timeOf(thread.lastAt),
         thread.parent ?? ABSENT

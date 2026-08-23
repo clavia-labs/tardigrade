@@ -1,14 +1,12 @@
 import { Context, Data, Effect } from "effect"
-import {
-  linkedEventOf,
-  type Delivery,
-  type LinkedEvent
-} from "@clavia/tardigrade-core/communication/delivery"
+import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 
 // IngressActor commits one canonical inbound and schedules its actor driver.
 export interface IngressActor {
-  readonly commit: (thread: string, event: LinkedEvent<unknown, MessageReceived>) => Effect.Effect<void>
+  readonly commit: (envelope: ActorEnvelope<MessageReceived>) => Effect.Effect<void>
   readonly schedule: Effect.Effect<void>
 }
 
@@ -21,49 +19,45 @@ export class ActorUnavailable extends Data.TaggedError("ActorUnavailable")<{
 export class Ingress extends Context.Service<
   Ingress,
   {
-    readonly commit: (deliveries: ReadonlyArray<Delivery>) => Effect.Effect<void, ActorUnavailable>
-    readonly schedule: (deliveries: ReadonlyArray<Delivery>) => Effect.Effect<void, ActorUnavailable>
+    readonly commit: (envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>>) => Effect.Effect<void, ActorUnavailable>
+    readonly schedule: (envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>>) => Effect.Effect<void, ActorUnavailable>
   }
 >()("tardigrade/host/Ingress") {}
 
-// ingressFrom binds actor names to host doors. It resolves the complete batch before writing, so an unavailable actor leaves every delivery in that batch uncommitted.
+// ingressFrom binds actor identities to host doors through a Directory. It resolves the complete batch before writing, so an unavailable actor leaves every envelope in that batch uncommitted.
 export const ingressFrom = (
-  actorFor: (actor: string) => IngressActor | undefined
+  directory: Directory<ActorId, IngressActor>
 ): Context.Service.Shape<typeof Ingress> => {
-  const resolve = (deliveries: ReadonlyArray<Delivery>) =>
+  const resolve = (envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>>) =>
     Effect.gen(function* () {
-      const routed: Array<{ readonly delivery: Delivery; readonly target: IngressActor }> = []
-      for (const delivery of deliveries) {
-        const target = actorFor(delivery.link.target.actor)
+      const routed: Array<{ readonly envelope: ActorEnvelope<MessageReceived>; readonly target: IngressActor }> = []
+      for (const envelope of envelopes) {
+        const target = yield* directory.resolve(envelope.link.target)
         if (target === undefined) {
-          return yield* new ActorUnavailable({ actor: delivery.link.target.actor })
+          return yield* new ActorUnavailable({ actor: envelope.link.target.actor })
         }
-        routed.push({ delivery, target })
+        routed.push({ envelope, target })
       }
       return routed
     })
 
   return {
-    commit: (deliveries) =>
-      Effect.flatMap(resolve(deliveries), (routed) =>
+    commit: (envelopes) =>
+      Effect.flatMap(resolve(envelopes), (routed) =>
         Effect.forEach(
           routed,
-          ({ delivery, target }) =>
-            target.commit(
-              delivery.link.target.thread,
-              linkedEventOf(delivery as Delivery<unknown, MessageReceived>)
-            ),
+          ({ envelope, target }) => target.commit(envelope),
           { discard: true }
         )
       ),
-    schedule: (deliveries) =>
-      Effect.flatMap(resolve(deliveries), (routed) => {
+    schedule: (envelopes) =>
+      Effect.flatMap(resolve(envelopes), (routed) => {
         const scheduled = new Set<string>()
         return Effect.forEach(
           routed,
-          ({ delivery, target }) => {
-            if (scheduled.has(delivery.link.target.actor)) return Effect.void
-            scheduled.add(delivery.link.target.actor)
+          ({ envelope, target }) => {
+            if (scheduled.has(envelope.link.target.actor)) return Effect.void
+            scheduled.add(envelope.link.target.actor)
             return target.schedule
           },
           { discard: true }

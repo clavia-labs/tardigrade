@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { Event } from "../event"
 import type { KeyFragment } from "../event-log"
 
-// MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's brief, and a reply coming home are all this event. id is the dedup key everywhere. source names the arriving connection; chat and sender are provider coordinates; from is the delivering actor's address; replyTo is where the terminal reports; input is a run's instance input; data is the provider's structured record. sender and from are separate namespaces on purpose: sender authored the message in the world, from delivered it here, receivers route by from and criteria match sender, so neither can impersonate the other.
+// MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's brief, and a reply coming home are all this event. id is the dedup key everywhere. source names the arriving connection; chat and sender are provider coordinates; from is the delivering actor's address; input is a run's instance input; data is the provider's structured record. sender and from are separate namespaces on purpose: sender authored the message in the world, from delivered it here, receivers route by from and criteria match sender, so neither can impersonate the other.
 export const MessageReceived = Schema.Struct({
   type: Schema.Literal("MessageReceived"),
   id: Schema.String,
@@ -11,11 +11,10 @@ export const MessageReceived = Schema.Struct({
   chat: Schema.optional(Schema.String),
   sender: Schema.optional(Schema.String),
   from: Schema.optional(Schema.String),
-  replyTo: Schema.optional(Schema.String),
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
   // outcome marks a terminal report whose reaction turn settles locally without sending a reply (packages/agent/src/components/reply.test.ts, "terminal reports cannot start reply chains").
-  outcome: Schema.optional(Schema.Literals(["completed", "failed"])),
+  outcome: Schema.optional(Schema.Literals(["completed", "failed", "requesting"])),
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
   at: Schema.Finite
@@ -46,18 +45,25 @@ export const messageReceived = (fields: {
 export const REPLY_SUFFIX = ".reply"
 export const replyId = (id: string): string => `${id}${REPLY_SUFFIX}`
 
-// replyEvent constructs the typed terminal report sent to a caller. The stable reply id makes redelivery absorb at the receiver (tla/Link.tla, AtMostOnce).
-export const replyEvent = (args: {
-  readonly id: string
+// boundaryId identifies one reported boundary of a turn. Round zero preserves the ordinary reply convention.
+export const boundaryId = (turn: string, round: number): string =>
+  round === 0 ? replyId(turn) : `${replyId(turn)}.${round}`
+
+// boundaryEvent constructs one typed boundary report sent to a caller through a reversed link.
+export const boundaryEvent = (args: {
+  readonly turn: string
+  readonly round: number
   readonly text: string
-  readonly outcome: "completed" | "failed"
+  readonly outcome: "completed" | "failed" | "requesting"
   readonly from: string
+  readonly data?: unknown
   readonly at: number
 }): MessageReceived => ({
   type: "MessageReceived",
-  id: replyId(args.id),
+  id: boundaryId(args.turn, args.round),
   text: args.text,
   outcome: args.outcome,
   from: args.from,
+  ...(args.data === undefined ? {} : { data: args.data }),
   at: args.at
 })

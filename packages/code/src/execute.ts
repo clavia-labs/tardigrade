@@ -20,7 +20,7 @@ import {
 import { callId as callIdOf } from "./ids"
 import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
-// The code reactor: durable execution of one body (tla/Reconcile.tla is the model;
+// The code reactor: durable execution of one body (tla/runtime/Reconcile.tla is the model;
 // ./projections.ts derives the owed work). An attempt re-runs the body from the top; committed
 // PackageCalled/PackageReturned pairs replay without touching the world, and the first
 // uncommitted call runs live. A crash between a call's effect and its append re-runs the call:
@@ -29,7 +29,7 @@ import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events
 // Park is host-internal control flow, never an event. An awaiting call whose reply has not
 // landed fails host-side with Park; the body sees a promise that never settles, and once every
 // in-flight call has committed or parked, the attempt closes and appends nothing. A reply
-// landing at any moment re-raises the owed work (tla/Reconcile.tla, NoVoid); the next attempt
+// landing at any moment re-raises the owed work (tla/runtime/Reconcile.tla, NoVoid); the next attempt
 // replays the pairs and harvests what is home.
 
 // CallOutcome is one call's outcome from the proxy's own effect: parked (the body's promise
@@ -87,7 +87,7 @@ const executeRecorded = <R = never>(
               // The replay guard: a recorded call at this position must be THIS call. Positional
               // ids are sound only for a deterministic body; a drifted body's question must
               // never receive the recorded answer to a different one, so a mismatch dies loud
-              // instead (tla/Replay.tla: Trusting fails RightAnswer, Guarded holds it and
+              // instead (tla/runtime/Replay.tla: Trusting fails RightAnswer, Guarded holds it and
               // refusal is drift's only reachable outcome).
               const sent = events.find(
                 (e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === callId
@@ -248,7 +248,7 @@ const executeRecorded = <R = never>(
     // appends keyed, absorbable events.
     if (drifted !== undefined) {
       // The replay guard fired: the body asked a question the log did not record at this
-      // position. Loud, never wrong (tla/Replay.tla, RightAnswer).
+      // position. Loud, never wrong (tla/runtime/Replay.tla, RightAnswer).
       yield* Fiber.interrupt(fiber)
       return [codeSettled({ execId, error: drifted, ...stamp, at })]
     }

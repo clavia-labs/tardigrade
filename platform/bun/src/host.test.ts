@@ -7,6 +7,10 @@ import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { threadCreated } from "@clavia/tardigrade-core/thread"
 import { hydrate, refs, spill } from "@clavia/tardigrade-code/store"
 
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/workspace"
@@ -54,6 +58,8 @@ const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
+const created = (lane: string, at = 0): Event => threadCreated({ actor: "bun", thread: lane }, undefined, at)
+
 const options = (path: string): BunHostOptions<never> => ({
   log: path,
   actorFor: (lane) => (lane === "echo" ? echo : undefined),
@@ -70,30 +76,30 @@ describe("the bun host", () => {
 
   test("delivers, settles, and a keyed redelivery absorbs", async () => {
     const h = await createBunHost(options(freshPath()))
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
-    expect((await h.read("echo")).map((e) => e.type)).toEqual(["MessageReceived", "Done"])
+    expect((await h.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     // The same keyed event again: absorbed inside the append transaction, the log does not grow.
-    await h.deliver("bun:echo", { type: "Done", id: "m1", at: 2 } as Event)
+    await h.commitRoot("bun:echo", { type: "Done", id: "m1", at: 2 } as Event)
     await h.drive()
-    expect(await h.read("echo")).toHaveLength(2)
+    expect(await h.read("echo")).toHaveLength(3)
     // The same message id again: receiver dedup.
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
-    expect(await h.read("echo")).toHaveLength(2)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
+    expect(await h.read("echo")).toHaveLength(3)
     expect(await h.resting()).toBe(true)
     await h.close()
   })
 
   test("refuses an unkeyed cross-lane event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
-    expect(h.deliver("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-lane event")
+    expect(h.commitRoot("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-lane event")
     await h.close()
   })
 
   test("a reopened database keeps the log byte for byte", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
-    await first.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await first.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await first.drive()
     const before = await first.read("echo")
     await first.close()
@@ -109,13 +115,13 @@ describe("the bun host", () => {
     const first = await createBunHost(options(path))
     // The message lands; the process dies before any drive. The owed Done exists only as a
     // derivation over the surviving log.
-    await first.seed("echo", [{ type: "MessageReceived", id: "m9", text: "go", at: 1 } as Event])
+    await first.seed("echo", [created("echo"), { type: "MessageReceived", id: "m9", text: "go", at: 1 } as Event])
     expect(await first.resting()).toBe(false)
     await first.close()
 
     const second = await createBunHost(options(path))
     await second.recover()
-    expect((await second.read("echo")).map((e) => e.type)).toEqual(["MessageReceived", "Done"])
+    expect((await second.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     expect(await second.resting()).toBe(true)
     await second.close()
   })
@@ -123,8 +129,8 @@ describe("the bun host", () => {
   test("lanes names every lane the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(await h.lanes()).toEqual([])
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
-    await h.seed("other", [{ type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.seed("other", [created("other"), { type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
     await h.drive()
     expect(await h.lanes()).toEqual(["echo", "other"])
     await h.close()
@@ -132,13 +138,46 @@ describe("the bun host", () => {
 
   test("a batch appends atomically: a mid-batch key collision absorbs that row only", async () => {
     const h = await createBunHost(options(freshPath()))
-    await h.seed("echo", [{ type: "Done", id: "a", at: 1 } as Event])
+    await h.seed("echo", [created("echo"), { type: "Done", id: "a", at: 1 } as Event])
     await h.seed("echo", [
       { type: "Done", id: "b", at: 2 } as Event,
       { type: "Done", id: "a", at: 3 } as Event,
       { type: "Done", id: "c", at: 4 } as Event
     ])
-    expect((await h.read("echo")).map((e) => String((e as { id?: unknown }).id))).toEqual(["a", "b", "c"])
+    expect((await h.read("echo")).filter((e) => e.type === "Done").map((e) => String((e as { id?: unknown }).id))).toEqual(["a", "b", "c"])
+    await h.close()
+  })
+
+  test("a child creation and its first delivery commit together", async () => {
+    const h = await createBunHost(options(freshPath()))
+    const parent = parseActorId("bun:parent")
+    const target = parseActorId("bun:child")
+    const first = envelopeOf(
+      linkOf(parent, target),
+      { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
+      { parent, depth: 1 }
+    )
+    await h.commit(first)
+    await h.commit(first)
+    expect(await h.read("child")).toEqual([
+      threadCreated(target, { parent, depth: 1 }, 7),
+      expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
+    ])
+    await expect(h.commit(envelopeOf(
+      linkOf(parseActorId("bun:other"), target),
+      { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
+      { parent: parseActorId("bun:other"), depth: 1 }
+    ))).rejects.toThrow("already has different lineage")
+    await h.close()
+  })
+
+  test("a refused initial actor delivery leaves no partial creation", async () => {
+    const h = await createBunHost(options(freshPath()))
+    await expect(h.commit(envelopeOf(
+      linkOf(parseActorId("bun:parent"), parseActorId("bun:child")),
+      { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
+    ))).rejects.toThrow("must carry lineage")
+    expect(await h.read("child")).toEqual([])
     await h.close()
   })
 })
@@ -190,7 +229,7 @@ describe("the durable workspace", () => {
       keyOf: workspaceKeyOf,
       actorFor: (lane) => (lane === "ws" ? spiller : undefined)
     })
-    await first.seed("ws", [{ type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
+    await first.seed("ws", [created("ws"), { type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
     await first.wake("ws")
     await first.close()
 
@@ -215,7 +254,7 @@ describe("the durable workspace", () => {
       workspace: bunWorkspace("elsewhere"),
       actorFor: (lane) => (lane === "ws" ? spiller : undefined)
     })
-    await first.seed("ws", [{ type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
+    await first.seed("ws", [created("ws"), { type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
     await first.wake("ws")
     await first.close()
 
@@ -235,7 +274,7 @@ describe("the durable workspace", () => {
 })
 
 describe("telemetry seam", () => {
-  test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
+  test("spans flow to a supplied tracer: commit and the transition fire, keyed", async () => {
     const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
     const linked: Array<{ name: string; traceId: string }> = []
     const capture = Layer.succeed(Tracer.Tracer)(
@@ -265,35 +304,35 @@ describe("telemetry seam", () => {
       })
     )
     const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
-    expect(names.some((s) => s.name === "deliver" && s.type === "MessageReceived")).toBe(true)
+    expect(names.some((s) => s.name === "commit" && s.type === "MessageReceived")).toBe(true)
     expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
-    // The cross-lane seam: the delivered event carries the deliver span's context, and the
+    // The cross-lane seam: the committed event carries the commit span's context, and the
     // fire links back to it: one business event, one trace.
-    const row = (await h.read("echo"))[0] as { traceparent?: string }
+    const row = (await h.read("echo")).find((event) => event.type === "MessageReceived") as { traceparent?: string }
     expect(row.traceparent).toMatch(/^00-t-s-01$/)
     expect(linked.some((l) => l.name === "transition.fire" && l.traceId === "t")).toBe(true)
     await h.close()
   })
 
-  test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the deliver", async () => {
+  test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the commit", async () => {
     const path = join(dir, `spans-${n++}.ndjson`)
     const h = await createBunHost({ ...options(freshPath()), telemetry: fileTelemetry(path) })
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     await h.close()
     const rows = readFileSync(path, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { SpanName: string; TraceId: string; Duration: number; StatusCode: string; SpanAttributes: Record<string, string>; Links: Array<{ TraceId: string }> })
-    const delivered = rows.find((r) => r.SpanName === "deliver")
+    const committed = rows.find((r) => r.SpanName === "commit")
     const fired = rows.find((r) => r.SpanName === "transition.fire")
-    expect(delivered?.SpanAttributes["type"]).toBe("MessageReceived")
+    expect(committed?.SpanAttributes["type"]).toBe("MessageReceived")
     expect(fired?.SpanAttributes["outcome"]).toBe("committed")
     expect(fired?.StatusCode).toBe("Ok")
     expect(fired?.Duration).toBeGreaterThan(0)
-    expect(fired?.Links[0]?.TraceId).toBe(delivered?.TraceId)
+    expect(fired?.Links[0]?.TraceId).toBe(committed?.TraceId)
   })
 })
 
@@ -348,7 +387,8 @@ const asked = async (
   host: BunHost,
   id: string
 ): Promise<{ methods: ReadonlyArray<string>; doc: boolean; sqlDoc: string; answers: ReadonlyArray<Answer> }> => {
-  await host.seed("ws", [{ type: "MessageReceived", id, text: "ask", at: 1 } as Event])
+  const creation = (await host.read("ws")).length === 0 ? [created("ws")] : []
+  await host.seed("ws", [...creation, { type: "MessageReceived", id, text: "ask", at: 1 } as Event])
   await host.wake("ws")
   const found = (await host.read("ws")).find((e) => e.type === "Answered" && String((e as { id?: unknown }).id) === id)
   return found as unknown as {
@@ -505,9 +545,10 @@ describe("the observe privilege", () => {
       actorFor: (lane) =>
         lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined
     })
-    await h.seed("other", [{ type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    await h.seed("other", [created("other"), { type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    await h.seed("watch", [created("watch")])
     await h.wake("watch")
-    expect((await h.read("watch")).map((e) => [e.type, (e as { n?: unknown }).n])).toEqual([["Saw", 1]])
+    expect((await h.read("watch")).at(-1)).toEqual({ type: "Saw", n: 2, at: 1 })
     await h.close()
   })
 })

@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ActorAddress, ProviderAddress } from "@clavia/tardigrade-core/communication/address"
+import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import {
   channelOf,
@@ -14,8 +14,8 @@ export const TELEGRAM_SECRET_TOKEN_HEADER = "x-telegram-bot-api-secret-token"
 const SECRET_TOKEN = /^[A-Za-z0-9_-]{1,256}$/
 type TelegramFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
-// TelegramAddress identifies one chat and optional forum topic under a configured Telegram provider.
-export interface TelegramAddress extends ProviderAddress {
+// TelegramEndpoint identifies one chat and optional forum topic under a configured Telegram provider.
+export interface TelegramEndpoint extends ProviderEndpoint {
   readonly chat: string
   readonly topic?: number
   readonly sender?: string
@@ -26,7 +26,7 @@ export interface TelegramOptions {
   readonly name: string
   readonly token: string
   readonly secretToken: string
-  readonly target: (source: TelegramAddress) => ActorAddress
+  readonly target: (source: TelegramEndpoint) => ActorId
   readonly apiBaseUrl?: string
   readonly fetch?: TelegramFetch
 }
@@ -54,12 +54,12 @@ const constantTimeEqual = (left: string, right: string): boolean => {
   return difference === 0
 }
 
-const response = (status: number): ProviderReceipt<TelegramAddress> => ({
+const response = (status: number): ProviderReceipt<TelegramEndpoint> => ({
   inbound: [],
   response: { status }
 })
 
-const isTelegramAddress = (address: ProviderAddress): address is TelegramAddress =>
+const isTelegramEndpoint = (address: ProviderEndpoint): address is TelegramEndpoint =>
   "chat" in address &&
   typeof address.chat === "string" &&
   (!("topic" in address) || address.topic === undefined || typeof address.topic === "number")
@@ -68,7 +68,7 @@ const parseUpdate = (
   options: TelegramOptions,
   body: Uint8Array,
   receivedAt: number
-): ProviderReceipt<TelegramAddress> => {
+): ProviderReceipt<TelegramEndpoint> => {
   let update: TelegramUpdate
   try {
     update = JSON.parse(new TextDecoder().decode(body)) as TelegramUpdate
@@ -85,7 +85,7 @@ const parseUpdate = (
   ) {
     return response(200)
   }
-  const source: TelegramAddress = {
+  const source: TelegramEndpoint = {
     provider: options.name,
     chat: String(message.chat.id),
     ...(typeof message.message_thread_id === "number" ? { topic: message.message_thread_id } : {}),
@@ -107,7 +107,7 @@ const parseUpdate = (
   return { inbound: [{ source, event }], response: { status: 200 } }
 }
 
-const providerOf = (options: TelegramOptions): ChannelProvider<TelegramAddress> => {
+const providerOf = (options: TelegramOptions): ChannelProvider<TelegramEndpoint> => {
   const fetch = options.fetch ?? globalThis.fetch
   const apiBaseUrl = (options.apiBaseUrl ?? TELEGRAM_API_BASE_URL).replace(/\/$/, "")
   return {
@@ -121,7 +121,7 @@ const providerOf = (options: TelegramOptions): ChannelProvider<TelegramAddress> 
       return Effect.succeed(parseUpdate(options, request.body, request.receivedAt))
     },
     send: (target, message) => {
-      if (target.provider !== options.name || !isTelegramAddress(target)) {
+      if (target.provider !== options.name || !isTelegramEndpoint(target)) {
         return Effect.die(new Error(`invalid address for provider: ${options.name}`))
       }
       return Effect.promise(async () => {
@@ -148,7 +148,7 @@ const providerOf = (options: TelegramOptions): ChannelProvider<TelegramAddress> 
 }
 
 // telegram constructs a bidirectional channel whose persisted source address is sufficient for later replies.
-export const telegram = (options: TelegramOptions): Channel<TelegramAddress> => {
+export const telegram = (options: TelegramOptions): Channel<TelegramEndpoint> => {
   if (options.name.length === 0) throw new Error("Telegram provider name cannot be empty")
   if (options.token.length === 0) throw new Error("Telegram bot token cannot be empty")
   if (!SECRET_TOKEN.test(options.secretToken)) {

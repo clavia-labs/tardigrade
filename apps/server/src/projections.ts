@@ -1,4 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
+import { formatActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { REPLY_SUFFIX } from "@clavia/tardigrade-core/message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/projections"
 import { boundaryOf } from "tardie/boundary"
@@ -70,16 +72,16 @@ export const statusOf = (events: ReadonlyArray<Event>): ThreadStatus => {
 export interface ThreadSummary {
   readonly id: string
   readonly parent?: string
+  readonly depth: number
   readonly events: number
   readonly lastAt?: number
   readonly status: ThreadStatus
 }
 
-// summaryOf projects one log into its row. `parent` is a parameter because a child's own log holds
-// no evidence of its parent: the claim is a `PackageCalled` in the PARENT's log, so parentage is a
-// fact of the forest and only `treeOf` can see it (projections.test.ts, "a summary carries the
-// parent the caller supplies").
+// summaryOf projects one created thread log into its row. The child's creation event supplies depth, while treeOf resolves its parent address to the API id in this listing.
 export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: string): ThreadSummary => {
+  const created = threadCreatedOf(events)
+  if (created === undefined) throw new Error(`thread ${JSON.stringify(id)} has no ThreadCreated first event`)
   let lastAt: number | undefined
   for (const event of events) {
     const at = numberAt(event)
@@ -88,6 +90,7 @@ export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: str
   return {
     id,
     ...(parent === undefined ? {} : { parent }),
+    depth: created.depth,
     events: events.length,
     ...(lastAt === undefined ? {} : { lastAt }),
     status: statusOf(events)
@@ -109,23 +112,22 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
   return Number.POSITIVE_INFINITY
 }
 
-// treeOf builds the spawn forest. X is the parent of Y when X's log records a `PackageCalled` whose
-// `callId` is Y's id: a spawn names its child by the call's own id and places it at `ag.<callId>`
-// (packages/agent/src/spawn.ts, `sibling`), so the recorded call IS the claim, and no id parsing is
-// needed to find it. Ids the map does not hold are calls to other packages and claim nothing
-// (projections.test.ts, "a package call to a non-thread claims nothing").
-//
-// Roots are the threads no log claims, sorted by first event time; children sort the same way, so
-// two runs of the same forest render identically (projections.test.ts, "three levels, two roots").
+// treeOf builds the forest from each log's ThreadCreated record. Address lookup resolves parentage without reading a lane grammar or correlating package call ids (tla/runtime/Thread.tla, AcceptedMatchesCreated).
 export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): ReadonlyArray<ThreadNode> => {
+  const idsByAddress = new Map<string, string>()
+  for (const [id, events] of logs) {
+    const created = threadCreatedOf(events)
+    if (created === undefined) throw new Error(`thread ${JSON.stringify(id)} has no ThreadCreated first event`)
+    const address = formatActorId(created.address)
+    if (idsByAddress.has(address)) throw new Error(`thread address ${JSON.stringify(address)} appears in more than one log`)
+    idsByAddress.set(address, id)
+  }
   const parents = new Map<string, string>()
   for (const [id, events] of logs) {
-    for (const event of events) {
-      if (event.type !== "PackageCalled") continue
-      const callId = String((event as { callId?: unknown }).callId ?? "")
-      if (callId === id || !logs.has(callId) || parents.has(callId)) continue
-      parents.set(callId, id)
-    }
+    const parentAddress = threadCreatedOf(events)!.parent
+    if (parentAddress === undefined) continue
+    const parent = idsByAddress.get(formatActorId(parentAddress))
+    if (parent !== undefined && parent !== id) parents.set(id, parent)
   }
   const order = (a: string, b: string): number =>
     (firstAt(logs.get(a) ?? []) - firstAt(logs.get(b) ?? [])) || (a < b ? -1 : a > b ? 1 : 0)

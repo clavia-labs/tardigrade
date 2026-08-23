@@ -8,7 +8,7 @@ import type { Event } from "./event"
 //
 // It exists only where logs share a store, a placement-2 privilege: a host whose lanes are
 // remote provides a Facets that proxies the read or refuses it, and the caller sees the same
-// shape either way. Beside Router (deliver) and Self (identity) it completes the cross-lane
+// shape either way. Beside Router (send) and Self (identity) it completes the cross-lane
 // vocabulary, so a package that watches a sibling names a service instead of closing over a
 // host (facets.test.ts, "Facets reads a sibling lane by name").
 export class Facets extends Context.Service<

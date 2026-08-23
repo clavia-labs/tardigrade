@@ -1,5 +1,6 @@
 import { Effect } from "effect"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { Ingress, type ActorUnavailable } from "./ingress"
 
 // WebhookRequest is the transport-neutral input captured from one HTTP request. Headers use lowercase names, body keeps the original bytes, and receivedAt is the host's acceptance time.
@@ -11,7 +12,7 @@ export interface WebhookRequest {
   readonly receivedAt: number
 }
 
-// WebhookResponse is the HTTP value a transport sends after ingress accepts the derived deliveries.
+// WebhookResponse is the HTTP value a transport sends after ingress accepts the derived envelopes.
 export interface WebhookResponse {
   readonly status: number
   readonly headers?: Readonly<Record<string, string>>
@@ -20,11 +21,11 @@ export interface WebhookResponse {
 
 // WebhookResult pairs the provider response with every durable delivery derived from the request.
 export interface WebhookResult {
-  readonly deliveries: ReadonlyArray<Delivery>
+  readonly envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>>
   readonly response: WebhookResponse
 }
 
-// Webhook verifies and translates one captured provider request. Expected provider refusals and challenges return no deliveries.
+// Webhook verifies and translates one captured provider request. Expected provider refusals and challenges return no envelopes.
 export interface Webhook<R = never, E = never> {
   readonly name: string
   readonly receive: (request: WebhookRequest) => Effect.Effect<WebhookResult, E, R>
@@ -38,7 +39,7 @@ export const handleWebhook = <R, E>(
   Effect.gen(function* () {
     const result = yield* webhook.receive(request)
     const ingress = yield* Ingress
-    yield* ingress.commit(result.deliveries)
-    yield* ingress.schedule(result.deliveries)
+    yield* ingress.commit(result.envelopes)
+    yield* ingress.schedule(result.envelopes)
     return result.response
   })

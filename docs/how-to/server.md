@@ -33,7 +33,7 @@ curl localhost:4242/v1/actors/default/threads/inv-81/turns
 # [{"turn":"m1","status":"completed","output":"…","epoch":0}]
 ```
 
-Appending is how a thread is created, messaged, and intervened in. The id is the dedup key, so sending the same event twice changes nothing.
+Appending is how a root thread is created, messaged, and intervened in. The host atomically records `ThreadCreated` before the first delivered event. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming. The message id is the dedup key, so sending the same message twice changes nothing.
 
 Reads are projections of the log, so `?at=<seq>` answers as of that point in history.
 

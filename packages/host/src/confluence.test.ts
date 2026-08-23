@@ -5,8 +5,9 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost, type HostOptions } from "./host"
-import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 
 // The driver's confluence property: the order the driver services dirty
 // lanes must not change any outcome. This is the driver-level bag law,
@@ -43,15 +44,15 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.deliver(
-                linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${opponent}`)),
+              yield* router.send(envelopeOf(
+                linkOf(parseActorId(`mem:${me}`), parseActorId(`mem:${opponent}`)),
                 {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
                 } as Event
-              )
+              , me === "a" || me === "b" ? { parent: parseActorId(`mem:${me}`), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -73,8 +74,8 @@ const scenario = (pick: HostOptions<Router>["pick"]) => {
     },
     ...(pick === undefined ? {} : { pick })
   })
-  host.deliver("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
-  host.deliver("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host
 }
 

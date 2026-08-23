@@ -7,7 +7,7 @@ import { actor } from "@clavia/tardigrade-core/component"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Router } from "@clavia/tardigrade-core/router"
-import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { Infer } from "../turn"
 import { NativeOutputSupport } from "../runtime/infer"
 import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
@@ -16,6 +16,7 @@ import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { reply } from "./reply"
 import { nativeOutput } from "./native-output"
+import { agentKeys } from "../events"
 
 const rootReactor = actor(infer([codeMode(), reply, budget, compaction, nativeOutput])).reactors[0]!
 
@@ -26,11 +27,9 @@ const rest = Layer.mergeAll(
   KeyValueStore.layerMemory,
   Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
   Layer.succeed(Router, {
-    deliver: () => Effect.void,
-    call: () => Effect.succeed({ error: "no router bound" }),
-    resume: () => Effect.succeed({ error: "no router bound" })
+    send: () => Effect.void
   }),
-  Layer.succeed(Self, parseActorAddress("test-agent")),
+  Layer.succeed(Self, parseActorId("test-agent")),
   Layer.succeed(NativeOutputSupport, { withTools: true }),
   Layer.succeed(Infer, { react: () => Effect.die("the tools gate never asks the model") })
 )
@@ -157,6 +156,13 @@ const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, tur
 const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
 
 describe("the escalation lifecycle", () => {
+  test("a grant and denial for one request share a decision key", () => {
+    const grant: Event = { type: "BudgetGranted", amount: 2, callId: "request-1", turn: "m1", at: 1 }
+    const denial: Event = { type: "BudgetDenied", reason: "no", callId: "request-1", turn: "m1", at: 2 }
+    expect(agentKeys.keyOf(grant)).toBe("bdec:request-1")
+    expect(agentKeys.keyOf(denial)).toBe("bdec:request-1")
+  })
+
   test("usedOf counts only execute; the turn's exits are free", () => {
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", budget: 5, at: 0 },

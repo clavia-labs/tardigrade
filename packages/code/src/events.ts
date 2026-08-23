@@ -37,7 +37,7 @@ export const PackageReturned = Schema.Struct({
 
 // BlockedOn is evidence, never a state: one attempt observed one reply absent. It suppresses
 // re-deriving the blocked work until `awaiting` appears in the event set (a membership check,
-// tla/Projection.tla), and it feeds the waits-for graph (packages/host/src/deadlock.ts). The
+// tla/runtime/Projection.tla), and it feeds the waits-for graph (packages/host/src/deadlock.ts). The
 // raiser knows what it awaits (Park carries it); no method table exists.
 export const BlockedOn = Schema.Struct({
   type: Schema.Literal("BlockedOn"),

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyId } from "@clavia/tardigrade-core/message"
+import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 import { statusOf, summaryOf, treeOf } from "./projections"
 
@@ -10,6 +11,13 @@ import { statusOf, summaryOf, treeOf } from "./projections"
 
 let clock = 0
 const at = () => ++clock
+
+const created = (id: string, parent?: string, depth = 0): Event =>
+  threadCreated(
+    { actor: "default", thread: id },
+    parent === undefined ? undefined : { parent: { actor: "default", thread: parent }, depth },
+    at()
+  )
 
 const inbound = (id: string, text = "do the thing"): Event =>
   ({ type: "MessageReceived", id, text, at: at() }) as Event
@@ -82,34 +90,34 @@ describe("statusOf", () => {
 
 describe("summaryOf", () => {
   test("a summary counts events and carries the last timestamp", () => {
-    const log = [inbound("m1"), completed("m1", "42")]
+    const log = [created("root"), inbound("m1"), completed("m1", "42")]
     const summary = summaryOf("root", log)
     expect(summary.id).toBe("root")
-    expect(summary.events).toBe(2)
-    expect(summary.lastAt).toBe(log[1]!["at"] as number)
+    expect(summary.depth).toBe(0)
+    expect(summary.events).toBe(3)
+    expect(summary.lastAt).toBe(log[2]!["at"] as number)
     expect(summary.status).toBe("settled")
     expect("parent" in summary).toBe(false)
   })
 
   test("a summary carries the parent the caller supplies", () => {
-    expect(summaryOf("t1.0", [], "root").parent).toBe("root")
+    expect(summaryOf("t1.0", [created("t1.0", "root", 1)], "root")).toMatchObject({ parent: "root", depth: 1 })
   })
 
-  test("an empty log has no last timestamp", () => {
-    expect("lastAt" in summaryOf("root", [])).toBe(false)
+  test("a log without its creation record is rejected", () => {
+    expect(() => summaryOf("root", [])).toThrow("no ThreadCreated first event")
   })
 })
 
 describe("treeOf", () => {
-  // Two roots, and one of them three levels deep: root -> t1.0 -> t9.0. The claim is the parent's
-  // own PackageCalled, so a level is one call recorded one log up.
+  // Two roots, and one of them three levels deep: root -> t1.0 -> t9.0.
   const forest = (): ReadonlyMap<string, ReadonlyArray<Event>> =>
     new Map<string, ReadonlyArray<Event>>([
-      ["root", [inbound("m1"), dispatched("t1"), called("t1.0"), called("t1.1")]],
-      ["t1.0", [inbound("t1.0"), dispatched("t9"), called("t9.0")]],
-      ["t1.1", [inbound("t1.1")]],
-      ["t9.0", [inbound("t9.0")]],
-      ["other", [inbound("m2")]]
+      ["root", [created("root"), inbound("m1"), dispatched("t1"), called("t1.0"), called("t1.1")]],
+      ["t1.0", [created("t1.0", "root", 1), inbound("t1.0"), dispatched("t9"), called("t9.0")]],
+      ["t1.1", [created("t1.1", "root", 1), inbound("t1.1")]],
+      ["t9.0", [created("t9.0", "t1.0", 2), inbound("t9.0")]],
+      ["other", [created("other"), inbound("m2")]]
     ])
 
   test("three levels, two roots", () => {
@@ -127,21 +135,22 @@ describe("treeOf", () => {
     expect(root.status).toBe("running")
     const child = root.children[0]!
     expect(child.parent).toBe("root")
-    expect(child.events).toBe(3)
+    expect(child.depth).toBe(1)
+    expect(child.events).toBe(4)
     expect(root.children[0]!.children[0]!.parent).toBe("t1.0")
     expect("parent" in root).toBe(false)
   })
 
   test("a package call to a non-thread claims nothing", () => {
     const logs = new Map<string, ReadonlyArray<Event>>([
-      ["root", [inbound("m1"), dispatched("t1"), called("t1.0", "workspace")]]
+      ["root", [created("root"), inbound("m1"), dispatched("t1"), called("t1.0", "workspace")]]
     ])
     expect(treeOf(logs).map((node) => node.id)).toEqual(["root"])
   })
 
   test("roots sort by first event time", () => {
-    const early = [inbound("a")]
-    const late = [inbound("b")]
+    const early = [created("early"), inbound("a")]
+    const late = [created("late"), inbound("b")]
     const logs = new Map<string, ReadonlyArray<Event>>([["late", late], ["early", early]])
     expect(treeOf(logs).map((node) => node.id)).toEqual(["early", "late"])
   })

@@ -129,7 +129,7 @@ describe("transience never reaches the body", () => {
 
 describe("the replay guard", () => {
   // A drifted body's question must never receive the recorded answer to a different one:
-  // the attempt dies loud instead (tla/Replay.tla: Trusting fails RightAnswer, Guarded
+  // the attempt dies loud instead (tla/runtime/Replay.tla: Trusting fails RightAnswer, Guarded
   // holds it). The seeded log records world.read at position 0; this body asks
   // world.ownedWrite there.
   test("a body asking a different question at a recorded position fails loud", async () => {

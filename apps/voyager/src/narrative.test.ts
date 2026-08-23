@@ -47,7 +47,7 @@ describe("summaryOf", () => {
     [{ type: "TurnFailed", error: "no mind", cause: "inference_error", at }, "inference_error · no mind"],
     [{ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at }, "m1 · epoch 0 to 1"],
     [{ type: "ReplyDelivered", turn: "m1", to: "bun:ag.root", at }, "to bun:ag.root"],
-    [{ type: "ReplyDelivered", turn: "m1", at }, "no replyTo"],
+    [{ type: "ReplyDelivered", turn: "m1", at }, "settled locally"],
     [{ type: "BudgetExhausted", budget: 40, used: 41, at }, "used 41 of 40"],
     [{ type: "BudgetRequested", callId: "b1", reason: "one more shard", amount: 10, at }, "asks 10 · one more shard"],
     [{ type: "BudgetGranted", amount: 10, at }, "granted 10"],

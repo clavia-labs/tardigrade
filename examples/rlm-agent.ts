@@ -37,12 +37,12 @@ const host = await createBunHost({
   layersFor: () => model
 })
 
-// One ask: deliver a brief to the root, drive to quiescence, read the boundary the settle left.
+// One ask: commit a brief to the root, drive to quiescence, read the boundary the settle left.
 // The turn id is the dedup key, so redelivering this exact event is absorbed, and a crash
 // mid-run resumes from the log on the next drive.
 const root = "ag.root"
 const id = "run-1"
-await host.deliver(host.self(root), {
+await host.commitRoot(host.self(root), {
   type: "MessageReceived",
   id,
   text: "Investigate the repository layout: spawn one child per top-level directory of your choosing and merge their reports.",

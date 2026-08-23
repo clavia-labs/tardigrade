@@ -2,22 +2,22 @@ import { Context, Effect } from "effect"
 import { EventLog } from "./event-log"
 import type { Event } from "./event"
 import { triggerOf } from "./trace"
-import type { ActorAddress } from "./communication/address"
+import type { ActorId } from "./communication/endpoint"
 
 // An actor is the single writer of one log and the reactors over it.
 // All state is a projection of the log: a crash loses nothing, and two
-// readers cannot disagree (tla/Projection.tla). The log is mailbox and
+// readers cannot disagree (tla/runtime/Projection.tla). The log is mailbox and
 // state at once; the platform must serialize sends per actor
 // (src/platform/host.ts).
 
 // Self is the current actor's own address, bound by the platform per
 // lane.
-export class Self extends Context.Service<Self, ActorAddress>()("tardigrade/Self") {}
+export class Self extends Context.Service<Self, ActorId>()("tardigrade/Self") {}
 
 // Transition is one keyed unit of work: state in, events out. The
 // runtime fires a transition only when no record derives its key; a
 // retried fire absorbs. `key` and `input` must be projections of the
-// event set (tla/Reconcile.tla, CommitOne), so a re-derived transition
+// event set (tla/runtime/Reconcile.tla, CommitOne), so a re-derived transition
 // cannot ask a different question under the same key. `act` may be
 // nondeterministic and may append evidence itself; one returned or
 // appended event must derive the key, or the work did not commit.
@@ -28,12 +28,12 @@ export interface Transition<T = unknown, R = never> {
 }
 
 // Reactor derives the transitions the log enables: a pure projection
-// into work. It must ignore event order (tla/Projection.tla,
+// into work. It must ignore event order (tla/runtime/Projection.tla,
 // ViewFaithful) and never read the clock or the random source; time is
 // data on the events. It never checks its own past: the key is the
 // only memory. It derives only enabled work; a transition whose
 // prerequisite is absent from the event set stays underived, so
-// quiescence stays honest (tla/Reconcile.tla, QuietIsBlocked).
+// quiescence stays honest (tla/runtime/Reconcile.tla, QuietIsBlocked).
 export type Reactor<R = never> = (events: ReadonlyArray<Event>) => ReadonlyArray<Transition<never, R>>
 
 // transition pins T at the construction site, then forgets it: an
@@ -80,7 +80,7 @@ export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Event>): ReadonlyA
 
 // restingActor reports quiescence to the platform alarm: no reactor
 // enables a transition. The alarm may be deleted only on a true answer
-// (tla/Driver.tla, Accounting); recomputing from the log keeps it
+// (tla/runtime/Driver.tla, Accounting); recomputing from the log keeps it
 // true.
 export const restingActor = <R>(a: Actor<R>, events: ReadonlyArray<Event>): boolean =>
   enabled(a, events).length === 0
@@ -92,7 +92,7 @@ export const restingActor = <R>(a: Actor<R>, events: ReadonlyArray<Event>): bool
 // (the act returned events, none derives its key, none landed), which
 // dies naming the transition, because a silent spin is the one outcome
 // worse than a crash. Progress is the store's watermark. Liveness is
-// the caller's debt, paid by the platform alarm (tla/Driver.tla,
+// the caller's debt, paid by the platform alarm (tla/runtime/Driver.tla,
 // EventuallyServed).
 export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog | R> =>
   Effect.gen(function* () {

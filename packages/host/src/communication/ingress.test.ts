@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
+import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { ActorUnavailable, ingressFrom, type IngressActor } from "./ingress"
 
@@ -11,7 +13,7 @@ const message = (id: string): MessageReceived => ({
   at: 42
 })
 
-const delivery = (actor: string, thread: string, id: string): Delivery => ({
+const delivery = (actor: string, thread: string, id: string): ActorEnvelope<MessageReceived> => ({
   link: {
     source: { provider: "example" },
     target: { actor, thread }
@@ -23,13 +25,13 @@ describe("ingressFrom", () => {
   test("commits a batch through its addressed actors in delivery order", async () => {
     const committed: string[] = []
     const target = (actor: string): IngressActor => ({
-      commit: (thread, event) =>
+      commit: (delivery) =>
         Effect.sync(() =>
-          committed.push(`${actor}:${thread}:${event.id}:${String((event.link.source as { provider?: unknown }).provider)}`)
+          committed.push(`${actor}:${delivery.link.target.thread}:${delivery.event.id}:${String((delivery.link.source as { provider?: unknown }).provider)}`)
         ),
       schedule: Effect.void
     })
-    const ingress = ingressFrom((actor) => target(actor))
+    const ingress = ingressFrom(mappedDirectory((id) => target(id.actor)))
 
     await Effect.runPromise(ingress.commit([
       delivery("support", "incident", "m1"),
@@ -46,10 +48,10 @@ describe("ingressFrom", () => {
 
   test("an empty batch commits nothing", async () => {
     let resolutions = 0
-    const ingress = ingressFrom(() => {
+    const ingress = ingressFrom(mappedDirectory<ActorId, IngressActor>(() => {
       resolutions += 1
       return undefined
-    })
+    }))
 
     await Effect.runPromise(ingress.commit([]))
 
@@ -58,11 +60,11 @@ describe("ingressFrom", () => {
 
   test("an unavailable actor refuses the complete batch before any commit", async () => {
     const committed: string[] = []
-    const ingress = ingressFrom((actor) =>
-      actor === "support"
-        ? { commit: (_thread, event) => Effect.sync(() => committed.push(event.id)), schedule: Effect.void }
+    const ingress = ingressFrom(mappedDirectory<ActorId, IngressActor>((id) =>
+      id.actor === "support"
+        ? { commit: (delivery) => Effect.sync(() => committed.push(delivery.event.id)), schedule: Effect.void }
         : undefined
-    )
+    ))
     const error = await Effect.runPromise(
       ingress.commit([
         delivery("support", "incident", "m1"),
@@ -76,10 +78,10 @@ describe("ingressFrom", () => {
 
   test("schedules each addressed actor once in first delivery order", async () => {
     const scheduled: string[] = []
-    const ingress = ingressFrom((actor) => ({
+    const ingress = ingressFrom(mappedDirectory((id) => ({
       commit: () => Effect.void,
-      schedule: Effect.sync(() => scheduled.push(actor))
-    }))
+      schedule: Effect.sync(() => scheduled.push(id.actor))
+    })))
 
     await Effect.runPromise(ingress.schedule([
       delivery("support", "incident", "m1"),

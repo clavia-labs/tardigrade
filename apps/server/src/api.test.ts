@@ -219,7 +219,7 @@ describe("actors", () => {
             text: "inspect"
           })
           const actors = await (await get(base, "/v1/actors")).json()
-          const events = await (await get(base, "/v1/actors/reviewer/threads/review/events")).json()
+          const events = await (await get(base, "/v1/actors/reviewer/threads/review/events")).json() as ReadonlyArray<EventRow>
           return { pushStatus: pushed.status, summary, accepted: await accepted.json(), actors, events }
         })
       }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)
@@ -227,7 +227,7 @@ describe("actors", () => {
       expect(result.summary).toEqual({ name: "reviewer", builtIn: false, digest })
       expect(result.accepted).toEqual({ actor: "reviewer", thread: "review" })
       expect(result.actors).toContainEqual({ name: "reviewer", builtIn: false, digest })
-      expect(result.events).toHaveLength(1)
+      expect(result.events.map((row: EventRow) => row.event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     } finally {
       await rm(root, { recursive: true, force: true })
       await rm(actorData, { recursive: true, force: true })
@@ -242,7 +242,7 @@ describe("the listing", () => {
       return (await (await fetch(`${base}/v1/actors/default/threads`)).json()) as ReadonlyArray<ThreadSummary>
     })
     expect(listed).toHaveLength(1)
-    expect(listed[0]).toMatchObject({ id: "alpha", status: "settled" })
+    expect(listed[0]).toMatchObject({ id: "alpha", status: "settled", depth: 0 })
     expect(listed[0]!.events).toBeGreaterThan(0)
     expect(listed[0]!.parent).toBeUndefined()
   })
@@ -458,12 +458,11 @@ describe("projections", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
-      return { now: await json("/v1/actors/default/threads/alpha/turns"), atOne: await json("/v1/actors/default/threads/alpha/turns?at=1") }
+      return { now: await json("/v1/actors/default/threads/alpha/turns"), atTwo: await json("/v1/actors/default/threads/alpha/turns?at=2") }
     })
     expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
-    // One event stands before the cut: the message that asked for the turn, and nothing that
-    // answered it.
-    expect(read.atOne).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
+    // Creation and the message stand before the cut, with nothing that answered the turn.
+    expect(read.atTwo).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
   })
 
   // The single lookup is the same projection with its `turn` query, which is why the platform keeps
@@ -501,9 +500,11 @@ describe("the tree", () => {
       }
     })
     expect(read.tree.id).toBe("root")
+    expect(read.tree.depth).toBe(0)
     expect(read.tree.children).toHaveLength(1)
     const child = read.tree.children[0]!
     expect(child.parent).toBe("root")
+    expect(child.depth).toBe(1)
     expect(child.children).toEqual([])
     // The child is a thread like any other: it lists, with the same parent the tree gave it.
     expect(read.listed.map((summary) => summary.id).sort()).toEqual(["root", child.id].sort())

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect } from "effect"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { Ingress } from "@clavia/tardigrade-host/ingress"
 import type { Webhook } from "@clavia/tardigrade-host/webhook"
 import { bunChannelHandler, handleBunWebhook, webhookRequestFrom, webhookResponseFrom } from "./webhook"
@@ -34,9 +35,9 @@ describe("Bun webhooks", () => {
     })
   })
 
-  test("commits and schedules deliveries before returning an HTTP response", async () => {
+  test("commits and schedules envelopes before returning an HTTP response", async () => {
     const order: string[] = []
-    const delivery: Delivery = {
+    const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
         target: { actor: "support", thread: "incident" }
@@ -48,7 +49,7 @@ describe("Bun webhooks", () => {
       receive: (request) => Effect.sync(() => {
         order.push(`receive:${new TextDecoder().decode(request.body)}`)
         return {
-          deliveries: [delivery],
+          envelopes: [delivery],
           response: {
             status: 202,
             headers: { "x-accepted": "yes" },
@@ -83,7 +84,7 @@ describe("Bun webhooks", () => {
   })
 
   test("binds a channel and ingress service as an HTTP handler", async () => {
-    const committed: Delivery[] = []
+    const committed: Array<ActorEnvelope<MessageReceived>> = []
     const channel = channelOf(
       {
         name: "example",
@@ -99,7 +100,7 @@ describe("Bun webhooks", () => {
       () => ({ actor: "support", thread: "incident" })
     )
     const handler = bunChannelHandler(channel, {
-      commit: (deliveries) => Effect.sync(() => committed.push(...deliveries)),
+      commit: (envelopes) => Effect.sync(() => committed.push(...envelopes)),
       schedule: () => Effect.void
     })
 

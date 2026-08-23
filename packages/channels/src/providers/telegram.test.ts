@@ -35,7 +35,7 @@ describe("telegram", () => {
     })))
 
     expect(result).toEqual({
-      deliveries: [{
+      envelopes: [{
         link: {
           source: {
             provider: "telegram-support",
@@ -80,7 +80,7 @@ describe("telegram", () => {
 
     const result = await Effect.runPromise(channel.webhook.receive(request({}, "wrong")))
 
-    expect(result).toEqual({ deliveries: [], response: { status: 401 } })
+    expect(result).toEqual({ envelopes: [], response: { status: 401 } })
   })
 
   test("sends a reply to the persisted chat and topic", async () => {

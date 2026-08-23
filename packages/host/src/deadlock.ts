@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 // unanswered awaiting call is an edge to the lane whose settle answers
 // it. A cycle is a deadlock: every member lane rests honestly, blocked
 // on the world, and the world is the other members. No lane-local
-// invariant can see a cycle (packages/core/tla/Delivery.tla, the
+// invariant can see a cycle (packages/core/tla/communication/Delivery.tla, the
 // DeliveryDeadlock config is the pinned trace); only the tier that
 // sees all lanes can break one.
 //

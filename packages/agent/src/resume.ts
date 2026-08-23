@@ -8,7 +8,7 @@ type Awaitable<T> = T | Promise<T>
 // TurnDriver is the common control surface of the memory host and the durable Bun host.
 export interface TurnDriver {
   readonly read: (lane: string) => Awaitable<ReadonlyArray<Event>>
-  readonly deliver: (address: string, event: Event) => Awaitable<void>
+  readonly commitRoot: (address: string, event: Event) => Awaitable<void>
   readonly drive: () => Promise<void>
   readonly self: (lane: string) => string
 }
@@ -30,7 +30,7 @@ export const resumeTurn = async (
     throw new Error(`turn "${turn}" cannot resume because its active epoch is not failed`)
   }
   const failedEpoch = turnEpochOf(before, turn)
-  await host.deliver(
+  await host.commitRoot(
     host.self(lane),
     turnResumed({ turn, failedEpoch, epoch: failedEpoch + 1, at: options.at ?? Date.now() })
   )

@@ -11,6 +11,7 @@ import { Infer, NativeOutputSupport, type InferRequest } from "./runtime/infer"
 import { boundaryOf } from "./boundary"
 import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
+import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { actor, budgetFor, codeMode, compactionFor, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
 import type { RlmR } from "./turn"
 
@@ -32,7 +33,7 @@ type TestR = RlmR | NativeOutputSupport
 const work = () => codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })])
 
 // hosted binds one assembled actor to an in-process host and drives the root lane. It is the
-// test's own driver: deliver a brief, drive to quiescence, read the boundary the settle left.
+// test's own driver: commit a root brief, drive to quiescence, read the boundary the settle left.
 // A caller with its own host does the same three things (host.ts, Host).
 const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
   const layersFor = (_lane: string): LaneEnv<TestR> =>
@@ -61,7 +62,7 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
   }
   const run = async (brief: string): Promise<Settled> => {
     const id = `run-${n++}`
-    host.deliver(host.self(ROOT_LANE), { type: "MessageReceived", id, text: brief, at: n } as Event)
+    host.commitRoot(host.self(ROOT_LANE), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     return settled(id)
   }
@@ -116,14 +117,25 @@ const scripted = async ({ trajectory }: { trajectory: ReadonlyArray<Event> }): P
 }
 
 describe("an assembled agent", () => {
-  test("one run fans out to two children and settles with their answers", async () => {
+  test("one complete RLM run records root and child lineage and settles with their answers", async () => {
     const mind = rlm(scripted)
     const answer = await mind.run("fan out and add")
     expect(answer.error).toBeUndefined()
     expect(answer.output).toBe('"4,6"')
+    expect(threadCreatedOf(mind.host.read(ROOT_LANE))).toEqual({
+      type: "ThreadCreated",
+      address: { actor: "mem", thread: ROOT_LANE },
+      depth: 0,
+      at: 1
+    })
     // The graph existed: two child lanes, each with a served turn.
     const children = ["ag.t1.0", "ag.t1.1"].map((lane) => mind.host.read(lane))
     for (const log of children) {
+      expect(threadCreatedOf(log)).toMatchObject({
+        address: { actor: "mem" },
+        parent: { actor: "mem", thread: ROOT_LANE },
+        depth: 1
+      })
       expect(log.some((e) => e.type === "TurnCompleted")).toBe(true)
       expect(log.some((e) => e.type === "ReplyDelivered")).toBe(true)
     }

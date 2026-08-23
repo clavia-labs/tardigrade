@@ -66,11 +66,13 @@ const has = (log: ReadonlyArray<Event>, type: string, key: string, value: string
 // decisionFor returns the parent's decision on an escalation ask, scoped to the call's turn.
 const decisionFor = (
   log: ReadonlyArray<Event>,
-  turn: string | undefined
+  turn: string | undefined,
+  request: string
 ): { granted: number } | { denied: string } | undefined => {
   for (const e of log) {
     const t = (e as { turn?: unknown }).turn
     if (turn !== undefined && t !== undefined && str(t) !== turn) continue
+    if (str((e as { callId?: unknown }).callId) !== request) continue
     if (e.type === "BudgetGranted") return { granted: Number((e as { amount?: unknown }).amount ?? 0) }
     if (e.type === "BudgetDenied") return { denied: str((e as { reason?: unknown }).reason) }
   }
@@ -105,7 +107,7 @@ export const toolsReactorFrom = <R = never>(
 
   // Escalation in flight: the answer exists only once the parent decided.
   if (has(log, "BudgetRequested", "callId", call.callId)) {
-    const decision = decisionFor(log, call.turn)
+    const decision = decisionFor(log, call.turn, call.callId)
     if (decision === undefined) return []
     if ("granted" in decision) return [answering({ granted: decision.granted })]
     const reason = decision.denied

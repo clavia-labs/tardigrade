@@ -149,7 +149,7 @@ const viewFrom = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentCo
 
 // offerLogFor returns the prefix from which inference offered a pending call's tools. ModelCalled
 // is appended before inference, so the preceding prefix is exactly the log passed to render
-// (infer.ts, inferReactorFor; tla/Component.tla, OfferedIsRoutable). Calls created outside
+// (infer.ts, inferReactorFor; tla/runtime/Component.tla, OfferedIsRoutable). Calls created outside
 // inference have no mark and use the current log.
 const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<Event> => {
   const called = log.findIndex(

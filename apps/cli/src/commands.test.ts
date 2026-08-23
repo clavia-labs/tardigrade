@@ -11,7 +11,7 @@ import { Cli, type CliProjections, type CliServices } from "./services"
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
 
 const threads: ReadonlyArray<ThreadSummary> = [
-  { id: "root", events: 2, lastAt: 0, status: "settled" }
+  { id: "root", depth: 0, events: 2, lastAt: 0, status: "settled" }
 ]
 
 const events: ReadonlyArray<EventRow> = [

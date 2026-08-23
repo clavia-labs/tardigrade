@@ -1,19 +1,23 @@
 import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
+import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
 import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
-import { replyId } from "@clavia/tardigrade-core/communication/message"
+import { boundaryId } from "@clavia/tardigrade-core/communication/message"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { childLineageOf, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import {
-  actorAddressOf,
-  formatActorAddress,
-  parseActorAddress,
-  type ActorAddress
-} from "@clavia/tardigrade-core/communication/address"
+  actorIdOf,
+  formatActorId,
+  parseActorId,
+  type ActorId
+} from "@clavia/tardigrade-core/communication/endpoint"
 import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } from "./output"
+import { budgetDenied, budgetGranted } from "./events"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
@@ -29,26 +33,20 @@ import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } fro
 // message id, so a replayed dispatch reaches the same child and is absorbed as a duplicate.
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
-// arguments. `Router` delivers and calls, `Self` names the calling lane, and `Facets` reads that
-// lane's committed replies (`@clavia/tardigrade-core/facets`), so `Package<Router | Self | Facets>`
-// states what a host must bind for these methods to run.
+// arguments. `Router` sends, `Self` names the calling lane, and `Facets` reads that
+// lane's committed replies (`@clavia/tardigrade-core/facets`). `EventLog` supplies the durable creation record from which a child delivery derives lineage.
 //
 // place selects the child's actor address from the call id and parent address. The host resolves
 // that stable identity to current placement when it interprets the resulting link.
 //
 // A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
-// deliver the brief with `replyTo` this lane, then await the reply row on this lane, host-side
-// `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a
-// promise that never settles for the code body). It never holds a call open.
+// deliver the brief through a link from this lane, then await the reply row on this lane, host-side
+// `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a promise
+// that never settles for the code body). It never holds a call open.
 //
-// An escalatable run is the one residual exception. An escalating child's ask for more budget
-// rides `router.call`'s own `CallResult.requesting` boundary (`src/core/router.ts`,
-// `src/agent/boundary.ts`): the platform's `call` RPC runs the child to its wall and reads the
-// ask straight off its settle, synchronously, in the SAME round trip; `agents.continue` answers
-// it with `router.resume`, another synchronous round trip to the child's next boundary. Nothing
-// carries that ask as a message the child could otherwise send home, so there is no reply row to
-// park on until the child is done asking. An escalatable spawn holds its call open; a plain one
-// parks.
+// An escalatable run uses the same parked delivery protocol. The child reports each budget request
+// through the reversed accepted link, and `agents.continue` sends the parent's decision back through
+// Router before parking on the child's next boundary.
 
 // SpawnOptions is the placement's environment: who the family works as, how a child's budget is
 // drawn from the run, and the isolation labels a brief carries down. Every field has a default,
@@ -71,16 +69,13 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
-// sibling is the default placement: the child is a facet of the parent's own principal, named
-// `ag.<callId>`. It parses the parent's address with core's one parser, so a placement can never
-// disagree with the router about what an address is (spawn.test.ts, "the default placement is
-// the host's own sibling address").
-const sibling = (callId: string, self: ActorAddress): ActorAddress =>
-  actorAddressOf(self.actor, `ag.${callId}`)
+// sibling is the default placement: the child is a facet of the parent's own principal, named `ag.<callId>`. The address selects the target while ThreadCreated records its lineage (spawn.test.ts, "the default placement is the host's own sibling address"; tla/runtime/Thread.tla, CreationFirst).
+const sibling = (callId: string, self: ActorId): ActorId =>
+  actorIdOf(self.actor, `ag.${callId}`)
 
 export const agentsPackage = (
-  options: SpawnOptions & { readonly place?: (callId: string, self: ActorAddress) => ActorAddress } = {}
-): Package<Router | Self | Facets> => {
+  options: SpawnOptions & { readonly place?: (callId: string, self: ActorId) => ActorId } = {}
+): Package<Router | Self | Facets | EventLog> => {
   const place = options.place ?? sibling
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
@@ -139,11 +134,17 @@ export const agentsPackage = (
     methods: {
       run: (args, ctx) =>
         Effect.gen(function* () {
-          // The three cross-lane privileges, read where the work happens: deliver, identity,
+          // The three cross-lane privileges, read where the work happens: send, identity,
           // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
           const source = yield* Self
-          const self = formatActorAddress(source)
+          const log = yield* EventLog
+          const created = threadCreatedOf(yield* log.read)
+          if (created === undefined) {
+            return yield* Effect.die(new Error(`thread ${formatActorId(source)} cannot spawn without ThreadCreated`))
+          }
+          const lineage = childLineageOf(created)
+          const self = formatActorId(source)
           const a = args as
             | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
             | undefined
@@ -188,13 +189,13 @@ export const agentsPackage = (
           const shadow = shadowOf()
           const world = worldOf()
           const target = place(ctx.callId, source)
-          const address = formatActorAddress(target)
+          const address = formatActorId(target)
           if (a?.background === true) {
             // A background run has no synchronous parent to decide an escalation, so it never asks:
             // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
             // later by `agents.result({ id: callId })`.
             const at = yield* Clock.currentTimeMillis
-            yield* router.deliver(linkOf(source, target), {
+            yield* router.send(envelopeOf(linkOf(source, target), {
               type: "MessageReceived",
               id: ctx.callId,
               text,
@@ -204,50 +205,31 @@ export const agentsPackage = (
               ...(actor === undefined ? {} : { actor }),
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world }),
-              replyTo: self,
               from: self,
               at
-            })
+            }, lineage))
             return { dispatched: true, callId: ctx.callId }
           }
-          // Escalation is a foreground affordance, and the one shape that still holds its call
-          // open: see the module comment for why. Every other foreground run parks below.
-          if (a?.escalatable === true) {
-            const answer = yield* router.call(linkOf(source, target), {
-              id: ctx.callId,
-              text,
-              ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-              ...(model === undefined ? {} : { model }),
-              budget,
-              escalatable: true,
-              ...(actor === undefined ? {} : { actor }),
-              ...(shadow ? { shadow: true } : {}),
-              ...(world === undefined ? {} : { world })
-            })
-            return shape(answer, address, ctx.callId, output)
-          }
-          // Plain foreground: the same park logic `tasks.fire` uses. A reply already on the lane
-          // (a replayed attempt) answers at once, with no re-delivery; otherwise the brief goes
-          // out with `replyTo` this lane, exactly the background delivery above, and the host
-          // parks this call until the reply lands.
-          const already = yield* awaitedReply(source, ctx.callId)
+          // Foreground runs park on their next reported boundary. A replay reads that boundary
+          // before redelivering the same brief.
+          const already = yield* awaitedBoundary(source, ctx.callId, 0)
           if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
-          yield* router.deliver(linkOf(source, target), {
+          yield* router.send(envelopeOf(linkOf(source, target), {
             type: "MessageReceived",
             id: ctx.callId,
             text,
             ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
             ...(model === undefined ? {} : { model }),
             budget,
+            ...(a?.escalatable === true ? { escalatable: true } : {}),
             ...(actor === undefined ? {} : { actor }),
             ...(shadow ? { shadow: true } : {}),
             ...(world === undefined ? {} : { world }),
-            replyTo: self,
             from: self,
             at
-          })
-          return yield* new Park({ callId: ctx.callId, awaiting: replyId(ctx.callId) })
+          }, lineage))
+          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
         }),
       // Await a run already fired in the background: no delivery, the same reply-or-park read the
       // plain foreground branch of `run` takes. `id` is the `callId` an earlier `background: true`
@@ -267,14 +249,14 @@ export const agentsPackage = (
           // The child is where this package placed it, recomputed rather than taken from the
           // caller: `place` is the one owner of that answer (sibling above).
           const target = place(id, source)
-          const address = formatActorAddress(target)
+          const address = formatActorId(target)
           const declared = yield* declaredRun(source, target, id)
           if ("error" in declared) return declared
-          const reply = yield* awaitedReply(source, id)
+          const reply = yield* awaitedBoundary(source, id, 0)
           if (reply !== undefined) return shape(answerOf(reply), address, id, declared.contract)
-          return yield* new Park({ callId: ctx.callId, awaiting: replyId(id) })
+          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(id, 0) })
         }),
-      // Resume a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
+      // Continue a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
       // or a spent run budget, denies and the child finishes. The grant draws the run's budget like a
       // fresh spawn does, so escalation stays inside the same whole-run bound. Returns the child's next
       // boundary, another request or its final answer, in the same shape `run` returns.
@@ -283,10 +265,14 @@ export const agentsPackage = (
           const router = yield* Router
           const source = yield* Self
           const a = args as { handle?: unknown; grant?: unknown } | undefined
-          const handle = a?.handle as { address?: unknown; turn?: unknown } | undefined
+          const handle = a?.handle as { address?: unknown; turn?: unknown; round?: unknown; request?: unknown } | undefined
           const address = String(handle?.address ?? "")
           const turn = String(handle?.turn ?? "")
-          if (address === "" || turn === "") return { error: "agents.continue needs { handle, grant }; the handle comes from a run that is requesting" }
+          const round = handle?.round
+          const request = typeof handle?.request === "string" ? handle.request : ""
+          if (address === "" || turn === "" || typeof round !== "number" || !Number.isSafeInteger(round) || round < 0 || request === "") {
+            return { error: "agents.continue needs { handle, grant }; the handle comes from a run that is requesting" }
+          }
           // grant accepts a whole count of calls because rounding could deny a request the parent
           // tried to grant (spawn.test.ts, "a fractional grant").
           const grant = a?.grant
@@ -295,13 +281,18 @@ export const agentsPackage = (
           }
           // The contract comes from the child's own brief, like `result`, so a rewritten handle
           // cannot make an answer structured that never was.
-          const target = parseActorAddress(address)
+          const target = parseActorId(address)
           const declared = yield* declaredRun(source, target, turn)
           if ("error" in declared) return declared
+          const already = yield* awaitedBoundary(source, turn, round + 1)
+          if (already !== undefined) return shape(answerOf(already), address, turn, declared.contract)
           const granted = grant > 0 ? yield* Effect.promise(() => reserve(ctx.callId, grant)) : 0
-          const decision = granted > 0 ? { amount: granted } : { amount: 0, reason: "the parent declined the request" }
-          const answer = yield* router.resume(linkOf(source, target), turn, decision)
-          return shape(answer, address, turn, declared.contract)
+          const at = yield* Clock.currentTimeMillis
+          const decision = granted > 0
+            ? budgetGranted({ amount: granted, callId: request, turn, at })
+            : budgetDenied({ reason: "the parent declined the request", callId: request, turn, at })
+          yield* router.send(envelopeOf(linkOf(source, target), decision))
+          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(turn, round + 1) })
         })
     }
   })
@@ -354,8 +345,8 @@ const outputAsked = (
 // text would erase a contract that is known to exist merely because its terms are out of reach
 // (spawn.test.ts, "a run stays bound to the schema it was started under").
 const declaredRun = (
-  self: ActorAddress,
-  address: ActorAddress,
+  self: ActorId,
+  address: ActorId,
   turn: string
 ): Effect.Effect<{ readonly contract: OutputContract | undefined } | { readonly error: string }, never, Facets> =>
   Effect.gen(function* () {
@@ -384,36 +375,68 @@ const declaredRun = (
 // read this one and an operator can tell the two apart.
 export const INLINE_OUTPUT_NAME = "inline"
 
-// SpawnTerminal is a spawned child's terminal, once its reply has landed on the calling lane.
-interface SpawnTerminal {
-  readonly outcome: "completed" | "failed"
+// SpawnBoundary is one child boundary reported to its caller through the reversed accepted link.
+interface SpawnBoundary {
+  readonly outcome: "completed" | "failed" | "requesting"
   readonly text: string
+  readonly reason?: string
+  readonly amount?: number
+  readonly round?: number
+  readonly request?: string
 }
 
-// awaitedReply returns the reply row for one spawn, if it has landed on the calling lane. The
+// awaitedBoundary returns one reported boundary for a spawn, if it has landed on the calling lane. The
 // read is the observe privilege (`Facets`), over this lane's own facet: `run` (awaiting) and
 // `result` ask it whether a spawned child's reply is already home before ever parking. `id` is
-// `replyEvent`'s own convention (`packages/core/src/reply.ts`): `<id>.reply` (`replyId`), so a
-// redelivered brief dedups at the sender and a redelivered reply dedups at the receiver.
-const awaitedReply = (self: ActorAddress, id: string): Effect.Effect<SpawnTerminal | undefined, never, Facets> =>
+// boundary id includes the escalation round, so each durable request or terminal has its own key.
+const awaitedBoundary = (self: ActorId, turn: string, round: number): Effect.Effect<SpawnBoundary | undefined, never, Facets> =>
   Effect.gen(function* () {
     const logs = yield* Facets
     const events = yield* logs.read(self.thread)
     const reply = events.find(
-      (e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === replyId(id)
-    ) as { outcome?: unknown; text?: unknown } | undefined
+      (e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === boundaryId(turn, round)
+    ) as { outcome?: unknown; text?: unknown; data?: unknown } | undefined
     if (reply === undefined) return undefined
-    return { outcome: reply.outcome === "failed" ? "failed" : "completed", text: String(reply.text) }
+    if (reply.outcome !== "requesting") {
+      return { outcome: reply.outcome === "failed" ? "failed" : "completed", text: String(reply.text) }
+    }
+    const data = reply.data as { request?: unknown; reason?: unknown; amount?: unknown; round?: unknown } | undefined
+    return {
+      outcome: "requesting",
+      text: String(reply.text),
+      reason: String(data?.reason ?? reply.text ?? ""),
+      amount: Number(data?.amount ?? 0),
+      round: Number(data?.round ?? round),
+      request: String(data?.request ?? "")
+    }
   })
 
-// answerOf strips `replyEvent`'s "error: " prefix back off a failed reply, so a foreground
+// answerOf strips a failed boundary's "error: " prefix back off, so a foreground
 // body's `.error` reads the bare text while the fresh-inbound reading a background reply keeps
 // the convention.
 const ERROR_PREFIX = "error: "
-const answerOf = (reply: SpawnTerminal): { output?: string; error?: string } =>
-  reply.outcome === "completed"
+const answerOf = (reply: SpawnBoundary): {
+  readonly output?: string
+  readonly error?: string
+  readonly requesting?: boolean
+  readonly reason?: string
+  readonly amount?: number
+  readonly round?: number
+  readonly request?: string
+} => {
+  if (reply.outcome === "requesting") {
+    return {
+      requesting: true,
+      ...(reply.reason === undefined ? {} : { reason: reply.reason }),
+      ...(reply.amount === undefined ? {} : { amount: reply.amount }),
+      ...(reply.round === undefined ? {} : { round: reply.round }),
+      ...(reply.request === undefined ? {} : { request: reply.request })
+    }
+  }
+  return reply.outcome === "completed"
     ? { output: reply.text }
     : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }
+}
 
 // shape renders a boundary as the code's return value. A request carries a handle the code passes
 // back to `agents.continue`; the handle names where and which turn, and nothing about the answer's
@@ -424,13 +447,18 @@ const answerOf = (reply: SpawnTerminal): { output?: string; error?: string } =>
 // such an answer, so one arriving here means the reply did not come from that path, and reading it
 // as the contract's shape would be the reinterpretation this whole surface exists to prevent.
 const shape = (
-  answer: { output?: string; error?: string; requesting?: boolean; reason?: string; amount?: number },
+  answer: { output?: string; error?: string; requesting?: boolean; reason?: string; amount?: number; round?: number; request?: string },
   address: string,
   turn: string,
   contract: OutputContract | undefined
 ): unknown => {
   if (answer.requesting === true) {
-    return { requesting: true, reason: answer.reason, amount: answer.amount, handle: { address, turn } }
+    return {
+      requesting: true,
+      reason: answer.reason,
+      amount: answer.amount,
+      handle: { address, turn, round: answer.round, request: answer.request }
+    }
   }
   if (contract === undefined || answer.output === undefined) return answer
   const decoded = decodeOutput(contract, answer.output)

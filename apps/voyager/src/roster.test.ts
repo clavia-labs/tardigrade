@@ -9,6 +9,7 @@ import { actorMarkOf, agoOf, countsOf, digestLabelOf, latestRootOf, matches, ros
 const summary = (id: string, parent?: string, events = 1): ThreadSummary => ({
   id,
   ...(parent === undefined ? {} : { parent }),
+  depth: parent === undefined ? 0 : 1,
   events,
   status: "settled"
 })

@@ -59,7 +59,7 @@ describe("slack", () => {
 
     const result = await Effect.runPromise(channel.webhook.receive(signedRequest(payload)))
 
-    expect(result.deliveries[0]?.link).toEqual({
+    expect(result.envelopes[0]?.link).toEqual({
       source: {
         provider: "slack-support",
         team: "T123",
@@ -72,7 +72,7 @@ describe("slack", () => {
         thread: "slack:C123:1699999999.000001"
       }
     })
-    expect(result.deliveries[0]?.event).toMatchObject({
+    expect(result.envelopes[0]?.event).toMatchObject({
       type: "MessageReceived",
       id: "slack:Ev123",
       text: "deploy failed",
@@ -92,7 +92,7 @@ describe("slack", () => {
     })))
 
     expect(new TextDecoder().decode(result.response.body)).toBe("prove-it")
-    expect(result.deliveries).toEqual([])
+    expect(result.envelopes).toEqual([])
   })
 
   test("rejects stale and incorrectly signed requests", async () => {
@@ -102,11 +102,11 @@ describe("slack", () => {
     const wrong = signedRequest({}, 1_700_000_000_000, "wrong-secret")
 
     expect(await Effect.runPromise(channel.webhook.receive(staleAtReceiver))).toEqual({
-      deliveries: [],
+      envelopes: [],
       response: { status: 401 }
     })
     expect(await Effect.runPromise(channel.webhook.receive(wrong))).toEqual({
-      deliveries: [],
+      envelopes: [],
       response: { status: 401 }
     })
   })
@@ -159,6 +159,6 @@ describe("slack", () => {
       }
     })))
 
-    expect(result).toEqual({ deliveries: [], response: { status: 200 } })
+    expect(result).toEqual({ envelopes: [], response: { status: 200 } })
   })
 })

@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { Effect } from "effect"
-import type { ActorAddress, ProviderAddress } from "@clavia/tardigrade-core/communication/address"
+import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import {
   channelOf,
@@ -16,8 +16,8 @@ export const DEFAULT_SLACK_SIGNATURE_TOLERANCE_SECONDS = 300
 
 type SlackFetch = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 
-// SlackAddress identifies one Slack thread under a configured provider instance.
-export interface SlackAddress extends ProviderAddress {
+// SlackEndpoint identifies one Slack thread under a configured provider instance.
+export interface SlackEndpoint extends ProviderEndpoint {
   readonly team: string
   readonly channel: string
   readonly thread: string
@@ -29,7 +29,7 @@ export interface SlackOptions {
   readonly name: string
   readonly botToken: string
   readonly signingSecret: string
-  readonly target: (source: SlackAddress) => ActorAddress
+  readonly target: (source: SlackEndpoint) => ActorId
   readonly apiBaseUrl?: string
   readonly fetch?: SlackFetch
   readonly signatureToleranceSeconds?: number
@@ -53,12 +53,12 @@ interface SlackEnvelope {
   }
 }
 
-const emptyReceipt = (status: number): ProviderReceipt<SlackAddress> => ({
+const emptyReceipt = (status: number): ProviderReceipt<SlackEndpoint> => ({
   inbound: [],
   response: { status }
 })
 
-const textResponse = (status: number, body: string): ProviderReceipt<SlackAddress> => ({
+const textResponse = (status: number, body: string): ProviderReceipt<SlackEndpoint> => ({
   inbound: [],
   response: {
     status,
@@ -67,7 +67,7 @@ const textResponse = (status: number, body: string): ProviderReceipt<SlackAddres
   }
 })
 
-const isSlackAddress = (address: ProviderAddress): address is SlackAddress =>
+const isSlackEndpoint = (address: ProviderEndpoint): address is SlackEndpoint =>
   "team" in address && typeof address.team === "string" &&
   "channel" in address && typeof address.channel === "string" &&
   "thread" in address && typeof address.thread === "string"
@@ -105,7 +105,7 @@ const parseEnvelope = (
   options: SlackOptions,
   body: Uint8Array,
   receivedAt: number
-): ProviderReceipt<SlackAddress> => {
+): ProviderReceipt<SlackEndpoint> => {
   let envelope: SlackEnvelope
   try {
     envelope = JSON.parse(new TextDecoder().decode(body)) as SlackEnvelope
@@ -129,7 +129,7 @@ const parseEnvelope = (
   ) {
     return emptyReceipt(200)
   }
-  const source: SlackAddress = {
+  const source: SlackEndpoint = {
     provider: options.name,
     team: envelope.team_id,
     channel: event.channel,
@@ -155,7 +155,7 @@ const parseEnvelope = (
   return { inbound: [{ source, event: message }], response: { status: 200 } }
 }
 
-const providerOf = (options: SlackOptions): ChannelProvider<SlackAddress> => {
+const providerOf = (options: SlackOptions): ChannelProvider<SlackEndpoint> => {
   const fetch = options.fetch ?? globalThis.fetch
   const apiBaseUrl = (options.apiBaseUrl ?? SLACK_API_BASE_URL).replace(/\/$/, "")
   return {
@@ -174,7 +174,7 @@ const providerOf = (options: SlackOptions): ChannelProvider<SlackAddress> => {
       return Effect.succeed(parseEnvelope(options, request.body, request.receivedAt))
     },
     send: (target, message) => {
-      if (target.provider !== options.name || !isSlackAddress(target)) {
+      if (target.provider !== options.name || !isSlackEndpoint(target)) {
         return Effect.die(new Error(`invalid address for provider: ${options.name}`))
       }
       return Effect.promise(async () => {
@@ -204,7 +204,7 @@ const providerOf = (options: SlackOptions): ChannelProvider<SlackAddress> => {
 }
 
 // slack constructs a bidirectional channel whose source address preserves the Slack reply thread.
-export const slack = (options: SlackOptions): Channel<SlackAddress> => {
+export const slack = (options: SlackOptions): Channel<SlackEndpoint> => {
   if (options.name.length === 0) throw new Error("Slack provider name cannot be empty")
   if (options.botToken.length === 0) throw new Error("Slack bot token cannot be empty")
   if (options.signingSecret.length === 0) throw new Error("Slack signing secret cannot be empty")
