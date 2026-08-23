@@ -19,7 +19,7 @@ import type { ToolSpec } from "../request"
 const EXECUTE_TOOL: ToolSpec = {
   name: "execute",
   description:
-    "Run JavaScript against the connected packages. Packages are objects in scope; await their methods and end with `return <value>`. The returned value comes back as this call's result, and console output comes back beside it as `logs` (capped; return the value you need, print to inspect).",
+    "Run an async JavaScript body against the connected packages. Package objects are already in scope; await their methods and end with `return <value>`. The returned value comes back as this call's result, and console output comes back beside it as `logs` (capped; return the value you need, print to inspect).",
   inputSchema: {
     type: "object",
     properties: { code: { type: "string", description: "The JavaScript body to run." } },
@@ -28,7 +28,7 @@ const EXECUTE_TOOL: ToolSpec = {
   }
 }
 
-const CODE_SYSTEM_LEAD = "You act on the world by calling the execute tool with JavaScript; the packages in scope are:"
+const CODE_SYSTEM_LEAD = "The execute tool runs an async JavaScript body with the connected packages already in scope as objects. Use ordinary JavaScript to coordinate calls. The calling pattern is `const value = await package.method(input); return value`. The packages in scope are:"
 export const CODE_SYSTEM = `${CODE_SYSTEM_LEAD}\nnone`
 
 // codeSystemFor names each package and renders every documented method's input and output schema.

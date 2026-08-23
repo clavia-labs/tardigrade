@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
+import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
@@ -140,6 +141,32 @@ describe("infer component", () => {
     )
     expect(events.find((e) => e.type === "ToolReturned")).toMatchObject({
       result: { error: "unknown tool: ghost. Call one of: echo." }
+    })
+  })
+
+  test("a direct package call teaches the execute calling convention", async () => {
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        const returned = request.trajectory.find((event) => event.type === "ToolReturned") as { result?: unknown } | undefined
+        return Effect.succeed(
+          returned === undefined
+            ? { kind: "call" as const, callId: "c10", name: "fetch.get", arguments: { url: "https://example.com" } }
+            : { kind: "complete" as const, output: JSON.stringify(returned.result) }
+        )
+      }
+    })
+    const agent = actor(infer([codeMode([fetchPackage()]), reply, nativeOutput]))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "go" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory, FetchHttpClient.layer)
+    )
+    expect(events.find((event) => event.type === "ToolReturned")).toMatchObject({
+      result: {
+        error: "unknown tool: fetch.get. Package methods run inside execute. Call execute with JavaScript such as `return await fetch.get({...})`."
+      }
     })
   })
 
@@ -303,6 +330,8 @@ describe("infer component", () => {
 
   test("package docs show fetch input and output shapes", () => {
     const system = codeSystemFor([fetchPackage()])
+    expect(system).toContain("The execute tool runs an async JavaScript body")
+    expect(system).toContain("const value = await package.method(input); return value")
     expect(system).toContain("fetch.get({url: string, headers?: object})")
     expect(system).toContain("-> {status?: number, headers?: object, body?: string, truncated?: boolean, error?: string}")
   })
