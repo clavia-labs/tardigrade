@@ -74,9 +74,9 @@ const executeRecorded = <R = never>(
     // (no method table; the raiser carries `awaiting` on Park).
     const blocked: Array<{ readonly callId: string; readonly awaiting?: string }> = []
     const parkGate = yield* Deferred.make<void>()
-    // finishCall releases a mixed attempt after every host-side call has completed. Every
-    // completion path uses it because the last call may return or park (tla/runtime/Execution.tla,
-    // ParkedAttemptReleases).
+    // finishCall releases a mixed attempt after every host-side call has completed. The call
+    // scope guarantees it as a finalizer because the last call may return or park
+    // (tla/runtime/Execution.tla, ParkedAttemptReleases).
     const finishCall = Effect.gen(function* () {
       inFlight--
       if (parked && inFlight === 0) yield* Deferred.succeed(parkGate, undefined)
@@ -121,7 +121,6 @@ const executeRecorded = <R = never>(
               )
               if (recorded) {
                 const r = recorded as { result?: unknown; tmp?: unknown }
-                yield* finishCall
                 if (r.tmp !== undefined) {
                   // A store that cannot answer is a defect, never a different answer: replaying a
                   // spilled pair with the preview in place of the value would hand the body an
@@ -157,7 +156,6 @@ const executeRecorded = <R = never>(
                 const result = { error: `shadow run: ${pkg.name}.${method} is an open-world write and does not execute in a shadow run` }
                 const answeredAt = yield* Clock.currentTimeMillis
                 yield* log.append([packageReturned({ callId, result, ...stamp, at: answeredAt })])
-                yield* finishCall
                 return { parked: false, result }
               }
               // The contract gate: a declared input schema is checked at this funnel, after the
@@ -176,7 +174,6 @@ const executeRecorded = <R = never>(
                   }
                   const answeredAt = yield* Clock.currentTimeMillis
                   yield* log.append([packageReturned({ callId, result, ...stamp, at: answeredAt })])
-                  yield* finishCall
                   return { parked: false, result }
                 }
               }
@@ -192,7 +189,6 @@ const executeRecorded = <R = never>(
                 Effect.gen(function* () {
                   parked = true
                   blocked.push({ callId, ...(awaiting === undefined ? {} : { awaiting }) })
-                  yield* finishCall
                   return { parked: true }
                 })
               const attempt = yield* fn(args, { callId }).pipe(
@@ -218,9 +214,11 @@ const executeRecorded = <R = never>(
               } else {
                 yield* log.append([packageReturned({ callId, result: attempt.result, ...stamp, at: answeredAt })])
               }
-              yield* finishCall
               return attempt
-            }).pipe(Effect.withSpan("package.call", { attributes: { name: `${pkg.name}.${method}`, callId } }))
+            }).pipe(
+              Effect.ensuring(finishCall),
+              Effect.withSpan("package.call", { attributes: { name: `${pkg.name}.${method}`, callId } })
+            )
           ).then((outcome) => (outcome.parked ? new Promise<unknown>(() => {}) : outcome.result))
         }
       }
