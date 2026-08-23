@@ -13,6 +13,7 @@ coverage/
 .cache/
 .turbo/
 .vite/
+.wrangler/
 .eslintcache
 .oxlintcache
 packages/core/tla/states/

@@ -10,7 +10,7 @@
 
 [![npm version](https://img.shields.io/npm/v/tardie.svg)](https://www.npmjs.com/package/tardie)
 
-Tardigrade is a framework for building durable, modular agents that can run at the edge. It is inspired by [React](https://react.dev/)'s declarative approach to building user interfaces.
+Tardigrade is a typescript framework for building durable, modular agents that can run at the edge. It is inspired by [React](https://react.dev/)'s declarative approach to building user interfaces.
 
 ### Agents that can self-improve
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.

@@ -57,6 +57,7 @@ export const checks: ReadonlyArray<Check> = [
   pass("runtime", "Driver", "DriverLive.cfg"),
   pass("runtime", "Driver", "DriverIsolate.cfg"),
   pass("runtime", "Driver", "DriverPoisoned.cfg"),
+  counterexample("runtime", "Driver", "DriverAlarmRace.cfg", "Invariant Accounting is violated"),
   counterexample("runtime", "Driver", "DriverDrop.cfg", "Invariant Accounting is violated"),
   pass("runtime", "Execution", "Execution.cfg"),
   counterexample("runtime", "Execution", "ExecutionReadyLeak.cfg", "Invariant ParkedAttemptReleases is violated"),
