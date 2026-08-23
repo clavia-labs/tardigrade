@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tardigrade",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [{ "name": "ACTORS", "class_name": "ActorHost" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorHost"] }],
+  "observability": { "enabled": true },
+  "limits": { "cpu_ms": 300000 },
+  "vars": {
+    "TARDIGRADE_MAX_CONCURRENT_LANES": "4"
+  }
+}

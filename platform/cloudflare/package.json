@@ -1,0 +1,42 @@
+{
+  "name": "@clavia/tardigrade-cloudflare",
+  "version": "0.0.1",
+  "private": true,
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Cloudflare Durable Object host binding for tardigrade.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "platform/cloudflare"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "tardie": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-host": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "@effect/sql-sqlite-do": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.20.1",
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "vitest": "^4.1.10",
+    "wrangler": "^4.119.0"
+  },
+  "scripts": {
+    "bundle": "wrangler deploy --dry-run --outdir .wrangler/bundle",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "bun test",
+    "test:workers": "vitest run --config vitest.config.ts"
+  }
+}
