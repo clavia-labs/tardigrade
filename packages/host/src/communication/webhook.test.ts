@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Data, Effect } from "effect"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
-import { ActorUnavailable, Ingress, ingressFrom } from "./ingress"
+import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
+import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import { ActorUnavailable, Ingress, ingressFrom, type IngressActor } from "./ingress"
 import { handleWebhook, type Webhook, type WebhookRequest, type WebhookResult } from "./webhook"
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
@@ -19,24 +22,24 @@ const webhook = <E = never>(receive: () => Effect.Effect<WebhookResult, E>): Web
   receive
 })
 
-const run = <E>(source: Webhook<never, E>, committed: Delivery[] = []) =>
+const run = <E>(source: Webhook<never, E>, committed: Array<ActorEnvelope<MessageReceived>> = []) =>
   handleWebhook(source, request).pipe(
     Effect.provideService(
       Ingress,
-      ingressFrom(() => ({
+      ingressFrom(mappedDirectory(() => ({
         commit: (delivery) => Effect.sync(() => committed.push(delivery)),
         schedule: Effect.void
-      }))
+      })))
     ),
     Effect.runPromise
   )
 
 describe("handleWebhook", () => {
   test("returns a challenge response with no delivery", async () => {
-    const committed: Delivery[] = []
+    const committed: Array<ActorEnvelope<MessageReceived>> = []
     const response = await run(
       webhook(() => Effect.succeed({
-        deliveries: [],
+        envelopes: [],
         response: {
           status: 200,
           headers: { "content-type": "application/json" },
@@ -52,9 +55,9 @@ describe("handleWebhook", () => {
   })
 
   test("returns the acknowledgement for a valid ignored event", async () => {
-    const committed: Delivery[] = []
+    const committed: Array<ActorEnvelope<MessageReceived>> = []
     const response = await run(
-      webhook(() => Effect.succeed({ deliveries: [], response: { status: 204 } })),
+      webhook(() => Effect.succeed({ envelopes: [], response: { status: 204 } })),
       committed
     )
 
@@ -62,9 +65,9 @@ describe("handleWebhook", () => {
     expect(committed).toEqual([])
   })
 
-  test("commits deliveries before returning the response", async () => {
+  test("commits envelopes before returning the response", async () => {
     const order: string[] = []
-    const delivery: Delivery = {
+    const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
         target: { actor: "support", thread: "incident" }
@@ -74,7 +77,7 @@ describe("handleWebhook", () => {
     const source = webhook(() =>
       Effect.sync(() => {
         order.push("receive")
-        return { deliveries: [delivery], response: { status: 202 } }
+        return { envelopes: [delivery], response: { status: 202 } }
       })
     )
     const effect = handleWebhook(source, request).pipe(
@@ -93,7 +96,7 @@ describe("handleWebhook", () => {
 
   test("a webhook failure commits nothing and returns no response", async () => {
     class Refused extends Data.TaggedError("Refused")<{}> {}
-    const committed: Delivery[] = []
+    const committed: Array<ActorEnvelope<MessageReceived>> = []
     const error = await run(webhook(() => Effect.fail(new Refused())), committed).then(
       () => undefined,
       (failure: unknown) => failure
@@ -104,7 +107,7 @@ describe("handleWebhook", () => {
   })
 
   test("an unavailable delivery actor prevents the response", async () => {
-    const delivery: Delivery = {
+    const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
         target: { actor: "missing", thread: "incident" }
@@ -113,10 +116,10 @@ describe("handleWebhook", () => {
     }
     const error = await Effect.runPromise(
       handleWebhook(
-        webhook(() => Effect.succeed({ deliveries: [delivery], response: { status: 202 } })),
+        webhook(() => Effect.succeed({ envelopes: [delivery], response: { status: 202 } })),
         request
       ).pipe(
-        Effect.provideService(Ingress, ingressFrom(() => undefined)),
+        Effect.provideService(Ingress, ingressFrom(mappedDirectory<ActorId, IngressActor>(() => undefined))),
         Effect.flip
       )
     )

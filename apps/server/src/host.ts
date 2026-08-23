@@ -7,7 +7,8 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
+import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
 import type { Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -135,7 +136,7 @@ export interface ThreadsOptions {
 interface ActorRuntime {
   readonly summary: ActorSummary
   readonly threads: ActorThreads
-  readonly commit: (delivery: Delivery) => Effect.Effect<void>
+  readonly commit: (delivery: Envelope) => Effect.Effect<void>
   readonly schedule: Effect.Effect<void>
   readonly resting: () => Promise<boolean>
   readonly dirty: () => number
@@ -221,14 +222,14 @@ const runtimeOf = async (
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const stamped = event.at === undefined ? { ...event, at } : event
-      yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
+      yield* Effect.promise(() => host.commitRoot(host.self(laneOf(id)), stamped))
     })
-  const commit = (delivery: Delivery) =>
+  const commit = (delivery: Envelope) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const event = delivery.event
       const stamped = event.at === undefined ? { ...event, at } : event
-      const placed: Delivery = {
+      const placed: Envelope = {
         ...delivery,
         link: {
           source: delivery.link.source,
@@ -236,7 +237,7 @@ const runtimeOf = async (
         },
         event: stamped
       }
-      yield* Effect.promise(() => host.accept(placed))
+      yield* Effect.promise(() => host.commit(placed))
     })
   const threads: ActorThreads = {
     append: (id, event) =>
@@ -428,13 +429,13 @@ const make = (options: ThreadsOptions) =>
       push,
       settled: Effect.forEach(runtimes.values(), (runtime) => runtime.threads.settled, { discard: true })
     }
-    const ingress = ingressFrom((name) => {
-      const runtime = runtimes.get(name)
+    const ingress = ingressFrom(mappedDirectory((id) => {
+      const runtime = runtimes.get(id.actor)
       return runtime === undefined ? undefined : {
         commit: runtime.commit,
         schedule: runtime.schedule
       }
-    })
+    }))
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
       resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
       dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))

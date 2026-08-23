@@ -230,6 +230,15 @@ export const BudgetRequested = Schema.Struct({
   at: Schema.Finite
 })
 
+// BudgetRequestReported records that one request reached its parent through the accepted link.
+export const BudgetRequestReported = Schema.Struct({
+  type: Schema.Literal("BudgetRequestReported"),
+  request: Schema.String,
+  turn: Schema.String,
+  round: Schema.Finite,
+  at: Schema.Finite
+})
+
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
   amount: Schema.Finite, // the tool calls added to this turn's budget
@@ -264,6 +273,7 @@ export const AgentEvent = Schema.Union([
   ReplyDelivered,
   BudgetExhausted,
   BudgetRequested,
+  BudgetRequestReported,
   BudgetGranted,
   BudgetDenied
 ])
@@ -305,22 +315,24 @@ export type Action =
     } & Served)
 
 // agentKeys is the agent lane's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
-// pair; bg/bd name the budget request a decision answers (a grant is SUMMED into the ceiling,
-// src/budget.ts, so a redelivered decision landing twice would double it). A decision that
-// carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
+// pair; bdec names the budget request a decision answers, so a grant and denial for one request
+// cannot both commit. A grant is summed into the ceiling, so a redelivery must also absorb. A
+// decision that carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bg:", "bd:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
+  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "ToolReturned":
         return `tr:${String(v.callId)}`
       case "BudgetGranted":
-        return v.callId === undefined ? undefined : `bg:${String(v.callId)}`
+        return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
       case "BudgetDenied":
-        return v.callId === undefined ? undefined : `bd:${String(v.callId)}`
+        return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
+      case "BudgetRequestReported":
+        return `brr:${String(v.request)}`
       case "ReplyDelivered":
         // One reply per logical turn. A resumed boundary returns to its operator.
         return `rd:${String(v.turn)}`
@@ -449,6 +461,10 @@ export const budgetExhausted = (
 export const budgetRequested = (
   fields: { readonly callId: string; readonly reason: string; readonly amount: number } & Stamp
 ): Event => ({ type: "BudgetRequested", ...fields }) as Event
+
+export const budgetRequestReported = (
+  fields: { readonly request: string; readonly turn: string; readonly round: number; readonly at: number }
+): Event => ({ type: "BudgetRequestReported", ...fields }) as Event
 
 export const budgetGranted = (
   fields: { readonly amount: number; readonly callId?: string } & Stamp

@@ -1,15 +1,8 @@
 import type { Effect } from "effect"
-import type { Event } from "../event"
-import type { ActorAddress, ProviderAddress } from "./address"
-import type { Delivery } from "./delivery"
+import type { RoutedEnvelope } from "./envelope"
 
-// TransportDelivery is the routed envelope a physical delivery path carries.
-export type TransportDelivery =
-  | Delivery<ActorAddress, Event, ActorAddress>
-  | Delivery<ActorAddress, Event, ProviderAddress>
-
-// Transport carries deliveries over one named path using coordinates resolved by Router.
-export interface Transport<Coordinates> {
+// Transport carries unchanged envelopes over one named physical path.
+export interface Transport<Destination, E extends RoutedEnvelope = RoutedEnvelope> {
   readonly name: string
-  readonly deliver: (coordinates: Coordinates, delivery: TransportDelivery) => Effect.Effect<void>
+  readonly send: (destination: Destination, envelope: E) => Effect.Effect<void>
 }

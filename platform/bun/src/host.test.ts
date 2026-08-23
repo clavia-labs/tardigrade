@@ -7,8 +7,8 @@ import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
-import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
-import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 import { hydrate, refs, spill } from "@clavia/tardigrade-code/store"
@@ -76,15 +76,15 @@ describe("the bun host", () => {
 
   test("delivers, settles, and a keyed redelivery absorbs", async () => {
     const h = await createBunHost(options(freshPath()))
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     expect((await h.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     // The same keyed event again: absorbed inside the append transaction, the log does not grow.
-    await h.deliver("bun:echo", { type: "Done", id: "m1", at: 2 } as Event)
+    await h.commitRoot("bun:echo", { type: "Done", id: "m1", at: 2 } as Event)
     await h.drive()
     expect(await h.read("echo")).toHaveLength(3)
     // The same message id again: receiver dedup.
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
     expect(await h.read("echo")).toHaveLength(3)
     expect(await h.resting()).toBe(true)
     await h.close()
@@ -92,14 +92,14 @@ describe("the bun host", () => {
 
   test("refuses an unkeyed cross-lane event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
-    expect(h.deliver("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-lane event")
+    expect(h.commitRoot("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-lane event")
     await h.close()
   })
 
   test("a reopened database keeps the log byte for byte", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
-    await first.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await first.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await first.drive()
     const before = await first.read("echo")
     await first.close()
@@ -129,7 +129,7 @@ describe("the bun host", () => {
   test("lanes names every lane the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(await h.lanes()).toEqual([])
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.seed("other", [created("other"), { type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
     await h.drive()
     expect(await h.lanes()).toEqual(["echo", "other"])
@@ -150,31 +150,31 @@ describe("the bun host", () => {
 
   test("a child creation and its first delivery commit together", async () => {
     const h = await createBunHost(options(freshPath()))
-    const parent = parseActorAddress("bun:parent")
-    const target = parseActorAddress("bun:child")
-    const first = deliveryOf(
+    const parent = parseActorId("bun:parent")
+    const target = parseActorId("bun:child")
+    const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
       { parent, depth: 1 }
     )
-    await h.accept(first)
-    await h.accept(first)
+    await h.commit(first)
+    await h.commit(first)
     expect(await h.read("child")).toEqual([
       threadCreated(target, { parent, depth: 1 }, 7),
       expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
     ])
-    await expect(h.accept(deliveryOf(
-      linkOf(parseActorAddress("bun:other"), target),
+    await expect(h.commit(envelopeOf(
+      linkOf(parseActorId("bun:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
-      { parent: parseActorAddress("bun:other"), depth: 1 }
+      { parent: parseActorId("bun:other"), depth: 1 }
     ))).rejects.toThrow("already has different lineage")
     await h.close()
   })
 
   test("a refused initial actor delivery leaves no partial creation", async () => {
     const h = await createBunHost(options(freshPath()))
-    await expect(h.accept(deliveryOf(
-      linkOf(parseActorAddress("bun:parent"), parseActorAddress("bun:child")),
+    await expect(h.commit(envelopeOf(
+      linkOf(parseActorId("bun:parent"), parseActorId("bun:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
     ))).rejects.toThrow("must carry lineage")
     expect(await h.read("child")).toEqual([])
@@ -274,7 +274,7 @@ describe("the durable workspace", () => {
 })
 
 describe("telemetry seam", () => {
-  test("spans flow to a supplied tracer: deliver and the transition fire, keyed", async () => {
+  test("spans flow to a supplied tracer: commit and the transition fire, keyed", async () => {
     const names: Array<{ name: string; key?: unknown; type?: unknown }> = []
     const linked: Array<{ name: string; traceId: string }> = []
     const capture = Layer.succeed(Tracer.Tracer)(
@@ -304,11 +304,11 @@ describe("telemetry seam", () => {
       })
     )
     const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
-    expect(names.some((s) => s.name === "deliver" && s.type === "MessageReceived")).toBe(true)
+    expect(names.some((s) => s.name === "commit" && s.type === "MessageReceived")).toBe(true)
     expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
-    // The cross-lane seam: the delivered event carries the deliver span's context, and the
+    // The cross-lane seam: the committed event carries the commit span's context, and the
     // fire links back to it: one business event, one trace.
     const row = (await h.read("echo")).find((event) => event.type === "MessageReceived") as { traceparent?: string }
     expect(row.traceparent).toMatch(/^00-t-s-01$/)
@@ -316,23 +316,23 @@ describe("telemetry seam", () => {
     await h.close()
   })
 
-  test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the deliver", async () => {
+  test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the commit", async () => {
     const path = join(dir, `spans-${n++}.ndjson`)
     const h = await createBunHost({ ...options(freshPath()), telemetry: fileTelemetry(path) })
-    await h.deliver("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     await h.close()
     const rows = readFileSync(path, "utf8")
       .trim()
       .split("\n")
       .map((line) => JSON.parse(line) as { SpanName: string; TraceId: string; Duration: number; StatusCode: string; SpanAttributes: Record<string, string>; Links: Array<{ TraceId: string }> })
-    const delivered = rows.find((r) => r.SpanName === "deliver")
+    const committed = rows.find((r) => r.SpanName === "commit")
     const fired = rows.find((r) => r.SpanName === "transition.fire")
-    expect(delivered?.SpanAttributes["type"]).toBe("MessageReceived")
+    expect(committed?.SpanAttributes["type"]).toBe("MessageReceived")
     expect(fired?.SpanAttributes["outcome"]).toBe("committed")
     expect(fired?.StatusCode).toBe("Ok")
     expect(fired?.Duration).toBeGreaterThan(0)
-    expect(fired?.Links[0]?.TraceId).toBe(delivered?.TraceId)
+    expect(fired?.Links[0]?.TraceId).toBe(committed?.TraceId)
   })
 })
 

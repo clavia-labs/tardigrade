@@ -5,40 +5,36 @@ import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { replyId } from "@clavia/tardigrade-core/communication/message"
+import { boundaryId, replyId } from "@clavia/tardigrade-core/communication/message"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { agentsPackage, INLINE_OUTPUT_NAME } from "./spawn"
 import { output, type OutputContract } from "./output"
 import {
-  formatActorAddress,
-  parseActorAddress,
-  type ActorAddress,
-  type ProviderAddress
-} from "@clavia/tardigrade-core/communication/address"
+  formatActorId,
+  parseActorId,
+  type ActorId,
+  type ProviderEndpoint
+} from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
 
-const REFUSED = Effect.succeed({ error: "no synchronous calls" })
-type SentLink = Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
-type Sent = Delivery<ActorAddress, Event, SentLink["target"]>
+type SentLink = Link<ActorId, ActorId> | Link<ActorId, ProviderEndpoint>
+type Sent = Envelope<ActorId, Event, SentLink["target"]>
 
 const env = (
   lane: string,
   sent: Array<Sent>,
-  lanes: Readonly<Record<string, ReadonlyArray<Event>>> = {},
-  router: { readonly resume?: () => Effect.Effect<{ output?: string; error?: string }> } = {}
+  lanes: Readonly<Record<string, ReadonlyArray<Event>>> = {}
 ) => {
-  const self = parseActorAddress(lane)
+  const self = parseActorId(lane)
   return Layer.mergeAll(
     Layer.succeed(Router, {
-      deliver: (delivery) => Effect.sync(() => void sent.push(delivery as Sent)),
-      call: () => REFUSED,
-      resume: router.resume ?? (() => REFUSED)
+      send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
     }),
     Layer.succeed(Self, self),
     Layer.succeed(EventLog, withWatermark({
@@ -67,13 +63,13 @@ describe("agentsPackage", () => {
     const pkg = agentsPackage({
       place: (callId, self) => ({
         actor: "far",
-        thread: `${formatActorAddress(self)}/${callId}`
+        thread: `${formatActorId(self)}/${callId}`
       })
     })
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true }, { callId: "c2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
     )
-    expect(formatActorAddress(sent[0]!.link.target as ActorAddress)).toBe("far:mem:ag.root/c2")
+    expect(formatActorId(sent[0]!.link.target as ActorId)).toBe("far:mem:ag.root/c2")
   })
 
   test("the callId is the child's identity and the link returns to the parent", async () => {
@@ -119,7 +115,72 @@ describe("agentsPackage", () => {
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
-    expect(formatActorAddress(sent[0]!.link.target as ActorAddress)).toBe("mem:ag.c5")
+    expect(formatActorId(sent[0]!.link.target as ActorId)).toBe("mem:ag.c5")
+  })
+
+  test("a foreground run returns a budget request reported by its child", async () => {
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage()
+    const lanes = {
+      "ag.root": [{
+        type: "MessageReceived",
+        id: boundaryId("c5", 0),
+        outcome: "requesting",
+        text: "one source remains",
+        data: { request: "request-1", reason: "one source remains", amount: 2, round: 0 },
+        at: 1
+      }]
+    } as Readonly<Record<string, ReadonlyArray<Event>>>
+
+    const answer = await Effect.runPromise(
+      pkg.methods.run!({ text: "research", escalatable: true }, { callId: "c5" }).pipe(
+        Effect.provide(env("mem:ag.root", sent, lanes))
+      )
+    )
+
+    expect(answer).toEqual({
+      requesting: true,
+      reason: "one source remains",
+      amount: 2,
+      handle: { address: "mem:ag.c5", turn: "c5", round: 0, request: "request-1" }
+    })
+    expect(sent).toEqual([])
+  })
+
+  test("continue sends a budget decision and parks on the next boundary", async () => {
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage()
+    const lanes = {
+      "ag.root": [{ type: "PackageCalled", callId: "c5", name: "agents.run", arguments: { text: "research", escalatable: true }, at: 0 }]
+    } as Readonly<Record<string, ReadonlyArray<Event>>>
+
+    const parked = await Effect.runPromise(
+      pkg.methods.continue!({
+        handle: { address: "mem:ag.c5", turn: "c5", round: 0, request: "request-1" },
+        grant: 2
+      }, { callId: "continue-1" }).pipe(
+        Effect.provide(env("mem:ag.root", sent, lanes)),
+        Effect.flip,
+        Effect.orDie
+      )
+    )
+
+    expect(parked).toBeInstanceOf(Park)
+    expect((parked as Park).awaiting).toBe(boundaryId("c5", 1))
+    expect(sent).toEqual([
+      expect.objectContaining({
+        link: {
+          source: { actor: "mem", thread: "ag.root" },
+          target: { actor: "mem", thread: "ag.c5" }
+        },
+        event: expect.objectContaining({
+          type: "BudgetGranted",
+          callId: "request-1",
+          turn: "c5",
+          amount: 2
+        })
+      })
+    ])
   })
 
   test("result reads the lane through Facets", async () => {
@@ -307,14 +368,18 @@ describe("a run stays bound to the schema it was started under", () => {
   test("continue recovers the same declaration, so a rewritten handle changes nothing", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage({ outputs: { scout: SCOUT_B } })
+    const recorded = lanes(declarationA, structured)
+    const withNextBoundary = {
+      ...recorded,
+      "ag.root": [
+        ...recorded["ag.root"]!,
+        { type: "MessageReceived", id: boundaryId("b1", 1), outcome: "completed", text: structured, at: 3 }
+      ]
+    } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answered = await Effect.runPromise(
       pkg.methods
-        .continue!({ handle: { address: "mem:ag.b1", turn: "b1" }, grant: 1 }, { callId: "later" })
-        .pipe(
-          Effect.provide(
-            env("mem:ag.root", sent, lanes(declarationA, structured), { resume: () => Effect.succeed({ output: structured }) })
-          )
-        )
+        .continue!({ handle: { address: "mem:ag.b1", turn: "b1", round: 0, request: "request-1" }, grant: 1 }, { callId: "later" })
+        .pipe(Effect.provide(env("mem:ag.root", sent, withNextBoundary)))
     )
     // Schema A read it, though the package now declares B under the same name.
     expect(answered).toEqual({ output: { summary: "done" } })

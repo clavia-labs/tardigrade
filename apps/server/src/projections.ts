@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/event"
-import { formatActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { formatActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { REPLY_SUFFIX } from "@clavia/tardigrade-core/message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/projections"
@@ -118,7 +118,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
   for (const [id, events] of logs) {
     const created = threadCreatedOf(events)
     if (created === undefined) throw new Error(`thread ${JSON.stringify(id)} has no ThreadCreated first event`)
-    const address = formatActorAddress(created.address)
+    const address = formatActorId(created.address)
     if (idsByAddress.has(address)) throw new Error(`thread address ${JSON.stringify(address)} appears in more than one log`)
     idsByAddress.set(address, id)
   }
@@ -126,7 +126,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
   for (const [id, events] of logs) {
     const parentAddress = threadCreatedOf(events)!.parent
     if (parentAddress === undefined) continue
-    const parent = idsByAddress.get(formatActorAddress(parentAddress))
+    const parent = idsByAddress.get(formatActorId(parentAddress))
     if (parent !== undefined && parent !== id) parents.set(id, parent)
   }
   const order = (a: string, b: string): number =>

@@ -166,7 +166,7 @@ const host = await createBunHost({
   layersFor: () => model
 })
 
-await host.deliver("bun:main", {
+await host.commitRoot("bun:main", {
   type: "MessageReceived",
   id: "m1",
   text: "What changed in the deploy?",

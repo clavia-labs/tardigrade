@@ -118,7 +118,7 @@ export const summaryOf = (
   switch (event.type) {
     case "MessageReceived": {
       // A reply is an inbound message answering an id this thread sent out, and it reads as the
-      // answer it is (packages/core/src/message.ts, replyEvent).
+      // answer it is (packages/core/src/communication/message.ts, boundaryEvent).
       const outcome = str(event.outcome)
       const from = str(event.from)
       if (outcome !== undefined) {

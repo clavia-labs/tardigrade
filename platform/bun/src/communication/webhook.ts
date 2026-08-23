@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Effect } from "effect"
-import type { ProviderAddress } from "@clavia/tardigrade-core/communication/address"
+import type { ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ActorUnavailable } from "@clavia/tardigrade-host/communication/ingress"
 import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
 import type { Channel } from "@clavia/tardigrade-host/communication/channel"
@@ -40,7 +40,7 @@ export const webhookResponseFrom = (response: WebhookResponse): Response =>
       : { status: response.status, headers: response.headers }
   )
 
-// handleBunWebhook captures a request, accepts its deliveries, and returns the provider response.
+// handleBunWebhook captures a request, commits its envelopes, and returns the provider response.
 export const handleBunWebhook = <R, E>(
   webhook: Webhook<R, E>,
   request: Request
@@ -53,7 +53,7 @@ export const handleBunWebhook = <R, E>(
   })
 
 // bunChannelHandler binds one environment-free channel and ingress service to a Bun HTTP handler.
-export const bunChannelHandler = <Source extends ProviderAddress, E>(
+export const bunChannelHandler = <Source extends ProviderEndpoint, E>(
   channel: Channel<Source, never, E>,
   ingress: Context.Service.Shape<typeof Ingress>
 ): ((request: Request) => Promise<Response>) =>

@@ -1,7 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { Ingress } from "@clavia/tardigrade-host/ingress"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 import { Infer, type InferRequest } from "tardie"
@@ -71,7 +72,7 @@ describe("the threads service", () => {
     const result = await running((threads) =>
       Effect.gen(function*() {
         const ingress = yield* Ingress
-        const deliveries: ReadonlyArray<Delivery> = [
+        const envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>> = [
           {
             link: {
               source: { provider: "test" },
@@ -94,7 +95,7 @@ describe("the threads service", () => {
             event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
           }
         ]
-        yield* ingress.commit(deliveries)
+        yield* ingress.commit(envelopes)
         const gauge = yield* DriverGauge
         const committed = {
           alpha: yield* threads.events("alpha"),
@@ -102,7 +103,7 @@ describe("the threads service", () => {
           dirty: yield* gauge.dirty,
           resting: yield* gauge.resting
         }
-        yield* ingress.schedule(deliveries)
+        yield* ingress.schedule(envelopes)
         yield* threads.settled
         return {
           committed,

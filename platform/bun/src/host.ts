@@ -7,26 +7,32 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { Router, deliverThrough, transportRoute, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
+import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
-import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
-  formatActorAddress,
-  isActorAddress,
-  isProviderAddress,
-  parseActorAddress,
-  type ActorAddress,
-  type ProviderAddress
-} from "@clavia/tardigrade-core/communication/address"
+  isActorEnvelope,
+  isProviderEnvelope,
+  linkedEventOf,
+  type ActorEnvelope,
+  type Envelope
+} from "@clavia/tardigrade-core/communication/envelope"
+import {
+  formatActorId,
+  isActorId,
+  parseActorId,
+  type ActorId,
+  type ProviderEndpoint
+} from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
-import { outboundFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
+import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import {
-  sameActorAddress,
+  sameActorId,
   sameThreadLineage,
   threadCreated,
   threadCreatedOf,
@@ -77,9 +83,8 @@ export type BunHostOptions<R> = {
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly call?: Parameters<typeof Router.of>[0]["call"]
-  readonly resume?: Parameters<typeof Router.of>[0]["resume"]
   readonly providers?: ReadonlyArray<Provider>
+  readonly routes?: ReadonlyArray<TransportRoute>
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
@@ -88,12 +93,12 @@ export type BunHostOptions<R> = {
 export interface BunHost {
   readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
-  readonly accept: (delivery: Delivery<unknown, Event, ActorAddress>) => Promise<void>
+  readonly commit: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
   // lanes names every lane the log holds, ordered by name. An app that lists what exists asks the
   // host rather than the database, so the store stays this module's (host.test.ts, "lanes names
   // every lane the log holds").
   readonly lanes: () => Promise<ReadonlyArray<string>>
-  readonly deliver: (address: string, event: Event) => Promise<void>
+  readonly commitRoot: (address: string, event: Event) => Promise<void>
   readonly wake: (lane: string) => Promise<void>
   readonly drive: () => Promise<void>
   // recover marks every lane that has an actor as owed a visit and drives: the alarm a real
@@ -108,8 +113,6 @@ const laneOf = (address: string): string => {
   const i = address.indexOf(":")
   return i === -1 ? address : address.slice(i + 1)
 }
-
-const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
@@ -152,7 +155,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   )
 
   const dirty = new Set<string>()
-  const outbound = outboundFrom(options.providers ?? [])
+  const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
   const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>, never> =>
@@ -193,12 +196,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     )
 
   const commitEffect = (
-    target: ActorAddress,
+    target: ActorId,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorAddress>
+    link?: Link<unknown, ActorId>
   ): Effect.Effect<void, never> => {
-    const address = formatActorAddress(target)
+    const address = formatActorId(target)
     return Effect.gen(function* () {
       // The membrane, identical to the reference host: a cross-lane event names its occurrence
       // or it does not travel (packages/host/src/host.ts).
@@ -227,20 +230,20 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           if (events.length > 0 && created === undefined) {
             return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
           }
-          if (created !== undefined && !sameActorAddress(created.address, target)) {
+          if (created !== undefined && !sameActorId(created.address, target)) {
             return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
           }
           if (lineage !== undefined) {
-            if (lineage.depth <= 0 || sameActorAddress(lineage.parent, target)) {
+            if (lineage.depth <= 0 || sameActorId(lineage.parent, target)) {
               return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
             }
-            if (link === undefined || !isActorAddress(link.source) || !sameActorAddress(lineage.parent, link.source)) {
+            if (link === undefined || !isActorId(link.source) || !sameActorId(lineage.parent, link.source)) {
               return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
             }
             if (created !== undefined && !sameThreadLineage(created, lineage)) {
               return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
             }
-          } else if (created === undefined && link !== undefined && isActorAddress(link.source)) {
+          } else if (created === undefined && link !== undefined && isActorId(link.source)) {
             return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
           }
           const landed = link !== undefined && stamped.type === "MessageReceived"
@@ -264,37 +267,36 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         })
       ).pipe(Effect.orDie)
       if (appended) dirty.add(lane)
-    }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
+    }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
   }
 
-  const acceptEffect = (delivery: Delivery<unknown, Event, ActorAddress>): Effect.Effect<void, never> =>
-    commitEffect(delivery.link.target, delivery.event, delivery.lineage, delivery.link)
+  const commitEnvelopeEffect = (envelope: Envelope<unknown, Event, ActorId>): Effect.Effect<void, never> =>
+    commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link)
 
-  const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
-    commitEffect(parseActorAddress(address), event, undefined)
+  const commitRootEffect = (address: string, event: Event): Effect.Effect<void, never> =>
+    commitEffect(parseActorId(address), event, undefined)
 
-  const localTransport: Transport<ActorAddress> = {
+  const localTransport: Transport<ActorId, ActorEnvelope> = {
     name: "local",
-    deliver: (coordinates, delivery) => acceptEffect({
-      ...delivery,
-      link: { source: delivery.link.source, target: coordinates }
-    })
-  }
-  const providerTransport: Transport<ProviderAddress> = {
-    name: "provider",
-    deliver: (coordinates, delivery) => outbound.send(
-      { source: delivery.link.source, target: coordinates },
-      delivery.event as import("@clavia/tardigrade-core/communication/message").MessageReceived
-    )
+    send: (_destination, envelope) => commitEnvelopeEffect(envelope)
   }
   const routes = [
-    transportRoute(localTransport, (delivery) => isActorAddress(delivery.link.target) ? delivery.link.target : undefined),
-    transportRoute(providerTransport, (delivery) => isProviderAddress(delivery.link.target) ? delivery.link.target : undefined)
+    directoryRoute(
+      localTransport,
+      mappedDirectory((id: ActorId) => id.actor === principal ? id : undefined),
+      isActorEnvelope,
+      (envelope) => envelope.link.target
+    ),
+    directoryRoute(
+      providerTransport,
+      mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint),
+      isProviderEnvelope,
+      (envelope) => envelope.link.target
+    ),
+    ...(options.routes ?? [])
   ]
   const router = Layer.succeed(Router, {
-    deliver: (delivery) => deliverThrough(routes, delivery),
-    call: options.call ?? (() => Effect.succeed(REFUSED)),
-    resume: options.resume ?? (() => Effect.succeed(REFUSED))
+    send: (envelope) => sendThrough(routes, envelope)
   })
 
   const self = (lane: string): string => `${principal}:${lane}`
@@ -309,7 +311,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, parseActorAddress(self(lane))),
+      Layer.succeed(Self, parseActorId(self(lane))),
       // Every lane's log lives in this one durable store, so the observe privilege is the same
       // read the host serves itself (packages/core/src/facets.ts, Facets). A binding whose lanes
       // are remote proxies or refuses instead.
@@ -354,7 +356,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       for (const knot of found) {
         const victim = victimOf(knot)
         await runtime.runPromise(
-          deliverEffect(self(victim.from), {
+          commitRootEffect(self(victim.from), {
             type: "MessageReceived",
             id: victim.replyId,
             outcome: "failed",
@@ -385,9 +387,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   return {
     seed: (lane, events) => runtime.runPromise(appendEffect(lane, events)),
     read: (lane) => runtime.runPromise(readEffect(lane)),
-    accept: (delivery) => runtime.runPromise(acceptEffect(delivery)),
+    commit: (envelope) => runtime.runPromise(commitEnvelopeEffect(envelope)),
     lanes: () => runtime.runPromise(lanesEffect),
-    deliver: (address, event) => runtime.runPromise(deliverEffect(address, event)),
+    commitRoot: (address, event) => runtime.runPromise(commitRootEffect(address, event)),
     wake: (lane) => {
       dirty.add(lane)
       return drive()

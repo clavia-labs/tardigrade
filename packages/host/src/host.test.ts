@@ -5,9 +5,9 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
-import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 // The host against toy reactors, package-pure: no app vocabulary.
@@ -45,12 +45,12 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.deliver(deliveryOf(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
+              yield* router.send(envelopeOf(linkOf(parseActorId(`mem:${me}`), parseActorId(opponent)), {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Event, me === "a" ? { parent: parseActorAddress("mem:a"), depth: 1 } : undefined))
+              } as Event, me === "a" ? { parent: parseActorId("mem:a"), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -71,7 +71,7 @@ const rally = () => {
 describe("the host", () => {
   test("one serve drives the whole rally to quiescence", async () => {
     const host = rally()
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.resting()).toBe(true)
     const total =
@@ -82,17 +82,17 @@ describe("the host", () => {
 
   test("redelivery is absorbed: same id, no second answer", async () => {
     const host = rally()
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     const before = host.read("a").length
-    host.deliver("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.read("a").length).toBe(before)
   })
 
   test("a sink lane takes deliveries and owes nothing", async () => {
     const host = rally()
-    host.deliver("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
+    host.commitRoot("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
     expect(host.read("reg").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(host.resting()).toBe(true)
@@ -100,30 +100,30 @@ describe("the host", () => {
 
   test("a child is created with its first delivery and keeps that lineage", () => {
     const host = createHost({ actorFor: () => undefined })
-    const parent = parseActorAddress("mem:parent")
-    const target = parseActorAddress("mem:child")
-    const first = deliveryOf(
+    const parent = parseActorId("mem:parent")
+    const target = parseActorId("mem:child")
+    const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
       { parent, depth: 1 }
     )
-    host.accept(first)
-    host.accept(first)
+    host.commit(first)
+    host.commit(first)
     expect(host.read("child")).toEqual([
       threadCreated(target, { parent, depth: 1 }, 7),
       { ...first.event, link: first.link }
     ])
-    expect(() => host.accept(deliveryOf(
-      linkOf(parseActorAddress("mem:other"), target),
+    expect(() => host.commit(envelopeOf(
+      linkOf(parseActorId("mem:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
-      { parent: parseActorAddress("mem:other"), depth: 1 }
+      { parent: parseActorId("mem:other"), depth: 1 }
     ))).toThrow("already has different lineage")
   })
 
   test("an initial actor delivery must carry child lineage", () => {
     const host = createHost({ actorFor: () => undefined })
-    expect(() => host.accept(deliveryOf(
-      linkOf(parseActorAddress("mem:parent"), parseActorAddress("mem:child")),
+    expect(() => host.commit(envelopeOf(
+      linkOf(parseActorId("mem:parent"), parseActorId("mem:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
     ))).toThrow("must carry lineage")
     expect(host.read("child")).toEqual([])
@@ -136,10 +136,10 @@ describe("the router membrane", () => {
       actorFor: () => undefined,
       keyOf: (e) => (e.type === "MessageReceived" || e.type === "Keyed" ? `k:${String((e as { id?: unknown }).id)}` : undefined)
     })
-    expect(() => host.deliver("mem:lane", { type: "Rogue", at: 1 } as never)).toThrow(
+    expect(() => host.commitRoot("mem:lane", { type: "Rogue", at: 1 } as never)).toThrow(
       'unkeyed cross-lane event "Rogue"'
     )
-    host.deliver("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
+    host.commitRoot("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("lane").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
   })
 })

@@ -14,7 +14,7 @@ export const MessageReceived = Schema.Struct({
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
   // outcome marks a terminal report whose reaction turn settles locally without sending a reply (packages/agent/src/components/reply.test.ts, "terminal reports cannot start reply chains").
-  outcome: Schema.optional(Schema.Literals(["completed", "failed"])),
+  outcome: Schema.optional(Schema.Literals(["completed", "failed", "requesting"])),
   input: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
   at: Schema.Finite
@@ -45,18 +45,25 @@ export const messageReceived = (fields: {
 export const REPLY_SUFFIX = ".reply"
 export const replyId = (id: string): string => `${id}${REPLY_SUFFIX}`
 
-// replyEvent constructs the typed terminal report sent to a caller. The stable reply id makes redelivery absorb at the receiver (tla/communication/Link.tla, AtMostOnce).
-export const replyEvent = (args: {
-  readonly id: string
+// boundaryId identifies one reported boundary of a turn. Round zero preserves the ordinary reply convention.
+export const boundaryId = (turn: string, round: number): string =>
+  round === 0 ? replyId(turn) : `${replyId(turn)}.${round}`
+
+// boundaryEvent constructs one typed boundary report sent to a caller through a reversed link.
+export const boundaryEvent = (args: {
+  readonly turn: string
+  readonly round: number
   readonly text: string
-  readonly outcome: "completed" | "failed"
+  readonly outcome: "completed" | "failed" | "requesting"
   readonly from: string
+  readonly data?: unknown
   readonly at: number
 }): MessageReceived => ({
   type: "MessageReceived",
-  id: replyId(args.id),
+  id: boundaryId(args.turn, args.round),
   text: args.text,
   outcome: args.outcome,
   from: args.from,
+  ...(args.data === undefined ? {} : { data: args.data }),
   at: args.at
 })

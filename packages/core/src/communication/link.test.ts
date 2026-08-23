@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { ActorAddress } from "./address"
-import { deliveryOf, linkedEventOf } from "./delivery"
+import { ActorId } from "./endpoint"
+import { envelopeOf, linkedEventOf } from "./envelope"
 import { linkOf, reverseLink } from "./link"
 
 describe("links", () => {
@@ -11,7 +11,7 @@ describe("links", () => {
       chat: "-1001234567890",
       topic: "42"
     }
-    const target = Schema.decodeSync(ActorAddress)({
+    const target = Schema.decodeSync(ActorId)({
       actor: "support",
       thread: "telegram:-1001234567890:42"
     })
@@ -37,7 +37,7 @@ describe("links", () => {
     )
     const event = { type: "MessageReceived" as const, id: "m1", text: "hello", at: 42 }
 
-    expect(deliveryOf(link, event)).toEqual({ link, event })
+    expect(envelopeOf(link, event)).toEqual({ link, event })
   })
 
   test("a linked event retains the accepted route in the log value", () => {
@@ -47,6 +47,6 @@ describe("links", () => {
     )
     const event = { type: "MessageReceived" as const, id: "m1", text: "hello", at: 42 }
 
-    expect(linkedEventOf(deliveryOf(link, event))).toEqual({ ...event, link })
+    expect(linkedEventOf(envelopeOf(link, event))).toEqual({ ...event, link })
   })
 })

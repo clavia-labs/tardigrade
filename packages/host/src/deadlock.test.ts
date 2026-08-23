@@ -5,9 +5,9 @@ import { Router } from "@clavia/tardigrade-core/router"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
-import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
+import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
+import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 
 // The deadlock sentinel against toy reactors, package-pure. Each lane's
 // body: on its brief, declare an await on its partner; on its await's
@@ -54,8 +54,8 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             // Answer whoever awaits me, then settle.
-            yield* router.deliver(deliveryOf(
-              linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${input.partner}`)),
+            yield* router.send(envelopeOf(
+              linkOf(parseActorId(`mem:${me}`), parseActorId(`mem:${input.partner}`)),
               {
               type: "MessageReceived",
               id: `${input.partner}.await.reply`,
@@ -97,8 +97,8 @@ const brief: Event = { type: "MessageReceived", id: "brief", text: "go", at: 0 }
 describe("the deadlock sentinel", () => {
   test("without it, the knot rests forever, honestly", async () => {
     const h = knot(false)
-    h.deliver("mem:p", brief)
-    h.deliver("mem:c", brief)
+    h.commitRoot("mem:p", brief)
+    h.commitRoot("mem:c", brief)
     await h.drive()
     expect(h.resting()).toBe(true)
     expect(has(h.read("p"), "Settled")).toBe(false)
@@ -107,8 +107,8 @@ describe("the deadlock sentinel", () => {
 
   test("with it, one victim fails and the whole knot settles", async () => {
     const h = knot(true)
-    h.deliver("mem:p", brief)
-    h.deliver("mem:c", brief)
+    h.commitRoot("mem:p", brief)
+    h.commitRoot("mem:c", brief)
     await h.drive()
     expect(has(h.read("p"), "Settled")).toBe(true)
     expect(has(h.read("c"), "Settled")).toBe(true)

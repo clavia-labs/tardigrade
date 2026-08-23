@@ -254,7 +254,7 @@ const ThreadParams = { actor: Schema.String, id: Schema.String }
 // append an event, read the events back. A tail follows beside this group (stream.ts). Everything
 // else a thread can be asked is a projection its actor declares, mounted by name below.
 export const threadsGroup = HttpApiGroup.make("threads").add(
-  // Delivery is an append: a message is an event, and the log is where it lands, so the write side
+  // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
   HttpApiEndpoint.post("append", "/v1/actors/:actor/threads/:id/events", {
     params: ThreadParams,

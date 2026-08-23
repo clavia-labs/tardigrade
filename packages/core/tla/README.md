@@ -9,8 +9,8 @@ The specifications describe the runtime and communication contracts independentl
 | Module | Contract | Passing configurations | Counterexample configurations |
 | --- | --- | --- | --- |
 | `communication/Delivery` | Spawn, await, settlement, and deadlock | `Delivery.cfg`, `DeliveryLive.cfg` | `DeliveryDeadlock.cfg` |
-| `communication/Link` | Target routing, retry absorption, and placement freshness | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
-| `communication/Reply` | Reply through the reversed accepted link | `Reply.cfg`, `ReplyLive.cfg` | `ReplyHint.cfg` |
+| `communication/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
+| `communication/Reply` | Terminal and budget reports through the reversed accepted link | `Reply.cfg`, `ReplyLive.cfg` | `ReplyHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
 | `runtime/Driver` | Wake accounting, service, isolation, and bounded failure | `Driver.cfg`, `DriverLive.cfg`, `DriverIsolate.cfg`, `DriverPoisoned.cfg` | `DriverDrop.cfg` |
 | `runtime/Guard` | Terminal outcome remains singular across attempts | `Guard.cfg` | `GuardRace.cfg` |

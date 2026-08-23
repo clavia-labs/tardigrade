@@ -33,7 +33,7 @@ type TestR = RlmR | NativeOutputSupport
 const work = () => codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })])
 
 // hosted binds one assembled actor to an in-process host and drives the root lane. It is the
-// test's own driver: deliver a brief, drive to quiescence, read the boundary the settle left.
+// test's own driver: commit a root brief, drive to quiescence, read the boundary the settle left.
 // A caller with its own host does the same three things (host.ts, Host).
 const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
   const layersFor = (_lane: string): LaneEnv<TestR> =>
@@ -62,7 +62,7 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
   }
   const run = async (brief: string): Promise<Settled> => {
     const id = `run-${n++}`
-    host.deliver(host.self(ROOT_LANE), { type: "MessageReceived", id, text: brief, at: n } as Event)
+    host.commitRoot(host.self(ROOT_LANE), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     return settled(id)
   }

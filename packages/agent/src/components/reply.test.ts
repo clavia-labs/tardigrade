@@ -4,17 +4,15 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { replyReactor } from "./reply"
 
 const fireReply = async (log: ReadonlyArray<Event>, self: { readonly actor: string; readonly thread: string }) => {
-  const sent: Array<Delivery<unknown, Event, unknown>> = []
+  const sent: Array<Envelope<unknown, Event, unknown>> = []
   const transition = replyReactor(log)[0]!
   const layers = Layer.mergeAll(
     Layer.succeed(Router, {
-      deliver: (delivery) => Effect.sync(() => sent.push(delivery)),
-      call: () => Effect.succeed({ error: "unused" }),
-      resume: () => Effect.succeed({ error: "unused" })
+      send: (envelope) => Effect.sync(() => sent.push(envelope))
     }),
     Layer.succeed(Self, self),
     Layer.succeed(EventLog, withWatermark({
@@ -88,6 +86,50 @@ describe("replyReactor", () => {
       to: "factory:main",
       turn: "run-worker"
     })
+  })
+
+  test("reports a budget request through the same reversed actor link", async () => {
+    const log: ReadonlyArray<Event> = [
+      {
+        type: "MessageReceived",
+        id: "run-worker",
+        text: "inspect",
+        link: {
+          source: { actor: "factory", thread: "main" },
+          target: { actor: "factory", thread: "worker" }
+        },
+        at: 1
+      },
+      { type: "BudgetExhausted", budget: 2, used: 3, turn: "run-worker", at: 2 },
+      { type: "BudgetRequested", callId: "request-1", reason: "one source remains", amount: 2, turn: "run-worker", at: 3 }
+    ]
+
+    const { returned, sent } = await fireReply(log, { actor: "factory", thread: "worker" })
+
+    expect(sent).toEqual([
+      expect.objectContaining({
+        link: {
+          source: { actor: "factory", thread: "worker" },
+          target: { actor: "factory", thread: "main" }
+        },
+        event: expect.objectContaining({
+          type: "MessageReceived",
+          id: "run-worker.reply",
+          outcome: "requesting",
+          text: "one source remains",
+          data: { request: "request-1", reason: "one source remains", amount: 2, round: 0 }
+        })
+      })
+    ])
+    expect(returned).toEqual([
+      expect.objectContaining({
+        type: "BudgetRequestReported",
+        request: "request-1",
+        turn: "run-worker",
+        round: 0
+      })
+    ])
+    expect(replyReactor([...log, ...returned])).toEqual([])
   })
 
   test("settles an unlinked inbound without sending a reply", async () => {
