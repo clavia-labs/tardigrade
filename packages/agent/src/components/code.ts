@@ -6,6 +6,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/event-log"
 import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/events"
 import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execute"
+import { renderShape, renderSignature } from "@clavia/tardigrade-code/contract"
 import {
   CODE_VIEW_ALGEBRA,
   type CodeComponent,
@@ -30,9 +31,17 @@ const EXECUTE_TOOL: ToolSpec = {
 const CODE_SYSTEM_LEAD = "You act on the world by calling the execute tool with JavaScript; the packages in scope are:"
 export const CODE_SYSTEM = `${CODE_SYSTEM_LEAD}\nnone`
 
-// codeSystemFor names each package on its own line as name and description.
+// codeSystemFor names each package and renders every documented method's input and output schema.
+// The declaration shown to the model is the same MethodDoc the dispatch funnel validates, so code
+// generation and execution share one calling convention (packages/code/src/contract.ts).
 export const codeSystemFor = (packages: ReadonlyArray<Package<unknown>>): string =>
-  `${CODE_SYSTEM_LEAD}\n${packages.length === 0 ? "none" : packages.map((p) => `${p.name}: ${p.description}`).join("\n")}`
+  `${CODE_SYSTEM_LEAD}\n${packages.length === 0 ? "none" : packages.map((pkg) => {
+    const methods = Object.entries(pkg.docs ?? {}).map(
+      ([name, doc]) =>
+        `  ${pkg.name}.${renderSignature(name, doc.input)} -> ${renderShape(doc.output)}: ${doc.description}`
+    )
+    return [`${pkg.name}: ${pkg.description}`, ...methods].join("\n")
+  }).join("\n")}`
 
 const settleFor = (
   log: ReadonlyArray<Event>,

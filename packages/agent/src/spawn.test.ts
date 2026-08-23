@@ -19,6 +19,7 @@ import type { Link } from "@clavia/tardigrade-core/communication/link"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { codeSystemFor } from "./components/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
@@ -46,6 +47,16 @@ const env = (
 }
 
 describe("agentsPackage", () => {
+  test("the code contract shows terminal and escalation boundary shapes", () => {
+    const system = codeSystemFor([agentsPackage()])
+    expect(system).toContain(
+      "agents.continue({handle: {address: string, turn: string, round: number, request: string}, grant: number})"
+    )
+    expect(system).toContain(
+      "-> {output?: unknown, error?: string, requesting?: boolean, reason?: string, amount?: number, handle?: {address: string, turn: string, round: number, request: string}}"
+    )
+  })
+
   test("the default placement is the host's own sibling address", async () => {
     const host = createHost({ actorFor: () => undefined, principal: "mem" })
     const sent: Array<Sent> = []

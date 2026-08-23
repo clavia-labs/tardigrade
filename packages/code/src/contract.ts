@@ -53,6 +53,14 @@ const objectBody = (node: SchemaNode, depth: number): string => {
 // raises it at the call site rather than losing the fields that would teach the fix.
 export const DEFAULT_SIGNATURE_DEPTH = 2
 
+// renderShape renders a declared JSON Schema as the compact type expression code mode shows the
+// model. MethodDoc requires both schemas, so `unknown` means the declaration chose an open value
+// instead of the prompt dropping a contract (packages.ts, MethodDoc).
+export const renderShape = (schema: unknown, depth = DEFAULT_SIGNATURE_DEPTH): string => {
+  const node = asNode(schema)
+  return node === undefined ? "unknown" : typeName(node, depth)
+}
+
 // renderSignature folds a method's declared input schema into one calling line:
 // `put({name: string, body: string, title?: string})`. A method with no usable object schema
 // renders bare: `list()`.

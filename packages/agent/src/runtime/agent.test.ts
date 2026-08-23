@@ -14,8 +14,9 @@ import {
   type CodeComponent,
   type Package
 } from "@clavia/tardigrade-code/packages"
+import { fetchPackage } from "@clavia/tardigrade-code/fetch"
 import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentView } from "./agent"
-import { CODE_SYSTEM, codeMode } from "../components/code"
+import { CODE_SYSTEM, codeMode, codeSystemFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction, compactionFor } from "../components/compaction"
 import { reply } from "../components/reply"
@@ -270,17 +271,40 @@ describe("infer component", () => {
 
   test("a mounted package names itself in the system fragment", () => {
     // The model is told what the code can name, from the same values the code reactor mounts:
-    // one line per package, `name: description` (components/code.ts, codeSystemFor).
+    // package prose followed by each documented input and output shape (components/code.ts,
+    // codeSystemFor).
     const notes: Package = definePackage({
       name: "notes",
       description: "the team's notes",
+      docs: {
+        put: {
+          description: "Save one note.",
+          input: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"]
+          },
+          output: {
+            type: "object",
+            properties: { ok: { type: "boolean" }, error: { type: "string" } },
+            required: ["ok"]
+          }
+        }
+      },
       methods: { put: () => Effect.succeed(null) }
     })
     const { system } = renderOf([codeMode([notes]), nativeOutput], [])
     expect(system).toContain("notes: the team's notes")
+    expect(system).toContain("notes.put({text: string}) -> {ok: boolean, error?: string}: Save one note.")
     expect(system).not.toContain("none")
     // An explicit fragment still wins over the derivation.
     expect(renderOf([codeMode([notes], { system: "my own scope" }), nativeOutput], []).system).toBe("my own scope")
+  })
+
+  test("package docs show fetch input and output shapes", () => {
+    const system = codeSystemFor([fetchPackage()])
+    expect(system).toContain("fetch.get({url: string, headers?: object})")
+    expect(system).toContain("-> {status?: number, headers?: object, body?: string, truncated?: boolean, error?: string}")
   })
 
   test("codeMode composes nested code components and preserves their work", () => {

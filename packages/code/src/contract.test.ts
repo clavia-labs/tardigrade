@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import { checkInput, renderSignature } from "./contract"
+import { checkInput, renderShape, renderSignature } from "./contract"
 import { definePackage, type Package } from "./packages"
 import { Sandbox, type Bindings } from "./sandbox"
 import { codeReactorFor } from "./execute"
@@ -65,6 +65,23 @@ describe("renderSignature", () => {
     expect(renderSignature("list", undefined)).toBe("list()")
     expect(renderSignature("list", { type: "string" })).toBe("list()")
     expect(renderSignature("list", { type: "object", properties: {} })).toBe("list()")
+  })
+
+  test("an output schema renders as a compact shape", () => {
+    expect(renderShape({
+      type: "object",
+      properties: {
+        status: { type: "number" },
+        body: { type: "string" },
+        handle: {
+          type: "object",
+          properties: { turn: { type: "string" }, round: { type: "integer" } },
+          required: ["turn"]
+        }
+      },
+      required: ["status"]
+    })).toBe("{status: number, body?: string, handle?: {turn: string, round?: number}}")
+    expect(renderShape(undefined)).toBe("unknown")
   })
 })
 
@@ -151,7 +168,13 @@ const notesLike: Package = definePackage({
     put: { readOnlyHint: false, openWorldHint: false },
     free: { readOnlyHint: true, openWorldHint: false }
   },
-  docs: { put: { description: "put", input: putSchema } },
+  docs: {
+    put: {
+      description: "put",
+      input: putSchema,
+      output: { type: "object", properties: { ok: { type: "boolean" } } }
+    }
+  },
   methods: {
     put: (args) => Effect.sync(() => (ran.push(args), { ok: true })),
     free: (args) => Effect.sync(() => (ran.push(args), { ok: "unchecked" }))

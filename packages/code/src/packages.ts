@@ -57,12 +57,12 @@ export interface Connection {
 
 // MethodDoc documents one method for `packages.describe` and the dispatch funnel's contract
 // gate (contract.ts). `input` and `output` are JSON Schemas of the args object and the returned
-// value. A declared `input` is enforced at the funnel; an absent one leaves the method
-// unchecked.
+// value. The input is enforced at the funnel, and both shapes are rendered into code mode's
+// system contract (packages/agent/src/components/code.ts).
 export interface MethodDoc {
   readonly description: string
-  readonly input?: unknown // JSON schema of the args object
-  readonly output?: unknown // JSON schema of the returned value
+  readonly input: unknown // JSON schema of the args object
+  readonly output: unknown // JSON schema of the returned value
 }
 
 // MethodAnnotations follows the MCP tool-annotation vocabulary and its defaults: a method that
