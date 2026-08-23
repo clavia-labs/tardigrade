@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
-import { checkpointOf, contextPolicyOf, keepFromIndex, type ContextPolicy } from "./components/compaction"
+import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "./components/compaction"
 import {
   correctionText,
   declaredOutputOf,
@@ -158,7 +158,7 @@ export const renderMessages = (
   trajectory: ReadonlyArray<Event>,
   policy: Partial<ContextPolicy> = {}
 ): ReadonlyArray<AgentMessage> => {
-  const resolved = contextPolicyOf(policy)
+  const resolved = resolvedContextPolicyOf(policy)
   const messages: AgentMessage[] = []
   const projected = projectedOutput(trajectory)
   const checkpoint = checkpointOf(projected)

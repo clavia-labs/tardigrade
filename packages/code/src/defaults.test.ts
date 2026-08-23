@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
-import { DEFAULT_SANDBOX_POLICY, Sandbox } from "./sandbox"
+import { DEFAULT_SANDBOX_POLICY, sandboxReturned, Sandbox } from "./sandbox"
 import { jsSandbox, jsSandboxFor } from "./defaults"
 import { codeReactor } from "./execute"
 import { codeKeys } from "./events"
@@ -60,6 +60,30 @@ describe("jsSandbox console capture", () => {
     const total = (outcome.logs ?? []).reduce((n, l) => n + l.length, 0)
     expect(total).toBeLessThanOrEqual(500 + 200)
     expect((outcome.logs ?? []).at(-1)).toContain("cut at 500 bytes")
+  })
+})
+
+describe("sandbox call ordinals", () => {
+  test("stamps concurrent calls before their promises settle", async () => {
+    const seen: number[] = []
+    const outcome = await Effect.runPromise(
+      Effect.gen(function* () {
+        const sandbox = yield* Sandbox
+        return yield* sandbox.run(
+          "return Promise.all([tools.echo(0), tools.echo(1), tools.echo(2)])",
+          {
+            tools: {
+              echo: async (input: unknown, ordinal: number) => {
+                seen.push(ordinal)
+                return sandboxReturned(input)
+              }
+            }
+          }
+        )
+      }).pipe(Effect.provide(jsSandbox))
+    )
+    expect(outcome.result).toEqual([0, 1, 2])
+    expect(seen).toEqual([0, 1, 2])
   })
 })
 

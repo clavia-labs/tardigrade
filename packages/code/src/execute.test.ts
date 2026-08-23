@@ -6,7 +6,7 @@ import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/ev
 import { settleActor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import { definePackage, type Package } from "./packages"
-import { Sandbox, type Bindings } from "./sandbox"
+import { guestBindings, Sandbox, type Bindings } from "./sandbox"
 import { codeReactor, codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
 
@@ -23,9 +23,10 @@ const jsSandbox = Layer.succeed(Sandbox, {
   run: (code: string, bindings: Bindings) =>
     Effect.promise(async () => {
       try {
-        const names = Object.keys(bindings)
+        const scope = guestBindings(bindings)
+        const names = Object.keys(scope)
         const body = new AsyncFunction(...names, code)
-        return { result: await body(...names.map((name) => bindings[name])) }
+        return { result: await body(...names.map((name) => scope[name])) }
       } catch (e) {
         return { error: String(e) }
       }

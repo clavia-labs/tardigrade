@@ -3,7 +3,7 @@ import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
 import type { Action } from "tardie/events"
-import { infer } from "@clavia/tardigrade-model/model"
+import { infer, modelAskOf, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -12,8 +12,15 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { DEFAULT_MAX_CONCURRENT_LANES, driverPolicyOf } from "@clavia/tardigrade-host/driver"
+import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox"
 import { alarmPolicyOf, armAt, nextAlarm, type AlarmPolicy } from "./alarm"
 import { createCloudflareHost, type CloudflareHost } from "./host"
+import {
+  layerCloudflareSandbox,
+  type SandboxBridgeCall,
+  type CloudflareSandboxLimits,
+  type SandboxBridgeLease
+} from "./sandbox"
 import {
   CloudflareActorRegistry,
   layerCloudflareActorRegistry,
@@ -23,26 +30,31 @@ import {
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
   readonly REGISTRY: D1Database
+  readonly LOADER: WorkerLoader
   readonly MODEL_BASE_URL?: string
   readonly MODEL_API_KEY?: string
   readonly MODEL_ID?: string
+  readonly MODEL_SONNET_ID?: string
+  readonly MODEL_OPUS_ID?: string
+  readonly MODEL_HAIKU_ID?: string
   readonly MODEL_PROVIDER?: string
+  readonly MODEL_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_SONNET_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MAX_CONCURRENT_LANES?: string
   readonly TARDIGRADE_ALARM_DELAY_MILLIS?: string
+  readonly TARDIGRADE_COMPACTION_FIRE_RATIO?: string
+  readonly TARDIGRADE_COMPACTION_KEEP_RATIO?: string
+  readonly TARDIGRADE_SANDBOX_LOG_CAP_BYTES?: string
+  readonly TARDIGRADE_SANDBOX_CPU_MILLIS?: string
+  readonly TARDIGRADE_SANDBOX_SUBREQUESTS?: string
 }
 
 const LANE_PREFIX = "ag."
 const laneOf = (thread: string): string => `${LANE_PREFIX}${thread}`
 const threadOf = (lane: string): string | undefined => lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
-
-const assembly = actor(inferAgent([
-  codeMode([agentsPackage(), workspacePackage(), fetchPackage()]),
-  reply,
-  budget,
-  compaction,
-  outputValidateOnce
-]))
 
 // DEFAULT_ACTOR_REGISTRATION exposes the actor this Worker deploys when no external artifact has been registered.
 export const DEFAULT_ACTOR_REGISTRATION: CloudflareActorRegistration = {
@@ -52,7 +64,7 @@ export const DEFAULT_ACTOR_REGISTRATION: CloudflareActorRegistration = {
   builtIn: true
 }
 
-const assemblies = new Map([[DEFAULT_ACTOR_REGISTRATION.assembly, assembly] as const])
+const assemblies = new Set([DEFAULT_ACTOR_REGISTRATION.assembly])
 const registryRuntimes = new WeakMap<D1Database, ManagedRuntime.ManagedRuntime<CloudflareActorRegistry, never>>()
 
 const actorRegistry = async (env: Env) => {
@@ -73,11 +85,18 @@ const modelLayer = (env: Env) => {
     const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
-  return infer({
-    baseUrl: env.MODEL_BASE_URL,
-    apiKey: env.MODEL_API_KEY,
-    model: env.MODEL_ID,
-    ...(env.MODEL_PROVIDER === undefined ? {} : { provider: env.MODEL_PROVIDER })
+  const baseUrl = env.MODEL_BASE_URL
+  const apiKey = env.MODEL_API_KEY
+  return Layer.succeed(Infer, {
+    react: (request, key) => {
+      const selected = infer({
+        baseUrl,
+        apiKey,
+        model: modelIdOf(env, modelAskOf(request.trajectory)),
+        ...(env.MODEL_PROVIDER === undefined ? {} : { provider: env.MODEL_PROVIDER })
+      })
+      return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
+    }
   })
 }
 
@@ -95,11 +114,46 @@ const nonNegativeInteger = (raw: string | undefined, fallback: number, name: str
   return value
 }
 
+const optionalNonNegativeInteger = (raw: string | undefined, name: string): number | undefined => {
+  if (raw === undefined) return undefined
+  return nonNegativeInteger(raw, 0, name)
+}
+
+const optionalRatio = (raw: string | undefined, name: string): number | undefined => {
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0 || value >= 1) {
+    throw new Error(`${name} must be between 0 and 1, got ${JSON.stringify(raw)}`)
+  }
+  return value
+}
+
+const assemblyOf = (name: string, env: Env) => {
+  if (!assemblies.has(name)) return undefined
+  const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
+  const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
+  return actor(inferAgent([
+    codeMode([agentsPackage(), workspacePackage(), fetchPackage()]),
+    reply,
+    budget,
+    compaction({
+      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model),
+      ...(fireRatio === undefined ? {} : { fireRatio }),
+      ...(keepRatio === undefined ? {} : { keepRatio })
+    }),
+    outputValidateOnce
+  ]))
+}
+
 // ActorHost runs one actor graph over one SQLite-backed Durable Object.
 export class ActorHost extends DurableObject<Env> {
   private runtime: Promise<CloudflareHost> | undefined
   private principal: string | undefined
   private readonly alarmPolicy: AlarmPolicy
+  private readonly sandboxCalls = new Map<
+    string,
+    (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
+  >()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
@@ -128,12 +182,52 @@ export class ActorHost extends DurableObject<Env> {
     return this.principal = row.value
   }
 
+  async sandboxCallBatch(
+    execution: string,
+    calls: ReadonlyArray<SandboxBridgeCall>
+  ): Promise<ReadonlyArray<SandboxCallOutcome>> {
+    const call = this.sandboxCalls.get(execution)
+    if (call === undefined) throw new Error(`sandbox execution ${JSON.stringify(execution)} is unavailable`)
+    return Promise.all(calls.map((entry) => call(entry.ordinal, entry.packageName, entry.method, entry.args)))
+  }
+
   private host(): Promise<CloudflareHost> {
     if (this.runtime !== undefined) return this.runtime
     const principal = this.name()
     const assemblyKey = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'assembly'").one().value
-    const selectedAssembly = assemblies.get(assemblyKey)
+    const selectedAssembly = assemblyOf(assemblyKey, this.env)
     if (selectedAssembly === undefined) throw new Error(`actor assembly ${JSON.stringify(assemblyKey)} is not deployed`)
+    const sandboxCpuMs = optionalNonNegativeInteger(this.env.TARDIGRADE_SANDBOX_CPU_MILLIS, "TARDIGRADE_SANDBOX_CPU_MILLIS")
+    const sandboxSubRequests = optionalNonNegativeInteger(
+      this.env.TARDIGRADE_SANDBOX_SUBREQUESTS,
+      "TARDIGRADE_SANDBOX_SUBREQUESTS"
+    )
+    const sandboxLimits: CloudflareSandboxLimits = {
+      ...(sandboxCpuMs === undefined ? {} : { cpuMs: sandboxCpuMs }),
+      ...(sandboxSubRequests === undefined ? {} : { subRequests: sandboxSubRequests })
+    }
+    const actorName = this.ctx.id.name
+    if (actorName === undefined) throw new Error("actor host requires a named durable object")
+    const sandboxLayer = layerCloudflareSandbox(
+      this.env.LOADER,
+      (call): SandboxBridgeLease => {
+        const execution = crypto.randomUUID()
+        this.sandboxCalls.set(execution, call)
+        return {
+          binding: this.env.ACTORS.getByName(actorName),
+          execution,
+          close: () => {
+            this.sandboxCalls.delete(execution)
+          }
+        }
+      },
+      {
+        ...(this.env.TARDIGRADE_SANDBOX_LOG_CAP_BYTES === undefined
+          ? {}
+          : { logCapBytes: nonNegativeInteger(this.env.TARDIGRADE_SANDBOX_LOG_CAP_BYTES, 0, "TARDIGRADE_SANDBOX_LOG_CAP_BYTES") }),
+        ...(Object.keys(sandboxLimits).length === 0 ? {} : { limits: sandboxLimits })
+      }
+    )
     const remoteTransport: Transport<ActorId, ActorEnvelope> = {
       name: "durable-object",
       send: (destination, envelope) => Effect.currentSpan.pipe(
@@ -162,7 +256,7 @@ export class ActorHost extends DurableObject<Env> {
       storage: this.ctx.storage,
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
-      layersFor: () => Layer.mergeAll(modelLayer(this.env), FetchHttpClient.layer),
+      layersFor: () => Layer.mergeAll(modelLayer(this.env), FetchHttpClient.layer, sandboxLayer),
       routes: [remoteRoute],
       driver: driverPolicyOf({
         maxConcurrentLanes: positiveInteger(

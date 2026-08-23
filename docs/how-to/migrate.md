@@ -54,7 +54,7 @@ Move related tools to code packages only when the decision rule above applies. M
 
 ### Policies and output
 
-State every policy that affects behavior. `budgetFor({ defaultToolBudget })` limits `execute` calls, so it is not a direct replacement for a model-step limit that counts completions and native tools. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compactionFor(...)` when the application needs context thresholds that differ from `DEFAULT_CONTEXT_POLICY`.
+State every policy that affects behavior. `budgetFor({ defaultToolBudget })` limits `execute` calls, so it is not a direct replacement for a model-step limit that counts completions and native tools. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
 
 Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
 

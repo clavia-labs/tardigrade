@@ -475,5 +475,12 @@ export const budgetDenied = (
 ): Event => ({ type: "BudgetDenied", ...fields }) as Event
 
 export const compactionCompleted = (
-  fields: { readonly keepFrom: string; readonly summary: string; readonly at: number }
+  fields: {
+    readonly keepFrom: string
+    readonly summary: string
+    readonly contextWindowTokens: number
+    readonly fireTokens: number
+    readonly keepTokens: number
+    readonly at: number
+  }
 ): Event => ({ type: "CompactionCompleted", ...fields }) as Event

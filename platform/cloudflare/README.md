@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding stores the actor registry in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the registry, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass.
+This binding stores the actor registry in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the registry, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 ## Verify and deploy
 
@@ -78,9 +78,21 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` | Limits lanes settled concurrently inside one actor object |
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `0` | Delays a newly armed actor alarm |
+| `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
+| `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
+| `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
+| `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
+| `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
 | `MODEL_BASE_URL` | unset | Selects the model API endpoint |
 | `MODEL_API_KEY` | unset | Authenticates the model API request |
 | `MODEL_ID` | unset | Selects the model |
+| `MODEL_SONNET_ID` | `MODEL_ID` | Selects the model for `sonnet` briefs |
+| `MODEL_OPUS_ID` | `MODEL_ID` | Selects the model for `opus` briefs |
+| `MODEL_HAIKU_ID` | `MODEL_ID` | Selects the model for `haiku` briefs |
 | `MODEL_PROVIDER` | unset | Supplies an optional provider hint |
+| `MODEL_CONTEXT_WINDOW_TOKENS` | `1000000` in `wrangler.jsonc`; framework fallback `128000` | Declares the default model context window used by compaction |
+| `MODEL_SONNET_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `sonnet` model context window |
+| `MODEL_OPUS_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `opus` model context window |
+| `MODEL_HAIKU_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `haiku` model context window |
 
-`wrangler.jsonc` also makes the D1 registry binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy.
+`wrangler.jsonc` also makes the D1 registry binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.

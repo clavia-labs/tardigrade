@@ -42,7 +42,7 @@ export default defineActor({
     // budget stops work tools when the turn reaches its tool-call limit.
     budget,
     // compaction summarizes older context when a long turn outgrows its context window.
-    compaction,
+    compaction(),
     // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
     outputValidateOnce
   ]))

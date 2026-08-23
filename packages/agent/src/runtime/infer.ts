@@ -43,7 +43,7 @@ export interface InferRequest {
   readonly system: string
   readonly tools: ReadonlyArray<import("../request").ToolSpec>
   // What the render truncates and where, stated by the assembly so the binding renders against
-  // the same numbers the compaction guard fires on (components/compaction.ts, compactionFor).
+  // the same numbers the compaction guard fires on (components/compaction.ts, compaction).
   readonly context?: Partial<ContextPolicy>
   // What the turn does when native structured output is unavailable for this call, and the
   // prompt that fallback needs. Absent means the assembly selected native output.

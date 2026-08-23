@@ -41,7 +41,7 @@ export const assemblyOf = () =>
     codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
-    compaction,
+    compaction(),
     outputValidateOnce
   ]))
 

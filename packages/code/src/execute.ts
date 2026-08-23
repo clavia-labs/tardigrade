@@ -6,7 +6,7 @@ import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { workOwed } from "./projections"
 import { annotationsOf, type Package, type PackageRequirements } from "./packages"
 import { checkInput, renderSignature } from "./contract"
-import { Sandbox, type Bindings } from "./sandbox"
+import { Sandbox, sandboxParked, sandboxReturned, type Bindings, type SandboxCall } from "./sandbox"
 import { turnHead, turnOf } from "./turns"
 import {
   BARE_SPILL_NOTE,
@@ -62,7 +62,6 @@ const executeRecorded = <R = never>(
     // which is why the requirement rides the reactor's type (execute.test.ts, "a package method
     // reads its service through the funnel").
     const context = yield* Effect.context<KeyValueStore.KeyValueStore | R>()
-    let n = 0
     // Park bookkeeping. inFlight counts proxy calls from synchronous invoke to committed pair
     // or park; parkGate completes when every open call settled or parked and at least one
     // parked: the cue to stop waiting on the body.
@@ -81,12 +80,12 @@ const executeRecorded = <R = never>(
       inFlight--
       if (parked && inFlight === 0) yield* Deferred.succeed(parkGate, undefined)
     })
-    const bindings: Record<string, Record<string, (args: unknown) => Promise<unknown>>> = {}
+    const bindings: Record<string, Record<string, SandboxCall>> = {}
     for (const pkg of packages) {
-      const methods: Record<string, (args: unknown) => Promise<unknown>> = {}
+      const methods: Record<string, SandboxCall> = {}
       for (const [method, fn] of Object.entries(pkg.methods)) {
-        methods[method] = (args: unknown) => {
-          const callId = callIdOf(execId, n++)
+        methods[method] = (args: unknown, ordinal: number) => {
+          const callId = callIdOf(execId, ordinal)
           inFlight++
           return Effect.runPromiseWith(context)(
             Effect.gen(function* () {
@@ -219,7 +218,7 @@ const executeRecorded = <R = never>(
               Effect.ensuring(finishCall),
               Effect.withSpan("package.call", { attributes: { name: `${pkg.name}.${method}`, callId } })
             )
-          ).then((outcome) => (outcome.parked ? new Promise<unknown>(() => {}) : outcome.result))
+          ).then((outcome) => outcome.parked ? sandboxParked : sandboxReturned(outcome.result))
         }
       }
       bindings[pkg.name] = methods

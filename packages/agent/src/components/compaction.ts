@@ -37,6 +37,12 @@ export interface ContextPolicy {
   readonly messageRenderCap: number
   // Chars of one tool result the render sends; past it the result truncates.
   readonly resultRenderCap: number
+  // Selected model context window used to derive the hysteresis lines.
+  readonly contextWindowTokens: number
+  // Fraction of the selected model window that fires compaction.
+  readonly fireRatio: number
+  // Fraction of the selected model window retained verbatim after compaction.
+  readonly keepRatio: number
   // Rendered suffix size, in estimated tokens, that fires a compaction pass.
   readonly fireTokens: number
   // Estimated tokens of the tail a pass keeps verbatim. Below fireTokens, which is the
@@ -46,23 +52,99 @@ export interface ContextPolicy {
   readonly summaryLineCap: number
 }
 
-export const DEFAULT_CONTEXT_POLICY: ContextPolicy = {
+export type ContextWindowTokens = number | ((model: string | undefined) => number)
+
+export interface CompactionPolicy {
+  readonly messageRenderCap: number
+  readonly resultRenderCap: number
+  readonly contextWindowTokens: ContextWindowTokens
+  readonly fireRatio: number
+  readonly keepRatio: number
+  readonly summaryLineCap: number
+}
+
+export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
   messageRenderCap: 12_000,
   resultRenderCap: 6_000,
-  fireTokens: 16_000,
-  keepTokens: 4_000,
+  contextWindowTokens: 128_000,
+  fireRatio: 0.8,
+  keepRatio: 0.5,
   summaryLineCap: 200
 }
 
-// contextPolicyOf fills an override with the defaults. Every surface that applies context policy
-// takes `Partial<ContextPolicy>` and resolves it here, so a caller states only what it changes.
-export const contextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => ({
-  messageRenderCap: policy.messageRenderCap ?? DEFAULT_CONTEXT_POLICY.messageRenderCap,
-  resultRenderCap: policy.resultRenderCap ?? DEFAULT_CONTEXT_POLICY.resultRenderCap,
-  fireTokens: policy.fireTokens ?? DEFAULT_CONTEXT_POLICY.fireTokens,
-  keepTokens: policy.keepTokens ?? DEFAULT_CONTEXT_POLICY.keepTokens,
-  summaryLineCap: policy.summaryLineCap ?? DEFAULT_CONTEXT_POLICY.summaryLineCap
-})
+const positive = (value: number, name: string): number => {
+  if (!Number.isFinite(value) || value <= 0) throw new Error(`${name} must be a finite positive number, got ${value}`)
+  return value
+}
+
+const ratio = (value: number, name: string): number => {
+  if (!Number.isFinite(value) || value <= 0 || value >= 1) throw new Error(`${name} must be between 0 and 1, got ${value}`)
+  return value
+}
+
+// modelOf returns the latest model choice recorded for the open thread. The same MessageReceived
+// field selects inference, so a replay resolves the same model window.
+const modelOf = (log: ReadonlyArray<Event>): string | undefined => {
+  let model: string | undefined
+  for (const event of log) {
+    if (event.type !== "MessageReceived") continue
+    const selected = (event as { readonly model?: unknown }).model
+    if (typeof selected === "string" && selected !== "") model = selected
+  }
+  return model
+}
+
+// contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
+// guard and render. The fire and keep lines form one hysteresis policy, so they are validated
+// together.
+export const contextPolicyOf = (
+  policy: Partial<CompactionPolicy> = {},
+  model?: string
+): ContextPolicy => {
+  const windowSource = policy.contextWindowTokens ?? DEFAULT_COMPACTION_POLICY.contextWindowTokens
+  const contextWindowTokens = positive(
+    typeof windowSource === "function" ? windowSource(model) : windowSource,
+    "contextWindowTokens"
+  )
+  const fireRatio = ratio(policy.fireRatio ?? DEFAULT_COMPACTION_POLICY.fireRatio, "fireRatio")
+  const keepRatio = ratio(policy.keepRatio ?? DEFAULT_COMPACTION_POLICY.keepRatio, "keepRatio")
+  if (keepRatio >= fireRatio) throw new Error(`keepRatio must be less than fireRatio, got ${keepRatio} and ${fireRatio}`)
+  return {
+    messageRenderCap: positive(
+      policy.messageRenderCap ?? DEFAULT_COMPACTION_POLICY.messageRenderCap,
+      "messageRenderCap"
+    ),
+    resultRenderCap: positive(
+      policy.resultRenderCap ?? DEFAULT_COMPACTION_POLICY.resultRenderCap,
+      "resultRenderCap"
+    ),
+    contextWindowTokens,
+    fireRatio,
+    keepRatio,
+    fireTokens: Math.floor(contextWindowTokens * fireRatio),
+    keepTokens: Math.floor(contextWindowTokens * keepRatio),
+    summaryLineCap: positive(
+      policy.summaryLineCap ?? DEFAULT_COMPACTION_POLICY.summaryLineCap,
+      "summaryLineCap"
+    )
+  }
+}
+
+// resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
+// normally contribute every field after resolving their model-relative policy.
+export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): ContextPolicy => {
+  const defaults = contextPolicyOf()
+  return {
+    messageRenderCap: policy.messageRenderCap ?? defaults.messageRenderCap,
+    resultRenderCap: policy.resultRenderCap ?? defaults.resultRenderCap,
+    contextWindowTokens: policy.contextWindowTokens ?? defaults.contextWindowTokens,
+    fireRatio: policy.fireRatio ?? defaults.fireRatio,
+    keepRatio: policy.keepRatio ?? defaults.keepRatio,
+    fireTokens: policy.fireTokens ?? defaults.fireTokens,
+    keepTokens: policy.keepTokens ?? defaults.keepTokens,
+    summaryLineCap: policy.summaryLineCap ?? defaults.summaryLineCap
+  }
+}
 
 // renderedChars counts the characters a render sends for one event: capped where the render
 // caps, zero for an event the render skips. The guard must measure the request the model sees;
@@ -99,7 +181,7 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
 // be a dependency and an impure path, and every budget decision must fold the same on replay, so
 // the estimate is a pure function of the recorded events (compaction.test.ts, "the measure").
 export const estimateTokens = (events: ReadonlyArray<Event>, policy: Partial<ContextPolicy> = {}): number => {
-  const resolved = contextPolicyOf(policy)
+  const resolved = resolvedContextPolicyOf(policy)
   return Math.ceil(projectedOutput(events).reduce((n, e) => n + renderedChars(e, resolved), 0) / 4)
 }
 
@@ -235,7 +317,7 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
   return fires > passes
 }
 
-// compactionReactorFor derives a pass when the suffix has crossed FIRE at a round boundary, or an
+// compactionReactor derives a pass when the suffix has crossed FIRE at a round boundary, or an
 // explicit `CompactionFired` stands uncovered. The act always advances the checkpoint (the
 // retained tail is bounded by KEEP < FIRE), so a served pass quiets the derivation instead of
 // re-firing. The checkpoint's key is the identity it keeps from: cc:<keepFrom>. Its input is the
@@ -245,8 +327,8 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 //
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
-export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): Reactor<Infer> => (log) => {
-  const resolved = contextPolicyOf(policy)
+export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer> => (log) => {
+  const resolved = contextPolicyOf(policy, modelOf(log))
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
   // its rejected reply into a summary (src/output.ts, projectedOutput).
@@ -259,13 +341,27 @@ export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): React
   return [
     transition({
       key: `cc:${cut.keepFrom}`,
-      input: { keepFrom: cut.keepFrom, summary: prior.summary, span },
+      input: {
+        keepFrom: cut.keepFrom,
+        summary: prior.summary,
+        span,
+        contextWindowTokens: resolved.contextWindowTokens,
+        fireTokens: resolved.fireTokens,
+        keepTokens: resolved.keepTokens
+      },
       act: (input) =>
         Effect.gen(function* () {
           const at = yield* Clock.currentTimeMillis
           const lines = input.span.map((e) => lineOf(e, resolved)).filter((l): l is string => l !== null)
           if (lines.length === 0) {
-            return [compactionCompleted({ keepFrom: input.keepFrom, summary: input.summary, at })]
+            return [compactionCompleted({
+              keepFrom: input.keepFrom,
+              summary: input.summary,
+              contextWindowTokens: input.contextWindowTokens,
+              fireTokens: input.fireTokens,
+              keepTokens: input.keepTokens,
+              at
+            })]
           }
           const brief = [
             "Summarize this agent history in a compact paragraph. Keep every fact a future turn could need: names, ids, decisions, unfinished work.",
@@ -282,26 +378,33 @@ export const compactionReactorFor = (policy: Partial<ContextPolicy> = {}): React
             `compact-${input.keepFrom}`
           )
           const summary = action.kind === "complete" ? action.output : input.summary
-          return [compactionCompleted({ keepFrom: input.keepFrom, summary, at })]
+          return [compactionCompleted({
+            keepFrom: input.keepFrom,
+            summary,
+            contextWindowTokens: input.contextWindowTokens,
+            fireTokens: input.fireTokens,
+            keepTokens: input.keepTokens,
+            at
+          })]
         })
     })
   ]
 }
 
-// compactionReactor is that reactor on the default policy. An agent on another policy builds its
-// own with `compactionReactorFor` and hands the same policy to its render.
-export const compactionReactor: Reactor<Infer> = compactionReactorFor()
-
-// compactionFor derives one context contribution and the transitions governed by that policy.
-export const compactionFor = (policy: Partial<ContextPolicy>): AgentComponent<Infer> => {
-  const reactor = compactionReactorFor(policy)
+// compaction derives one resolved context contribution and the transitions governed by the same
+// model-relative policy.
+export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<Infer> => {
+  const reactor = compactionReactor(policy)
   return {
     name: "compaction",
     derive: (log) => ({
-      view: { system: [], tools: [], context: [{ component: "compaction", policy }], output: [] },
+      view: {
+        system: [],
+        tools: [],
+        context: [{ component: "compaction", policy: contextPolicyOf(policy, modelOf(log)) }],
+        output: []
+      },
       transitions: reactor(log)
     })
   }
 }
-
-export const compaction: AgentComponent<Infer> = compactionFor({})

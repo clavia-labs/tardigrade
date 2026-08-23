@@ -18,7 +18,7 @@ const rlm = actor(inferAgent([
   codeMode([agentsPackage(), workspacePackage()]),
   reply, // reports each turn's terminal to whoever asked
   budget, // the per-turn code budget, inherited by spawned children
-  compaction, // bounded model context over long investigations
+  compaction(), // bounded model context over long investigations
   outputValidateOnce // handles structured results without adding a retry
 ]))
 

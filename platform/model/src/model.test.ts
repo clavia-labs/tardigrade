@@ -23,6 +23,7 @@ import {
   DEFAULT_STREAM_BOUNDS,
   ladderOf,
   modelAskOf,
+  modelContextWindowTokensOf,
   modelIdOf,
   infer,
   retryAfterMsOf,
@@ -879,6 +880,18 @@ describe("model selection", () => {
         { type: "MessageReceived", id: "m2", text: "b", at: 2 } as never
       ])
     ).toBe("opus")
+  })
+  test("context windows follow the same selected-model fallback", () => {
+    const windows = {
+      MODEL_ID: "default-id",
+      MODEL_CONTEXT_WINDOW_TOKENS: "1000000",
+      MODEL_SONNET_CONTEXT_WINDOW_TOKENS: "200000"
+    }
+    expect(modelContextWindowTokensOf(windows, "sonnet")).toBe(200_000)
+    expect(modelContextWindowTokensOf(windows, "opus")).toBe(1_000_000)
+    expect(() => modelContextWindowTokensOf({ MODEL_ID: "m", MODEL_CONTEXT_WINDOW_TOKENS: "many" })).toThrow(
+      "model context window must be a positive integer"
+    )
   })
 })
 

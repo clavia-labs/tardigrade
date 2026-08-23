@@ -123,13 +123,27 @@ const releaseAnalyst = actor(infer([
   deploys,     // recent_deploys and its paired handler
   codeMode(),  // durable JavaScript execution over an empty package scope
   budget,      // a per-turn code budget
-  compaction,  // bounded model context
+  compaction(), // bounded model context
   reply,       // results for parent agents
   outputValidateOnce // validates one structured result without correction
 ]))
 ```
 
 `infer` composes its children, preserves their transitions, and adds inference and tool routing over their final view. `actor` adapts the root component to reconciliation and carries its service requirements into the host type. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+
+`compaction(policy?)` takes a model-window resolver and hysteresis ratios. The default fires at 80 percent of a 128,000-token window and keeps a 50 percent tail. A platform that serves several models should state each window from the same model catalog that inference uses:
+
+```ts
+const windows = { default: 1_000_000, sonnet: 200_000 } as const
+
+const boundedContext = compaction({
+  contextWindowTokens: (model) => windows[model === "sonnet" ? "sonnet" : "default"],
+  fireRatio: 0.8,
+  keepRatio: 0.5
+})
+```
+
+When the guard fires, the component appends the resolved policy with its checkpoint. The output shape is `{ type: "CompactionCompleted", keepFrom: string, summary: string, contextWindowTokens: number, fireTokens: number, keepTokens: number, at: number }`.
 
 `codeMode([...components])` applies the same structure to the code surface. Each package factory returns a leaf `CodeComponent`. Code mode composes their package views and transitions, then exposes the combined scope through one `execute` tool. Use `definePackage({...})` for a custom leaf. Use `composeComponents(name, CODE_VIEW_ALGEBRA, children)` when one code component groups other code components.
 

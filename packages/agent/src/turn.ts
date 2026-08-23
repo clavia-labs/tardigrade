@@ -8,7 +8,7 @@ import type { Facets } from "@clavia/tardigrade-core/facets"
 import type { Infer, InferPolicy } from "./runtime/infer"
 import type { OutputContract } from "./output"
 import type { BudgetPolicy } from "./components/budget"
-import type { ContextPolicy } from "./components/compaction"
+import type { CompactionPolicy } from "./components/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execute"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/workspace"
 
@@ -27,11 +27,11 @@ export type RlmR = AgentR
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
 // packages/code/src/execute.ts). `infer` is the root component's policy; `workspace`
 // bounds the workspace package's own read and grep answers (packages/code/src/workspace.ts); the
-// rest ride their components (budgetFor, compactionFor, codeMode).
+// rest ride their components (budgetFor, compaction, codeMode).
 export interface AgentPolicy {
   readonly infer: Partial<InferPolicy>
   readonly budget: Partial<BudgetPolicy>
-  readonly context: Partial<ContextPolicy>
+  readonly context: Partial<CompactionPolicy>
   readonly code: Partial<CodePolicy>
   readonly workspace: Partial<WorkspacePolicy>
 }

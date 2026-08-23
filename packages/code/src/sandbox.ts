@@ -12,11 +12,44 @@ export interface SandboxResult {
   readonly logs?: ReadonlyArray<string>
 }
 
-// Bindings is what a code body sees in scope: one object per package, one async function per
-// method. The functions are host-side proxies; the sandbox only wires names into scope. A
-// binding is a package proxy (an object of methods) or a plain value spliced into scope
-// (`brief`, `spec`, `trajectory`).
-export type Bindings = Readonly<Record<string, Readonly<Record<string, (args: unknown) => Promise<unknown>>> | unknown>>
+export type SandboxCallOutcome =
+  | { readonly _tag: "Returned"; readonly result: unknown }
+  | { readonly _tag: "Parked" }
+
+export type SandboxCall = (args: unknown, ordinal: number) => Promise<SandboxCallOutcome>
+
+// Bindings carries host package calls into a sandbox. A returned call carries its value across
+// the platform boundary. A parked call crosses that boundary as a value and becomes pending in
+// the guest, so a remote sandbox does not hold an RPC open while durable work is away.
+export type Bindings = Readonly<Record<string, Readonly<Record<string, SandboxCall>> | unknown>>
+
+export const sandboxReturned = (result: unknown): SandboxCallOutcome => ({ _tag: "Returned", result })
+export const sandboxParked: SandboxCallOutcome = { _tag: "Parked" }
+
+const packageBinding = (binding: Bindings[string]): Readonly<Record<string, SandboxCall>> | undefined => {
+  if (binding === null || typeof binding !== "object" || Array.isArray(binding)) return undefined
+  const entries = Object.entries(binding)
+  if (!entries.every(([, method]) => typeof method === "function")) return undefined
+  return binding as Readonly<Record<string, SandboxCall>>
+}
+
+// guestBindings turns host call outcomes into the promises a code body observes.
+export const guestBindings = (bindings: Bindings): Readonly<Record<string, unknown>> => {
+  let ordinal = 0
+  return Object.fromEntries(Object.entries(bindings).map(([name, binding]) => {
+    const methods = packageBinding(binding)
+    if (methods === undefined) return [name, binding]
+    return [name, Object.fromEntries(Object.entries(methods).map(([method, call]) => [
+      method,
+      async (args: unknown) => {
+        const position = ordinal++
+        const outcome = await call(args, position)
+        if (outcome._tag === "Parked") return new Promise<never>(() => undefined)
+        return outcome.result
+      }
+    ]))]
+  }))
+}
 
 // Ambient pins one execution's clock and randomness to recorded data, so every attempt sees
 // the same values. `at` is the dispatch event's own timestamp (a body is a pure function of
@@ -125,8 +158,8 @@ export const jsSandboxServiceFor = (policy: Partial<SandboxPolicy> = {}): Sandbo
       Effect.promise(async () => {
         const lines: string[] = []
         const logs = () => (lines.length === 0 ? {} : { logs: lines })
-        const scope: Bindings = {
-          ...bindings,
+        const scope: Readonly<Record<string, unknown>> = {
+          ...guestBindings(bindings),
           console: consoleShim(lines, resolved),
           ...(ambient === undefined ? {} : ambientShims(ambient))
         }

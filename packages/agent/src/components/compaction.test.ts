@@ -10,10 +10,9 @@ import { agentKeys } from "../events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
-  DEFAULT_CONTEXT_POLICY,
   checkpointOf,
   compactionReactor,
-  compactionReactorFor,
+  contextPolicyOf,
   estimateTokens,
   keepFromIndex,
   suffixOf
@@ -25,6 +24,9 @@ import {
 // rendered chars over four.
 
 const head: Event = { type: "MessageReceived", id: "m0", text: "extract the covenants", at: 0 }
+const TEST_POLICY = { contextWindowTokens: 20_000, fireRatio: 0.8, keepRatio: 0.2 }
+const TEST_CONTEXT = contextPolicyOf(TEST_POLICY)
+const reactor = compactionReactor(TEST_POLICY)
 
 // One resolved tool round inside the open turn, sized so a dozen rounds cross the token budget.
 const round = (i: number, turn = "m0"): Event[] => [
@@ -41,15 +43,15 @@ const openTurn = (rounds: number): Event[] => {
 describe("the compaction measure and guard", () => {
   test("the measure counts what a render sends: capped results, skipped lanes", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
-    expect(estimateTokens([big])).toBe(Math.ceil(DEFAULT_CONTEXT_POLICY.resultRenderCap / 4))
+    expect(estimateTokens([big])).toBe(Math.ceil(TEST_CONTEXT.resultRenderCap / 4))
     const lane: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
     expect(estimateTokens([lane])).toBe(0)
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {
-    expect(estimateTokens(suffixOf(openTurn(16)))).toBeGreaterThan(DEFAULT_CONTEXT_POLICY.fireTokens)
-    expect(compactionReactor(openTurn(16))).toHaveLength(1) // no reply anywhere, the turn is live
-    expect(compactionReactor(openTurn(2))).toHaveLength(0) // under FIRE
+    expect(estimateTokens(suffixOf(openTurn(16)))).toBeGreaterThan(TEST_CONTEXT.fireTokens)
+    expect(reactor(openTurn(16))).toHaveLength(1) // no reply anywhere, the turn is live
+    expect(reactor(openTurn(2))).toHaveLength(0) // under FIRE
   })
 
   test("the guard holds while a call is unanswered", () => {
@@ -57,15 +59,28 @@ describe("the compaction measure and guard", () => {
       ...openTurn(16),
       { type: "ToolCalled", callId: "c99", name: "execute", arguments: {}, turn: "m0", at: 99 }
     ]
-    expect(compactionReactor(awaiting)).toHaveLength(0)
+    expect(reactor(awaiting)).toHaveLength(0)
   })
 
   test("the policy is the consumer's: a raised FIRE holds the guard, a lowered one fires early", () => {
-    expect(compactionReactorFor({ fireTokens: 1_000_000 })(openTurn(16))).toHaveLength(0)
-    expect(compactionReactorFor({ fireTokens: 100 })(openTurn(2))).toHaveLength(1)
+    expect(compactionReactor({ contextWindowTokens: 1_250_000 })(openTurn(16))).toHaveLength(0)
+    expect(compactionReactor({ contextWindowTokens: 125 })(openTurn(2))).toHaveLength(1)
     // The measure moves with the render cap, because one policy states both.
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
     expect(estimateTokens([big], { resultRenderCap: 40 })).toBe(10)
+  })
+
+  test("the selected model resolves both hysteresis lines from one window", () => {
+    const policy = contextPolicyOf(
+      { contextWindowTokens: (model) => model === "large" ? 1_000_000 : 100_000 },
+      "large"
+    )
+    expect(policy.fireTokens).toBe(800_000)
+    expect(policy.keepTokens).toBe(500_000)
+  })
+
+  test("the keep line must remain below the fire line", () => {
+    expect(() => contextPolicyOf({ keepRatio: 0.9, fireRatio: 0.8 })).toThrow("keepRatio must be less than fireRatio")
   })
 
   test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
@@ -78,7 +93,7 @@ describe("the compaction measure and guard", () => {
       throw new Error("random in the compaction guard")
     }
     try {
-      expect(compactionReactor(openTurn(16))).toHaveLength(1)
+      expect(reactor(openTurn(16))).toHaveLength(1)
     } finally {
       Date.now = realNow
       Math.random = realRandom
@@ -86,7 +101,7 @@ describe("the compaction measure and guard", () => {
   })
 })
 
-const mailbox = actorFromReactors<Infer | EventLog>([compactionReactor], agentActorKeys)
+const mailbox = actorFromReactors<Infer | EventLog>([reactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>) => {
@@ -116,11 +131,16 @@ describe("the compaction pass", () => {
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
     const { log, briefed } = await run(openTurn(16))
     const checkpoint = checkpointOf(log)
+    expect(log.find((event) => event.type === "CompactionCompleted")).toMatchObject({
+      contextWindowTokens: 20_000,
+      fireTokens: 16_000,
+      keepTokens: 4_000
+    })
     expect(checkpoint.summary).toBe("covenants 1 through 13 extracted")
     expect(keepFromIndex(log, checkpoint.keepFrom)).toBeGreaterThan(0)
     // The retained tail fits KEEP plus at most one round of boundary slack.
     const roundTokens = estimateTokens(round(1))
-    expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(DEFAULT_CONTEXT_POLICY.keepTokens + 2 * roundTokens)
+    expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
   })
@@ -190,7 +210,7 @@ describe("a projected repair is invisible to compaction as well as to the render
       { type: "ToolReturned", callId: "c2", result: "ok", turn: "m2", at: 7 }
     ]
     const events = await Effect.runPromise(
-      Effect.all(compactionReactor(log).map((t) => t.act(t.input as never))).pipe(
+      Effect.all(reactor(log).map((t) => t.act(t.input as never))).pipe(
         Effect.provide(
           Layer.succeed(Infer, {
             react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {

@@ -10,7 +10,7 @@ import { definePackage, type Package } from "./packages"
 import { Park } from "./errors"
 import { codeKeys } from "./events"
 import { codeReactorFor } from "./execute"
-import { Sandbox, type Bindings } from "./sandbox"
+import { guestBindings, Sandbox, type Bindings } from "./sandbox"
 
 const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor as new (
   ...args: ReadonlyArray<string>
@@ -20,9 +20,10 @@ const jsSandbox = Layer.succeed(Sandbox, {
   run: (code: string, bindings: Bindings) =>
     Effect.promise(async () => {
       try {
-        const names = Object.keys(bindings)
+        const scope = guestBindings(bindings)
+        const names = Object.keys(scope)
         const body = new AsyncFunction(...names, code)
-        return { result: await body(...names.map((name) => bindings[name])) }
+        return { result: await body(...names.map((name) => scope[name])) }
       } catch (error) {
         return { error: String(error) }
       }

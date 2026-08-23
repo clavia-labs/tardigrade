@@ -42,6 +42,10 @@ export interface ModelEnv {
   readonly MODEL_SONNET_ID?: string
   readonly MODEL_OPUS_ID?: string
   readonly MODEL_HAIKU_ID?: string
+  readonly MODEL_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_SONNET_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
   // "bedrock" speaks Converse through the gateway's aws-bedrock route (v5's proven leg);
   // anything else is the OpenAI-compat wire.
   readonly MODEL_PROVIDER?: string
@@ -70,6 +74,30 @@ export const modelAskOf = (trajectory: ReadonlyArray<Event>): string | undefined
     if (typeof v === "string" && v !== "") name = v
   }
   return name
+}
+
+export const DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS = 128_000
+
+const contextWindowValueOf = (env: ModelEnv, name?: string): string | undefined =>
+  name === "opus"
+    ? (env.MODEL_OPUS_CONTEXT_WINDOW_TOKENS ?? env.MODEL_CONTEXT_WINDOW_TOKENS)
+    : name === "sonnet"
+      ? (env.MODEL_SONNET_CONTEXT_WINDOW_TOKENS ?? env.MODEL_CONTEXT_WINDOW_TOKENS)
+      : name === "haiku"
+        ? (env.MODEL_HAIKU_CONTEXT_WINDOW_TOKENS ?? env.MODEL_CONTEXT_WINDOW_TOKENS)
+        : env.MODEL_CONTEXT_WINDOW_TOKENS
+
+// modelContextWindowTokensOf resolves the selected model's declared context window. The model
+// choice and window share the same alias fallback, so inference and compaction cannot select
+// different configured tiers.
+export const modelContextWindowTokensOf = (env: ModelEnv, name?: string): number => {
+  const raw = contextWindowValueOf(env, name)
+  if (raw === undefined) return DEFAULT_MODEL_CONTEXT_WINDOW_TOKENS
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`model context window must be a positive integer, got ${JSON.stringify(raw)}`)
+  }
+  return value
 }
 
 // StreamBounds is time to first chunk, idle between chunks, and the whole stream. Each timeout
