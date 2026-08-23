@@ -1,14 +1,9 @@
 import { Context, Data, Effect } from "effect"
-import {
-  linkedEventOf,
-  type Delivery,
-  type LinkedEvent
-} from "@clavia/tardigrade-core/communication/delivery"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
 
 // IngressActor commits one canonical inbound and schedules its actor driver.
 export interface IngressActor {
-  readonly commit: (thread: string, event: LinkedEvent<unknown, MessageReceived>) => Effect.Effect<void>
+  readonly commit: (delivery: Delivery) => Effect.Effect<void>
   readonly schedule: Effect.Effect<void>
 }
 
@@ -48,11 +43,7 @@ export const ingressFrom = (
       Effect.flatMap(resolve(deliveries), (routed) =>
         Effect.forEach(
           routed,
-          ({ delivery, target }) =>
-            target.commit(
-              delivery.link.target.thread,
-              linkedEventOf(delivery as Delivery<unknown, MessageReceived>)
-            ),
+          ({ delivery, target }) => target.commit(delivery),
           { discard: true }
         )
       ),

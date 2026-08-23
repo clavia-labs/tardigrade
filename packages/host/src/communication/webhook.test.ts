@@ -24,14 +24,7 @@ const run = <E>(source: Webhook<never, E>, committed: Delivery[] = []) =>
     Effect.provideService(
       Ingress,
       ingressFrom(() => ({
-        commit: (thread, event) =>
-          Effect.sync(() => committed.push({
-            link: {
-              source: { provider: "example" },
-              target: { actor: "support", thread }
-            },
-            event
-          })),
+        commit: (delivery) => Effect.sync(() => committed.push(delivery)),
         schedule: Effect.void
       }))
     ),

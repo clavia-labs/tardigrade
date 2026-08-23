@@ -16,29 +16,38 @@ import {
   type ProviderAddress
 } from "@clavia/tardigrade-core/communication/address"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
+import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
+import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
 
 const REFUSED = Effect.succeed({ error: "no synchronous calls" })
 type SentLink = Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
-type Sent = { readonly link: SentLink; readonly event: Event }
+type Sent = Delivery<ActorAddress, Event, SentLink["target"]>
 
 const env = (
   lane: string,
   sent: Array<Sent>,
   lanes: Readonly<Record<string, ReadonlyArray<Event>>> = {},
   router: { readonly resume?: () => Effect.Effect<{ output?: string; error?: string }> } = {}
-) =>
-  Layer.mergeAll(
+) => {
+  const self = parseActorAddress(lane)
+  return Layer.mergeAll(
     Layer.succeed(Router, {
-      deliver: (link, event) => Effect.sync(() => void sent.push({ link, event })),
+      deliver: (delivery) => Effect.sync(() => void sent.push(delivery as Sent)),
       call: () => REFUSED,
       resume: router.resume ?? (() => REFUSED)
     }),
-    Layer.succeed(Self, parseActorAddress(lane)),
+    Layer.succeed(Self, self),
+    Layer.succeed(EventLog, withWatermark({
+      append: () => Effect.void,
+      read: Effect.succeed([threadCreated(self, undefined, 0)])
+    })),
     Layer.succeed(Facets, { read: (name: string) => Effect.succeed(lanes[name] ?? []) })
   )
+}
 
 describe("agentsPackage", () => {
   test("the default placement is the host's own sibling address", async () => {
@@ -67,16 +76,19 @@ describe("agentsPackage", () => {
     expect(formatActorAddress(sent[0]!.link.target as ActorAddress)).toBe("far:mem:ag.root/c2")
   })
 
-  test("the callId is the child's identity and the brief's id", async () => {
+  test("the callId is the child's identity and the link returns to the parent", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const answer = await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
     )
     expect(answer).toEqual({ dispatched: true, callId: "c3" })
-    const brief = sent[0]!.event as { id?: unknown; replyTo?: unknown }
+    const brief = sent[0]!.event as { id?: unknown }
     expect(brief.id).toBe("c3")
-    expect(brief.replyTo).toBe("mem:ag.root")
+    expect(sent[0]!.link).toEqual({
+      source: { actor: "mem", thread: "ag.root" },
+      target: { actor: "mem", thread: "ag.c3" }
+    })
   })
 
   test("a reply already on the lane answers without parking", async () => {

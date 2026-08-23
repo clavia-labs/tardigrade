@@ -7,6 +7,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
 import type { Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -134,7 +135,7 @@ export interface ThreadsOptions {
 interface ActorRuntime {
   readonly summary: ActorSummary
   readonly threads: ActorThreads
-  readonly commit: (id: string, event: Event) => Effect.Effect<void>
+  readonly commit: (delivery: Delivery) => Effect.Effect<void>
   readonly schedule: Effect.Effect<void>
   readonly resting: () => Promise<boolean>
   readonly dirty: () => number
@@ -174,6 +175,7 @@ const runtimeOf = async (
 ): Promise<ActorRuntime> => {
   const host: BunHost = await createBunHost<ServerR>({
     log,
+    principal: summary.name,
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
     layersFor: () => lane,
     providers,
@@ -215,16 +217,31 @@ const runtimeOf = async (
   )
   await host.recover()
   const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
-  const commit = (id: string, event: Event) =>
+  const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const stamped = event.at === undefined ? { ...event, at } : event
       yield* Effect.promise(() => host.deliver(host.self(laneOf(id)), stamped))
     })
+  const commit = (delivery: Delivery) =>
+    Effect.gen(function*() {
+      const at = yield* Clock.currentTimeMillis
+      const event = delivery.event
+      const stamped = event.at === undefined ? { ...event, at } : event
+      const placed: Delivery = {
+        ...delivery,
+        link: {
+          source: delivery.link.source,
+          target: { actor: summary.name, thread: laneOf(delivery.link.target.thread) }
+        },
+        event: stamped
+      }
+      yield* Effect.promise(() => host.accept(placed))
+    })
   const threads: ActorThreads = {
     append: (id, event) =>
       Effect.gen(function*() {
-        yield* commit(id, event)
+        yield* commitRoot(id, event)
         request()
       }),
     events: read,

@@ -3,8 +3,8 @@ import type { Event } from "./event"
 import { composeKeys, type KeyFragment } from "./event-log"
 
 // Derivation is one component's reading of a log: a view for consumers and transitions for the
-// actor runtime. The view follows tla/Projection.tla, ViewFaithful. The
-// transitions follow tla/Reconcile.tla, NoVoid.
+// actor runtime. The view follows tla/runtime/Projection.tla, ViewFaithful. The
+// transitions follow tla/runtime/Reconcile.tla, NoVoid.
 export interface Derivation<V, R = never> {
   readonly view: V
   readonly transitions: ReadonlyArray<Transition<never, R>>

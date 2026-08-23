@@ -82,8 +82,7 @@ const problemKind = <const Kind extends string, const Title extends string, cons
 // problem document").
 export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 400)
 
-// A thread exists once its log has an event, so an empty log is the only unknown thread there is
-// (apps/server/src/api.test.ts, "a log that never existed is the only 404").
+// A thread exists once its log has its ThreadCreated event, so an empty log is the only unknown thread there is (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
 
 // An actor is deployed code, and this build has one compiled in, so every name but the reserved one
@@ -134,6 +133,7 @@ export type ThreadStatus = typeof ThreadStatus.Type
 export const ThreadSummary = Schema.Struct({
   id: Schema.String,
   parent: Schema.optionalKey(Schema.String),
+  depth: Schema.Int,
   events: Schema.Finite,
   lastAt: Schema.optionalKey(Schema.Finite),
   status: ThreadStatus
@@ -273,8 +273,7 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
   }),
-  // The assembly's surface, pending its own change: the tree reads the whole family rather than one
-  // thread's events, and its parentage rule comes from PackageCalled claims in a parent's log.
+  // The tree reads the whole family because each thread owns its identity while parent addresses resolve against the other ThreadCreated records in the actor's listing.
   HttpApiEndpoint.get("tree", "/v1/actors/:actor/threads/:id/tree", {
     params: ThreadParams,
     success: ThreadNode,

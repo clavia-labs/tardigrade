@@ -23,9 +23,9 @@ describe("ingressFrom", () => {
   test("commits a batch through its addressed actors in delivery order", async () => {
     const committed: string[] = []
     const target = (actor: string): IngressActor => ({
-      commit: (thread, event) =>
+      commit: (delivery) =>
         Effect.sync(() =>
-          committed.push(`${actor}:${thread}:${event.id}:${String((event.link.source as { provider?: unknown }).provider)}`)
+          committed.push(`${actor}:${delivery.link.target.thread}:${delivery.event.id}:${String((delivery.link.source as { provider?: unknown }).provider)}`)
         ),
       schedule: Effect.void
     })
@@ -60,7 +60,7 @@ describe("ingressFrom", () => {
     const committed: string[] = []
     const ingress = ingressFrom((actor) =>
       actor === "support"
-        ? { commit: (_thread, event) => Effect.sync(() => committed.push(event.id)), schedule: Effect.void }
+        ? { commit: (delivery) => Effect.sync(() => committed.push(delivery.event.id)), schedule: Effect.void }
         : undefined
     )
     const error = await Effect.runPromise(

@@ -1,12 +1,15 @@
 import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
+import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
 import { budgetPolicyOf, type BudgetPolicy } from "./components/budget"
 import { Park } from "@clavia/tardigrade-code/errors"
 import { replyId } from "@clavia/tardigrade-core/communication/message"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
+import { childLineageOf, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import {
   actorAddressOf,
   formatActorAddress,
@@ -30,16 +33,15 @@ import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } fro
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
 // arguments. `Router` delivers and calls, `Self` names the calling lane, and `Facets` reads that
-// lane's committed replies (`@clavia/tardigrade-core/facets`), so `Package<Router | Self | Facets>`
-// states what a host must bind for these methods to run.
+// lane's committed replies (`@clavia/tardigrade-core/facets`). `EventLog` supplies the durable creation record from which a child delivery derives lineage.
 //
 // place selects the child's actor address from the call id and parent address. The host resolves
 // that stable identity to current placement when it interprets the resulting link.
 //
 // A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
-// deliver the brief with `replyTo` this lane, then await the reply row on this lane, host-side
-// `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a
-// promise that never settles for the code body). It never holds a call open.
+// deliver the brief through a link from this lane, then await the reply row on this lane, host-side
+// `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a promise
+// that never settles for the code body). It never holds a call open.
 //
 // An escalatable run is the one residual exception. An escalating child's ask for more budget
 // rides `router.call`'s own `CallResult.requesting` boundary (`src/core/router.ts`,
@@ -71,16 +73,13 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
-// sibling is the default placement: the child is a facet of the parent's own principal, named
-// `ag.<callId>`. It parses the parent's address with core's one parser, so a placement can never
-// disagree with the router about what an address is (spawn.test.ts, "the default placement is
-// the host's own sibling address").
+// sibling is the default placement: the child is a facet of the parent's own principal, named `ag.<callId>`. The address selects the target while ThreadCreated records its lineage (spawn.test.ts, "the default placement is the host's own sibling address"; tla/runtime/Thread.tla, CreationFirst).
 const sibling = (callId: string, self: ActorAddress): ActorAddress =>
   actorAddressOf(self.actor, `ag.${callId}`)
 
 export const agentsPackage = (
   options: SpawnOptions & { readonly place?: (callId: string, self: ActorAddress) => ActorAddress } = {}
-): Package<Router | Self | Facets> => {
+): Package<Router | Self | Facets | EventLog> => {
   const place = options.place ?? sibling
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
@@ -143,6 +142,12 @@ export const agentsPackage = (
           // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
           const source = yield* Self
+          const log = yield* EventLog
+          const created = threadCreatedOf(yield* log.read)
+          if (created === undefined) {
+            return yield* Effect.die(new Error(`thread ${formatActorAddress(source)} cannot spawn without ThreadCreated`))
+          }
+          const lineage = childLineageOf(created)
           const self = formatActorAddress(source)
           const a = args as
             | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
@@ -186,7 +191,7 @@ export const agentsPackage = (
             // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
             // later by `agents.result({ id: callId })`.
             const at = yield* Clock.currentTimeMillis
-            yield* router.deliver(linkOf(source, target), {
+            yield* router.deliver(deliveryOf(linkOf(source, target), {
               type: "MessageReceived",
               id: ctx.callId,
               text,
@@ -196,10 +201,9 @@ export const agentsPackage = (
               ...(actor === undefined ? {} : { actor }),
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world }),
-              replyTo: self,
               from: self,
               at
-            })
+            }, lineage))
             return { dispatched: true, callId: ctx.callId }
           }
           // Escalation is a foreground affordance, and the one shape that still holds its call
@@ -214,18 +218,19 @@ export const agentsPackage = (
               escalatable: true,
               ...(actor === undefined ? {} : { actor }),
               ...(shadow ? { shadow: true } : {}),
-              ...(world === undefined ? {} : { world })
+              ...(world === undefined ? {} : { world }),
+              lineage
             })
             return shape(answer, address, ctx.callId, output)
           }
           // Plain foreground: the same park logic `tasks.fire` uses. A reply already on the lane
           // (a replayed attempt) answers at once, with no re-delivery; otherwise the brief goes
-          // out with `replyTo` this lane, exactly the background delivery above, and the host
-          // parks this call until the reply lands.
+          // out through the parent-child link, exactly the background delivery above, and the
+          // host parks this call until the reversed-link reply lands.
           const already = yield* awaitedReply(source, ctx.callId)
           if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
-          yield* router.deliver(linkOf(source, target), {
+          yield* router.deliver(deliveryOf(linkOf(source, target), {
             type: "MessageReceived",
             id: ctx.callId,
             text,
@@ -235,10 +240,9 @@ export const agentsPackage = (
             ...(actor === undefined ? {} : { actor }),
             ...(shadow ? { shadow: true } : {}),
             ...(world === undefined ? {} : { world }),
-            replyTo: self,
             from: self,
             at
-          })
+          }, lineage))
           return yield* new Park({ callId: ctx.callId, awaiting: replyId(ctx.callId) })
         }),
       // Await a run already fired in the background: no delivery, the same reply-or-park read the

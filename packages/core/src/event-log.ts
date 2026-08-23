@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect"
 import type { Event } from "./event"
 
-// EventLog is the one durable thing; append is the only mutation in the system (tla/Log.tla).
+// EventLog is the one durable thing; append is the only mutation in the system (tla/runtime/Log.tla).
 // State is a projection of it: replay is re-derivation, recovery is re-settling.
 //
 // A store that binds this port owes six guarantees.

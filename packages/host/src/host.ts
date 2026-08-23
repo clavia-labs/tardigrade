@@ -2,9 +2,10 @@ import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
-import { linkedEventOf } from "@clavia/tardigrade-core/communication/delivery"
+import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
+  isActorAddress,
   isProviderAddress,
   parseActorAddress,
   type ActorAddress,
@@ -15,12 +16,20 @@ import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { outboundFrom, type Provider } from "./communication/provider"
+import {
+  sameActorAddress,
+  sameThreadLineage,
+  threadCreated,
+  threadCreatedOf,
+  threadKeys,
+  type ThreadLineage
+} from "@clavia/tardigrade-core/thread"
 
 // A host runs the emergent graph: many lanes, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
 // A binding that adds physics (durable storage, real alarms, isolation)
 // earns a qualified name and must keep every guarantee here; the
-// conformance contract is packages/core/tla (Driver, Delivery).
+// conformance contract is packages/core/tla/runtime/Driver.tla and packages/core/tla/communication/Delivery.tla.
 
 // HostPorts are the services every host binds per lane: the log, the
 // router, this lane's address, and the read over its siblings' logs.
@@ -50,7 +59,7 @@ export type HostOptions<R> = {
   // edgesOf arms the deadlock sentinel: after a drive drains, the host
   // breaks each await cycle among resting lanes by failing one victim
   // edge with a synthetic error reply, then drives on. Without it a
-  // cycle rests forever (packages/core/tla/Delivery.tla,
+  // cycle rests forever (packages/core/tla/communication/Delivery.tla,
   // DeliveryDeadlock).
   readonly edgesOf?: EdgesOf
   // pick chooses which dirty lane the driver serves next; the default
@@ -68,6 +77,8 @@ export interface Host {
   // seed appends without waking the lane: test and bootstrap ingress.
   readonly seed: (lane: string, events: ReadonlyArray<Event>) => void
   readonly read: (lane: string) => ReadonlyArray<Event>
+  // accept commits one addressed delivery, including child creation lineage when present.
+  readonly accept: (delivery: Delivery<unknown, Event, ActorAddress>) => void
   // deliver is the router's contract: at-least-once, receiver dedup by
   // message id, and the lane is marked owed a visit.
   readonly deliver: (address: string, event: Event) => void
@@ -98,6 +109,14 @@ const seen = (events: ReadonlyArray<Event>, event: Event): boolean => {
   return events.some((e) => e.type === "MessageReceived" && (e as { id?: unknown }).id === id)
 }
 
+const eventAt = (event: Event): number => {
+  const at = (event as { readonly at?: unknown }).at
+  if (typeof at !== "number" || !Number.isFinite(at)) {
+    throw new Error(`first thread event "${event.type}" must carry a finite at`)
+  }
+  return at
+}
+
 const isOutboundLink = (
   link: Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
 ): link is Link<ActorAddress, ProviderAddress> => isProviderAddress(link.target)
@@ -109,6 +128,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const lanes = new Map<string, ReadonlyArray<Event>>()
   const dirty = new Set<string>()
   const outbound = outboundFrom(options.providers ?? [])
+  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
   const read = (lane: string): ReadonlyArray<Event> => lanes.get(lane) ?? []
   // append implements guarantee 5 of the log port (packages/core/src/event-log.ts): a keyed
@@ -117,18 +137,18 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   // here and once there.
   const append = (lane: string, events: ReadonlyArray<Event>): void => {
     const current = read(lane)
-    if (options.keyOf === undefined) {
+    if (options.keyOf === undefined && events.every((event) => threadKeys.keyOf(event) === undefined)) {
       lanes.set(lane, [...current, ...events])
       return
     }
     const recorded = new Set<string>()
     for (const e of current) {
-      const key = options.keyOf(e)
+      const key = storeKeyOf(e)
       if (key !== undefined) recorded.add(key)
     }
     const landing: Event[] = []
     for (const e of events) {
-      const key = options.keyOf(e)
+      const key = storeKeyOf(e)
       if (key !== undefined) {
         if (recorded.has(key)) continue
         recorded.add(key)
@@ -139,7 +159,13 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   }
   const seed = (lane: string, events: ReadonlyArray<Event>): void => append(lane, events)
 
-  const deliver = (address: string, event: Event): void => {
+  const commit = (
+    target: ActorAddress,
+    event: Event,
+    lineage: ThreadLineage | undefined,
+    link?: Link<unknown, ActorAddress>
+  ): void => {
+    const address = formatActorAddress(target)
     // The membrane: every cross-lane event names its occurrence, or it does not travel.
     // At-least-once lives on these edges, so an unkeyed traveler is a standing double-effect
     // window. The memory host refuses identically to the platform host, so an unkeyed event
@@ -150,21 +176,49 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       )
     }
     const lane = laneOf(address)
-    if (seen(read(lane), event)) return
-    append(lane, [event])
+    const current = read(lane)
+    const created = threadCreatedOf(current)
+    if (current.length > 0 && created === undefined) {
+      throw new Error(`thread ${address} has no ThreadCreated first event`)
+    }
+    if (created !== undefined && !sameActorAddress(created.address, target)) {
+      throw new Error(`thread ${address} creation address does not match its target`)
+    }
+    if (lineage !== undefined) {
+      if (lineage.depth <= 0 || sameActorAddress(lineage.parent, target)) {
+        throw new Error(`thread ${address} has invalid child lineage`)
+      }
+      if (link === undefined || !isActorAddress(link.source) || !sameActorAddress(lineage.parent, link.source)) {
+        throw new Error(`thread ${address} lineage parent does not match its delivery source`)
+      }
+      if (created !== undefined && !sameThreadLineage(created, lineage)) {
+        throw new Error(`thread ${address} already has different lineage`)
+      }
+    } else if (created === undefined && link !== undefined && isActorAddress(link.source)) {
+      throw new Error(`initial actor delivery to ${address} must carry lineage`)
+    }
+    const landed = link !== undefined && event.type === "MessageReceived"
+      ? linkedEventOf({ link, event })
+      : event
+    if (seen(current, landed)) return
+    append(lane, created === undefined ? [threadCreated(target, lineage, eventAt(event)), landed] : [landed])
     dirty.add(lane)
   }
 
+  const accept = (delivery: Delivery<unknown, Event, ActorAddress>): void =>
+    commit(delivery.link.target, delivery.event, delivery.lineage, delivery.link)
+
+  const deliver = (address: string, event: Event): void =>
+    commit(parseActorAddress(address), event, undefined)
+
   const router = Layer.succeed(Router, {
-    deliver: (link, event) =>
-      isOutboundLink(link)
-        ? outbound.send(link, event as import("@clavia/tardigrade-core/communication/message").MessageReceived)
-        : Effect.sync(() =>
-            deliver(
-              formatActorAddress(link.target),
-              event.type === "MessageReceived" ? linkedEventOf({ link, event }) : event
-            )
-          ),
+    deliver: (delivery) =>
+      isOutboundLink(delivery.link)
+        ? outbound.send(
+            delivery.link,
+            delivery.event as import("@clavia/tardigrade-core/communication/message").MessageReceived
+          )
+        : Effect.sync(() => accept(delivery as Delivery<ActorAddress, Event, ActorAddress>)),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -191,7 +245,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     )
 
   // Exclude is not distributive over a generic R, so the merge is named
-  // here as the env settleActor requires (tla/Driver.tla, EventuallyServed).
+  // here as the env settleActor requires (tla/runtime/Driver.tla, EventuallyServed).
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
     const extra = (options.layersFor ?? (() => Layer.empty as unknown as LaneEnv<R>))(lane)
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
@@ -217,7 +271,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       if (found.length === 0) return
       for (const knot of found) {
         const victim = victimOf(knot)
-        deliver(victim.from, {
+        deliver(self(victim.from), {
           type: "MessageReceived",
           id: victim.replyId,
           outcome: "failed",
@@ -242,5 +296,5 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
-  return { seed, read, deliver, drive, wake, resting, router, self }
+  return { seed, read, accept, deliver, drive, wake, resting, router, self }
 }

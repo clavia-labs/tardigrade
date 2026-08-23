@@ -6,20 +6,19 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { replyEvent, terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
 import { turnTerminalOf, replyView } from "@clavia/tardigrade-code/turns"
 import type { AgentComponent } from "../runtime/agent"
-import { linkOf, reverseLink, type Link } from "@clavia/tardigrade-core/communication/link"
+import { reverseLink, type Link } from "@clavia/tardigrade-core/communication/link"
+import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
   isActorAddress,
   isProviderAddress,
-  parseActorAddress,
   type ActorAddress,
   type ProviderAddress
 } from "@clavia/tardigrade-core/communication/address"
 
-// The reply reactor: report the turn's terminal home. When the inbound named a `replyTo`, the
-// terminal goes back to that actor as a plain `MessageReceived`, and the caller folds it as a
-// fresh turn. When it named none, it records that nothing was owed. Delivery is at-least-once
-// across a crash; the receiver dedups by the reply's message id.
+// The reply reactor reports the turn's terminal through the reverse of its accepted inbound link.
+// An unlinked inbound settles locally. Delivery is at-least-once across a crash; the receiver dedups
+// by the reply's message id (tla/communication/Reply.tla, ReplyReversesAcceptedLink).
 //
 // Owed work is the reply view: the earliest turn whose terminal is stamped and whose reply is
 // not. It lags one stage behind the infer reactor on purpose, so a queued next turn never
@@ -31,13 +30,12 @@ const owedTurn = (
 ): {
   readonly id: string
   readonly link?: Link<unknown, ActorAddress>
-  readonly replyTo?: string
   readonly text: string
   readonly outcome: "completed" | "failed"
   readonly terminalReport: boolean
 } => {
   const view = replyView(log)
-  const inbound = view[0] as { id?: unknown; link?: unknown; replyTo?: unknown; outcome?: unknown } | undefined
+  const inbound = view[0] as { id?: unknown; link?: unknown; outcome?: unknown } | undefined
   const id = String(inbound?.id)
   const terminal = turnTerminalOf(log, id) as
     | { output?: unknown; error?: unknown }
@@ -50,7 +48,6 @@ const owedTurn = (
     ...(typeof inbound.link === "object" && inbound.link !== null && "source" in inbound.link && "target" in inbound.link
       ? { link: inbound.link as Link<unknown, ActorAddress> }
       : {}),
-    ...(inbound.replyTo === undefined ? {} : { replyTo: String(inbound.replyTo) }),
     text: terminal.error === undefined ? String(terminal.output) : `error: ${String(terminal.error)}`,
     // The outcome rides as a typed field, so a reader never sniffs the text for failure.
     outcome: terminal.error === undefined ? "completed" : "failed",
@@ -74,6 +71,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
         Effect.gen(function* () {
           const at = yield* Clock.currentTimeMillis
           if (input.terminalReport) return [replyDelivered({ turn: input.id, at })]
+          if (input.link === undefined) return [replyDelivered({ turn: input.id, at })]
           const self = yield* Self
           const event = replyEvent({
             id: input.id,
@@ -82,23 +80,18 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
             from: formatActorAddress(self),
             at
           })
-          if (input.link !== undefined && isProviderAddress(input.link.source)) {
+          if (isProviderAddress(input.link.source)) {
             const router = yield* Router
-            yield* router.deliver(
+            yield* router.deliver(deliveryOf(
               reverseLink(input.link as Link<ProviderAddress, ActorAddress>),
               event
-            )
+            ))
             return [replyDelivered({ to: input.link.source.provider, turn: input.id, at })]
           }
-          if (input.link !== undefined && isActorAddress(input.link.source)) {
+          if (isActorAddress(input.link.source)) {
             const router = yield* Router
-            yield* router.deliver(reverseLink(input.link as Link<ActorAddress, ActorAddress>), event)
+            yield* router.deliver(deliveryOf(reverseLink(input.link as Link<ActorAddress, ActorAddress>), event))
             return [replyDelivered({ to: formatActorAddress(input.link.source), turn: input.id, at })]
-          }
-          if (input.replyTo !== undefined) {
-            const router = yield* Router
-            yield* router.deliver(linkOf(self, parseActorAddress(input.replyTo)), event)
-            return [replyDelivered({ to: input.replyTo, turn: input.id, at })]
           }
           return [replyDelivered({ turn: input.id, at })]
         })

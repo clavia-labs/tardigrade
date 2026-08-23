@@ -8,9 +8,10 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
-import { linkedEventOf } from "@clavia/tardigrade-core/communication/delivery"
+import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
+  isActorAddress,
   isProviderAddress,
   parseActorAddress,
   type ActorAddress,
@@ -23,6 +24,14 @@ import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadl
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { outboundFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
+import {
+  sameActorAddress,
+  sameThreadLineage,
+  threadCreated,
+  threadCreatedOf,
+  threadKeys,
+  type ThreadLineage
+} from "@clavia/tardigrade-core/thread"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
@@ -78,6 +87,7 @@ export type BunHostOptions<R> = {
 export interface BunHost {
   readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
+  readonly accept: (delivery: Delivery<unknown, Event, ActorAddress>) => Promise<void>
   // lanes names every lane the log holds, ordered by name. An app that lists what exists asks the
   // host rather than the database, so the store stays this module's (host.test.ts, "lanes names
   // every lane the log holds").
@@ -146,6 +156,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
 
   const dirty = new Set<string>()
   const outbound = outboundFrom(options.providers ?? [])
+  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
   const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>, never> =>
     sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`.pipe(
@@ -153,27 +164,24 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.orDie
     )
 
-  // appendEffect keeps guarantees 4 and 5 in the store itself: the batch lands in one
-  // transaction, and a keyed event whose key is already recorded is absorbed inside it, leaving
-  // MAX(seq) unchanged, which is exactly the honest no-progress answer the settle compares.
+  const appendRowsEffect = (lane: string, events: ReadonlyArray<Event>): Effect.Effect<void, never> =>
+    Effect.gen(function* () {
+      const head = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE lane = ${lane}`
+      let seq = Number(head[0]?.seq ?? 0) + 1
+      for (const event of events) {
+        const key = storeKeyOf(event)
+        if (key !== undefined) {
+          const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE lane = ${lane} AND key = ${key}`
+          if (Number(present[0]?.n ?? 0) > 0) continue
+        }
+        yield* sql`INSERT INTO events (lane, seq, key, event) VALUES (${lane}, ${seq}, ${key ?? null}, ${JSON.stringify(event)})`
+        seq += 1
+      }
+    }).pipe(Effect.orDie)
+
+  // appendEffect keeps guarantees 4 and 5 in the store itself: the batch lands in one transaction, and a keyed event already recorded is absorbed inside it.
   const appendEffect = (lane: string, events: ReadonlyArray<Event>): Effect.Effect<void, never> =>
-    events.length === 0
-      ? Effect.void
-      : sql.withTransaction(
-          Effect.gen(function* () {
-            const head = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE lane = ${lane}`
-            let seq = Number(head[0]?.seq ?? 0) + 1
-            for (const e of events) {
-              const key = options.keyOf?.(e)
-              if (key !== undefined) {
-                const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE lane = ${lane} AND key = ${key}`
-                if (Number(present[0]?.n ?? 0) > 0) continue
-              }
-              yield* sql`INSERT INTO events (lane, seq, key, event) VALUES (${lane}, ${seq}, ${key ?? null}, ${JSON.stringify(e)})`
-              seq += 1
-            }
-          })
-        ).pipe(Effect.orDie)
+    events.length === 0 ? Effect.void : sql.withTransaction(appendRowsEffect(lane, events)).pipe(Effect.orDie)
 
   const headEffect = (lane: string): Effect.Effect<number, never> =>
     sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events WHERE lane = ${lane}`.pipe(
@@ -187,8 +195,14 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.orDie
     )
 
-  const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
-    Effect.gen(function* () {
+  const commitEffect = (
+    target: ActorAddress,
+    event: Event,
+    lineage: ThreadLineage | undefined,
+    link?: Link<unknown, ActorAddress>
+  ): Effect.Effect<void, never> => {
+    const address = formatActorAddress(target)
+    return Effect.gen(function* () {
       // The membrane, identical to the reference host: a cross-lane event names its occurrence
       // or it does not travel (packages/host/src/host.ts).
       if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
@@ -208,26 +222,68 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         current._tag === "Some" && (event as { traceparent?: unknown }).traceparent === undefined
           ? ({ ...event, traceparent: traceparentOf(current.value) } as Event)
           : event
-      if (event.type === "MessageReceived") {
-        const id = String((event as { id?: unknown }).id)
-        const seen = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events
-          WHERE lane = ${lane} AND json_extract(event, '$.type') = 'MessageReceived' AND json_extract(event, '$.id') = ${id}`.pipe(
-          Effect.orDie
-        )
-        if (Number(seen[0]?.n ?? 0) > 0) return
-      }
-      yield* appendEffect(lane, [stamped])
-      dirty.add(lane)
+      const appended = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const rows = yield* sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`
+          const events = rows.map((row) => JSON.parse(row.event) as Event)
+          const created = threadCreatedOf(events)
+          if (events.length > 0 && created === undefined) {
+            return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
+          }
+          if (created !== undefined && !sameActorAddress(created.address, target)) {
+            return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
+          }
+          if (lineage !== undefined) {
+            if (lineage.depth <= 0 || sameActorAddress(lineage.parent, target)) {
+              return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
+            }
+            if (link === undefined || !isActorAddress(link.source) || !sameActorAddress(lineage.parent, link.source)) {
+              return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
+            }
+            if (created !== undefined && !sameThreadLineage(created, lineage)) {
+              return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
+            }
+          } else if (created === undefined && link !== undefined && isActorAddress(link.source)) {
+            return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
+          }
+          const landed = link !== undefined && stamped.type === "MessageReceived"
+            ? linkedEventOf({ link, event: stamped })
+            : stamped
+          if (landed.type === "MessageReceived") {
+            const id = String((landed as { id?: unknown }).id)
+            if (events.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) {
+              return false
+            }
+          }
+          const at = (event as { readonly at?: unknown }).at
+          if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
+            return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
+          }
+          yield* appendRowsEffect(
+            lane,
+            created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed]
+          )
+          return true
+        })
+      ).pipe(Effect.orDie)
+      if (appended) dirty.add(lane)
     }).pipe(Effect.withSpan("deliver", { kind: "producer", attributes: { to: address, type: event.type } }))
+  }
+
+  const acceptEffect = (delivery: Delivery<unknown, Event, ActorAddress>): Effect.Effect<void, never> =>
+    commitEffect(delivery.link.target, delivery.event, delivery.lineage, delivery.link)
+
+  const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
+    commitEffect(parseActorAddress(address), event, undefined)
 
   const router = Layer.succeed(Router, {
-    deliver: (link, event) =>
-      isOutboundLink(link)
-        ? outbound.send(link, event as import("@clavia/tardigrade-core/communication/message").MessageReceived)
-        : deliverEffect(
-            formatActorAddress(link.target),
-            event.type === "MessageReceived" ? linkedEventOf({ link, event }) : event
-          ),
+    deliver: (delivery) =>
+      isOutboundLink(delivery.link)
+        ? outbound.send(
+            delivery.link,
+            delivery.event as import("@clavia/tardigrade-core/communication/message").MessageReceived
+          )
+        : acceptEffect(delivery as Delivery<ActorAddress, Event, ActorAddress>),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -289,7 +345,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       for (const knot of found) {
         const victim = victimOf(knot)
         await runtime.runPromise(
-          deliverEffect(victim.from, {
+          deliverEffect(self(victim.from), {
             type: "MessageReceived",
             id: victim.replyId,
             outcome: "failed",
@@ -320,6 +376,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   return {
     seed: (lane, events) => runtime.runPromise(appendEffect(lane, events)),
     read: (lane) => runtime.runPromise(readEffect(lane)),
+    accept: (delivery) => runtime.runPromise(acceptEffect(delivery)),
     lanes: () => runtime.runPromise(lanesEffect),
     deliver: (address, event) => runtime.runPromise(deliverEffect(address, event)),
     wake: (lane) => {

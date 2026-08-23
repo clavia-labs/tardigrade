@@ -1,7 +1,9 @@
 import { Context, Effect } from "effect"
 import type { Event } from "../event"
 import type { ActorAddress, ProviderAddress } from "./address"
+import type { Delivery } from "./delivery"
 import type { Link } from "./link"
+import type { ThreadLineage } from "../thread"
 
 // CallResult is a turn's boundary: a terminal or a park on a budget request.
 export interface CallResult {
@@ -18,8 +20,9 @@ export class Router extends Context.Service<
   Router,
   {
     readonly deliver: (
-      link: Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>,
-      event: Event
+      delivery:
+        | Delivery<ActorAddress, Event, ActorAddress>
+        | Delivery<ActorAddress, Event, ProviderAddress>
     ) => Effect.Effect<void>
     readonly call: (
       link: Link<ActorAddress, ActorAddress>,
@@ -33,6 +36,7 @@ export class Router extends Context.Service<
         readonly actor?: string
         readonly shadow?: boolean
         readonly world?: string
+        readonly lineage: ThreadLineage
       }
     ) => Effect.Effect<CallResult>
     readonly resume: (

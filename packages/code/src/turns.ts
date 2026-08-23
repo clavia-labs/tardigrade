@@ -45,7 +45,7 @@ const activeStamped = (log: ReadonlyArray<Event>, turn: string): ReadonlyArray<E
 // claimedByPark: a reply an open package call was awaiting when it landed belongs to that call,
 // never to a fresh turn of its own; the awaiting body harvests it, and nothing else may react
 // to it as inbound. The verdict reads only events before the reply's own position, so later
-// appends cannot rewrite it (tla/Projection.tla, PrefixFaithful). A background spawn's reply is
+// appends cannot rewrite it (tla/runtime/Projection.tla, PrefixFaithful). A background spawn's reply is
 // the opposite case and is meant to head its own turn: its call returned at once, so no call is
 // open for it. Only agents.run ids can ever match: tasks.fire mints run- prefixed ids
 // (mintedRunId, src/grammar/grammar.ts), so a task reply is structurally never claimed.

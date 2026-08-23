@@ -157,7 +157,7 @@ export const summaryOf = (
       return line([str(event.turn), `epoch ${String(num(event.failedEpoch))} to ${String(num(event.epoch))}`], chars)
     case "ReplyDelivered": {
       const to = str(event.to)
-      return line([to === undefined ? "no replyTo" : `to ${to}`], chars)
+      return line([to === undefined ? "settled locally" : `to ${to}`], chars)
     }
     case "BudgetExhausted":
       return line([`used ${String(num(event.used))} of ${String(num(event.budget))}`], chars)
@@ -213,7 +213,7 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 // renders, after the named ones and in the event's own key order, so a type this table is behind on
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
-  MessageReceived: ["id", "from", "replyTo", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
+  MessageReceived: ["id", "from", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
   ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
   TextReturned: [...STAMP, "text"],
   ToolCalled: ["callId", "name", "mode", ...STAMP, "arguments", "usage", "endpoint"],

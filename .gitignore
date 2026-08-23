@@ -15,6 +15,7 @@ coverage/
 .vite/
 .eslintcache
 .oxlintcache
+packages/core/tla/states/
 
 # Local files
 .DS_Store

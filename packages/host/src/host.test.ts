@@ -7,6 +7,8 @@ import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
+import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 // The host against toy reactors, package-pure: no app vocabulary.
 // A "player" lane answers every unanswered ping on its log with a pong
@@ -43,12 +45,12 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.deliver(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
+              yield* router.deliver(deliveryOf(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Event)
+              } as Event, me === "a" ? { parent: parseActorAddress("mem:a"), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -92,8 +94,39 @@ describe("the host", () => {
     const host = rally()
     host.deliver("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
-    expect(host.read("reg")).toHaveLength(1)
+    expect(host.read("reg").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(host.resting()).toBe(true)
+  })
+
+  test("a child is created with its first delivery and keeps that lineage", () => {
+    const host = createHost({ actorFor: () => undefined })
+    const parent = parseActorAddress("mem:parent")
+    const target = parseActorAddress("mem:child")
+    const first = deliveryOf(
+      linkOf(parent, target),
+      { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
+      { parent, depth: 1 }
+    )
+    host.accept(first)
+    host.accept(first)
+    expect(host.read("child")).toEqual([
+      threadCreated(target, { parent, depth: 1 }, 7),
+      { ...first.event, link: first.link }
+    ])
+    expect(() => host.accept(deliveryOf(
+      linkOf(parseActorAddress("mem:other"), target),
+      { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
+      { parent: parseActorAddress("mem:other"), depth: 1 }
+    ))).toThrow("already has different lineage")
+  })
+
+  test("an initial actor delivery must carry child lineage", () => {
+    const host = createHost({ actorFor: () => undefined })
+    expect(() => host.accept(deliveryOf(
+      linkOf(parseActorAddress("mem:parent"), parseActorAddress("mem:child")),
+      { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
+    ))).toThrow("must carry lineage")
+    expect(host.read("child")).toEqual([])
   })
 })
 
@@ -107,7 +140,7 @@ describe("the router membrane", () => {
       'unkeyed cross-lane event "Rogue"'
     )
     host.deliver("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
-    expect(host.read("lane").length).toBe(1)
+    expect(host.read("lane").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
   })
 })
 
@@ -133,8 +166,9 @@ describe("the observe privilege", () => {
     const host = createHost<Facets>({
       actorFor: (lane) => (lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined)
     })
-    host.seed("other", [{ type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    host.seed("other", [threadCreated({ actor: "mem", thread: "other" }, undefined, 0), { type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
+    host.seed("watch", [threadCreated({ actor: "mem", thread: "watch" }, undefined, 0)])
     await host.wake("watch")
-    expect(host.read("watch")).toEqual([{ type: "Saw", n: 1, at: 1 }])
+    expect(host.read("watch").at(-1)).toEqual({ type: "Saw", n: 2, at: 1 })
   })
 })

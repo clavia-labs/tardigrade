@@ -199,11 +199,11 @@ export const TurnResumed = Schema.Struct({
   at: Schema.Finite
 })
 
-// ReplyDelivered records that the turn's terminal went home, or had no home to go to. The
-// committed record binds, so a re-settle never delivers a reply twice.
+// ReplyDelivered records that the turn's terminal went home or settled locally. The committed
+// record binds, so a re-settle never delivers a reply twice.
 export const ReplyDelivered = Schema.Struct({
   type: Schema.Literal("ReplyDelivered"),
-  to: Schema.optional(Schema.String), // absent = the inbound named no replyTo, and nothing was sent
+  to: Schema.optional(Schema.String), // absent means no reply was sent
   at: Schema.Finite
 })
 

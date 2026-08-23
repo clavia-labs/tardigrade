@@ -114,8 +114,8 @@ describe("the threads service", () => {
       })
     )
 
-    expect(result.committed.alpha.map((event) => event.type)).toEqual(["MessageReceived"])
-    expect(result.committed.beta.map((event) => event.type)).toEqual(["MessageReceived"])
+    expect(result.committed.alpha.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
+    expect(result.committed.beta.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(result.committed.dirty).toBe(0)
     expect(result.committed.resting).toBe(false)
     expect(result.settled.alpha.some((event) => event.type === "TurnCompleted")).toBe(true)

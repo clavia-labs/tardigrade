@@ -4,14 +4,15 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import { replyReactor } from "./reply"
 
 const fireReply = async (log: ReadonlyArray<Event>, self: { readonly actor: string; readonly thread: string }) => {
-  const sent: Array<{ readonly link: unknown; readonly event: Event }> = []
+  const sent: Array<Delivery<unknown, Event, unknown>> = []
   const transition = replyReactor(log)[0]!
   const layers = Layer.mergeAll(
     Layer.succeed(Router, {
-      deliver: (link, event) => Effect.sync(() => sent.push({ link, event })),
+      deliver: (delivery) => Effect.sync(() => sent.push(delivery)),
       call: () => Effect.succeed({ error: "unused" }),
       resume: () => Effect.succeed({ error: "unused" })
     }),
@@ -61,6 +62,45 @@ describe("replyReactor", () => {
       to: "telegram-support",
       turn: "m1"
     })
+  })
+
+  test("reverses the actor link persisted with the inbound message", async () => {
+    const { returned, sent } = await fireReply([
+      {
+        type: "MessageReceived",
+        id: "run-worker",
+        text: "inspect",
+        link: {
+          source: { actor: "factory", thread: "main" },
+          target: { actor: "factory", thread: "worker" }
+        },
+        at: 1
+      },
+      { type: "TurnCompleted", turn: "run-worker", output: "done", at: 2 }
+    ], { actor: "factory", thread: "worker" })
+
+    expect(sent[0]?.link).toEqual({
+      source: { actor: "factory", thread: "worker" },
+      target: { actor: "factory", thread: "main" }
+    })
+    expect(returned[0]).toMatchObject({
+      type: "ReplyDelivered",
+      to: "factory:main",
+      turn: "run-worker"
+    })
+  })
+
+  test("settles an unlinked inbound without sending a reply", async () => {
+    const { returned, sent } = await fireReply([
+      { type: "MessageReceived", id: "m2", text: "inspect", at: 1 },
+      { type: "TurnCompleted", turn: "m2", output: "done", at: 2 }
+    ], { actor: "support", thread: "incident" })
+
+    expect(sent).toEqual([])
+    expect(returned).toEqual([
+      expect.objectContaining({ type: "ReplyDelivered", turn: "m2" })
+    ])
+    expect(returned[0]).not.toHaveProperty("to")
   })
 
   describe("terminal reports cannot start reply chains", () => {
