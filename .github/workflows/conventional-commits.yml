@@ -5,6 +5,7 @@ on:
     types: [opened, edited, reopened, synchronize]
 
 permissions:
+  contents: read
   pull-requests: read
 
 jobs:
@@ -17,3 +18,25 @@ jobs:
         with:
           task_types: '["build","chore","ci","docs","feat","fix","perf","refactor","revert","style","test"]'
           add_label: "false"
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Reject AI co-author trailers
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nocasematch
+          while IFS= read -r sha; do
+            while IFS= read -r trailer; do
+              key=${trailer%%:*}
+              value=${trailer#*:}
+              if [[ ${key} == "co-authored-by" && ${value} =~ (^|[^[:alnum:]_])(claude|cursor|codex)([^[:alnum:]_]|$) ]]; then
+                echo "::error title=Prohibited co-author::Commit ${sha} contains ${trailer}"
+                exit 1
+              fi
+            done < <(git show -s --format=%B "${sha}" | git interpret-trailers --parse)
+          done < <(git rev-list "${BASE_SHA}..${HEAD_SHA}")
