@@ -8,7 +8,7 @@ import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
-import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
+import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
 import type { Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -21,6 +21,7 @@ import {
 } from "tardie"
 import type { Action } from "tardie/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
+import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
 import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
 
@@ -74,7 +75,7 @@ export class Threads extends Context.Service<
     // a shutdown do (host.test.ts).
     readonly settled: ActorThreads["settled"]
     readonly actors?: Effect.Effect<ReadonlyArray<ActorSummary>>
-    readonly actor?: (name: string) => ActorThreads | undefined
+    readonly actor?: (name: string) => Effect.Effect<ActorThreads | undefined>
     readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
   }
 >()("tardigrade/server/Threads") {}
@@ -297,6 +298,8 @@ const make = (options: ThreadsOptions) =>
     const config = yield* ServerConfig
     const lane = layerLane(config, options)
     const runtimes = new Map<string, ActorRuntime>()
+    const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
+    const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
     const builtIn = assemblyOf()
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
@@ -315,6 +318,7 @@ const make = (options: ThreadsOptions) =>
         config.maxConcurrentLanes
       )
       runtimes.set(summary.name, runtime)
+      await runRegistry(registry.put(summary))
       return runtime
     }
     const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly actor: Actor<ServerR> }> => {
@@ -352,6 +356,10 @@ const make = (options: ThreadsOptions) =>
         if (name === RESERVED_ACTOR || found.has(name)) continue
         await runtime.close()
         runtimes.delete(name)
+        await runRegistry(registry.remove(name))
+      }
+      for (const registration of await runRegistry(registry.list)) {
+        if (!runtimes.has(registration.name)) await runRegistry(registry.remove(registration.name))
       }
     }
     let watcher: FSWatcher | undefined
@@ -385,8 +393,9 @@ const make = (options: ThreadsOptions) =>
       })
     )
 
-    const selected = (name: string): ActorThreads | undefined => runtimes.get(name)?.threads
-    const primary = selected(RESERVED_ACTOR)!
+    const selected = (name: string): Effect.Effect<ActorThreads | undefined> =>
+      registry.resolve(name).pipe(Effect.map((registration) => registration === undefined ? undefined : runtimes.get(name)?.threads))
+    const primary = runtimes.get(RESERVED_ACTOR)!.threads
     const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, ActorPushRefused> =>
       Effect.tryPromise({
         try: () => exclusive(async () => {
@@ -433,18 +442,21 @@ const make = (options: ThreadsOptions) =>
 
     const service: Context.Service.Shape<typeof Threads> = {
       ...primary,
-      actors: Effect.sync(() => [...runtimes.values()].map((runtime) => runtime.summary)),
+      actors: registry.list,
       actor: selected,
       push,
       settled: Effect.forEach(runtimes.values(), (runtime) => runtime.threads.settled, { discard: true })
     }
-    const ingress = ingressFrom(mappedDirectory((id) => {
-      const runtime = runtimes.get(id.actor)
-      return runtime === undefined ? undefined : {
-        commit: runtime.commit,
-        schedule: runtime.schedule
-      }
-    }))
+    const directory: Directory<{ readonly actor: string }, {
+      readonly commit: ActorRuntime["commit"]
+      readonly schedule: ActorRuntime["schedule"]
+    }> = {
+      resolve: (id) => registry.resolve(id.actor).pipe(Effect.map((registration) => {
+        const runtime = registration === undefined ? undefined : runtimes.get(registration.name)
+        return runtime === undefined ? undefined : { commit: runtime.commit, schedule: runtime.schedule }
+      }))
+    }
+    const ingress = ingressFrom(directory)
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
       resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
       dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
