@@ -238,10 +238,12 @@ export const infer = <
     keys: rootKeys(combined.keys),
     derive: (log) => {
       const children = combined.derive(log)
+      const inferred = inference(log)
+      const selectingModel = inferred.some((candidate) => candidate.key.startsWith("ms:"))
       return {
         view: children.view,
-        transitions: [
-          ...inference(log),
+        transitions: selectingModel ? inferred : [
+          ...inferred,
           ...dispatch(log),
           ...children.transitions
         ]

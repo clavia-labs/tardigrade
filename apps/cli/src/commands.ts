@@ -147,7 +147,7 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     const home = homeOf(cli.env)
     if (home === undefined) return yield* userErrorOf(HOME_MISSING)
     const file = yield* readFileConfig(cli.env)
-    const answers = yield* Effect.mapError(setupPrompt(file.model === undefined ? {} : { current: file.model }), userErrorOf)
+    const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
     const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
   })).pipe(
@@ -316,7 +316,7 @@ export const devCommand = Command.make("dev", {
       ? Effect.gen(function*() {
         const home = homeOf(cli.env)
         if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
-        const answers = yield* Effect.mapError(setupPrompt({ current: config.model }), userErrorOf)
+        const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
         const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
         yield* Console.log(setupSummary(path, answers))
         const written = yield* readFileConfig(cli.env)

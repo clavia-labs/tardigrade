@@ -25,7 +25,7 @@ import { toolList } from "../components/tool-list"
 import { nativeOutput } from "../components/native-output"
 import { system } from "../components/system"
 import { receive } from "../turn"
-import { Infer, NativeOutputSupport, type InferRequest } from "./infer"
+import { Infer, NativeOutputSupport, selectedModelOf, type InferRequest } from "./infer"
 
 // The component assembly end to end: the render the model sees is the composed view, and a call
 // routes through the same derived tool binding.
@@ -75,6 +75,59 @@ const viewComponent = (
 })
 
 describe("infer component", () => {
+  test("the actor owns model selection", () => {
+    const fallback = { id: "openai/gpt-5.6-luna", connection: "cloudflare" } as const
+    const message = {
+      type: "MessageReceived",
+      id: "m1",
+      text: "go",
+      model: { id: "anthropic/claude-sonnet-4-6", connection: "vercel" },
+      at: 1
+    } as Event
+    expect(selectedModelOf(message, [message], fallback)).toEqual(fallback)
+    expect(selectedModelOf(message, [message], ({ requested }) => requested)).toEqual({
+      id: "anthropic/claude-sonnet-4-6",
+      connection: "vercel"
+    })
+  })
+
+  test("the selected model reaches the model binding", async () => {
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = actor(infer([
+      reply,
+      compaction({
+        contextWindowTokens: (model) =>
+          typeof model === "object" && model.connection === "vercel" ? 200_000 : 100_000
+      }),
+      nativeOutput
+    ], {
+      model: ({ input }) => (input as { readonly model: { readonly id: string; readonly connection: string } }).model
+    }))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, {
+          id: "m1",
+          text: "go",
+          input: { model: { id: "anthropic/claude-sonnet-4-6", connection: "vercel" } }
+        })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(seen[0]?.model).toEqual({ id: "anthropic/claude-sonnet-4-6", connection: "vercel" })
+    expect(seen[0]?.context?.contextWindowTokens).toBe(200_000)
+    expect(events.find((event) => event.type === "ModelSelected")).toMatchObject({
+      turn: "m1",
+      model: { id: "anthropic/claude-sonnet-4-6", connection: "vercel" }
+    })
+  })
+
   test("an assembly must declare one output strategy", () => {
     expect(() => actor(infer([echoTable]))).toThrow("must declare one output strategy")
   })

@@ -8,6 +8,7 @@ import {
   type Env,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
+import { modelDriverOf, type ModelReference } from "@clavia/tardigrade-model/connection"
 
 // Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
 // the command line, then the environment, then the file `tdg setup` wrote, then the exported
@@ -45,14 +46,19 @@ export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE
 // the one value nothing ever prints back (setup.ts).
 export interface FileConfig {
   readonly model?: {
-    readonly baseUrl?: string
-    readonly apiKey?: string
-    readonly id?: string
-    readonly provider?: string
-    // What the endpoint and the model promise about a declared output contract, and whether that
-    // promise survives beside a tool list (apps/server/src/config.ts, ModelConfig).
-    readonly output?: string
-    readonly outputWithTools?: string
+    readonly default?: ModelReference
+    readonly connections?: Readonly<Record<string, {
+      readonly baseUrl?: string
+      readonly apiKey?: string
+      readonly driver?: string
+      readonly provider?: string
+      readonly models?: Readonly<Record<string, {
+        readonly contextWindowTokens?: number
+        readonly maxOutputTokens?: number
+        readonly output?: string
+        readonly outputWithTools?: string
+      }>>
+    }>>
   }
   readonly url?: string
   readonly token?: string
@@ -61,6 +67,54 @@ export interface FileConfig {
 const stringField = (source: Record<string, unknown>, name: string): string | undefined => {
   const value = source[name]
   return typeof value === "string" ? value : undefined
+}
+
+const positiveIntegerField = (source: Record<string, unknown>, name: string): number | undefined => {
+  const value = source[name]
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+const modelReferenceField = (value: unknown): ModelReference | undefined => {
+  if (typeof value === "string" && value.trim().length > 0) return value.trim()
+  if (typeof value !== "object" || value === null) return undefined
+  const source = value as Record<string, unknown>
+  const id = stringField(source, "id")?.trim()
+  const connection = stringField(source, "connection")?.trim()
+  if (id === undefined || id.length === 0) return undefined
+  return connection === undefined || connection.length === 0 ? { id } : { id, connection }
+}
+
+const fileModelsOf = (value: unknown): NonNullable<NonNullable<NonNullable<FileConfig["model"]>["connections"]>[string]["models"]> => {
+  if (typeof value !== "object" || value === null) return {}
+  const models: Record<string, NonNullable<NonNullable<NonNullable<FileConfig["model"]>["connections"]>[string]["models"]>[string]> = {}
+  for (const [id, raw] of Object.entries(value)) {
+    if (typeof raw !== "object" || raw === null) continue
+    const source = raw as Record<string, unknown>
+    models[id] = {
+      ...(positiveIntegerField(source, "contextWindowTokens") === undefined ? {} : { contextWindowTokens: positiveIntegerField(source, "contextWindowTokens")! }),
+      ...(positiveIntegerField(source, "maxOutputTokens") === undefined ? {} : { maxOutputTokens: positiveIntegerField(source, "maxOutputTokens")! }),
+      ...(stringField(source, "output") === undefined ? {} : { output: stringField(source, "output")! }),
+      ...(stringField(source, "outputWithTools") === undefined ? {} : { outputWithTools: stringField(source, "outputWithTools")! })
+    }
+  }
+  return models
+}
+
+const fileConnectionsOf = (value: unknown): NonNullable<NonNullable<FileConfig["model"]>["connections"]> => {
+  if (typeof value !== "object" || value === null) return {}
+  const connections: Record<string, NonNullable<NonNullable<FileConfig["model"]>["connections"]>[string]> = {}
+  for (const [name, raw] of Object.entries(value)) {
+    if (typeof raw !== "object" || raw === null) continue
+    const source = raw as Record<string, unknown>
+    connections[name] = {
+      ...(stringField(source, "baseUrl") === undefined ? {} : { baseUrl: stringField(source, "baseUrl")! }),
+      ...(stringField(source, "apiKey") === undefined ? {} : { apiKey: stringField(source, "apiKey")! }),
+      ...(stringField(source, "driver") === undefined ? {} : { driver: stringField(source, "driver")! }),
+      ...(stringField(source, "provider") === undefined ? {} : { provider: stringField(source, "provider")! }),
+      models: fileModelsOf(source["models"])
+    }
+  }
+  return connections
 }
 
 // parseFileConfig reads what it recognizes and ignores the rest. A file with a key nobody declared
@@ -80,14 +134,8 @@ export const parseFileConfig = (raw: string): FileConfig => {
     : {}
   return {
     model: {
-      ...(stringField(model, "baseUrl") === undefined ? {} : { baseUrl: stringField(model, "baseUrl")! }),
-      ...(stringField(model, "apiKey") === undefined ? {} : { apiKey: stringField(model, "apiKey")! }),
-      ...(stringField(model, "id") === undefined ? {} : { id: stringField(model, "id")! }),
-      ...(stringField(model, "provider") === undefined ? {} : { provider: stringField(model, "provider")! }),
-      ...(stringField(model, "output") === undefined ? {} : { output: stringField(model, "output")! }),
-      ...(stringField(model, "outputWithTools") === undefined
-        ? {}
-        : { outputWithTools: stringField(model, "outputWithTools")! })
+      ...(modelReferenceField(model["default"]) === undefined ? {} : { default: modelReferenceField(model["default"])! }),
+      connections: fileConnectionsOf(model["connections"])
     },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
     ...(stringField(source, "token") === undefined ? {} : { token: stringField(source, "token")! })
@@ -148,6 +196,23 @@ export interface ServerFlags {
 export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {}): ServerConfigValue => {
   const base = readConfig(env)
   const model = file.model ?? {}
+  const fileConnections = Object.fromEntries(Object.entries(model.connections ?? {}).map(([name, connection]) => [
+    name,
+    {
+      baseUrl: text(connection.baseUrl),
+      apiKey: text(connection.apiKey),
+      driver: text(connection.driver) === undefined ? undefined : modelDriverOf(text(connection.driver)!),
+      provider: text(connection.provider),
+      models: Object.fromEntries(Object.entries(connection.models ?? {}).map(([id, metadata]) => [
+        id,
+        {
+          contextWindowTokens: metadata.contextWindowTokens,
+          maxOutputTokens: metadata.maxOutputTokens,
+          output: outputCapabilityOf(text(metadata.output), text(metadata.outputWithTools))
+        }
+      ]))
+    }
+  ]))
   return {
     ...base,
     port: flags.port ?? base.port,
@@ -157,14 +222,8 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
     token: undefined,
     model: {
-      baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),
-      apiKey: resolve(undefined, base.model.apiKey, model.apiKey),
-      id: resolve(undefined, base.model.id, model.id),
-      provider: resolve(undefined, base.model.provider, model.provider),
-      output: outputCapabilityOf(
-        resolve(undefined, env["MODEL_OUTPUT_GUARANTEE"], model.output),
-        resolve(undefined, env["MODEL_OUTPUT_WITH_TOOLS"], model.outputWithTools)
-      )
+      default: base.model.default ?? model.default,
+      connections: { ...fileConnections, ...base.model.connections }
     }
   }
 }

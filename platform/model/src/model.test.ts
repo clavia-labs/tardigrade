@@ -31,6 +31,8 @@ import {
   tapStopReason,
   throttleDelayMs
 } from "./model"
+import type { ModelConfig } from "./model"
+import type { ModelDriver } from "./connection"
 import {
   capabilityOf,
   converseOutputConfig,
@@ -40,6 +42,9 @@ import {
 } from "./output"
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
+
+const testInfer = <const C extends Omit<ModelConfig, "driver"> & { readonly driver?: ModelDriver }>(config: C) =>
+  infer({ driver: "openai-chat-completions", ...config })
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -176,7 +181,7 @@ describe("the Converse output surface", () => {
   })
 
   test("buildInput sets the native surface, and never a forced tool", () => {
-    const config = { baseUrl: "https://bedrock.test/us-east-1", apiKey: "k", model: "anthropic.claude-sonnet", provider: "bedrock" }
+    const config = { baseUrl: "https://bedrock.test/us-east-1", apiKey: "k", model: "anthropic.claude-sonnet", driver: "bedrock-converse" as const, provider: "bedrock" }
     const options = { model: config.model, messages: [{ role: "user", content: "go" }], systemPrompts: ["be brief"], tools: [] }
     const withContract = bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS, request, NATIVE_MODE).buildInput(options as never)
     expect(withContract.outputConfig).toEqual(converseOutputConfig(request, NATIVE_MODE)!)
@@ -274,7 +279,7 @@ describe("infer end to end", () => {
         { id: "r1", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] }
       ])
     }) as typeof globalThis.fetch
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -299,7 +304,7 @@ describe("infer end to end", () => {
         { id: "r2", choices: [{ index: 0, delta: { content: "is 4" } }] },
         { id: "r2", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "2+2?", at: 1 }]))).pipe(
         Effect.provide(layer)
@@ -330,7 +335,7 @@ describe("infer end to end", () => {
         { id: "r3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])
     }) as typeof globalThis.fetch
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "gpt-5.2",
@@ -404,7 +409,7 @@ describe("infer end to end", () => {
       return sse([])
     }) as unknown as typeof globalThis.fetch
     // No provider name and no declared capability: the endpoint promises nothing.
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "mystery", fetch: fetchImpl })
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "mystery", fetch: fetchImpl })
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf(declared()))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )) as Action
@@ -432,7 +437,7 @@ describe("infer end to end", () => {
         { id: "r5", choices: [{ index: 0, delta: {}, finish_reason: "stop" }], usage: { prompt_tokens: 11, completion_tokens: 0 } }
       ])
     }) as unknown as typeof globalThis.fetch
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "m",
@@ -460,7 +465,7 @@ describe("infer end to end", () => {
         { id: "r6", choices: [{ index: 0, delta: { role: "assistant" } }] },
         { id: "r6", choices: [{ index: 0, delta: {}, finish_reason: "content_filter" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", fetch: fetchImpl, sleep: async () => {} })
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", fetch: fetchImpl, sleep: async () => {} })
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) =>
         model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
@@ -478,7 +483,7 @@ describe("infer end to end", () => {
         { id: "r7", choices: [{ index: 0, delta: { role: "assistant", content: ANSWER } }] },
         { id: "r7", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "gpt-5.2",
@@ -499,7 +504,7 @@ describe("infer end to end", () => {
         { id: "r8", provider: "Anthropic", model: "claude-sonnet-4.5", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
         { id: "r8", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])) as unknown as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "auto", provider: "openrouter", fetch: fetchImpl })
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "auto", provider: "openrouter", fetch: fetchImpl })
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) =>
         model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
@@ -523,7 +528,7 @@ describe("infer end to end", () => {
         { id: "r3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
       ])
     }) as typeof globalThis.fetch
-    const layer = infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
+    const layer = testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "test-model", fetch: fetchImpl })
     const trajectory = [{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]
     await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf(trajectory), "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
@@ -556,7 +561,7 @@ describe("infer: cost provenance", () => {
     const billed = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
-          infer({
+          testInfer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
@@ -590,7 +595,7 @@ describe("infer: cost provenance", () => {
     const filled = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
-          infer({
+          testInfer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
@@ -621,7 +626,7 @@ describe("infer: cost provenance", () => {
     const unknown = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
-          infer({
+          testInfer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
@@ -647,7 +652,7 @@ describe("infer: cost provenance", () => {
         model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
       ).pipe(
         Effect.provide(
-          infer({
+          testInfer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "test-model",
@@ -688,7 +693,7 @@ describe("infer: throttle-shaped retry", () => {
     const slept: Array<number> = []
     const seed = "throttle retry"
     const expectedDelay = Effect.runSync(Random.next.pipe(Random.withSeed(seed))) * 2_000
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -729,7 +734,7 @@ describe("infer: throttle-shaped retry", () => {
     const slept: Array<number> = []
     const seed = "clock retry"
     const expectedDelay = Effect.runSync(Random.next.pipe(Random.withSeed(seed))) * 2_000
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -766,7 +771,7 @@ describe("infer: throttle-shaped retry", () => {
       return new Response(JSON.stringify({ error: { message: "upstream trouble" } }), { status: 503 })
     }) as unknown as typeof globalThis.fetch
     const slept: Array<number> = []
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -806,7 +811,7 @@ describe("infer: throttle-shaped retry", () => {
       return new Response(JSON.stringify({ error: { message: "bad request" } }), { status: 400 })
     }) as unknown as typeof globalThis.fetch
     const slept: Array<number> = []
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -832,7 +837,7 @@ describe("infer: throttle-shaped retry", () => {
 
   test("Bun's timed-out wording enters the bounded retry policy", async () => {
     let calls = 0
-    const layer = infer({
+    const layer = testInfer({
       baseUrl: "https://model.test/v1",
       apiKey: "k",
       model: "test-model",
@@ -962,7 +967,7 @@ describe("truncation", () => {
       keys.push(request.headers.get("Idempotency-Key"))
       return calls++ === 0 ? cut("half an ans") : whole("the whole answer")
     }) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
+    const layer = testInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]), "t1/infer/0")).pipe(
         Effect.provide(layer)
@@ -984,7 +989,7 @@ describe("truncation", () => {
       calls++ === 0
         ? cut("half an ans", { prompt_tokens: 10, completion_tokens: 32768, cost: 5 })
         : whole("the whole answer", { prompt_tokens: 10, completion_tokens: 4, cost: 1 })) as unknown as typeof fetch
-    const layer = infer({
+    const layer = testInfer({
       provider: "openai",
       model: "m",
       baseUrl: "https://x",
@@ -1024,7 +1029,7 @@ describe("truncation", () => {
 
   test("the top rung still truncating fails the turn loudly, never half an answer", async () => {
     const fetchImpl = (async () => cut("half")) as unknown as typeof fetch
-    const layer = infer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
+    const layer = testInfer({ provider: "openai", model: "m", baseUrl: "https://x", apiKey: "k", fetch: fetchImpl as never })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(layer)
@@ -1041,7 +1046,7 @@ describe("truncation", () => {
     const routed = await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
         Effect.provide(
-          infer({
+          testInfer({
             baseUrl: "https://model.test/v1",
             apiKey: "k",
             model: "meta-llama/llama-3.1-70b",
@@ -1081,7 +1086,7 @@ describe("truncation", () => {
           }),
           { status: 200, headers: { "content-type": "text/event-stream" } }
         )) as unknown as typeof fetch
-      const layer = infer({
+      const layer = testInfer({
         provider: "openai",
         model: "m",
         baseUrl: "https://x",
@@ -1128,7 +1133,7 @@ describe("declared limits", () => {
         headers: { "content-type": "text/event-stream" }
       })
     }) as unknown as typeof fetch
-    const layer = infer({
+    const layer = testInfer({
       provider: "openai",
       model: "m",
       baseUrl: "https://x",
@@ -1150,13 +1155,13 @@ describe("stream bounds", () => {
     // A value outside Bun's timer range would clamp to 1ms and read as provider trouble
     // (model.ts, infer).
     expect(() =>
-      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { totalMs: Infinity } })
+      testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { totalMs: Infinity } })
     ).toThrow(/finite positive/)
     expect(() =>
-      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { idleMs: 0 } })
+      testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { idleMs: 0 } })
     ).toThrow(/finite positive/)
     expect(() =>
-      infer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { firstChunkMs: 2_147_483_648 } })
+      testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", stream: { firstChunkMs: 2_147_483_648 } })
     ).toThrow(/2147483647/)
   })
 })

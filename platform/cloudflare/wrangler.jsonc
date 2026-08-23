@@ -17,7 +17,8 @@
   "observability": { "enabled": true },
   "limits": { "cpu_ms": 300000 },
   "vars": {
-    "MODEL_CONTEXT_WINDOW_TOKENS": "1000000",
+    "MODEL_DRIVER": "openai-responses",
+    "MODEL_CONTEXT_WINDOW_TOKENS": "1050000",
     "TARDIGRADE_COMPACTION_FIRE_RATIO": "0.8",
     "TARDIGRADE_COMPACTION_KEEP_RATIO": "0.5",
     "TARDIGRADE_MAX_CONCURRENT_LANES": "4"

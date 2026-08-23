@@ -3,6 +3,7 @@ import {
   DEFAULT_MAX_CONCURRENT_LANES,
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
+import { modelDriverOf, type ModelDriver, type ModelReference } from "@clavia/tardigrade-model/connection"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
@@ -22,18 +23,33 @@ export const DEFAULT_ACTORS = ".tardigrade/actors"
 
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
 
-// The model binding's coordinates. Absent values are absent rather than guessed: the model layer
-// decides what it can do without them, and the server does not invent an endpoint.
-export interface ModelConfig {
-  readonly baseUrl: string | undefined
-  readonly apiKey: string | undefined
-  readonly id: string | undefined
-  readonly provider: string | undefined
+export const ENVIRONMENT_MODEL_CONNECTION = "environment"
+
+export interface ConfiguredModel {
+  readonly contextWindowTokens: number | undefined
+  readonly maxOutputTokens: number | undefined
   // What this endpoint and this model promise about a turn's declared output contract. A
   // provider name proves nothing here: structured output is a property of the endpoint AND the
   // model behind it, so an operator states it. Absent, a turn that declares a contract fails
   // before it spends (platform/model/src/output.ts, capabilityOf).
   readonly output: OutputCapabilityValue | undefined
+}
+
+// ModelConnectionConfig is one named route to models. Coordinates may be absent so the server can
+// boot and report an incomplete environment configuration through the ordinary model failure.
+export interface ModelConnectionConfig {
+  readonly baseUrl: string | undefined
+  readonly apiKey: string | undefined
+  readonly driver: ModelDriver | undefined
+  readonly provider: string | undefined
+  readonly models: Readonly<Record<string, ConfiguredModel>>
+}
+
+// ModelConfig holds every configured route and the deployment fallback. A request and an actor may
+// select another model without replacing this configuration.
+export interface ModelConfig {
+  readonly default: ModelReference | undefined
+  readonly connections: Readonly<Record<string, ModelConnectionConfig>>
 }
 
 export const OUTPUT_GUARANTEES = ["native", "none"] as const
@@ -70,6 +86,14 @@ const text = (env: Env, name: string): string | undefined => {
   if (value === undefined) return undefined
   const trimmed = value.trim()
   return trimmed.length === 0 ? undefined : trimmed
+}
+
+const optionalPositiveInteger = (env: Env, name: string): number | undefined => {
+  const raw = text(env, name)
+  if (raw === undefined) return undefined
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`)
+  return value
 }
 
 // MODEL_OUTPUT_GUARANTEE and MODEL_OUTPUT_WITH_TOOLS name a promise the process must be able to
@@ -125,21 +149,42 @@ const maxConcurrentLanes = (env: Env): number => {
 }
 
 // readConfig resolves the environment into the value the process runs on.
-export const readConfig = (env: Env): ServerConfigValue => ({
-  port: port(env),
-  db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
-  actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
-  actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
-  maxConcurrentLanes: maxConcurrentLanes(env),
-  token: text(env, "TARDIGRADE_TOKEN"),
-  model: {
-    baseUrl: text(env, "MODEL_BASE_URL"),
-    apiKey: text(env, "MODEL_API_KEY"),
-    id: text(env, "MODEL_ID"),
-    provider: text(env, "MODEL_PROVIDER"),
-    output: outputCapabilityOf(text(env, "MODEL_OUTPUT_GUARANTEE"), text(env, "MODEL_OUTPUT_WITH_TOOLS"))
+export const readConfig = (env: Env): ServerConfigValue => {
+  const id = text(env, "MODEL_ID")
+  const baseUrl = text(env, "MODEL_BASE_URL")
+  const apiKey = text(env, "MODEL_API_KEY")
+  const driverText = text(env, "MODEL_DRIVER")
+  const provider = text(env, "MODEL_PROVIDER")
+  const contextWindowTokens = optionalPositiveInteger(env, "MODEL_CONTEXT_WINDOW_TOKENS")
+  const maxOutputTokens = optionalPositiveInteger(env, "MODEL_MAX_OUTPUT_TOKENS")
+  const output = outputCapabilityOf(text(env, "MODEL_OUTPUT_GUARANTEE"), text(env, "MODEL_OUTPUT_WITH_TOOLS"))
+  const hasEnvironmentModel = [id, baseUrl, apiKey, driverText, provider, contextWindowTokens, maxOutputTokens, output]
+    .some((value) => value !== undefined)
+  return {
+    port: port(env),
+    db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
+    actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
+    actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
+    maxConcurrentLanes: maxConcurrentLanes(env),
+    token: text(env, "TARDIGRADE_TOKEN"),
+    model: {
+      default: id === undefined ? undefined : { id, connection: ENVIRONMENT_MODEL_CONNECTION },
+      connections: hasEnvironmentModel
+        ? {
+            [ENVIRONMENT_MODEL_CONNECTION]: {
+              baseUrl,
+              apiKey,
+              driver: driverText === undefined ? undefined : modelDriverOf(driverText),
+              provider,
+              models: id === undefined
+                ? {}
+                : { [id]: { contextWindowTokens, maxOutputTokens, output } }
+            }
+          }
+        : {}
+    }
   }
-})
+}
 
 // layerConfig provides a resolved configuration; layerFromEnv reads one out of an environment.
 export const layerConfig = (value: ServerConfigValue): Layer.Layer<ServerConfig> =>

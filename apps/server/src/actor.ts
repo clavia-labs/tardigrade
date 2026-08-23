@@ -19,6 +19,7 @@ import { boundaryOf } from "tardie/boundary"
 import { projection, projectionsOf, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"
+import type { ModelReference } from "tardie"
 
 // The actor this build serves: the reactors it runs, and the projections it declares over the logs
 // they write. Both halves belong together, because a projection is only meaningful to whoever knows
@@ -36,12 +37,16 @@ import { inboundOf } from "./projections"
 // one root directory, the working directory of the process that booted, and `fetch` makes HTTP
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
-export const assemblyOf = () =>
+export interface AssemblyModelPolicy {
+  readonly contextWindowTokens?: number | ((model: ModelReference | undefined) => number)
+}
+
+export const assemblyOf = (models: AssemblyModelPolicy = {}) =>
   actor(infer([
     codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
-    compaction(),
+    compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
     outputValidateOnce
   ]))
 

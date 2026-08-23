@@ -117,14 +117,24 @@ export const agentsPackage = (
     },
     docs: {
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` accepts a model id on the default connection, or { id, connection } to select both. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
-            model: { type: "string", enum: ["haiku", "sonnet", "opus"], description: "which model runs the agent; default sonnet" },
+            model: {
+              oneOf: [
+                { type: "string" },
+                {
+                  type: "object",
+                  properties: { id: { type: "string" }, connection: { type: "string" } },
+                  required: ["id"]
+                }
+              ],
+              description: "a model id on the default connection, or { id, connection }"
+            },
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
           },
@@ -195,7 +205,21 @@ export const agentsPackage = (
           const outputDeclaration = output === undefined ? undefined : { name: output.name, schema: output.schema }
           // The model name rides the brief's envelope: the child's log records the choice, so its
           // Infer resolves it from trajectory and replay agrees by construction.
-          const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" ? a.model : undefined
+          const model = (() => {
+            if (a?.model === undefined) return undefined
+            if (typeof a.model === "string" && a.model.trim().length > 0) return a.model.trim()
+            if (typeof a.model !== "object" || a.model === null) return undefined
+            const reference = a.model as { readonly id?: unknown; readonly connection?: unknown }
+            if (typeof reference.id !== "string" || reference.id.trim().length === 0) return undefined
+            if (reference.connection !== undefined && (typeof reference.connection !== "string" || reference.connection.trim().length === 0)) return undefined
+            return {
+              id: reference.id.trim(),
+              ...(reference.connection === undefined ? {} : { connection: reference.connection.trim() })
+            }
+          })()
+          if (a?.model !== undefined && model === undefined) {
+            return { error: "agents.run takes model as a non-empty id or { id, connection }" }
+          }
           // asked is the tool-call budget carried on the brief. It accepts a whole positive count
           // because rounding could turn a requested child into an exhausted run (spawn.test.ts,
           // "a fractional budget"). An absent budget takes the per-agent default.

@@ -29,6 +29,7 @@ const native = infer({
   baseUrl: "https://model.test",
   apiKey: "test",
   model: "strict",
+  driver: "openai-responses",
   output: { guarantee: "native", withTools: true }
 })
 
@@ -36,6 +37,7 @@ const toolLimited = infer({
   baseUrl: "https://model.test",
   apiKey: "test",
   model: "strict-without-tools",
+  driver: "openai-responses",
   output: { guarantee: "native", withTools: false }
 })
 
@@ -43,6 +45,7 @@ const unproven = infer({
   baseUrl: "https://model.test",
   apiKey: "test",
   model: "unproven",
+  driver: "openai-responses",
   output: { guarantee: "none" }
 })
 

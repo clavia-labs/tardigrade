@@ -67,7 +67,7 @@ describe("resolveServer", () => {
     expect(config.port).toBe(8080)
     expect(config.db).toBe("runs.sqlite")
     expect(config.maxConcurrentLanes).toBe(6)
-    expect(config.model.id).toBe("a-model")
+    expect(config.model.default).toEqual({ id: "a-model", connection: "environment" })
   })
 
   test("a flag beats the environment", () => {
@@ -143,8 +143,8 @@ describe("the config file", () => {
   })
 
   test("a key nobody declared is ignored, and the rest still reads", () => {
-    expect(parseFileConfig(JSON.stringify({ model: { id: "a-model", weird: 3 }, later: true }))).toEqual({
-      model: { id: "a-model" }
+    expect(parseFileConfig(JSON.stringify({ model: { default: { id: "a-model", connection: "primary" }, weird: 3 }, later: true }))).toEqual({
+      model: { default: { id: "a-model", connection: "primary" }, connections: {} }
     })
   })
 
@@ -152,15 +152,18 @@ describe("the config file", () => {
   // survives beside a tool list, because a turn that offers tools and declares a contract sends
   // both on one call (platform/model/src/output.ts, outputModeOf).
   test("the output capability resolves in the same order every value does", async () => {
-    await put(JSON.stringify({ model: { output: "native", outputWithTools: "true" } }))
+    await put(JSON.stringify({ model: {
+      default: { id: "m", connection: "primary" },
+      connections: { primary: { models: { m: { output: "native", outputWithTools: "true" } } } }
+    } }))
     const file = await read({ HOME: home })
-    expect(resolveServer({}, {}, file).model.output).toEqual({ guarantee: "native", withTools: true })
-    expect(resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "none" }, file).model.output).toEqual({ guarantee: "none" })
-    expect(resolveServer({}, {}, {}).model.output).toBeUndefined()
+    expect(resolveServer({}, {}, file).model.connections.primary?.models.m?.output).toEqual({ guarantee: "native", withTools: true })
+    expect(resolveServer({}, { MODEL_ID: "env", MODEL_OUTPUT_GUARANTEE: "none" }, file).model.connections.environment?.models.env?.output).toEqual({ guarantee: "none" })
+    expect(resolveServer({}, {}, {}).model.connections).toEqual({})
   })
 
   test("a capability nobody stated whole refuses to resolve, rather than leaving one field guessed", async () => {
-    await put(JSON.stringify({ model: { output: "probably" } }))
+    await put(JSON.stringify({ model: { connections: { primary: { models: { m: { output: "probably" } } } } } }))
     const file = await read({ HOME: home })
     expect(() => resolveServer({}, {}, file)).toThrow("model output guarantee must be one of")
     expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "maybe" }, {})).toThrow("model output guarantee must be one of")
@@ -170,19 +173,40 @@ describe("the config file", () => {
   })
 
   test("the file is the third source for the model, and the environment beats it", async () => {
-    await put(JSON.stringify({ model: { baseUrl: "https://file.example.com", apiKey: "file-key", id: "file-model" } }))
+    await put(JSON.stringify({ model: {
+      default: { id: "file-model", connection: "primary" },
+      connections: {
+        primary: {
+          baseUrl: "https://file.example.com",
+          apiKey: "file-key",
+          driver: "openai-responses",
+          models: { "file-model": { contextWindowTokens: 128000 } }
+        }
+      }
+    } }))
     const file = await read({ HOME: home })
     const fromFile = resolveServer({}, {}, file)
     expect(fromFile.model).toEqual({
-      baseUrl: "https://file.example.com",
-      apiKey: "file-key",
-      id: "file-model",
-      provider: undefined,
-      output: undefined
+      default: { id: "file-model", connection: "primary" },
+      connections: {
+        primary: {
+          baseUrl: "https://file.example.com",
+          apiKey: "file-key",
+          driver: "openai-responses",
+          provider: undefined,
+          models: {
+            "file-model": {
+              contextWindowTokens: 128000,
+              maxOutputTokens: undefined,
+              output: undefined
+            }
+          }
+        }
+      }
     })
     const overridden = resolveServer({}, { MODEL_ID: "env-model" }, file)
-    expect(overridden.model.id).toBe("env-model")
-    expect(overridden.model.baseUrl).toBe("https://file.example.com")
+    expect(overridden.model.default).toEqual({ id: "env-model", connection: "environment" })
+    expect(overridden.model.connections.primary?.baseUrl).toBe("https://file.example.com")
   })
 
   test("the file is the third source for the remote, and a flag beats both", async () => {

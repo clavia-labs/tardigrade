@@ -16,6 +16,7 @@ import {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
   Infer,
+  type ModelReference,
   type ActorArtifactManifest,
   type ActorDefinition
 } from "tardie"
@@ -26,7 +27,7 @@ import { infer } from "@clavia/tardigrade-model/model"
 import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
 
 import { assemblyOf, type ServerR } from "./actor"
-import { ServerConfig, type ServerConfigValue } from "./config"
+import { ServerConfig, type ModelConfig, type ServerConfigValue } from "./config"
 import { DriverGauge } from "./http"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
@@ -83,27 +84,89 @@ export class Threads extends Context.Service<
 // The model binding the configured coordinates name. Absent coordinates are not an endpoint this
 // server invents: every attempt fails with what is missing, so the process still boots, still
 // answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
-export const MISSING_MODEL = "no model is configured: run `tdg setup`, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID"
+export const MISSING_MODEL = "no model is configured: run `tdg setup`, or set MODEL_BASE_URL, MODEL_API_KEY, MODEL_ID, MODEL_DRIVER, and MODEL_CONTEXT_WINDOW_TOKENS"
+
+interface SelectedModel {
+  readonly id: string
+  readonly connection: string
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly driver: NonNullable<ModelConfig["connections"][string]["driver"]>
+  readonly provider?: string
+  readonly contextWindowTokens: number
+  readonly maxOutputTokens?: number
+  readonly output?: NonNullable<ModelConfig["connections"][string]["models"][string]["output"]>
+}
+
+// selectedModelFrom resolves an actor selection against host connections and their declared metadata.
+export const selectedModelFrom = (config: ModelConfig, reference?: ModelReference): SelectedModel => {
+  const selected = reference ?? config.default
+  if (selected === undefined) throw new Error("no default model is configured")
+  const defaultConnection = typeof config.default === "object" ? config.default.connection : undefined
+  const id = typeof selected === "string" ? selected : selected.id
+  const connectionName = typeof selected === "string" ? defaultConnection : (selected.connection ?? defaultConnection)
+  if (connectionName === undefined) throw new Error(`model ${JSON.stringify(id)} requires a connection`)
+  const connection = config.connections[connectionName]
+  if (connection === undefined) throw new Error(`unknown model connection ${JSON.stringify(connectionName)}`)
+  const metadata = connection.models[id]
+  if (metadata === undefined) throw new Error(`model ${JSON.stringify(id)} has no metadata on connection ${JSON.stringify(connectionName)}`)
+  if (connection.baseUrl === undefined) throw new Error(`model connection ${JSON.stringify(connectionName)} has no base URL`)
+  if (connection.apiKey === undefined) throw new Error(`model connection ${JSON.stringify(connectionName)} has no API key`)
+  if (connection.driver === undefined) throw new Error(`model connection ${JSON.stringify(connectionName)} has no protocol driver`)
+  if (metadata.contextWindowTokens === undefined) throw new Error(`model ${JSON.stringify(id)} has no context window`)
+  return {
+    id,
+    connection: connectionName,
+    baseUrl: connection.baseUrl,
+    apiKey: connection.apiKey,
+    driver: connection.driver,
+    ...(connection.provider === undefined ? {} : { provider: connection.provider }),
+    contextWindowTokens: metadata.contextWindowTokens,
+    ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
+    ...(metadata.output === undefined ? {} : { output: metadata.output })
+  }
+}
 
 // modelIsConfigured says whether a turn can reach a model at all. The command line reads it to say
 // so once on boot rather than letting every turn be the first news (apps/cli/src/commands.ts).
 export const modelIsConfigured = (config: ServerConfigValue): boolean =>
-  config.model.baseUrl !== undefined && config.model.apiKey !== undefined && config.model.id !== undefined
+  (() => {
+    try {
+      selectedModelFrom(config.model)
+      return true
+    } catch {
+      return false
+    }
+  })()
 
 const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
-  const { apiKey, baseUrl, id, provider, output } = config.model
-  if (!modelIsConfigured(config) || baseUrl === undefined || apiKey === undefined || id === undefined) {
+  if (!modelIsConfigured(config)) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
-  return infer({
-    baseUrl,
-    apiKey,
-    model: id,
-    ...(provider === undefined ? {} : { provider }),
-    // The capability is the operator's whole statement, passed through as declared. Nothing here
-    // fills a field it did not state (platform/model/src/output.ts, capabilityOf).
-    ...(output === undefined ? {} : { output })
+  return Layer.succeed(Infer, {
+    react: (request, key) => Effect.suspend(() => {
+      let selected: SelectedModel
+      try {
+        selected = selectedModelFrom(config.model, request.model)
+      } catch (error) {
+        return Effect.succeed<Action>({
+          kind: "fail",
+          error: error instanceof Error ? error.message : String(error),
+          failure: { cause: "inference_error", attempts: 0 }
+        })
+      }
+      const binding = infer({
+        baseUrl: selected.baseUrl,
+        apiKey: selected.apiKey,
+        model: selected.id,
+        driver: selected.driver,
+        ...(selected.provider === undefined ? {} : { provider: selected.provider }),
+        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
+        ...(selected.output === undefined ? {} : { output: selected.output })
+      })
+      return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(binding))
+    })
   })
 }
 
@@ -300,7 +363,9 @@ const make = (options: ThreadsOptions) =>
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
-    const builtIn = assemblyOf()
+    const builtIn = modelIsConfigured(config)
+      ? assemblyOf({ contextWindowTokens: (model) => selectedModelFrom(config.model, model).contextWindowTokens })
+      : assemblyOf()
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
     const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {

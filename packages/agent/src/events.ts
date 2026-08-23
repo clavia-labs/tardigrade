@@ -3,6 +3,7 @@ import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/event-log"
 import type { Usage } from "./usage"
+import { ModelReference, type ModelReference as ModelReferenceType } from "./model"
 
 // The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
 // sees only the open envelope. The model responds by acting: its recorded decision is the
@@ -81,6 +82,26 @@ export const ModelCalled = Schema.Struct({
   output: Schema.optional(OutputPolicy),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// ModelSelected records the infer component's model choice for one turn before work uses it.
+export const ModelSelected = Schema.Struct({
+  type: Schema.Literal("ModelSelected"),
+  turn: Schema.String,
+  model: ModelReference,
+  contextWindowTokens: Schema.optional(Schema.Finite),
+  maxOutputTokens: Schema.optional(Schema.Finite),
+  catalogRevision: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// ModelSelectionFailed records a model reference that the host could not resolve for one turn.
+export const ModelSelectionFailed = Schema.Struct({
+  type: Schema.Literal("ModelSelectionFailed"),
+  turn: Schema.String,
+  requested: ModelReference,
+  error: Schema.String,
   at: Schema.Finite
 })
 
@@ -261,6 +282,8 @@ export const BudgetDenied = Schema.Struct({
 
 export const AgentEvent = Schema.Union([
   MessageReceived,
+  ModelSelected,
+  ModelSelectionFailed,
   ModelCalled,
   TextReturned,
   ToolCalled,
@@ -321,7 +344,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
+  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "ms:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -347,6 +370,9 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
+      case "ModelSelected":
+      case "ModelSelectionFailed":
+        return `ms:${String(v.turn)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -398,6 +424,16 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
+
+export const modelSelected = (fields: {
+  readonly turn: string
+  readonly model: ModelReferenceType
+  readonly contextWindowTokens?: number
+  readonly maxOutputTokens?: number
+  readonly catalogRevision?: string
+  readonly at: number
+}): Event =>
+  ({ type: "ModelSelected", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event

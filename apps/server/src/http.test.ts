@@ -75,11 +75,8 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
-      baseUrl: undefined,
-      apiKey: undefined,
-      id: undefined,
-      provider: undefined,
-      output: undefined
+      default: undefined,
+      connections: {}
     })
   })
 
@@ -94,6 +91,9 @@ describe("config", () => {
       MODEL_BASE_URL: "https://api.example.com",
       MODEL_API_KEY: "key",
       MODEL_ID: "a-model",
+      MODEL_DRIVER: "openai-responses",
+      MODEL_CONTEXT_WINDOW_TOKENS: "1050000",
+      MODEL_MAX_OUTPUT_TOKENS: "128000",
       MODEL_PROVIDER: "openai"
     })
     expect(config.port).toBe(8080)
@@ -102,8 +102,13 @@ describe("config", () => {
     expect(config.actorData).toBe("/var/lib/actor-data")
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
-    expect(config.model.baseUrl).toBe("https://api.example.com")
-    expect(config.model.provider).toBe("openai")
+    expect(config.model.default).toEqual({ id: "a-model", connection: "environment" })
+    const connection = config.model.connections["environment"]!
+    expect(connection.baseUrl).toBe("https://api.example.com")
+    expect(connection.provider).toBe("openai")
+    expect(connection.driver).toBe("openai-responses")
+    expect(connection.models["a-model"]?.contextWindowTokens).toBe(1_050_000)
+    expect(connection.models["a-model"]?.maxOutputTokens).toBe(128_000)
   })
 
   // Listening somewhere other than where the operator asked is worse than refusing to start.

@@ -9,12 +9,14 @@ import {
   type ToolCall
 } from "@tanstack/ai"
 import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
+import { createAnthropicChat } from "@tanstack/ai-anthropic"
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
 import { Infer, NativeOutputSupport, type InferRequest } from "tardie"
 import type { Action, AttemptEndpoint } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
+import type { ModelReference } from "tardie"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/request"
 import {
@@ -28,6 +30,8 @@ import {
 } from "./output"
 import { NATIVE_MODE, type OutputMode } from "tardie/output"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
+import type { ModelDriver } from "./connection"
+import { modelDriverOf } from "./connection"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -46,13 +50,19 @@ export interface ModelEnv {
   readonly MODEL_SONNET_CONTEXT_WINDOW_TOKENS?: string
   readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
   readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
+  readonly MODEL_DRIVER?: string
   // "bedrock" speaks Converse through the gateway's aws-bedrock route (v5's proven leg);
   // anything else is the OpenAI-compat wire.
   readonly MODEL_PROVIDER?: string
 }
 
 export const modelConfigured = (env: ModelEnv): boolean =>
-  env.MODEL_BASE_URL !== undefined && env.MODEL_API_KEY !== undefined && env.MODEL_ID !== undefined
+  env.MODEL_BASE_URL !== undefined && env.MODEL_API_KEY !== undefined && env.MODEL_ID !== undefined && env.MODEL_DRIVER !== undefined
+
+export const modelDriverFrom = (env: ModelEnv): ModelDriver => {
+  if (env.MODEL_DRIVER === undefined) throw new Error("MODEL_DRIVER is required")
+  return modelDriverOf(env.MODEL_DRIVER)
+}
 
 // The model vocabulary agents speak: short names, resolved to provider ids by env. An unknown
 // or absent name is the default. The asked name rides the brief's MessageReceived envelope, so
@@ -66,12 +76,19 @@ export const modelIdOf = (env: ModelEnv, name?: string): string =>
         ? (env.MODEL_HAIKU_ID ?? env.MODEL_ID!)
         : env.MODEL_ID!
 
-export const modelAskOf = (trajectory: ReadonlyArray<Event>): string | undefined => {
-  let name: string | undefined
+export const modelAskOf = (trajectory: ReadonlyArray<Event>): ModelReference | undefined => {
+  let name: ModelReference | undefined
   for (const e of trajectory) {
     if (e.type !== "MessageReceived") continue
     const v = (e as { model?: unknown }).model
     if (typeof v === "string" && v !== "") name = v
+    else if (
+      typeof v === "object" &&
+      v !== null &&
+      typeof (v as { id?: unknown }).id === "string" &&
+      (v as { id: string }).id !== "" &&
+      ((v as { connection?: unknown }).connection === undefined || typeof (v as { connection?: unknown }).connection === "string")
+    ) name = v as { readonly id: string; readonly connection?: string }
   }
   return name
 }
@@ -233,6 +250,7 @@ export interface ModelConfig {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
+  readonly driver: ModelDriver
   readonly provider?: string
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
@@ -726,14 +744,20 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     const held: { tokens?: TokenUsage } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
     const stops: { stopReason?: string } = {}
-    const adapter =
-      config.provider === "bedrock"
-        ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops, reported)
+    const adapter = config.driver === "bedrock-converse"
+      ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops, reported)
+      : config.driver === "anthropic-messages"
+        ? createAnthropicChat(config.model as never, config.apiKey, {
+            baseURL: config.baseUrl,
+            maxRetries: 0,
+            fetch: fetcher
+          })
         : openaiCompatibleText(config.model, {
             name: "tardigrade",
             baseURL: config.baseUrl,
             apiKey: config.apiKey,
-            // The openai SDK client retries a throttle-shaped failure on its own schedule by
+            api: config.driver === "openai-responses" ? "responses" : "chat-completions",
+            // The OpenAI client retries a throttle-shaped failure on its own schedule by
             // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
             // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
             maxRetries: 0,
@@ -743,7 +767,12 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     // compatible leg's provider-options seam, and `outputConfig` through the Converse leg's
     // buildInput above. Both are absent under an implementation that asked for no guarantee, so
     // no endpoint is handed a schema it never promised to keep.
-    const responseFormat = config.provider === "bedrock" ? undefined : compatibleResponseFormat(req.output, mode)
+    const responseFormat = config.driver === "openai-responses" || config.driver === "openai-chat-completions"
+      ? compatibleResponseFormat(req.output, mode)
+      : undefined
+    const outputSchema = config.driver === "anthropic-messages" && req.output?.kind === "contract" && mode.kind === "native"
+      ? req.output.contract.schema
+      : undefined
     // The fallback's own instruction rides the request and reaches the model only on an attempt
     // running as that fallback, so a native attempt sends exactly the base prompt.
     const fallbackSystem = fallbackSystemFor(req.output, mode)
@@ -759,6 +788,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
         max_tokens: maxTokens,
         ...(responseFormat === undefined ? {} : { response_format: responseFormat })
       } as never,
+      ...(outputSchema === undefined ? {} : { outputSchema }),
       logger: noopLogger
     } as never)
     // The wire is read once and answers two questions: what the attempt spent, and who served
@@ -816,7 +846,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
       attributes: {
         "gen_ai.operation.name": "chat",
         "gen_ai.request.model": config.model,
-        "gen_ai.provider.name": config.provider === "bedrock" ? "aws.bedrock" : (config.provider ?? "openai")
+        "gen_ai.provider.name": config.driver === "bedrock-converse" ? "aws.bedrock" : (config.provider ?? config.driver)
       }
     })(function* (request: InferRequest, key?: string) {
       // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it

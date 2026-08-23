@@ -3,7 +3,8 @@ import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
 import type { Action } from "tardie/events"
-import { infer, modelAskOf, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
+import { infer, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
+import { modelDriverOf } from "@clavia/tardigrade-model/connection"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -34,6 +35,8 @@ export interface Env {
   readonly MODEL_BASE_URL?: string
   readonly MODEL_API_KEY?: string
   readonly MODEL_ID?: string
+  readonly MODEL_DRIVER?: string
+  readonly MODEL_CONNECTION?: string
   readonly MODEL_SONNET_ID?: string
   readonly MODEL_OPUS_ID?: string
   readonly MODEL_HAIKU_ID?: string
@@ -65,6 +68,7 @@ export const DEFAULT_ACTOR_REGISTRATION: CloudflareActorRegistration = {
 }
 
 const assemblies = new Set([DEFAULT_ACTOR_REGISTRATION.assembly])
+export const DEFAULT_MODEL_CONNECTION = "default"
 const registryRuntimes = new WeakMap<D1Database, ManagedRuntime.ManagedRuntime<CloudflareActorRegistry, never>>()
 
 const actorRegistry = async (env: Env) => {
@@ -81,18 +85,28 @@ const actorRegistry = async (env: Env) => {
 }
 
 const modelLayer = (env: Env) => {
-  if (env.MODEL_BASE_URL === undefined || env.MODEL_API_KEY === undefined || env.MODEL_ID === undefined) {
+  if (env.MODEL_BASE_URL === undefined || env.MODEL_API_KEY === undefined || env.MODEL_ID === undefined || env.MODEL_DRIVER === undefined) {
     const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
   }
   const baseUrl = env.MODEL_BASE_URL
   const apiKey = env.MODEL_API_KEY
+  const driver = modelDriverOf(env.MODEL_DRIVER)
   return Layer.succeed(Infer, {
     react: (request, key) => {
+      const asked = request.model
+      if (typeof asked === "object" && asked.connection !== undefined && asked.connection !== (env.MODEL_CONNECTION ?? DEFAULT_MODEL_CONNECTION)) {
+        return Effect.succeed({
+          kind: "fail" as const,
+          error: `unknown model connection ${JSON.stringify(asked.connection)}`,
+          failure: { cause: "inference_error" as const, attempts: 0 }
+        })
+      }
       const selected = infer({
         baseUrl,
         apiKey,
-        model: modelIdOf(env, modelAskOf(request.trajectory)),
+        model: modelIdOf(env, typeof asked === "string" ? asked : asked?.id),
+        driver,
         ...(env.MODEL_PROVIDER === undefined ? {} : { provider: env.MODEL_PROVIDER })
       })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
@@ -137,7 +151,7 @@ const assemblyOf = (name: string, env: Env) => {
     reply,
     budget,
     compaction({
-      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model),
+      contextWindowTokens: (model) => modelContextWindowTokensOf(env, typeof model === "string" ? model : model?.id),
       ...(fireRatio === undefined ? {} : { fireRatio }),
       ...(keepRatio === undefined ? {} : { keepRatio })
     }),

@@ -27,9 +27,13 @@ import {
 const KEY = "sk-do-not-print-me"
 
 const answers: SetupAnswers = {
+  connection: "primary",
   baseUrl: "https://api.example.com/v1",
   id: "a-model",
   apiKey: KEY,
+  driver: "openai-responses",
+  contextWindowTokens: 128_000,
+  maxOutputTokens: 16_384,
   output: "native",
   outputWithTools: "true"
 }
@@ -119,12 +123,23 @@ describe("writeSetup", () => {
     const path = await write({ ...answers, provider: "bedrock" })
     const held = parseFileConfig(await readFile(path, "utf8"))
     expect(held.model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
-      provider: "bedrock",
-      output: "native",
-      outputWithTools: "true"
+      default: { id: "a-model", connection: "primary" },
+      connections: {
+        primary: {
+          baseUrl: "https://api.example.com/v1",
+          apiKey: KEY,
+          driver: "openai-responses",
+          provider: "bedrock",
+          models: {
+            "a-model": {
+              contextWindowTokens: 128_000,
+              maxOutputTokens: 16_384,
+              output: "native",
+              outputWithTools: "true"
+            }
+          }
+        }
+      }
     })
   })
 
@@ -137,7 +152,23 @@ describe("writeSetup", () => {
     const held = parseFileConfig(await readFile(path, "utf8"))
     expect(held.url).toBe("https://agents.example.com")
     expect(held.token).toBe("held")
-    expect(held.model?.id).toBe("a-model")
+    expect(held.model?.default).toEqual({ id: "a-model", connection: "primary" })
+  })
+
+  test("a later setup keeps prior connections and changes the default", async () => {
+    await write()
+    const path = await write({
+      ...answers,
+      connection: "secondary",
+      id: "another-model",
+      baseUrl: "https://secondary.example.com/v1",
+      apiKey: "secondary-key"
+    })
+    const held = parseFileConfig(await readFile(path, "utf8"))
+    expect(Object.keys(held.model?.connections ?? {}).sort()).toEqual(["primary", "secondary"])
+    expect(held.model?.default).toEqual({ id: "another-model", connection: "secondary" })
+    expect(held.model?.connections?.primary?.models?.["a-model"]?.contextWindowTokens).toBe(128_000)
+    expect(held.model?.connections?.secondary?.models?.["another-model"]?.contextWindowTokens).toBe(128_000)
   })
 
   // A rerun over a file left readable by everyone must narrow it, and `mode` on a write applies
@@ -154,27 +185,41 @@ describe("writeSetup", () => {
     await write({ ...answers, provider: "bedrock" })
     const file = await Effect.runPromise(Effect.provide(readFileConfig({ HOME: home }), BunFileSystem.layer))
     expect(file.model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
-      provider: "bedrock",
-      output: "native",
-      outputWithTools: "true"
+      default: { id: "a-model", connection: "primary" },
+      connections: {
+        primary: {
+          baseUrl: "https://api.example.com/v1",
+          apiKey: KEY,
+          driver: "openai-responses",
+          provider: "bedrock",
+          models: {
+            "a-model": {
+              contextWindowTokens: 128_000,
+              maxOutputTokens: 16_384,
+              output: "native",
+              outputWithTools: "true"
+            }
+          }
+        }
+      }
     })
   })
 
   test("a setup with no native guarantee writes the whole alternative", async () => {
     const path = await write({
+      connection: answers.connection,
       baseUrl: answers.baseUrl,
       id: answers.id,
       apiKey: answers.apiKey,
+      driver: answers.driver,
+      contextWindowTokens: answers.contextWindowTokens,
+      ...(answers.maxOutputTokens === undefined ? {} : { maxOutputTokens: answers.maxOutputTokens }),
       ...(answers.provider === undefined ? {} : { provider: answers.provider }),
       output: "none"
     })
-    expect(parseFileConfig(await readFile(path, "utf8")).model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
+    expect(parseFileConfig(await readFile(path, "utf8")).model?.connections?.primary?.models?.["a-model"]).toEqual({
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 16_384,
       output: "none"
     })
   })
@@ -194,6 +239,8 @@ describe("what setup prints", () => {
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.apiKey).toBe("stored")
     expect(json.provider).toBe("bedrock")
+    expect(json.driver).toBe("openai-responses")
+    expect(json.contextWindowTokens).toBe(128_000)
     expect(json.output).toBe("native")
     expect(json.outputWithTools).toBe(true)
     expect(summary).toContain("output native (with tools)")
