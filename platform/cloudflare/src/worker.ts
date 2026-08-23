@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers"
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
 import type { Action } from "tardie/events"
@@ -14,9 +14,15 @@ import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { DEFAULT_MAX_CONCURRENT_LANES, driverPolicyOf } from "@clavia/tardigrade-host/driver"
 import { alarmPolicyOf, armAt, nextAlarm, type AlarmPolicy } from "./alarm"
 import { createCloudflareHost, type CloudflareHost } from "./host"
+import {
+  CloudflareActorRegistry,
+  layerCloudflareActorRegistry,
+  type CloudflareActorRegistration
+} from "./registry"
 
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
+  readonly REGISTRY: D1Database
   readonly MODEL_BASE_URL?: string
   readonly MODEL_API_KEY?: string
   readonly MODEL_ID?: string
@@ -37,6 +43,30 @@ const assembly = actor(inferAgent([
   compaction,
   outputValidateOnce
 ]))
+
+// DEFAULT_ACTOR_REGISTRATION exposes the actor this Worker deploys when no external artifact has been registered.
+export const DEFAULT_ACTOR_REGISTRATION: CloudflareActorRegistration = {
+  name: "default",
+  assembly: "default",
+  host: "default",
+  builtIn: true
+}
+
+const assemblies = new Map([[DEFAULT_ACTOR_REGISTRATION.assembly, assembly] as const])
+const registryRuntimes = new WeakMap<D1Database, ManagedRuntime.ManagedRuntime<CloudflareActorRegistry, never>>()
+
+const actorRegistry = async (env: Env) => {
+  let runtime = registryRuntimes.get(env.REGISTRY)
+  if (runtime === undefined) {
+    runtime = ManagedRuntime.make(layerCloudflareActorRegistry(env.REGISTRY))
+    registryRuntimes.set(env.REGISTRY, runtime)
+  }
+  const registry = await runtime.runPromise(CloudflareActorRegistry)
+  if ((await Effect.runPromise(registry.resolve(DEFAULT_ACTOR_REGISTRATION.name))) === undefined) {
+    await Effect.runPromise(registry.put(DEFAULT_ACTOR_REGISTRATION))
+  }
+  return registry
+}
 
 const modelLayer = (env: Env) => {
   if (env.MODEL_BASE_URL === undefined || env.MODEL_API_KEY === undefined || env.MODEL_ID === undefined) {
@@ -79,11 +109,16 @@ export class ActorHost extends DurableObject<Env> {
     })
   }
 
-  async init(principal: string): Promise<void> {
-    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('principal', ?)", principal)
-    const stored = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'principal'").one().value
-    if (stored !== principal) throw new Error("actor host principal does not match its durable identity")
-    this.principal ??= stored
+  async init(registration: CloudflareActorRegistration): Promise<void> {
+    if (!assemblies.has(registration.assembly)) throw new Error(`actor assembly ${JSON.stringify(registration.assembly)} is not deployed`)
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('principal', ?)", registration.name)
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('assembly', ?)", registration.assembly)
+    const principal = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'principal'").one().value
+    const assemblyKey = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'assembly'").one().value
+    if (principal !== registration.name || assemblyKey !== registration.assembly) {
+      throw new Error("actor host registration does not match its durable identity")
+    }
+    this.principal ??= principal
   }
 
   private name(): string {
@@ -96,6 +131,9 @@ export class ActorHost extends DurableObject<Env> {
   private host(): Promise<CloudflareHost> {
     if (this.runtime !== undefined) return this.runtime
     const principal = this.name()
+    const assemblyKey = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'assembly'").one().value
+    const selectedAssembly = assemblies.get(assemblyKey)
+    if (selectedAssembly === undefined) throw new Error(`actor assembly ${JSON.stringify(assemblyKey)} is not deployed`)
     const remoteTransport: Transport<ActorId, ActorEnvelope> = {
       name: "durable-object",
       send: (destination, envelope) => Effect.currentSpan.pipe(
@@ -105,8 +143,10 @@ export class ActorHost extends DurableObject<Env> {
             ? ({ ...envelope.event, traceparent: traceparentOf(current.value) } as Event)
             : envelope.event
           return Effect.promise(async () => {
-            const stub = this.env.ACTORS.getByName(destination.actor)
-            await stub.init(destination.actor)
+            const registration = await Effect.runPromise((await actorRegistry(this.env)).resolve(destination.actor))
+            if (registration === undefined) throw new Error(`actor ${JSON.stringify(destination.actor)} is not registered`)
+            const stub = this.env.ACTORS.getByName(registration.host)
+            await stub.init(registration)
             await stub.deliver({ ...envelope, event })
           })
         })
@@ -121,7 +161,7 @@ export class ActorHost extends DurableObject<Env> {
     this.runtime = createCloudflareHost({
       storage: this.ctx.storage,
       principal,
-      actorFor: (lane) => threadOf(lane) === undefined ? undefined : assembly,
+      actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
       layersFor: () => Layer.mergeAll(modelLayer(this.env), FetchHttpClient.layer),
       routes: [remoteRoute],
       driver: driverPolicyOf({
@@ -131,7 +171,7 @@ export class ActorHost extends DurableObject<Env> {
           "TARDIGRADE_MAX_CONCURRENT_LANES"
         )
       }),
-      keyOf: assembly.keyOf
+      keyOf: selectedAssembly.keyOf
     })
     return this.runtime
   }
@@ -183,9 +223,15 @@ export class ActorHost extends DurableObject<Env> {
   }
 }
 
-const actorStub = async (env: Env, name: string): Promise<DurableObjectStub<ActorHost>> => {
-  const stub = env.ACTORS.getByName(name)
-  await stub.init(name)
+const actorStub = async (
+  env: Env,
+  registry: Context.Service.Shape<typeof CloudflareActorRegistry>,
+  name: string
+): Promise<DurableObjectStub<ActorHost> | undefined> => {
+  const registration = await Effect.runPromise(registry.resolve(name))
+  if (registration === undefined) return undefined
+  const stub = env.ACTORS.getByName(registration.host)
+  await stub.init(registration)
   return stub
 }
 
@@ -217,17 +263,22 @@ const protectedRoute = <E, R>(
 const routes = [
   HttpRouter.route("GET", "/healthz", Effect.gen(function* () {
     const env = yield* WorkerEnv
-    return json(yield* Effect.promise(async () => (await actorStub(env, "default")).status()))
+    const registry = yield* CloudflareActorRegistry
+    return json(yield* Effect.promise(async () => (await actorStub(env, registry, DEFAULT_ACTOR_REGISTRATION.name))!.status()))
   })),
-  HttpRouter.route("GET", "/v1/actors", protectedRoute((_request, _env) =>
-    Effect.succeed(json([{ name: "default", builtIn: true }]))
-  )),
+  HttpRouter.route("GET", "/v1/actors", protectedRoute((_request, _env) => Effect.gen(function* () {
+    const registry = yield* CloudflareActorRegistry
+    const registrations = yield* registry.list
+    return json(registrations.map(({ name, builtIn, digest }) => ({ name, builtIn, ...(digest === undefined ? {} : { digest }) })))
+  }))),
   HttpRouter.route("GET", "/v1/actors/:actor/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = decodeURIComponent(params.actor ?? "")
-      if (actor !== "default") return json({ error: "unknown actor" }, 404)
-      return json(yield* Effect.promise(async () => (await actorStub(env, actor)).threads()))
+      const registry = yield* CloudflareActorRegistry
+      const stub = yield* Effect.promise(() => actorStub(env, registry, actor))
+      if (stub === undefined) return json({ error: "unknown actor" }, 404)
+      return json(yield* Effect.promise(() => stub.threads()))
     })
   )),
   HttpRouter.route("POST", "/v1/actors/:actor/threads/:thread/events", protectedRoute((request, env) =>
@@ -235,12 +286,14 @@ const routes = [
       const params = yield* HttpRouter.params
       const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      if (actor !== "default") return json({ error: "unknown actor" }, 404)
+      const registry = yield* CloudflareActorRegistry
+      const stub = yield* Effect.promise(() => actorStub(env, registry, actor))
+      if (stub === undefined) return json({ error: "unknown actor" }, 404)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
         return json({ error: "event type is required" }, 400)
       }
-      yield* Effect.promise(async () => (await actorStub(env, actor)).append(thread, event))
+      yield* Effect.promise(() => stub.append(thread, event))
       return json({ actor, thread }, 202)
     })
   )),
@@ -249,13 +302,15 @@ const routes = [
       const params = yield* HttpRouter.params
       const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      if (actor !== "default") return json({ error: "unknown actor" }, 404)
+      const registry = yield* CloudflareActorRegistry
+      const stub = yield* Effect.promise(() => actorStub(env, registry, actor))
+      if (stub === undefined) return json({ error: "unknown actor" }, 404)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
       const limit = Number(url.searchParams.get("limit") ?? 200)
       const types = url.searchParams.get("types")?.split(",")
       return yield* Effect.tryPromise({
-        try: async (): Promise<ReadonlyArray<Event>> => (await actorStub(env, actor)).events(thread),
+        try: (): Promise<ReadonlyArray<Event>> => stub.events(thread),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause)
       }).pipe(Effect.match({
         onFailure: (error) => json({ error }, 500),
@@ -279,6 +334,9 @@ const webHandler = HttpEffect.toWebHandler(httpApp)
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    return webHandler(request, Context.make(WorkerEnv, env) as Context.Context<never>)
+    const registry = await actorRegistry(env)
+    return webHandler(request, Context.make(WorkerEnv, env).pipe(
+      Context.add(CloudflareActorRegistry, registry)
+    ) as Context.Context<never>)
   }
 } satisfies ExportedHandler<Env>

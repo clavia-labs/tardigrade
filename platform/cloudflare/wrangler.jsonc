@@ -7,6 +7,11 @@
   "durable_objects": {
     "bindings": [{ "name": "ACTORS", "class_name": "ActorHost" }]
   },
+  "d1_databases": [{
+    "binding": "REGISTRY",
+    "database_name": "tardigrade-registry",
+    "database_id": "d73ecf80-70a3-4d22-a37c-81e8ce190317"
+  }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorHost"] }],
   "observability": { "enabled": true },
   "limits": { "cpu_ms": 300000 },

@@ -72,10 +72,10 @@ const unknownActorDetail = (actor: string) =>
 // rather than an empty listing (api.test.ts, "an actor nobody deployed is its own 404").
 const actorOf = (actor: string): Effect.Effect<ActorThreads, ReturnType<typeof UnknownActor.of>, Threads> =>
   Effect.flatMap(Threads, (threads) => {
-    const selected = actor === RESERVED_ACTOR ? threads : threads.actor?.(actor)
-    return selected === undefined
+    const selected = actor === RESERVED_ACTOR ? Effect.succeed(threads) : (threads.actor?.(actor) ?? Effect.void)
+    return Effect.flatMap(selected, (found) => found === undefined
       ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
-      : Effect.succeed(selected)
+      : Effect.succeed(found))
   })
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
@@ -183,7 +183,9 @@ export const layerStream = (options: ApiOptions = {}) => {
       // (contract.ts, the SSE note; api.test.ts, "the tail refuses an actor nobody deployed").
       const id = paramOf(params, "id")
       const registry = yield* Threads
-      const threads = actor === RESERVED_ACTOR ? registry : registry.actor?.(actor)
+      const threads = actor === RESERVED_ACTOR
+        ? registry
+        : (yield* (registry.actor?.(actor) ?? Effect.void))
       if (threads === undefined) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
       const log = yield* threads.events(id)
       if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
@@ -312,7 +314,7 @@ export const layerUnknownProjection = HttpRouter.add(
     const params = yield* HttpRouter.params
     const actor = paramOf(params, "actor")
     const registry = yield* Threads
-    if (actor !== RESERVED_ACTOR && registry.actor?.(actor) === undefined) {
+    if (actor !== RESERVED_ACTOR && (yield* (registry.actor?.(actor) ?? Effect.void)) === undefined) {
       return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
     }
     const name = paramOf(params, "name")

@@ -147,6 +147,7 @@
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
+        "@effect/sql-d1": "4.0.0-rc.110",
         "@effect/sql-sqlite-do": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
@@ -276,6 +277,8 @@
     "@effect/platform-bun": ["@effect/platform-bun@4.0.0-rc.110", "", { "dependencies": { "@effect/platform-node-shared": "^4.0.0-rc.110" }, "peerDependencies": { "effect": "^4.0.0-rc.110" } }, "sha512-f4AcFTWVwGby9RvSitqAcG/McN8OCDy7LW8PYRG4NIOO2eYphlW73S5Z7jm3UDP+FmIwwzjfgfIfBYkfPR+YfA=="],
 
     "@effect/platform-node-shared": ["@effect/platform-node-shared@4.0.0-rc.110", "", { "dependencies": { "@types/ws": "^8.18.1", "ws": "^8.21.0" }, "peerDependencies": { "effect": "^4.0.0-rc.110" } }, "sha512-P8EZloxS7RtCOSL3VSBPyqSenUm93xLbXf9jkWoy67cibZ2wgZ9nAou9iN8f1i4vzgxUsWtDuy6BEmg67np6Zw=="],
+
+    "@effect/sql-d1": ["@effect/sql-d1@4.0.0-rc.110", "", { "dependencies": { "@cloudflare/workers-types": "^5.20260708.1" }, "peerDependencies": { "effect": "^4.0.0-rc.110" } }, "sha512-QSOJVPW9x9f5+x5GIfznBwz1UL81GfGX3sEtFgHJ4Ub6zsredVfv14Eex7SNxDM6nf/7zwSbh5YWQMTHV6oNmQ=="],
 
     "@effect/sql-sqlite-bun": ["@effect/sql-sqlite-bun@4.0.0-rc.110", "", { "peerDependencies": { "effect": "^4.0.0-rc.110" } }, "sha512-Lam3gY1xszjQS/cebdLbWbtR21FtQI4ke7QHqbBQ6AyVJF0CGUtS/ePL9zNq6wHNmJ95FUDGS6W+Qx/l6RPSzA=="],
 
