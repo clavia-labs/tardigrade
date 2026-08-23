@@ -1,7 +1,7 @@
 # platform
 
 The packages state contracts and semantics: the log, the reconciler, the code lane, the agent,
-and the ports they leave open (EventLog, Transport, Sandbox, Infer). A package depends on effect
+and the ports they leave open (EventLog, Router, Sandbox, Infer). A package depends on effect
 and on other packages, and on nothing else. That invariant is the line between the two trees.
 
 A platform binds one port to the world. A binding that delivers events also stamps the sending span's context onto each event it persists (one traceparent string, first stamp wins), or every cross-lane trace it serves arrives fragmented. Storage and delivery on Cloudflare, a model provider

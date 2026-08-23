@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { Transport } from "@clavia/tardigrade-core/communication/transport"
+import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Delivery } from "@clavia/tardigrade-core/communication/delivery"
@@ -11,7 +11,7 @@ const fireReply = async (log: ReadonlyArray<Event>, self: { readonly actor: stri
   const sent: Array<Delivery<unknown, Event, unknown>> = []
   const transition = replyReactor(log)[0]!
   const layers = Layer.mergeAll(
-    Layer.succeed(Transport, {
+    Layer.succeed(Router, {
       deliver: (delivery) => Effect.sync(() => sent.push(delivery)),
       call: () => Effect.succeed({ error: "unused" }),
       resume: () => Effect.succeed({ error: "unused" })

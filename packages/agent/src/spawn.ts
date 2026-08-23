@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import { Transport } from "@clavia/tardigrade-core/communication/transport"
+import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { Facets } from "@clavia/tardigrade-core/facets"
@@ -32,7 +32,7 @@ import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } fro
 // message id, so a replayed dispatch reaches the same child and is absorbed as a duplicate.
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
-// arguments. `Transport` delivers and calls, `Self` names the calling lane, and `Facets` reads that
+// arguments. `Router` delivers and calls, `Self` names the calling lane, and `Facets` reads that
 // lane's committed replies (`@clavia/tardigrade-core/facets`). `EventLog` supplies the durable creation record from which a child delivery derives lineage.
 //
 // place selects the child's actor address from the call id and parent address. The host resolves
@@ -44,10 +44,10 @@ import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } fro
 // that never settles for the code body). It never holds a call open.
 //
 // An escalatable run is the one residual exception. An escalating child's ask for more budget
-// rides `transport.call`'s own `CallResult.requesting` boundary (`src/core/transport.ts`,
+// rides `router.call`'s own `CallResult.requesting` boundary (`src/core/router.ts`,
 // `src/agent/boundary.ts`): the platform's `call` RPC runs the child to its wall and reads the
 // ask straight off its settle, synchronously, in the SAME round trip; `agents.continue` answers
-// it with `transport.resume`, another synchronous round trip to the child's next boundary. Nothing
+// it with `router.resume`, another synchronous round trip to the child's next boundary. Nothing
 // carries that ask as a message the child could otherwise send home, so there is no reply row to
 // park on until the child is done asking. An escalatable spawn holds its call open; a plain one
 // parks.
@@ -79,7 +79,7 @@ const sibling = (callId: string, self: ActorAddress): ActorAddress =>
 
 export const agentsPackage = (
   options: SpawnOptions & { readonly place?: (callId: string, self: ActorAddress) => ActorAddress } = {}
-): Package<Transport | Self | Facets | EventLog> => {
+): Package<Router | Self | Facets | EventLog> => {
   const place = options.place ?? sibling
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
@@ -140,7 +140,7 @@ export const agentsPackage = (
         Effect.gen(function* () {
           // The three cross-lane privileges, read where the work happens: deliver, identity,
           // observe. A host that binds them serves this method; nothing here closes over one.
-          const transport = yield* Transport
+          const router = yield* Router
           const source = yield* Self
           const log = yield* EventLog
           const created = threadCreatedOf(yield* log.read)
@@ -191,7 +191,7 @@ export const agentsPackage = (
             // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
             // later by `agents.result({ id: callId })`.
             const at = yield* Clock.currentTimeMillis
-            yield* transport.deliver(deliveryOf(linkOf(source, target), {
+            yield* router.deliver(deliveryOf(linkOf(source, target), {
               type: "MessageReceived",
               id: ctx.callId,
               text,
@@ -209,7 +209,7 @@ export const agentsPackage = (
           // Escalation is a foreground affordance, and the one shape that still holds its call
           // open: see the module comment for why. Every other foreground run parks below.
           if (a?.escalatable === true) {
-            const answer = yield* transport.call(linkOf(source, target), {
+            const answer = yield* router.call(linkOf(source, target), {
               id: ctx.callId,
               text,
               ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
@@ -230,7 +230,7 @@ export const agentsPackage = (
           const already = yield* awaitedReply(source, ctx.callId)
           if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
-          yield* transport.deliver(deliveryOf(linkOf(source, target), {
+          yield* router.deliver(deliveryOf(linkOf(source, target), {
             type: "MessageReceived",
             id: ctx.callId,
             text,
@@ -276,7 +276,7 @@ export const agentsPackage = (
       // boundary, another request or its final answer, in the same shape `run` returns.
       continue: (args, ctx) =>
         Effect.gen(function* () {
-          const transport = yield* Transport
+          const router = yield* Router
           const source = yield* Self
           const a = args as { handle?: unknown; grant?: unknown } | undefined
           const handle = a?.handle as { address?: unknown; turn?: unknown } | undefined
@@ -291,7 +291,7 @@ export const agentsPackage = (
           const want = typeof a?.grant === "number" ? Math.floor(a.grant) : 0
           const granted = want > 0 ? yield* Effect.promise(() => reserve(ctx.callId, want)) : 0
           const decision = granted > 0 ? { amount: granted } : { amount: 0, reason: "the parent declined the request" }
-          const answer = yield* transport.resume(linkOf(source, target), turn, decision)
+          const answer = yield* router.resume(linkOf(source, target), turn, decision)
           return shape(answer, address, turn, declared.contract)
         })
     }

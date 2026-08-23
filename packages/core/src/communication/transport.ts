@@ -1,48 +1,15 @@
-import { Context, Effect } from "effect"
+import type { Effect } from "effect"
 import type { Event } from "../event"
 import type { ActorAddress, ProviderAddress } from "./address"
 import type { Delivery } from "./delivery"
-import type { Link } from "./link"
-import type { ThreadLineage } from "../thread"
 
-// CallResult is a turn's boundary: a terminal or a park on a budget request.
-export interface CallResult {
-  readonly output?: string
-  readonly error?: string
-  readonly requesting?: boolean
-  readonly reason?: string
-  readonly amount?: number
-  readonly callId?: string
+// TransportDelivery is the routed envelope a physical delivery path carries.
+export type TransportDelivery =
+  | Delivery<ActorAddress, Event, ActorAddress>
+  | Delivery<ActorAddress, Event, ProviderAddress>
+
+// Transport carries deliveries over one named path using coordinates resolved by Router.
+export interface Transport<Coordinates> {
+  readonly name: string
+  readonly deliver: (coordinates: Coordinates, delivery: TransportDelivery) => Effect.Effect<void>
 }
-
-// Transport carries typed deliveries through the placement and connection selected by its host.
-export class Transport extends Context.Service<
-  Transport,
-  {
-    readonly deliver: (
-      delivery:
-        | Delivery<ActorAddress, Event, ActorAddress>
-        | Delivery<ActorAddress, Event, ProviderAddress>
-    ) => Effect.Effect<void>
-    readonly call: (
-      link: Link<ActorAddress, ActorAddress>,
-      message: {
-        readonly id: string
-        readonly text: string
-        readonly output?: unknown
-        readonly model?: string
-        readonly budget?: number
-        readonly escalatable?: boolean
-        readonly actor?: string
-        readonly shadow?: boolean
-        readonly world?: string
-        readonly lineage: ThreadLineage
-      }
-    ) => Effect.Effect<CallResult>
-    readonly resume: (
-      link: Link<ActorAddress, ActorAddress>,
-      turn: string,
-      decision: { readonly amount: number; readonly reason?: string }
-    ) => Effect.Effect<CallResult>
-  }
->()("tardigrade/Transport") {}

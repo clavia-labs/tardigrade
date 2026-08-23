@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { Transport } from "@clavia/tardigrade-core/communication/transport"
+import { Router } from "@clavia/tardigrade-core/communication/router"
 import { deliveryOf } from "@clavia/tardigrade-core/communication/delivery"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { createHost } from "../host"
@@ -26,15 +26,15 @@ describe("host providers", () => {
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        const transport = yield* Transport
-        yield* transport.deliver(deliveryOf(
+        const router = yield* Router
+        yield* router.deliver(deliveryOf(
           {
             source: { actor: "support", thread: "incident" },
             target: { provider: "telegram-support", chat: "-100123", topic: 42 }
           },
           message
         ))
-      }).pipe(Effect.provide(host.transport))
+      }).pipe(Effect.provide(host.router))
     )
 
     expect(sent).toEqual([{
@@ -47,15 +47,15 @@ describe("host providers", () => {
     const host = createHost({ actorFor: () => undefined })
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
-        const transport = yield* Transport
-        yield* transport.deliver(deliveryOf(
+        const router = yield* Router
+        yield* router.deliver(deliveryOf(
           {
             source: { actor: "support", thread: "incident" },
             target: { provider: "missing" }
           },
           message
         ))
-      }).pipe(Effect.provide(host.transport))
+      }).pipe(Effect.provide(host.router))
     )
 
     expect(exit._tag).toBe("Failure")

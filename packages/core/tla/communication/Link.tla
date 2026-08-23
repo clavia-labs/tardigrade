@@ -62,7 +62,7 @@ Send(message) ==
   /\ pending' = pending \cup {message}
   /\ UNCHANGED <<committed, logs, placement, resolved, attempts>>
 
-(* Resolve reads the target's current placement when an attempt is ready to route. *)
+(* Resolve models Router reading the target's current transport coordinates when an attempt is ready to route. *)
 Resolve(message) ==
   LET target == Target(LinkOf[message]) IN
     /\ message \in pending
@@ -80,7 +80,7 @@ Move(address, place) ==
        ELSE resolved[message]]
   /\ UNCHANGED <<sent, pending, committed, logs, attempts>>
 
-(* Deliver commits at the link target and absorbs a retry already present in its log. *)
+(* Deliver models the selected Transport committing at the link target and absorbing a retry already present in its log. *)
 Deliver(message) ==
   LET target == Target(LinkOf[message]) IN
     /\ message \in pending

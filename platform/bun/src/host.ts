@@ -7,7 +7,8 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { Transport, type CallResult } from "@clavia/tardigrade-core/communication/transport"
+import { Router, deliverThrough, transportRoute, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
@@ -76,8 +77,8 @@ export type BunHostOptions<R> = {
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly call?: Parameters<typeof Transport.of>[0]["call"]
-  readonly resume?: Parameters<typeof Transport.of>[0]["resume"]
+  readonly call?: Parameters<typeof Router.of>[0]["call"]
+  readonly resume?: Parameters<typeof Router.of>[0]["resume"]
   readonly providers?: ReadonlyArray<Provider>
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
@@ -109,10 +110,6 @@ const laneOf = (address: string): string => {
 }
 
 const REFUSED: CallResult = { error: "this host takes no synchronous calls" }
-
-const isOutboundLink = (
-  link: Link<ActorAddress, ActorAddress> | Link<ActorAddress, ProviderAddress>
-): link is Link<ActorAddress, ProviderAddress> => isProviderAddress(link.target)
 
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
@@ -276,14 +273,26 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
     commitEffect(parseActorAddress(address), event, undefined)
 
-  const transport = Layer.succeed(Transport, {
-    deliver: (delivery) =>
-      isOutboundLink(delivery.link)
-        ? outbound.send(
-            delivery.link,
-            delivery.event as import("@clavia/tardigrade-core/communication/message").MessageReceived
-          )
-        : acceptEffect(delivery as Delivery<ActorAddress, Event, ActorAddress>),
+  const localTransport: Transport<ActorAddress> = {
+    name: "local",
+    deliver: (coordinates, delivery) => acceptEffect({
+      ...delivery,
+      link: { source: delivery.link.source, target: coordinates }
+    })
+  }
+  const providerTransport: Transport<ProviderAddress> = {
+    name: "provider",
+    deliver: (coordinates, delivery) => outbound.send(
+      { source: delivery.link.source, target: coordinates },
+      delivery.event as import("@clavia/tardigrade-core/communication/message").MessageReceived
+    )
+  }
+  const routes = [
+    transportRoute(localTransport, (delivery) => isActorAddress(delivery.link.target) ? delivery.link.target : undefined),
+    transportRoute(providerTransport, (delivery) => isProviderAddress(delivery.link.target) ? delivery.link.target : undefined)
+  ]
+  const router = Layer.succeed(Router, {
+    deliver: (delivery) => deliverThrough(routes, delivery),
     call: options.call ?? (() => Effect.succeed(REFUSED)),
     resume: options.resume ?? (() => Effect.succeed(REFUSED))
   })
@@ -298,7 +307,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         head: headEffect(lane),
         readFrom: (mark: number) => readFromEffect(lane, mark)
       }),
-      transport,
+      router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
       Layer.succeed(Self, parseActorAddress(self(lane))),
       // Every lane's log lives in this one durable store, so the observe privilege is the same
