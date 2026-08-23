@@ -23,6 +23,7 @@ import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { providerTransportFrom, type Provider } from "./communication/provider"
+import { createLaneDriver, type DriverPolicy } from "./driver"
 import {
   sameActorId,
   sameThreadLineage,
@@ -67,9 +68,11 @@ export type HostOptions<R> = {
   // cycle rests forever (packages/core/tla/communication/Delivery.tla,
   // DeliveryDeadlock).
   readonly edgesOf?: EdgesOf
-  // pick chooses which dirty lane the driver serves next; the default
-  // is insertion order. Service order must not change any outcome: the
-  // confluence property test shuffles this seam.
+  // driver states the graph-wide settlement capacity.
+  readonly driver?: Partial<DriverPolicy>
+  // pick chooses which eligible dirty lane the driver serves next; the default is insertion
+  // order. Service order must not change any outcome: the confluence property test shuffles this
+  // seam.
   readonly pick?: (dirty: ReadonlySet<string>) => string
   // keyOf is the composed dedup-key derivation (composeKeys). When
   // given, the host enforces the membrane: it refuses an unkeyed
@@ -124,7 +127,6 @@ const eventAt = (event: Event): number => {
 export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const principal = options.principal ?? "mem"
   const lanes = new Map<string, ReadonlyArray<Event>>()
-  const dirty = new Set<string>()
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
@@ -200,7 +202,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       : event
     if (seen(current, landed)) return
     append(lane, created === undefined ? [threadCreated(target, lineage, eventAt(event)), landed] : [landed])
-    dirty.add(lane)
+    driver.mark(lane)
   }
 
   const commit = (envelope: Envelope<unknown, Event, ActorId>): void =>
@@ -260,17 +262,19 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
   }
 
-  const drain = async (): Promise<void> => {
-    while (dirty.size > 0) {
-      const lane = options.pick?.(dirty) ?? (dirty.values().next().value as string)
-      dirty.delete(lane)
+  const driver = createLaneDriver({
+    ...(options.driver === undefined ? {} : { policy: options.driver }),
+    ...(options.pick === undefined ? {} : { pick: options.pick }),
+    serve: async (lane) => {
       const actor = options.actorFor(lane)
-      if (actor === undefined) continue
+      if (actor === undefined) return
       await Effect.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
     }
-  }
+  })
 
-  const drive = async (): Promise<void> => {
+  const drain = (): Promise<void> => driver.drain()
+
+  const driveGraph = async (): Promise<void> => {
     await drain()
     if (options.edgesOf === undefined) return
     // A quiet graph may still be knotted: the sentinel fails one
@@ -292,16 +296,23 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }
   }
 
+  let driveTail: Promise<void> = Promise.resolve()
+  const drive = (): Promise<void> => {
+    const next = driveTail.then(driveGraph)
+    driveTail = next.then(() => undefined, () => undefined)
+    return next
+  }
+
   const resting = (): boolean => {
     for (const [lane, events] of lanes) {
       const actor = options.actorFor(lane)
       if (actor !== undefined && !restingActor(actor, events)) return false
     }
-    return dirty.size === 0
+    return driver.resting()
   }
 
   const wake = (lane: string): Promise<void> => {
-    dirty.add(lane)
+    driver.mark(lane)
     return drive()
   }
 

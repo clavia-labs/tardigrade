@@ -30,6 +30,7 @@ import { Facets } from "@clavia/tardigrade-core/facets"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
+import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import {
   sameActorId,
@@ -86,6 +87,7 @@ export type BunHostOptions<R> = {
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly edgesOf?: EdgesOf
+  readonly driver?: Partial<DriverPolicy>
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
 } & LayersFor<R>
@@ -105,6 +107,8 @@ export interface BunHost {
   // process runs at start, so work interrupted by a death settles from the surviving log.
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
+  // work counts lanes that are dirty, live, or both.
+  readonly work: () => number
   readonly self: (lane: string) => string
   readonly close: () => Promise<void>
 }
@@ -154,7 +158,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     )
   )
 
-  const dirty = new Set<string>()
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
@@ -266,7 +269,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           return true
         })
       ).pipe(Effect.orDie)
-      if (appended) dirty.add(lane)
+      if (appended) driver.mark(lane)
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
   }
 
@@ -323,15 +326,17 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
   }
 
-  const drain = async (): Promise<void> => {
-    while (dirty.size > 0) {
-      const lane = options.pick?.(dirty) ?? (dirty.values().next().value as string)
-      dirty.delete(lane)
+  const driver = createLaneDriver({
+    ...(options.driver === undefined ? {} : { policy: options.driver }),
+    ...(options.pick === undefined ? {} : { pick: options.pick }),
+    serve: async (lane) => {
       const actor = options.actorFor(lane)
-      if (actor === undefined) continue
+      if (actor === undefined) return
       await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
     }
-  }
+  })
+
+  const drain = (): Promise<void> => driver.drain()
 
   const lanesEffect: Effect.Effect<ReadonlyArray<string>, never> = sql<{
     lane: string
@@ -347,7 +352,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return map
   }
 
-  const drive = async (): Promise<void> => {
+  const driveGraph = async (): Promise<void> => {
     await drain()
     if (options.edgesOf === undefined) return
     for (;;) {
@@ -369,17 +374,24 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
   }
 
+  let driveTail: Promise<void> = Promise.resolve()
+  const drive = (): Promise<void> => {
+    const next = driveTail.then(driveGraph)
+    driveTail = next.then(() => undefined, () => undefined)
+    return next
+  }
+
   const resting = async (): Promise<boolean> => {
     for (const [lane, events] of await lanesMap()) {
       const actor = options.actorFor(lane)
       if (actor !== undefined && !restingActor(actor, events)) return false
     }
-    return dirty.size === 0
+    return driver.resting()
   }
 
   const recover = async (): Promise<void> => {
     for (const lane of (await lanesMap()).keys()) {
-      if (options.actorFor(lane) !== undefined) dirty.add(lane)
+      if (options.actorFor(lane) !== undefined) driver.mark(lane)
     }
     await drive()
   }
@@ -391,12 +403,13 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     lanes: () => runtime.runPromise(lanesEffect),
     commitRoot: (address, event) => runtime.runPromise(commitRootEffect(address, event)),
     wake: (lane) => {
-      dirty.add(lane)
+      driver.mark(lane)
       return drive()
     },
     drive,
     recover,
     resting,
+    work: driver.work,
     self,
     close: () => runtime.dispose()
   }

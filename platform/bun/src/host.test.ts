@@ -60,6 +60,14 @@ const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
 const created = (lane: string, at = 0): Event => threadCreated({ actor: "bun", thread: lane }, undefined, at)
 
+const signal = (): { readonly promise: Promise<void>; readonly send: () => void } => {
+  let send!: () => void
+  const promise = new Promise<void>((resolve) => {
+    send = resolve
+  })
+  return { promise, send }
+}
+
 const options = (path: string): BunHostOptions<never> => ({
   log: path,
   actorFor: (lane) => (lane === "echo" ? echo : undefined),
@@ -67,6 +75,58 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("settles distinct lanes up to the configured capacity", async () => {
+    const release = signal()
+    const twoStarted = signal()
+    let active = 0
+    let peak = 0
+    let started = 0
+    const actor: Actor = {
+      keyOf,
+      reactors: [(events) =>
+        events
+          .filter((event) => event.type === "MessageReceived")
+          .map((event) => {
+            const id = String((event as { id?: unknown }).id)
+            return transition({
+              key: `dn:${id}`,
+              input: id,
+              act: (input: string) => Effect.promise(async () => {
+                active += 1
+                peak = Math.max(peak, active)
+                started += 1
+                if (started === 2) twoStarted.send()
+                await release.promise
+                active -= 1
+                return [{ type: "Done", id: input, at: 1 } as Event]
+              })
+            })
+          })]
+    }
+    const h = await createBunHost({
+      log: freshPath(),
+      actorFor: () => actor,
+      keyOf,
+      driver: { maxConcurrentLanes: 2 }
+    })
+    for (const lane of ["a", "b", "c"]) {
+      await h.commitRoot(`bun:${lane}`, { type: "MessageReceived", id: lane, at: 0 } as Event)
+    }
+
+    const driving = h.drive()
+    await twoStarted.promise
+    expect(active).toBe(2)
+    expect(h.work()).toBe(3)
+    expect(await h.resting()).toBe(false)
+    release.send()
+    await driving
+
+    expect(peak).toBe(2)
+    expect(h.work()).toBe(0)
+    expect(await h.resting()).toBe(true)
+    await h.close()
+  })
+
   test("creates the directory for a nested log path", async () => {
     const path = join(dir, `nested-${n++}`, "agents.sqlite")
     const h = await createBunHost(options(path))

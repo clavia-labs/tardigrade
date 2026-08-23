@@ -8,7 +8,7 @@ import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 
-import { layerConfig, readConfig } from "./config"
+import { layerConfig, readConfig, ServerConfig } from "./config"
 import { Threads, layerThreads } from "./host"
 import { DriverGauge } from "./http"
 
@@ -49,16 +49,20 @@ const config = layerConfig(readConfig({
 // The body runs with both services the layer provides: the threads it drives, and the gauge
 // /healthz reads over the same driver (http.ts, DriverGauge).
 const running = <A, E>(
-  body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>
+  body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>,
+  options: {
+    readonly infer?: Layer.Layer<Infer>
+    readonly config?: Layer.Layer<ServerConfig>
+  } = {}
 ): Promise<A> =>
   Effect.gen(function*() {
     const threads = yield* Threads
     return yield* body(threads)
   }).pipe(
     Effect.provide(Layer.provide(layerThreads({
-      infer: layerScripted,
+      infer: options.infer ?? layerScripted,
       providers: [{ name: "test", send: () => Effect.void }]
-    }), config)),
+    }), options.config ?? config)),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
@@ -68,6 +72,51 @@ const running = <A, E>(
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
 
 describe("the threads service", () => {
+  test("the configured lane capacity runs model calls concurrently", async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let twoStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      twoStarted = resolve
+    })
+    let active = 0
+    let peak = 0
+    let calls = 0
+    const concurrent = Layer.succeed(Infer)({
+      react: () => Effect.promise(async () => {
+        active += 1
+        peak = Math.max(peak, active)
+        calls += 1
+        if (calls === 2) twoStarted()
+        await released
+        active -= 1
+        return { kind: "complete", output: "done" } as Action
+      })
+    })
+    const concurrentConfig = layerConfig(readConfig({
+      TARDIGRADE_DB: ":memory:",
+      TARDIGRADE_ACTORS: `/tmp/tardigrade-host-concurrent-${process.pid}`,
+      TARDIGRADE_MAX_CONCURRENT_LANES: "2"
+    }))
+
+    await running(
+      (threads) => Effect.gen(function*() {
+        yield* Effect.all([
+          threads.append("alpha", brief("a")),
+          threads.append("beta", brief("b"))
+        ], { concurrency: "unbounded" })
+        yield* Effect.promise(() => started)
+        expect(active).toBe(2)
+        release()
+        yield* threads.settled
+        expect(peak).toBe(2)
+      }),
+      { infer: concurrent, config: concurrentConfig }
+    )
+  })
+
   test("ingress commits a deduplicated batch before any actor is driven", async () => {
     const result = await running((threads) =>
       Effect.gen(function*() {
@@ -117,7 +166,7 @@ describe("the threads service", () => {
 
     expect(result.committed.alpha.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(result.committed.beta.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
-    expect(result.committed.dirty).toBe(0)
+    expect(result.committed.dirty).toBe(2)
     expect(result.committed.resting).toBe(false)
     expect(result.settled.alpha.some((event) => event.type === "TurnCompleted")).toBe(true)
     expect(result.settled.beta.some((event) => event.type === "TurnCompleted")).toBe(true)

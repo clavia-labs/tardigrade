@@ -172,7 +172,8 @@ const runtimeOf = async (
   actor: Actor<ServerR>,
   log: string,
   lane: ReturnType<typeof layerLane>,
-  providers: ReadonlyArray<Provider>
+  providers: ReadonlyArray<Provider>,
+  maxConcurrentLanes: number
 ): Promise<ActorRuntime> => {
   const host: BunHost = await createBunHost<ServerR>({
     log,
@@ -180,6 +181,7 @@ const runtimeOf = async (
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
     layersFor: () => lane,
     providers,
+    driver: { maxConcurrentLanes },
     keyOf: (event) => actor.keyOf?.(event)
   })
   let driving: Promise<void> | undefined
@@ -264,7 +266,7 @@ const runtimeOf = async (
       request()
     }),
     resting: () => host.resting(),
-    dirty: () => (driving === undefined ? 0 : follow ? 2 : 1),
+    dirty: host.work,
     close: async () => {
       await Effect.runPromise(settled)
       await host.close()
@@ -304,7 +306,14 @@ const make = (options: ThreadsOptions) =>
       return result
     }
     const open = async (summary: ActorSummary, actor: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
-      const runtime = await runtimeOf(summary, actor, log, lane, options.providers ?? [])
+      const runtime = await runtimeOf(
+        summary,
+        actor,
+        log,
+        lane,
+        options.providers ?? [],
+        config.maxConcurrentLanes
+      )
       runtimes.set(summary.name, runtime)
       return runtime
     }

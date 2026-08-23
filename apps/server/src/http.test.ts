@@ -3,7 +3,16 @@ import { Effect, Layer } from "effect"
 import { HttpClient, HttpClientRequest } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 
-import { DEFAULT_ACTORS, DEFAULT_ACTOR_DATA, DEFAULT_DB, DEFAULT_PORT, layerConfig, readConfig, type ServerConfigValue } from "./config"
+import {
+  DEFAULT_ACTORS,
+  DEFAULT_ACTOR_DATA,
+  DEFAULT_DB,
+  DEFAULT_MAX_CONCURRENT_LANES,
+  DEFAULT_PORT,
+  layerConfig,
+  readConfig,
+  type ServerConfigValue
+} from "./config"
 import { Threads } from "./host"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
@@ -63,6 +72,7 @@ describe("config", () => {
     expect(config.db).toBe(DEFAULT_DB)
     expect(config.actors).toBe(DEFAULT_ACTORS)
     expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
+    expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
       baseUrl: undefined,
@@ -79,6 +89,7 @@ describe("config", () => {
       TARDIGRADE_DB: "/var/lib/agents.sqlite",
       TARDIGRADE_ACTORS: "/var/lib/actors",
       TARDIGRADE_ACTOR_DATA: "/var/lib/actor-data",
+      TARDIGRADE_MAX_CONCURRENT_LANES: "7",
       TARDIGRADE_TOKEN: "secret",
       MODEL_BASE_URL: "https://api.example.com",
       MODEL_API_KEY: "key",
@@ -89,6 +100,7 @@ describe("config", () => {
     expect(config.db).toBe("/var/lib/agents.sqlite")
     expect(config.actors).toBe("/var/lib/actors")
     expect(config.actorData).toBe("/var/lib/actor-data")
+    expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
     expect(config.model.baseUrl).toBe("https://api.example.com")
     expect(config.model.provider).toBe("openai")
@@ -98,6 +110,11 @@ describe("config", () => {
   test("a PORT that is not a port refuses to resolve", () => {
     expect(() => readConfig({ PORT: "http" })).toThrow()
     expect(() => readConfig({ PORT: "70000" })).toThrow()
+  })
+
+  test("a concurrency cap that cannot schedule a lane refuses to resolve", () => {
+    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "0" })).toThrow("positive integer")
+    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "many" })).toThrow("positive integer")
   })
 })
 
