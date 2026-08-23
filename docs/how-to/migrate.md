@@ -159,7 +159,9 @@ Validate the import before cutover:
 
 Run the same representative task once with Tardigrade. Use the same model, settings, input, data, and timer boundary as the baseline. Check semantic output parity before comparing efficiency.
 
-Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Report cost only when the provider reports it or the application supplies an explicit price table. Measure latency from request delivery through the terminal event.
+Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Each usage stamp keeps normalized cache-read, cache-write, and reasoning counts when the provider supplies them. Each `providerReports` entry keeps one physical request's unconventional fields unchanged under `providerSpecific`, including reports from retried requests. The field contains the provider object directly when the request produced one report and an array when it produced several. `reportedCostUsd` keeps the provider figure, and `estimatedCostUsd` keeps an independent projection from the configured price table. `costUsd` remains the provider figure when available and otherwise uses the table estimate. Measure latency from request delivery through the terminal event.
+
+A price table needs `cachedPromptUsdPerToken` or `cacheWritePromptUsdPerToken` when the matching usage bucket is greater than zero. Tardigrade leaves the estimate unknown when a reported cache bucket has no declared rate. Calling `priced` with a complete new table recomputes `estimatedCostUsd`; a table that cannot price the usage preserves a recorded estimate.
 
 For each numeric measure, report `change = Tardigrade - existing` and `percent = change / existing * 100`. A negative token, cost, latency, line, or dependency change is a reduction. Leave the percentage unavailable when the existing value is zero or either value is missing.
 
