@@ -12,10 +12,14 @@
     "database_name": "tardigrade-registry",
     "database_id": "d73ecf80-70a3-4d22-a37c-81e8ce190317"
   }],
+  "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorHost"] }],
   "observability": { "enabled": true },
   "limits": { "cpu_ms": 300000 },
   "vars": {
+    "MODEL_CONTEXT_WINDOW_TOKENS": "1000000",
+    "TARDIGRADE_COMPACTION_FIRE_RATIO": "0.8",
+    "TARDIGRADE_COMPACTION_KEEP_RATIO": "0.5",
     "TARDIGRADE_MAX_CONCURRENT_LANES": "4"
   }
 }

@@ -19,7 +19,7 @@ import { fetchPackage } from "@clavia/tardigrade-code/fetch"
 import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentView } from "./agent"
 import { CODE_SYSTEM, codeMode, codeSystemFor } from "../components/code"
 import { budget } from "../components/budget"
-import { compaction, compactionFor } from "../components/compaction"
+import { compaction } from "../components/compaction"
 import { reply } from "../components/reply"
 import { toolList } from "../components/tool-list"
 import { nativeOutput } from "../components/native-output"
@@ -104,7 +104,7 @@ describe("infer component", () => {
         )
       }
     })
-    const agent = actor(infer([echoTable, reply, budget, compaction, nativeOutput]))
+    const agent = actor(infer([echoTable, reply, budget, compaction(), nativeOutput]))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -224,9 +224,16 @@ describe("infer component", () => {
     expect(events.find((event) => event.type === "ToolReturned")).toMatchObject({ result: "served" })
   })
 
-  test("compactionFor's context reaches the render, so the guard and the request hold one policy", () => {
-    const render = renderOf([codeMode(), compactionFor({ messageRenderCap: 1234 }), nativeOutput], [])
-    expect(render.context).toEqual({ messageRenderCap: 1234 })
+  test("compaction's context reaches the render, so the guard and the request hold one policy", () => {
+    const render = renderOf([codeMode(), compaction({ messageRenderCap: 1234 }), nativeOutput], [])
+    expect(render.context).toMatchObject({
+      messageRenderCap: 1234,
+      contextWindowTokens: 128_000,
+      fireRatio: 0.8,
+      keepRatio: 0.5,
+      fireTokens: 102_400,
+      keepTokens: 64_000
+    })
   })
 
   test("different values for one context field fail with both component names", () => {

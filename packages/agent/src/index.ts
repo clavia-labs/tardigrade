@@ -73,7 +73,15 @@ export { nativeOutput } from "./components/native-output"
 export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export { replyReactor } from "./components/reply"
-export { compactionReactorFor, DEFAULT_CONTEXT_POLICY, type ContextPolicy } from "./components/compaction"
+export {
+  compactionReactor,
+  contextPolicyOf,
+  DEFAULT_COMPACTION_POLICY,
+  resolvedContextPolicyOf,
+  type CompactionPolicy,
+  type ContextPolicy,
+  type ContextWindowTokens
+} from "./components/compaction"
 export { agentKeys, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./resume"
 export {
@@ -153,7 +161,7 @@ export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./co
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export { budget, budgetFor } from "./components/budget"
-export { compaction, compactionFor } from "./components/compaction"
+export { compaction } from "./components/compaction"
 export { reply } from "./components/reply"
 export {
   actor,

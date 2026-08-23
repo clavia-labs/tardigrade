@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { send, settleActor, transition } from "@clavia/tardigrade-core/actor"
 import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
-import { Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
+import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { Facets } from "@clavia/tardigrade-core/facets"
@@ -40,7 +40,7 @@ import {
 // The default assembly over a stated scope. The infer root contains model inference, call routing,
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actor(infer([codeMode(packages), reply, budget, compaction, nativeOutput]))
+  actor(infer([codeMode(packages), reply, budget, compaction(), nativeOutput]))
 const rlmAgent = agentWith([])
 const rootReactor = rlmAgent.reactors[0]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -67,9 +67,10 @@ const jsSandbox = Layer.succeed(Sandbox, {
   run: (code: string, bindings: Bindings) =>
     Effect.promise(async () => {
       try {
-        const names = Object.keys(bindings)
+        const scope = guestBindings(bindings)
+        const names = Object.keys(scope)
         const body = new AsyncFunction(...names, code)
-        return { result: await body(...names.map((name) => bindings[name])) }
+        return { result: await body(...names.map((name) => scope[name])) }
       } catch (e) {
         return { error: String(e) }
       }
@@ -448,7 +449,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  actor(infer([codeMode(), reply, budget, compaction, outputRepairFor(policy)]))
+  actor(infer([codeMode(), reply, budget, compaction(), outputRepairFor(policy)]))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -943,7 +944,7 @@ describe("the mind on a native surface", () => {
 })
 
 describe("the validate-once implementation", () => {
-  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction, outputValidateOnce]))
+  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction(), outputValidateOnce]))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0

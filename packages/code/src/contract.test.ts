@@ -7,7 +7,7 @@ import { settleActor } from "@clavia/tardigrade-core/actor"
 import { messageKeys } from "@clavia/tardigrade-core/message"
 import { checkInput, renderShape, renderSignature } from "./contract"
 import { definePackage, type Package } from "./packages"
-import { Sandbox, type Bindings } from "./sandbox"
+import { guestBindings, Sandbox, type Bindings } from "./sandbox"
 import { codeReactorFor } from "./execute"
 import { codeKeys } from "./events"
 
@@ -139,9 +139,10 @@ const jsSandbox = Layer.succeed(Sandbox, {
   run: (code: string, bindings: Bindings) =>
     Effect.promise(async () => {
       try {
-        const names = Object.keys(bindings)
+        const scope = guestBindings(bindings)
+        const names = Object.keys(scope)
         const body = new AsyncFunction(...names, code)
-        return { result: await body(...names.map((name) => bindings[name])) }
+        return { result: await body(...names.map((name) => scope[name])) }
       } catch (e) {
         return { error: String(e) }
       }

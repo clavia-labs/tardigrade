@@ -233,7 +233,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   BudgetRequested: ["callId", "amount", "reason", ...STAMP],
   BudgetGranted: ["callId", "amount", ...STAMP],
   BudgetDenied: ["callId", "reason", ...STAMP],
-  CompactionCompleted: ["keepFrom", ...STAMP, "summary"]
+  CompactionCompleted: ["keepFrom", "contextWindowTokens", "fireTokens", "keepTokens", ...STAMP, "summary"]
 }
 
 // TIME_FIELDS are the fields whose number is an instant rather than a quantity. The lanes stamp

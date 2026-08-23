@@ -12,7 +12,7 @@ import { boundaryOf } from "./boundary"
 import { resumeTurn } from "./resume"
 import { agentsPackage } from "./spawn"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
-import { actor, budgetFor, codeMode, compactionFor, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
+import { actor, budgetFor, codeMode, compaction, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
 import type { RlmR } from "./turn"
 
 const ROOT_LANE = "ag.root"
@@ -77,7 +77,7 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
 // in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
 const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
-  hosted(actor(infer([...components, reply, budgetFor({}), compactionFor({}), nativeOutput])), mind, log)
+  hosted(actor(infer([...components, reply, budgetFor({}), compaction(), nativeOutput])), mind, log)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
