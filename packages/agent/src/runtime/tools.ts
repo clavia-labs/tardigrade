@@ -63,6 +63,14 @@ const pendingCall = (log: ReadonlyArray<Event>): PendingCall | undefined => {
 const has = (log: ReadonlyArray<Event>, type: string, key: string, value: string): boolean =>
   log.some((e) => e.type === type && str((e as Record<string, unknown>)[key]) === value)
 
+const unknownToolError = (name: string, offered: ReadonlyArray<{ readonly name: string }>): string => {
+  const available = offered.map((tool) => tool.name)
+  if (name.includes(".") && available.includes("execute")) {
+    return `unknown tool: ${name}. Package methods run inside execute. Call execute with JavaScript such as \`return await ${name}({...})\`.`
+  }
+  return `unknown tool: ${name}. Call one of: ${available.join(", ")}.`
+}
+
 // decisionFor returns the parent's decision on an escalation ask, scoped to the call's turn.
 const decisionFor = (
   log: ReadonlyArray<Event>,
@@ -144,7 +152,7 @@ export const toolsReactorFrom = <R = never>(
   }
   const served = serve(call, log, answering)
   if (served === undefined) {
-    return [answering({ error: `unknown tool: ${call.name}. Call one of: ${toolsFor(log, call).map((t) => t.name).join(", ")}.` })]
+    return [answering({ error: unknownToolError(call.name, toolsFor(log, call)) })]
   }
   return served
 }
