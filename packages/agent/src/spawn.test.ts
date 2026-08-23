@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "@clavia/tardigrade-host/host"
@@ -31,14 +31,14 @@ const env = (
   lane: string,
   sent: Array<Sent>,
   lanes: Readonly<Record<string, ReadonlyArray<Event>>> = {},
-  router: { readonly resume?: () => Effect.Effect<{ output?: string; error?: string }> } = {}
+  transport: { readonly resume?: () => Effect.Effect<{ output?: string; error?: string }> } = {}
 ) => {
   const self = parseActorAddress(lane)
   return Layer.mergeAll(
-    Layer.succeed(Router, {
+    Layer.succeed(Transport, {
       deliver: (delivery) => Effect.sync(() => void sent.push(delivery as Sent)),
       call: () => REFUSED,
-      resume: router.resume ?? (() => REFUSED)
+      resume: transport.resume ?? (() => REFUSED)
     }),
     Layer.succeed(Self, self),
     Layer.succeed(EventLog, withWatermark({

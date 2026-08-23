@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { replyDelivered } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -60,7 +60,7 @@ const owedTurn = (
 // message id, and the local record commits the key. A terminal report carries `outcome` and
 // settles locally because another report would let two agents acknowledge each other without end
 // (reply.test.ts, "terminal reports cannot start reply chains").
-export const replyReactor: Reactor<Router | Self> = (log) => {
+export const replyReactor: Reactor<Transport | Self> = (log) => {
   if (replyView(log).length === 0) return []
   const turn = owedTurn(log)
   return [
@@ -81,16 +81,16 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
             at
           })
           if (isProviderAddress(input.link.source)) {
-            const router = yield* Router
-            yield* router.deliver(deliveryOf(
+            const transport = yield* Transport
+            yield* transport.deliver(deliveryOf(
               reverseLink(input.link as Link<ProviderAddress, ActorAddress>),
               event
             ))
             return [replyDelivered({ to: input.link.source.provider, turn: input.id, at })]
           }
           if (isActorAddress(input.link.source)) {
-            const router = yield* Router
-            yield* router.deliver(deliveryOf(reverseLink(input.link as Link<ActorAddress, ActorAddress>), event))
+            const transport = yield* Transport
+            yield* transport.deliver(deliveryOf(reverseLink(input.link as Link<ActorAddress, ActorAddress>), event))
             return [replyDelivered({ to: formatActorAddress(input.link.source), turn: input.id, at })]
           }
           return [replyDelivered({ turn: input.id, at })]
@@ -100,7 +100,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
 }
 
 // reply derives parent-delivery transitions and contributes an empty agent view.
-export const reply: AgentComponent<Router | Self> = {
+export const reply: AgentComponent<Transport | Self> = {
   name: "reply",
   derive: (log) => ({
     view: { system: [], tools: [], context: [], output: [] },

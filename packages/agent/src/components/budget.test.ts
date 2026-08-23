@@ -6,7 +6,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { actor } from "@clavia/tardigrade-core/component"
 import { Self } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
-import { Router } from "@clavia/tardigrade-core/router"
+import { Transport } from "@clavia/tardigrade-core/transport"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
 import { Infer } from "../turn"
 import { NativeOutputSupport } from "../runtime/infer"
@@ -25,10 +25,10 @@ const rootReactor = actor(infer([codeMode(), reply, budget, compaction, nativeOu
 const rest = Layer.mergeAll(
   KeyValueStore.layerMemory,
   Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
-  Layer.succeed(Router, {
+  Layer.succeed(Transport, {
     deliver: () => Effect.void,
-    call: () => Effect.succeed({ error: "no router bound" }),
-    resume: () => Effect.succeed({ error: "no router bound" })
+    call: () => Effect.succeed({ error: "no transport bound" }),
+    resume: () => Effect.succeed({ error: "no transport bound" })
   }),
   Layer.succeed(Self, parseActorAddress("test-agent")),
   Layer.succeed(NativeOutputSupport, { withTools: true }),

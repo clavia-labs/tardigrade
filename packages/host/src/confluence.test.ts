@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "@clavia/tardigrade-core/router"
+import { Transport } from "@clavia/tardigrade-core/transport"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost, type HostOptions } from "./host"
 import { parseActorAddress } from "@clavia/tardigrade-core/communication/address"
@@ -26,7 +26,7 @@ const rallyKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const playerReactor = (me: string, opponent: string): Reactor<Router> =>
+const playerReactor = (me: string, opponent: string): Reactor<Transport> =>
   (events) => {
     const answered = new Set(
       events.filter((e) => e.type === "Answered").map((e) => str((e as { id?: unknown }).id))
@@ -42,9 +42,9 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
         input: { id: str(pending.id), n },
         act: (input) =>
           Effect.gen(function* () {
-            const router = yield* Router
+            const transport = yield* Transport
             if (input.n < RALLY) {
-              yield* router.deliver(deliveryOf(
+              yield* transport.deliver(deliveryOf(
                 linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${opponent}`)),
                 {
                 type: "MessageReceived",
@@ -64,8 +64,8 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
 // once and the schedule genuinely matters.
 const LANES = ["a", "b", "c", "d"]
 
-const scenario = (pick: HostOptions<Router>["pick"]) => {
-  const host = createHost<Router>({
+const scenario = (pick: HostOptions<Transport>["pick"]) => {
+  const host = createHost<Transport>({
     actorFor: (lane) => {
       const i = LANES.indexOf(lane)
       if (i === -1) return undefined

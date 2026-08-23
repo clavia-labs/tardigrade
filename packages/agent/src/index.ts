@@ -94,7 +94,7 @@ export {
 export { boundaryOf, outputOf, type Boundary } from "./boundary"
 
 // The spawn package: a value with no lane in it, so the assembly that mounts it and the host
-// that binds Router, Self, and Facets per lane cannot disagree about placement (spawn.ts).
+// that binds Transport, Self, and Facets per lane cannot disagree about placement (spawn.ts).
 export { agentsPackage, INLINE_OUTPUT_NAME, type SpawnOptions } from "./spawn"
 
 // The workspace the model reads its spilled values back through, and the optional SQL binding a

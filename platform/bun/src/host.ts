@@ -7,7 +7,7 @@ import { SqliteClient } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import { Transport, type CallResult } from "@clavia/tardigrade-core/communication/transport"
 import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
@@ -76,8 +76,8 @@ export type BunHostOptions<R> = {
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly call?: Parameters<typeof Router.of>[0]["call"]
-  readonly resume?: Parameters<typeof Router.of>[0]["resume"]
+  readonly call?: Parameters<typeof Transport.of>[0]["call"]
+  readonly resume?: Parameters<typeof Transport.of>[0]["resume"]
   readonly providers?: ReadonlyArray<Provider>
   readonly edgesOf?: EdgesOf
   readonly pick?: (dirty: ReadonlySet<string>) => string
@@ -276,7 +276,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const deliverEffect = (address: string, event: Event): Effect.Effect<void, never> =>
     commitEffect(parseActorAddress(address), event, undefined)
 
-  const router = Layer.succeed(Router, {
+  const transport = Layer.succeed(Transport, {
     deliver: (delivery) =>
       isOutboundLink(delivery.link)
         ? outbound.send(
@@ -298,7 +298,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         head: headEffect(lane),
         readFrom: (mark: number) => readFromEffect(lane, mark)
       }),
-      router,
+      transport,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
       Layer.succeed(Self, parseActorAddress(self(lane))),
       // Every lane's log lives in this one durable store, so the observe privilege is the same

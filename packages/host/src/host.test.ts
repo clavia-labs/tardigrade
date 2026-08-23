@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "@clavia/tardigrade-core/router"
+import { Transport } from "@clavia/tardigrade-core/transport"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
@@ -27,7 +27,7 @@ const rallyKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const playerReactor = (me: string, opponent: string): Reactor<Router> =>
+const playerReactor = (me: string, opponent: string): Reactor<Transport> =>
   (events) => {
     const answered = new Set(
       events.filter((e) => e.type === "Answered").map((e) => str((e as { id?: unknown }).id))
@@ -43,9 +43,9 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
         input: { id: str(pending.id), n },
         act: (input) =>
           Effect.gen(function* () {
-            const router = yield* Router
+            const transport = yield* Transport
             if (input.n < RALLY) {
-              yield* router.deliver(deliveryOf(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
+              yield* transport.deliver(deliveryOf(linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(opponent)), {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
@@ -59,7 +59,7 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
   }
 
 const rally = () => {
-  const host = createHost<Router>({
+  const host = createHost<Transport>({
     actorFor: (lane) =>
       lane === "a" ? { reactors: [playerReactor("a", "mem:b")], keyOf: rallyKeys }
       : lane === "b" ? { reactors: [playerReactor("b", "mem:a")], keyOf: rallyKeys }
@@ -130,7 +130,7 @@ describe("the host", () => {
   })
 })
 
-describe("the router membrane", () => {
+describe("the transport membrane", () => {
   test("an unkeyed cross-lane event refuses loudly; a keyed one travels", () => {
     const host = createHost<never>({
       actorFor: () => undefined,
@@ -145,7 +145,7 @@ describe("the router membrane", () => {
 })
 
 describe("the observe privilege", () => {
-  // All lanes share one store here, so the host binds Facets beside Router and Self: a lane reads
+  // All lanes share one store here, so the host binds Facets beside Transport and Self: a lane reads
   // a sibling's committed events by name (packages/core/src/logs.ts, Facets).
   test("a lane reads a seeded sibling lane through Facets", async () => {
     const watcher: Reactor<Facets> = (events) =>

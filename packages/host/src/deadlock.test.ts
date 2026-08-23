@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "@clavia/tardigrade-core/router"
+import { Transport } from "@clavia/tardigrade-core/transport"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
@@ -30,7 +30,7 @@ const knotKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const knotReactor = (me: string, partner: string): Reactor<Router> =>
+const knotReactor = (me: string, partner: string): Reactor<Transport> =>
   (events) => {
     if (has(events, "Settled")) return []
     // A brief with no declared await: declare one.
@@ -52,9 +52,9 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
         input: { partner },
         act: (input) =>
           Effect.gen(function* () {
-            const router = yield* Router
+            const transport = yield* Transport
             // Answer whoever awaits me, then settle.
-            yield* router.deliver(deliveryOf(
+            yield* transport.deliver(deliveryOf(
               linkOf(parseActorAddress(`mem:${me}`), parseActorAddress(`mem:${input.partner}`)),
               {
               type: "MessageReceived",
@@ -84,7 +84,7 @@ const edgesOf = (lane: string, events: ReadonlyArray<Event>): ReadonlyArray<Awai
 }
 
 const knot = (withSentinel: boolean) =>
-  createHost<Router>({
+  createHost<Transport>({
     actorFor: (lane) =>
       lane === "p" ? { reactors: [knotReactor("p", "c")], keyOf: knotKeys }
       : lane === "c" ? { reactors: [knotReactor("c", "p")], keyOf: knotKeys }

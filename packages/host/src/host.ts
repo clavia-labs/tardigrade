@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { Router, type CallResult } from "@clavia/tardigrade-core/communication/router"
+import { Transport, type CallResult } from "@clavia/tardigrade-core/communication/transport"
 import { linkedEventOf, type Delivery } from "@clavia/tardigrade-core/communication/delivery"
 import {
   formatActorAddress,
@@ -25,16 +25,16 @@ import {
   type ThreadLineage
 } from "@clavia/tardigrade-core/thread"
 
-// A host runs the emergent graph: many lanes, one router, one driver.
+// A host runs the emergent graph: many lanes, one transport, one driver.
 // This is the default binding: in-process and volatile, semantics only.
 // A binding that adds physics (durable storage, real alarms, isolation)
 // earns a qualified name and must keep every guarantee here; the
 // conformance contract is packages/core/tla/runtime/Driver.tla and packages/core/tla/communication/Delivery.tla.
 
 // HostPorts are the services every host binds per lane: the log, the
-// router, this lane's address, and the read over its siblings' logs.
+// transport, this lane's address, and the read over its siblings' logs.
 // layersFor may require them and must not provide them.
-export type HostPorts = EventLog | Router | Self | Facets
+export type HostPorts = EventLog | Transport | Self | Facets
 
 // LaneEnv is the rest of an actor's R: what the host does not bind.
 // Construction may require HostPorts; Layer.provideMerge discharges them.
@@ -47,14 +47,14 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 // HostOptions binds a host to its owner's world. actorFor names a
 // lane's reactors; a lane with none is a sink (a registry, a mirror)
 // and delivery still lands. layersFor supplies the rest of R; the host
-// binds EventLog, Router, and Self. A missing Infer is a type error.
+// binds EventLog, Transport, and Self. A missing Infer is a type error.
 // call and resume are the synchronous doors; a host without them
 // refuses synchronous calls with an error result.
 export type HostOptions<R> = {
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
-  readonly call?: Parameters<typeof Router.of>[0]["call"]
-  readonly resume?: Parameters<typeof Router.of>[0]["resume"]
+  readonly call?: Parameters<typeof Transport.of>[0]["call"]
+  readonly resume?: Parameters<typeof Transport.of>[0]["resume"]
   readonly providers?: ReadonlyArray<Provider>
   // edgesOf arms the deadlock sentinel: after a drive drains, the host
   // breaks each await cycle among resting lanes by failing one victim
@@ -79,7 +79,7 @@ export interface Host {
   readonly read: (lane: string) => ReadonlyArray<Event>
   // accept commits one addressed delivery, including child creation lineage when present.
   readonly accept: (delivery: Delivery<unknown, Event, ActorAddress>) => void
-  // deliver is the router's contract: at-least-once, receiver dedup by
+  // deliver is the transport's contract: at-least-once, receiver dedup by
   // message id, and the lane is marked owed a visit.
   readonly deliver: (address: string, event: Event) => void
   // wake marks a lane owed a visit and drives: what a binding's backup
@@ -92,9 +92,9 @@ export interface Host {
   readonly drive: () => Promise<void>
   // resting is the graph-wide quiescence question over lanes with actors.
   readonly resting: () => boolean
-  // router is the host's router as a Layer, for environments built
+  // transport is the host's transport as a Layer, for environments built
   // outside layersFor.
-  readonly router: Layer.Layer<Router>
+  readonly transport: Layer.Layer<Transport>
   readonly self: (lane: string) => string
 }
 
@@ -211,7 +211,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const deliver = (address: string, event: Event): void =>
     commit(parseActorAddress(address), event, undefined)
 
-  const router = Layer.succeed(Router, {
+  const transport = Layer.succeed(Transport, {
     deliver: (delivery) =>
       isOutboundLink(delivery.link)
         ? outbound.send(
@@ -236,7 +236,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
           read: Effect.sync(() => read(lane))
         })
       ),
-      router,
+      transport,
       Layer.succeed(Self, parseActorAddress(self(lane))),
       // All lanes share one store here, so the observe privilege is the host's own read
       // (packages/core/src/logs.ts, Facets). A lane's own log still arrives as EventLog: this
@@ -296,5 +296,5 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
-  return { seed, read, accept, deliver, drive, wake, resting, router, self }
+  return { seed, read, accept, deliver, drive, wake, resting, transport, self }
 }

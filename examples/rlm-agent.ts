@@ -12,7 +12,7 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 
 // The work surface: code mode with the spawn and workspace packages in scope. The packages are
 // values, so the model's system fragment lists them and the assembly's requirements carry their
-// needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
+// needs (Transport, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
 const rlm = actor(inferAgent([
   codeMode([agentsPackage(), workspacePackage()]),

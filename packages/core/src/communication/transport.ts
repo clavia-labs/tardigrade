@@ -15,9 +15,9 @@ export interface CallResult {
   readonly callId?: string
 }
 
-// Router interprets typed actor links through the placement and transport selected by its host.
-export class Router extends Context.Service<
-  Router,
+// Transport carries typed deliveries through the placement and connection selected by its host.
+export class Transport extends Context.Service<
+  Transport,
   {
     readonly deliver: (
       delivery:
@@ -45,4 +45,4 @@ export class Router extends Context.Service<
       decision: { readonly amount: number; readonly reason?: string }
     ) => Effect.Effect<CallResult>
   }
->()("tardigrade/Router") {}
+>()("tardigrade/Transport") {}
