@@ -30,6 +30,7 @@ import {
   type SandboxBridgeLease
 } from "./sandbox"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
+import { structuredWorkerConfigOf } from "./config"
 
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
@@ -89,15 +90,12 @@ const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<s
     const value = values[name]
     if (typeof value === "string" && value.trim().length > 0) return value.trim()
   }
-  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret`)
+  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret or variable`)
 }
 
 const modelsFrom = (env: Env): CloudflareModels | undefined => {
-  if (env.TARDIGRADE_CONFIG === undefined) return undefined
-  if (typeof env.TARDIGRADE_CONFIG !== "object" || env.TARDIGRADE_CONFIG === null) {
-    throw new Error("TARDIGRADE_CONFIG must be a JSON object")
-  }
-  const rawModels = (env.TARDIGRADE_CONFIG as Readonly<Record<string, unknown>>)["models"]
+  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
+  const rawModels = config?.["models"]
   if (rawModels === undefined) return undefined
   const parsed = modelConfigOf(rawModels)
   if (parsed.default === undefined) {

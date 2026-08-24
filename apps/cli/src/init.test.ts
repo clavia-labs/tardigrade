@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
+import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import { DEFAULT_ACTOR_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
 
 let root = ""
@@ -23,12 +24,15 @@ describe("initActor", () => {
     const initialized = await initActor("reviewer", { cwd, model, now: new Date("2026-08-24T00:00:00Z") })
     const source = await readFile(initialized.entry, "utf8")
     const worker = await readFile(initialized.worker, "utf8")
-    const manifest = JSON.parse(await readFile(initialized.manifest, "utf8")) as Record<string, unknown>
+    const manifestSource = await readFile(initialized.manifest, "utf8")
+    const manifest = JSON.parse(manifestSource) as Record<string, unknown>
+    const celldManifest = JSON.parse(await readFile(initialized.celldManifest, "utf8")) as Record<string, unknown>
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
     expect(initialized.entry).toBe(join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY))
     expect(initialized.worker).toBe(join(cwd, "reviewer", DEFAULT_WORKER_ENTRY))
+    expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
     expect(worker).toContain('import definition from "./actor"')
@@ -43,6 +47,17 @@ describe("initActor", () => {
       migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }]
     })
     expect(manifest).not.toHaveProperty("d1_databases")
+    expect(Object.keys(celldManifest).sort()).toEqual([
+      "$schema",
+      "compatibility_date",
+      "compatibility_flags",
+      "durable_objects",
+      "main",
+      "migrations",
+      "name",
+      "vars"
+    ])
+    expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -76,12 +91,14 @@ describe("initSummary", () => {
     expect(summary).toContain("created reviewer/actor.ts")
     expect(summary).toContain("created reviewer/worker.ts")
     expect(summary).toContain("created reviewer/wrangler.jsonc")
+    expect(summary).toContain("created reviewer/celld.jsonc")
     expect(summary).toContain("cd reviewer")
     expect(summary).not.toContain("tdg push")
     expect(summary).not.toContain("tdg build actor.ts")
     expect(summary).toContain("tdg call message")
     expect(summary).toContain("tdg dev")
     expect(summary).toContain("bunx wrangler deploy")
+    expect(summary).toContain("celld deploy --config celld.jsonc")
     expect(summary).toContain('--actor reviewer')
   })
 })

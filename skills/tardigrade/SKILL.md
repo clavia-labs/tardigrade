@@ -1,11 +1,11 @@
 ---
 name: tardigrade
-description: Create, migrate, author, build, push, run, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with an existing agent harness, actor.ts, the local actor registry, a Tardigrade run, or GEPA harness optimization from run traces.
+description: Create, migrate, author, build, deploy, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with an existing agent harness, actor.ts, a Tardigrade thread, a self-hosted actor registry, or GEPA harness optimization from run traces.
 ---
 
 # Tardigrade
 
-Read the [CLI guide](../../docs/how-to/cli.md) for initialization, provider setup, build, push, discovery, and method calls. Read the [server guide](../../docs/how-to/server.md) for HTTP routes, configuration, secrets, model catalog behavior, and deployment.
+Read the [CLI guide](../../docs/how-to/cli.md) for initialization, provider setup, local development, deployment, discovery, and method calls. Read the [server guide](../../docs/how-to/server.md) for HTTP routes, configuration, secrets, and model catalog behavior. Read the [Celld guide](../../docs/how-to/celld.md) before deploying to a Celld fleet.
 
 Start a new actor interactively:
 
@@ -31,14 +31,21 @@ tdg setup provider openai '{"env":["OPENAI_API_KEY"]}'
 tdg setup default --provider openai --model gpt-5.2
 ```
 
-Edit `actor.ts`. Keep the name passed to `defineActor` stable because build, push, calls, and stored traces use it as actor identity. Add or remove package components in `codeMode([...components])` when the task needs different capabilities.
+Edit `actor.ts`. Keep the name passed to `defineActor` stable because builds, calls, deployments, and stored traces use it as actor identity. Add or remove package components in `codeMode([...components])` when the task needs different capabilities.
 
-Build, push, and serve from the actor directory:
+Build and serve from the actor directory:
 
 ```bash
 tdg build actor.ts
-tdg push actor.ts --target local
 tdg dev
+```
+
+Deploy the generated Worker with the platform CLI:
+
+```bash
+bunx wrangler deploy
+celld deploy --config celld.jsonc --dry-run
+celld deploy --config celld.jsonc
 ```
 
 Keep the server running. From another shell, inspect provider requirements, search models, discover methods, and call one:
@@ -50,7 +57,7 @@ tdg methods --actor researcher --json
 tdg call message '{"text":"Read this repository and tell me what it does"}' --actor researcher
 ```
 
-Use `--json` for programmatic output. Use `--url` and `--token` for another server. State `--target local` or `--target hosted` on every push. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
+Use `--json` for programmatic output. Use `--url` and `--token` for another server. Use `tdg push` only when an explicit self-hosted actor registry is the deployment target, and state `--target local` or `--target hosted` on every push. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
 
 ## Migrate an existing harness
 

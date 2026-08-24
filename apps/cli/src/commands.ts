@@ -258,7 +258,7 @@ export const setupProviderCommand = Command.make("provider", {
       : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Add or update one provider connection in wrangler.jsonc."
+      "Add or update one provider connection in the platform manifests."
     ),
     Command.withExamples([
       { command: "tdg setup provider", description: "Prompt for a provider connection" },
@@ -314,7 +314,7 @@ export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*
   const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
   yield* Console.log(setupPlanSummary(files, plan))
 })).pipe(
-  Command.withDescription("Add provider connections, choose the project default, then write wrangler.jsonc and .dev.vars at 0600."),
+  Command.withDescription("Add provider connections, choose the project default, then write the platform manifests and .dev.vars at 0600."),
   Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
 )
 

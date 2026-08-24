@@ -2,6 +2,8 @@
 
 This binding mounts one actor definition into a named SQLite Durable Object. The object stores its event logs, workspace, and last valid model catalog snapshot. Every thread is a lane in the actor's event table. Each accepted event commits its log append and watchdog before reconciliation starts. One alarm recovers ready lanes after an interrupted drive. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
+Celld implements the Worker, SQLite Durable Object, and alarm surfaces this binding uses. Its Worker Loader cannot yet pass the package capability bridge used by Code Mode. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and this constraint.
+
 ## Verify and deploy
 
 ```bash

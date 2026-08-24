@@ -25,6 +25,7 @@ import {
 } from "@clavia/tardigrade-model/metadata"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
+import { CELLD_PROJECT_CONFIG_PATH, celldConfigWithVarOf } from "./celld"
 
 // Interactive `tdg setup` collects provider connections and chooses the project default before writing either file.
 //
@@ -662,6 +663,7 @@ const readOrEmpty = (fs: FileSystemService, path: string): Effect.Effect<string,
 export interface SetupFiles {
   readonly configPath: string
   readonly secretsPath: string
+  readonly celldConfigPath?: string
 }
 
 const updatedProject = (
@@ -709,10 +711,28 @@ const writeSetupChanges = (
       })
     })
     const secretsPath = envPathIn(root)
-    yield* fs.writeFileString(
-      configPath,
-      updatedProject(configRaw, selected, providers)
-    )
+    const updatedConfig = updatedProject(configRaw, selected, providers)
+    const celldConfigPath = `${root.replace(/\/$/, "")}/${CELLD_PROJECT_CONFIG_PATH}`
+    const celldConfigRaw = yield* readOrEmpty(fs, celldConfigPath)
+    const updatedCelldConfig = celldConfigRaw.trim().length === 0
+      ? undefined
+      : yield* Effect.try({
+        try: () => celldConfigWithVarOf(
+          celldConfigRaw,
+          updatedConfig,
+          TARDIGRADE_CONFIG_VAR,
+          celldConfigPath,
+          configPath
+        ),
+        catch: (cause) => new SetupConfigError({
+          message: cause instanceof Error ? cause.message : String(cause),
+          cause
+        })
+      })
+    yield* fs.writeFileString(configPath, updatedConfig)
+    if (updatedCelldConfig !== undefined) {
+      yield* fs.writeFileString(celldConfigPath, updatedCelldConfig)
+    }
     const credentials = Object.fromEntries(providers.flatMap((provider) =>
       provider.credential === undefined ? [] : [[provider.env[0]!, provider.credential]]
     ))
@@ -730,8 +750,17 @@ const writeSetupChanges = (
       const gitignoreRaw = yield* readOrEmpty(fs, gitignorePath)
       yield* fs.writeFileString(gitignorePath, withSecretsIgnored(gitignoreRaw))
     }
-    return { configPath, secretsPath }
+    return {
+      configPath,
+      secretsPath,
+      ...(celldConfigRaw.trim().length === 0 ? {} : { celldConfigPath })
+    }
   })
+
+const writtenConfigLines = (files: SetupFiles): ReadonlyArray<string> => [
+  `wrote ${files.configPath}`,
+  ...(files.celldConfigPath === undefined ? [] : [`wrote ${files.celldConfigPath}`])
+]
 
 // writeSetup merges one connection and selects its model as the project default.
 export const writeSetup = (
@@ -775,7 +804,7 @@ export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem
 // setupSummary prints where an entered credential was stored without showing its value.
 export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =>
   [
-    `wrote ${files.configPath}`,
+    ...writtenConfigLines(files),
     ...(answers.credential === undefined ? [] : [`stored credential in ${files.secretsPath}`]),
     `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
@@ -786,7 +815,7 @@ export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =
   ].join("\n")
 
 export const providerSetupSummary = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>): string => [
-  `wrote ${files.configPath}`,
+  ...writtenConfigLines(files),
   ...(providers.some((provider) => provider.credential !== undefined)
     ? [`stored credentials in ${files.secretsPath}`]
     : []),
@@ -800,13 +829,14 @@ export const providerSetupSummary = (files: SetupFiles, providers: ReadonlyArray
 ].join("\n")
 
 export const defaultSetupSummary = (files: SetupFiles, selected: NonNullable<ModelConfig["default"]>): string =>
-  [`wrote ${files.configPath}`, `default ${selected.provider}/${selected.model_id}`].join("\n")
+  [...writtenConfigLines(files), `default ${selected.provider}/${selected.model_id}`].join("\n")
 
 export const setupPlanSummary = (files: SetupFiles, plan: SetupPlan): string =>
-  `${providerSetupSummary(files, plan.providers)}\n${defaultSetupSummary(files, plan.default).split("\n")[1]}`
+  `${providerSetupSummary(files, plan.providers)}\ndefault ${plan.default.provider}/${plan.default.model_id}`
 
 export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly configPath: string
+  readonly celldConfigPath?: string
   readonly secretsPath?: string
   readonly baseUrl: string
   readonly provider: string
@@ -817,6 +847,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly region?: string
 } => ({
   configPath: files.configPath,
+  ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
   ...(answers.credential === undefined ? {} : { secretsPath: files.secretsPath }),
   provider: answers.provider,
   baseUrl: answers.baseUrl,
@@ -829,6 +860,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
 
 export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>) => ({
   configPath: files.configPath,
+  ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
   ...(providers.some((provider) => provider.credential !== undefined) ? { secretsPath: files.secretsPath } : {}),
   providers: providers.map((provider) => ({
     provider: provider.provider,
@@ -842,5 +874,6 @@ export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<Pr
 
 export const defaultSetupJson = (files: SetupFiles, selected: NonNullable<ModelConfig["default"]>) => ({
   configPath: files.configPath,
+  ...(files.celldConfigPath === undefined ? {} : { celldConfigPath: files.celldConfigPath }),
   default: selected
 })

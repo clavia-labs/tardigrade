@@ -5,4 +5,5 @@
 - [trace-review.md](trace-review.md): the trace review and eval discovery product specification.
 - [how-to/server.md](how-to/server.md): the HTTP server.
 - [how-to/cli.md](how-to/cli.md): the CLI.
+- [how-to/celld.md](how-to/celld.md): deploy an actor project to a Celld fleet.
 - [explanations/why.md](explanations/why.md): why tardigrade exists. {transitions} = f(log), and what the log-as-state shape enables.

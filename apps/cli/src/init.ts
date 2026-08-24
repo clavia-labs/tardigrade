@@ -1,7 +1,8 @@
-import { mkdir, writeFile } from "node:fs/promises"
+import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 
+import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, type ActorTemplateModel } from "./template"
 import { callCommandFor, shellWord } from "./workflow"
 
@@ -22,6 +23,7 @@ export interface InitializedActor {
   readonly entry: string
   readonly worker: string
   readonly manifest: string
+  readonly celldManifest: string
 }
 
 export const defaultInitDirectory = (name: string): string => name
@@ -67,7 +69,9 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const entry = resolve(directory, DEFAULT_ACTOR_ENTRY)
   const worker = resolve(directory, DEFAULT_WORKER_ENTRY)
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
+  const celldManifest = resolve(directory, CELLD_PROJECT_CONFIG_PATH)
   const source = await actorTemplate({ name, model: options.model })
+  const manifestSource = manifestTemplate(name, options.now ?? new Date())
 
   await mkdir(dirname(entry), { recursive: true })
   try {
@@ -86,12 +90,19 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   }
 
   try {
-    await writeFile(manifest, manifestTemplate(name, options.now ?? new Date()), { encoding: "utf8", flag: "wx" })
+    await writeFile(manifest, manifestSource, { encoding: "utf8", flag: "wx" })
   } catch (error) {
     if (!existsError(error)) throw error
   }
 
-  return { name, directory, entry, worker, manifest }
+  try {
+    const currentManifest = await readFile(manifest, "utf8")
+    await writeFile(celldManifest, celldConfigOf(currentManifest, manifest).source, { encoding: "utf8", flag: "wx" })
+  } catch (error) {
+    if (!existsError(error)) throw error
+  }
+
+  return { name, directory, entry, worker, manifest, celldManifest }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -105,6 +116,7 @@ export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()
     `created ${shownPath(cwd, actor.entry)}`,
     `created ${shownPath(cwd, actor.worker)}`,
     `created ${shownPath(cwd, actor.manifest)}`,
+    `created ${shownPath(cwd, actor.celldManifest)}`,
     "",
     "next",
     `  cd ${shellWord(directory)}`,
@@ -113,7 +125,10 @@ export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()
     "then, in another terminal",
     `  ${callCommandFor(actor.name)}`,
     "",
-    "deploy",
-    "  bunx wrangler deploy"
+    "deploy to Cloudflare",
+    "  bunx wrangler deploy",
+    "",
+    "deploy to Celld",
+    `  celld deploy --config ${shellWord(shownPath(actor.directory, actor.celldManifest))}`
   ].join("\n")
 }
