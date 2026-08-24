@@ -31,7 +31,8 @@
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",
-    "effect": "4.0.0-rc.110"
+    "effect": "4.0.0-rc.110",
+    "tardie": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

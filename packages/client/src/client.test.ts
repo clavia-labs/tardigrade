@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import { agentMethods, type ActorMethodState } from "tardie"
 
 import { makeClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
@@ -11,6 +12,7 @@ import { ProblemError } from "./problem"
 
 interface Call {
   readonly url: string
+  readonly method: string
   readonly headers: Record<string, string>
   readonly body: string | undefined
 }
@@ -37,6 +39,7 @@ const stub = ((input: string | URL | Request, init?: RequestInit) => {
   const headers = new Headers(init?.headers ?? {})
   calls.push({
     url: String(input),
+    method: init?.method ?? "GET",
     headers: Object.fromEntries(headers.entries()),
     body: bodyOf(init?.body)
   })
@@ -98,6 +101,45 @@ describe("the token", () => {
   test("no token means no header", async () => {
     await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list()
     expect(calls[0]!.headers["authorization"]).toBeUndefined()
+  })
+})
+
+describe("a declared actor method", () => {
+  test("discovers method schemas at the actor", async () => {
+    answer = () => new Response(JSON.stringify([{
+      name: "message",
+      inputSchema: { type: "object" },
+      outputSchema: { type: "string" }
+    }]), { status: 200, headers: { "content-type": "application/json" } })
+    const methods = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).methods()
+    expect(methods[0]?.name).toBe("message")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/methods")
+  })
+
+  test("invokes the selected method with its typed input", async () => {
+    answer = () => new Response(JSON.stringify({
+      actor: "default",
+      thread: "root",
+      method: "message",
+      call: "m1"
+    }), { status: 202, headers: { "content-type": "application/json" } })
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const accepted = await client.invoke("root", "message", { id: "m1", input: { text: "hello" } })
+    expect(accepted.call).toBe("m1")
+    expect(calls[0]?.method).toBe("PUT")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
+  })
+
+  test("reads and types completed output from the declaration", async () => {
+    answer = () => new Response(JSON.stringify({ status: "completed", output: "done" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const state: ActorMethodState<string> = await client.methodState("root", "message", "m1")
+    expect(state).toEqual({ status: "completed", output: "done" })
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
   })
 })
 
@@ -165,7 +207,7 @@ describe("a declared projection", () => {
   test("serves at the name it was declared under, and carries its own query", async () => {
     const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     await client.projection("root", "turns", { at: 3 })
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/turns")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/projections/turns")
     expect(lastUrl().searchParams.get("at")).toBe("3")
   })
 
@@ -240,7 +282,7 @@ describe("resuming a turn", () => {
     // Two calls: the projection it read, then the append it made.
     expect(calls).toHaveLength(2)
     const read = new URL(calls[0]!.url)
-    expect(read.pathname).toBe("/v1/actors/default/threads/root/turns")
+    expect(read.pathname).toBe("/v1/actors/default/threads/root/projections/turns")
     expect(read.searchParams.get("turn")).toBe("m1")
     const appended = new URL(calls[1]!.url)
     expect(appended.pathname).toBe("/v1/actors/default/threads/root/events")

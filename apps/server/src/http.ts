@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
-import { layerActorsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
+import { layerActorsGroup, layerMethodsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
 import { ServerConfig } from "./config"
 import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
@@ -163,6 +163,7 @@ export const layerApp = (options: ApiOptions = {}) =>
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
         layerActorsGroup,
         layerThreadsGroup(options),
+        layerMethodsGroup,
         layerProjectionsGroup,
         layerHealthGroup
       ]),
@@ -170,9 +171,7 @@ export const layerApp = (options: ApiOptions = {}) =>
     ),
     HttpApiScalar.layer(ServerApi, { path: DOCS_PATH }),
     layerStream(options),
-    // After the declared routes and before the catch-all: a literal segment beats a parameter in
-    // this router, so a projection the actor declared is served and every other name under a thread
-    // is told what does exist (api.ts, layerUnknownProjection).
+    // layerUnknownProjection names the declared projections when a lookup misses.
     layerUnknownProjection,
     layerNotFound,
     layerCors,

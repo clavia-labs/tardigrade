@@ -120,7 +120,7 @@ const put = (base: string, path: string, body: unknown) =>
 // agentProjections).
 const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
   const views = (await (await fetch(
-    `${base}/v1/actors/default/threads/${thread}/turns?turn=${encodeURIComponent(turn)}`
+    `${base}/v1/actors/default/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
   )).json()) as ReadonlyArray<TurnView>
   return views[0]
 }
@@ -137,6 +137,98 @@ const birth = async (base: string, id: string, message: { id: string; text: stri
     return view === undefined || view.status === "pending" ? undefined : view
   })
 }
+
+const callMessage = async (base: string, thread: string, call: string, text: string) => {
+  const response = await put(
+    base,
+    `/v1/actors/default/threads/${thread}/methods/message/calls/${call}`,
+    { text }
+  )
+  expect(response.status).toBe(202)
+  expect(await response.json()).toEqual({
+    actor: RESERVED_ACTOR,
+    thread,
+    method: "message",
+    call
+  })
+  return until(`method call ${call} of ${thread}`, async () => {
+    const state = await get(base, `/v1/actors/default/threads/${thread}/methods/message/calls/${call}`)
+    const body = await state.json() as Record<string, unknown>
+    return body["status"] === "pending" ? undefined : body
+  })
+}
+
+describe("actor methods", () => {
+  test("the actor exposes its method schemas", async () => {
+    const methods = await serving(async (base) =>
+      await (await get(base, "/v1/actors/default/methods")).json() as ReadonlyArray<{
+        readonly name: string
+        readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, unknown> }
+        readonly outputSchema: { readonly type?: unknown }
+      }>)
+    expect(methods.map((method) => method.name)).toEqual(["message"])
+    expect(methods[0]?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
+    expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
+      type: "object",
+      required: ["text"]
+    })
+    expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
+  })
+
+  test("an invocation births a thread and exposes its completed state", async () => {
+    const state = await serving((base) => callMessage(base, "alpha", "m1", "hello"))
+    expect(state).toEqual({ status: "completed", output: "ok: hello" })
+  })
+
+  test("putting the same call URL is absorbed", async () => {
+    const read = await serving(async (base) => {
+      await callMessage(base, "alpha", "m1", "hello")
+      const eventsAt = async () => await (await get(base, "/v1/actors/default/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const before = await eventsAt()
+      const repeated = await put(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1", { text: "different" })
+      const after = await eventsAt()
+      const state = await get(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1")
+      return { repeated: { status: repeated.status, body: await repeated.json() }, before, after, state: await state.json() }
+    })
+    expect(read.repeated).toEqual({
+      status: 202,
+      body: { actor: RESERVED_ACTOR, thread: "alpha", method: "message", call: "m1" }
+    })
+    expect(read.after).toEqual(read.before)
+    expect(read.state).toEqual({ status: "completed", output: "ok: hello" })
+  })
+
+  test("an invalid input is refused before it reaches the log", async () => {
+    const refusal = await serving(async (base) => {
+      const response = await put(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1", {})
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(400)
+    expect(refusal.body).toMatchObject({ title: "Invalid Request", status: 400 })
+    expect(String(refusal.body["detail"])).toContain("message")
+    expect(String(refusal.body["detail"])).toContain("text")
+  })
+
+  test("an unknown method names the methods the actor declares", async () => {
+    const refusal = await serving(async (base) => {
+      const response = await put(base, "/v1/actors/default/threads/alpha/methods/missing/calls/m1", {})
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(404)
+    expect(refusal.body).toMatchObject({ title: "Unknown Method", status: 404 })
+    expect(String(refusal.body["detail"])).toContain('"message"')
+  })
+
+  test("a call the method cannot derive is its own 404", async () => {
+    const refusal = await serving(async (base) => {
+      await callMessage(base, "alpha", "m1", "hello")
+      const response = await get(base, "/v1/actors/default/threads/alpha/methods/message/calls/missing")
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(404)
+    expect(refusal.body).toMatchObject({ title: "Unknown Method Call", status: 404 })
+  })
+})
 
 describe("appending", () => {
   test("an appended message births a thread and the server drives its turn to completed", async () => {
@@ -397,7 +489,7 @@ describe("the event stream", () => {
   })
 })
 
-// The projections the actor declares are mounted by name under a thread, and this build's actor
+// The projections the actor declares are mounted by name under a thread's projection namespace, and this build's actor
 // declares `turns` (actor.ts, agentProjections). The cases below are about the mounting: that a
 // declared name serves what the actor computes, that its own query reaches `run`, and that any
 // other name says what does exist.
@@ -405,7 +497,7 @@ describe("projections", () => {
   test("a declared projection serves what the actor computes", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/actors/default/threads/alpha/turns`)
+      const response = await fetch(`${base}/v1/actors/default/threads/alpha/projections/turns`)
       return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
     })
     expect(read.status).toBe(200)
@@ -423,7 +515,10 @@ describe("projections", () => {
           body: await response.json() as Record<string, unknown>
         }
       }
-      return { ghost: await read("/v1/actors/default/threads/alpha/facts"), actor: await read("/v1/actors/ghost/threads/alpha/facts") }
+      return {
+        ghost: await read("/v1/actors/default/threads/alpha/projections/facts"),
+        actor: await read("/v1/actors/ghost/threads/alpha/projections/facts")
+      }
     })
     expect(answers.ghost.status).toBe(404)
     expect(answers.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
@@ -439,18 +534,13 @@ describe("projections", () => {
     expect(answers.actor.body).toMatchObject({ title: "Unknown Actor" })
   })
 
-  // `events` is the log read back, and the log is not a projection of itself, so a reserved name
-  // keeps serving the platform's own route rather than reaching the projection mount. `stream` is
-  // the same rule for the tail, proven where the tail is exercised ("the event stream", below;
-  // contract.ts, RESERVED_PROJECTIONS).
-  test("a reserved name still serves the log", async () => {
+  test("the event log keeps its platform route", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const events = await fetch(`${base}/v1/actors/default/threads/alpha/events`)
       return { status: events.status, type: events.headers.get("content-type") }
     })
     expect(answers.status).toBe(200)
-    // Not a problem document, which is what reaching the projection mount would have produced.
     expect(answers.type).toContain("application/json")
   })
 
@@ -458,7 +548,10 @@ describe("projections", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
-      return { now: await json("/v1/actors/default/threads/alpha/turns"), atTwo: await json("/v1/actors/default/threads/alpha/turns?at=2") }
+      return {
+        now: await json("/v1/actors/default/threads/alpha/projections/turns"),
+        atTwo: await json("/v1/actors/default/threads/alpha/projections/turns?at=2")
+      }
     })
     expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
     // Creation and the message stand before the cut, with nothing that answered the turn.
@@ -472,8 +565,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        one: await json("/v1/actors/default/threads/alpha/turns?turn=m1"),
-        ghost: await json("/v1/actors/default/threads/alpha/turns?turn=m9")
+        one: await json("/v1/actors/default/threads/alpha/projections/turns?turn=m1"),
+        ghost: await json("/v1/actors/default/threads/alpha/projections/turns?turn=m9")
       }
     })
     expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])

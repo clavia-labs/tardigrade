@@ -15,7 +15,8 @@ Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 ```bash
 tdg setup                  # provider, model, key
 tdg dev                    # API and UI on http://localhost:4242
-tdg run "read this repo and tell me what it does"
+tdg methods
+tdg call message '{"text":"read this repo and tell me what it does"}'
 ```
 
 ## Commands
@@ -27,12 +28,12 @@ tdg run "read this repo and tell me what it does"
 | `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
 | `tdg dev` | Serve the API and the UI on one port |
 | `tdg actors` | List actors available on the server |
-| `tdg run <brief>` | Start a thread and wait for its answer |
-| `tdg send <thread> <brief>` | Send to a thread, do not wait |
+| `tdg methods` | List an actor's methods and schemas |
+| `tdg call <method> <input>` | Call a method with JSON input and wait for its result |
 | `tdg ls` | List threads |
 | `tdg events <thread>` | Print a thread's log |
 
-Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. `tdg <command> --help` prints the rest.
+Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
 
 ## Configuration
 
@@ -63,7 +64,9 @@ No shell: a directory or a host list can be scoped and a shell cannot.
 ## Examples
 
 ```bash
-tdg run "summarize the open PRs" --json
+tdg methods --actor reviewer
+tdg call message '{"text":"summarize the open PRs"}' --actor reviewer --json
+tdg call inspect '{"path":"README.md"}' --actor reviewer --no-wait
 tdg actors
 tdg build ./actors/reviewer.ts
 tdg push ./actors/reviewer.ts --target local

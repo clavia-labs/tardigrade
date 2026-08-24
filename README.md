@@ -42,21 +42,21 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command creates `researcher/actor.ts` from the bundled template. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Build and push the result into the local actor registry:
+The `init` command creates `researcher/actor.ts` from the bundled template. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
 
 ```bash
-tdg build actor.ts
 tdg push actor.ts --target local
 tdg dev
 ```
 
-Keep `tdg dev` running. Start the actor from another shell in the same directory:
+Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:
 
 ```bash
-tdg run "read this repo and tell me what it does" --actor researcher
+tdg methods --actor researcher
+tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
 ```
 
-Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg run` prints the direct Voyager URL for the new trace.
+Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg call` prints the direct Voyager URL for the new trace.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">

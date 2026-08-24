@@ -51,17 +51,17 @@ const BOOT_MS = 20_000
 
 setDefaultTimeout(BOOT_MS)
 
-// Every route the server answers, as method and OpenAPI path. The stream is absent because it is
-// not a declared endpoint (api.ts, layerStream). The first three are the log, which is the whole of
-// what the platform declares; `turns` is there because the actor this build mounts declares it
-// (actor.ts, agentProjections), and it appears in the document by being declared.
+// Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream). `turns` appears because this build's actor declares it (actor.ts, agentProjections).
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
+  ["get", "/v1/actors/{actor}/methods"],
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
+  ["put", "/v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}"],
   ["get", "/v1/actors/{actor}/threads"],
   ["get", "/v1/actors/{actor}/threads/{id}/events"],
-  ["get", "/v1/actors/{actor}/threads/{id}/turns"],
+  ["get", "/v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}"],
+  ["get", "/v1/actors/{actor}/threads/{id}/projections/turns"],
   ["get", "/v1/actors/{actor}/threads/{id}/tree"],
   ["get", "/healthz"]
 ]
@@ -128,8 +128,8 @@ describe("problem documents", () => {
     const failures = await serving({}, (client) =>
       Effect.gen(function*() {
         const unknownThread = yield* client.get("/v1/actors/default/threads/ghost/events")
-        const unknownProjection = yield* client.get("/v1/actors/default/threads/ghost/facts")
-        const unknownTurn = yield* client.get("/v1/actors/default/threads/ghost/turns?at=1")
+        const unknownProjection = yield* client.get("/v1/actors/default/threads/ghost/projections/facts")
+        const unknownTurn = yield* client.get("/v1/actors/default/threads/ghost/projections/turns?at=1")
         return [
           { status: unknownThread.status, type: unknownThread.headers["content-type"], body: yield* unknownThread.json },
           {
@@ -164,7 +164,7 @@ describe("problem documents", () => {
       Effect.gen(function*() {
         const post = (path: string, body: unknown) =>
           client.post(path, { body: HttpBody.jsonUnsafe(body) })
-        const repeated = yield* client.get("/v1/actors/default/threads/ghost/turns?at=1&at=2")
+        const repeated = yield* client.get("/v1/actors/default/threads/ghost/projections/turns?at=1&at=2")
         const notANumber = yield* client.get("/v1/actors/default/threads/ghost/events?after=soon")
         const negative = yield* client.get("/v1/actors/default/threads/ghost/events?limit=-1")
         const missingField = yield* post("/v1/actors/default/threads/ghost/events", { id: "m1" })

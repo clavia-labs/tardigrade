@@ -2,13 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { replyId } from "@clavia/tardigrade-core/message"
-import { projection, projectionsOf, RESERVED_PROJECTIONS } from "@clavia/tardigrade-client/contract"
+import { projection, projectionsOf } from "@clavia/tardigrade-client/contract"
 
 import { agentProjections, builtInActor } from "./actor"
 
-// The actor's own declaration: what it says a thread can be asked beyond its log, and what the
-// platform refuses to mount. The projections are pure functions of an event array, so the fixtures
-// are event arrays, trimmed to the fields the reading looks at.
+// The actor's own declaration states what a thread can be asked beyond its log. The projections are pure functions of an event array, so the fixtures are event arrays trimmed to the fields the reading looks at.
 
 let clock = 0
 const at = () => ++clock
@@ -103,30 +101,11 @@ describe("reading one turn", () => {
 })
 
 describe("declaring projections", () => {
-  // The log is not a projection of itself, so the two names that read it are refused where the
-  // declaration is written rather than where a request arrives (contract.ts, RESERVED_PROJECTIONS).
-  test("a projection may not claim a reserved name", () => {
-    for (const reserved of RESERVED_PROJECTIONS) {
-      expect(() =>
-        projectionsOf({
-          [reserved]: projection({
-            params: {},
-            result: Schema.Array(Schema.String),
-            run: () => []
-          })
-        })
-      ).toThrow(`a projection may not be named ${JSON.stringify(reserved)}`)
-    }
-  })
-
-  test("a name the log does not own is declared without complaint", () => {
+  test("the projection namespace accepts platform route names", () => {
     const declared = projectionsOf({
-      streams: projection({ params: {}, result: Schema.Array(Schema.String), run: () => [] })
+      events: projection({ params: {}, result: Schema.Array(Schema.String), run: () => [] }),
+      stream: projection({ params: {}, result: Schema.Array(Schema.String), run: () => [] })
     })
-    expect(Object.keys(declared)).toEqual(["streams"])
-  })
-
-  test("the reserved names are the log's own two routes", () => {
-    expect([...RESERVED_PROJECTIONS].sort()).toEqual(["events", "stream"])
+    expect(Object.keys(declared)).toEqual(["events", "stream"])
   })
 })

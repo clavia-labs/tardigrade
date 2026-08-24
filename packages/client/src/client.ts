@@ -1,6 +1,7 @@
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
+import type { ActorMethodInput, ActorMethodOutput, ActorMethods, ActorMethodState } from "tardie"
 
 import {
   apiOf,
@@ -13,6 +14,8 @@ import {
   type ThreadSummary,
   type EventRow,
   type Health,
+  type MethodAccepted,
+  type MethodSummary,
   type Projections,
   type TurnView
 } from "./contract"
@@ -57,7 +60,7 @@ type ProjectionCall = (request: {
   readonly query: unknown
 }) => Effect.Effect<unknown, unknown>
 
-export interface ClientOptions<P extends Projections = {}> {
+export interface ClientOptions<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
   // The server's address. A path on it is kept, so a server mounted under a prefix works.
   readonly baseUrl?: string | undefined
   // The bearer token, sent as an `authorization` header on every request (apps/server/src/http.ts,
@@ -78,6 +81,8 @@ export interface ClientOptions<P extends Projections = {}> {
   // client that reads the log alone states none; one that calls a projection states the same
   // declaration the server mounts (contract.ts, apiOf).
   readonly projections?: P | undefined
+  // methods preserves the selected actor's call types at this client boundary.
+  readonly methods?: M | undefined
 }
 
 export interface EventsOptions {
@@ -98,9 +103,15 @@ export type ProjectionQuery<P extends Projections, Name extends keyof P> = Schem
 
 export type ProjectionResult<P extends Projections, Name extends keyof P> = P[Name]["result"]["Type"]
 
+// MethodCall carries the caller-minted id and the selected declaration's input type.
+export type MethodCall<M extends ActorMethods, Name extends keyof M> = {
+  readonly id: string
+  readonly input: ActorMethodInput<M[Name]>
+}
+
 type SchemaStructType<Fields> = Fields extends Schema.Struct.Fields ? Schema.Struct<Fields>["Type"] : never
 
-export interface Client<P extends Projections = {}> {
+export interface Client<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
   readonly baseUrl: string
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
@@ -111,6 +122,20 @@ export interface Client<P extends Projections = {}> {
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (thread: string, event: Append) => Promise<Accepted>
+  // methods lists the selected actor's callable interface and JSON Schema documents.
+  readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
+  // invoke commits one declared method call and returns its durable handle.
+  readonly invoke: <const Name extends keyof M & string>(
+    thread: string,
+    name: Name,
+    call: MethodCall<M, Name>
+  ) => Promise<MethodAccepted>
+  // methodState reads the selected declaration's typed durable state.
+  readonly methodState: <const Name extends keyof M & string>(
+    thread: string,
+    name: Name,
+    call: string
+  ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
   // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
   // SDK's convenience rather than a route: the platform has no resume, because a resume is an
   // append like any other (resume, below).
@@ -184,7 +209,9 @@ const eventsQuery = (options: EventsOptions) => {
 
 // makeClient builds the client once. The derivation reads the declaration and compiles an encoder
 // and a decoder per endpoint, so it happens at construction rather than per call.
-export const makeClient = <const P extends Projections = {}>(options: ClientOptions<P> = {}): Client<P> => {
+export const makeClient = <const P extends Projections = {}, const M extends ActorMethods = ActorMethods>(
+  options: ClientOptions<P, M> = {}
+): Client<P, M> => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
   const token = options.token
   // The derivation's own requirement is `HttpClient`, which the layer below provides, plus whatever
@@ -239,6 +266,16 @@ export const makeClient = <const P extends Projections = {}>(options: ClientOpti
     events: (thread, events = {}) =>
       run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
     append,
+    methods: () => run(api.methods.methods({ params: { actor } })),
+    invoke: (thread, name, call) =>
+      run(api.methods.invoke({
+        params: { actor, id: thread, method: name, call: call.id },
+        payload: call.input
+      })),
+    methodState: (thread, name, call) =>
+      run(api.methods.methodState({
+        params: { actor, id: thread, method: name, call }
+      })) as never,
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a

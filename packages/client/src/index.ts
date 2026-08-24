@@ -12,7 +12,8 @@ export {
   type Client,
   type ClientOptions,
   type EventsOptions,
-  type FollowOptions
+  type FollowOptions,
+  type MethodCall
 } from "./client"
 export { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 // The vocabulary's top level, and where the versioned routes live. A consumer that builds a URL by
@@ -24,13 +25,16 @@ export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenE
 export type {
   Accepted,
   ActorSummary,
+  Append,
+  EventRow,
+  Health,
+  MethodAccepted,
+  MethodSummary,
+  MethodState,
+  Problem,
   ThreadNode,
   ThreadStatus,
   ThreadSummary,
-  EventRow,
-  Health,
-  Append,
-  Problem,
   TurnStatus,
   TurnView
 } from "./contract"

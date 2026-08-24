@@ -1,6 +1,6 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
-import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type TurnView } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
 
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 
@@ -10,8 +10,8 @@ import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_U
 import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
-import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
-import { Cli, type CliProjections } from "./services"
+import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
+import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
@@ -19,24 +19,15 @@ import { traceUrlFor } from "./workflow"
 // the same tree the parser runs (commands.test.ts). A handler is a few lines over the derived
 // client (packages/client) and holds no wire knowledge of its own.
 
-// How often `tdg run` asks whether the turn it delivered has left `pending`. The server answers a
-// delivery with 202 and settles the turn on its own loop, so waiting is polling; this is the delay
-// a person sees between the turn finishing and the command printing.
+// DEFAULT_POLL_MILLIS is how often `tdg call` asks whether a method call has left `pending`.
 export const DEFAULT_POLL_MILLIS = 200
 
-// How long `tdg run` waits before it gives up and says so. A turn that outlives this is still
-// running on the server, and its output is still one `tdg events` away, so the number bounds the
-// command rather than the work.
+// DEFAULT_TIMEOUT_MILLIS bounds how long `tdg call` waits while the server continues the work.
 export const DEFAULT_TIMEOUT_MILLIS = 300_000
 
 // DEFAULT_OPEN_BROWSER is whether `tdg dev` opens the UI after listening. The `--no-open` flag
 // overrides it for scripts, containers, and remote shells.
 export const DEFAULT_OPEN_BROWSER = true
-
-// The turn status a run is asked for. Everything else, `failed` and `parked` alike, leaves the
-// command with a non-zero exit: a script that ran a turn and got no answer should not read as
-// success (commands.test.ts, "a failed turn prints its error and exits non-zero").
-export const SETTLED: TurnView["status"] = "completed"
 
 // problemLine is the whole of what a failed call prints. The four fields are the server's own words
 // (packages/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
@@ -80,9 +71,9 @@ const actor = Flag.string("actor").pipe(
   Flag.withDefault(RESERVED_ACTOR)
 )
 
-const messageId = Flag.string("id").pipe(
+const callId = Flag.string("id").pipe(
   Flag.withDescription(
-    "The message id, which is also the turn id and the dedup key. A fresh one is minted per invocation, so state it to make a retry absorbed rather than duplicated."
+    "The call id. A fresh id is minted unless stated; reuse it for an idempotent retry."
   ),
   Flag.optional
 )
@@ -105,25 +96,28 @@ const clientOf = (flags: {
 
 const stated = (option: Option.Option<string>): string | undefined => Option.getOrUndefined(option)
 
+const methodInput = (source: string): Effect.Effect<unknown, CliError.UserError> =>
+  Effect.try({
+    try: () => JSON.parse(source) as unknown,
+    catch: () => userErrorOf("method input must be valid JSON")
+  })
+
 const settle = (
-  client: Client<CliProjections>,
+  client: Client,
   thread: string,
-  turn: string,
+  method: string,
+  callId: string,
   pollMillis: number,
   timeoutMillis: number
-): Effect.Effect<TurnView, CliError.UserError> =>
+): Effect.Effect<MethodState, CliError.UserError> =>
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      // The single lookup is a query on the actor's declared projection rather than a route of its
-      // own: `turn` narrows it to one entry, and a turn nobody was asked to serve matches nothing
-      // (apps/server/src/actor.ts, agentProjections).
-      const views = yield* call(() => client.projection(thread, "turns", { turn }))
-      const view = views.find((candidate) => candidate.turn === turn)
-      if (view !== undefined && view.status !== "pending") return view
+      const state = yield* call(() => client.methodState(thread, method, callId))
+      if (state.status !== "pending") return state
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* userErrorOf(
-          `turn ${turn} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
+          `call ${callId} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
         )
       }
       yield* Effect.sleep(pollMillis)
@@ -363,19 +357,37 @@ export const devCommand = Command.make("dev", {
       ])
     )
 
-export const runCommand = Command.make("run", {
-  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the actor to do")),
+export const methodsCommand = Command.make("methods", remote, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf(flags)
+    const methods = yield* call(() => client.methods())
+    yield* Console.log(flags.json ? jsonOf(methods) : methodsLines(methods))
+  })).pipe(
+    Command.withDescription("List method names and their input and output schemas."),
+    Command.withExamples([
+      { command: "tdg methods --actor researcher", description: "Inspect an actor's callable interface" },
+      { command: "tdg methods --actor researcher --json", description: "Print the method catalog as JSON" }
+    ])
+  )
+
+export const callCommand = Command.make("call", {
+  method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
+  input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
   thread: Flag.string("thread").pipe(
-    Flag.withDescription("The thread to deliver to. A fresh id is minted per invocation, which births a new thread."),
+    Flag.withDescription("The thread id. A fresh id is minted unless stated."),
     Flag.optional
   ),
-  id: messageId,
+  id: callId,
+  wait: Flag.boolean("wait").pipe(
+    Flag.withDescription("Wait for the method call to leave pending."),
+    Flag.withDefault(true)
+  ),
   poll: Flag.integer("poll").pipe(
-    Flag.withDescription("Milliseconds between turn reads while waiting."),
+    Flag.withDescription("Milliseconds between method state reads while waiting."),
     Flag.withDefault(DEFAULT_POLL_MILLIS)
   ),
   timeout: Flag.integer("timeout").pipe(
-    Flag.withDescription("Milliseconds to wait for the turn to leave pending."),
+    Flag.withDescription("Milliseconds to wait for the method call to leave pending."),
     Flag.withDefault(DEFAULT_TIMEOUT_MILLIS)
   ),
   ...remote
@@ -385,46 +397,29 @@ export const runCommand = Command.make("run", {
     const client = yield* clientOf(flags)
     const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.append(thread, { type: "MessageReceived", id, text: flags.brief }))
-    const view = yield* settle(client, accepted.thread, id, flags.poll, flags.timeout)
+    const input = yield* methodInput(flags.input)
+    const accepted = yield* call(() => client.invoke(thread, flags.method, { id, input }))
+    if (!flags.wait) {
+      yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.call} accepted`)
+      return
+    }
+    const state = yield* settle(client, accepted.thread, accepted.method, accepted.call, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
-        ? jsonOf(view)
-        : view.status === SETTLED
-        ? `${turnLines(accepted.thread, view)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
-        : turnLines(accepted.thread, view)
+        ? jsonOf({ ...accepted, ...state })
+        : state.status === "completed"
+        ? `${methodLines(accepted.thread, accepted.call, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
+        : methodLines(accepted.thread, accepted.call, state)
     )
-    if (view.status !== SETTLED) {
-      return yield* userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`)
+    if (state.status !== "completed") {
+      return yield* userErrorOf(`call ${accepted.call} on thread ${accepted.thread} is ${state.status}`)
     }
   })).pipe(
-    Command.withDescription(
-      "Start a thread, wait for its turn to settle, and print what it answered. Exits non-zero unless the turn completed."
-    ),
+    Command.withDescription("Call an actor method with JSON input. Waits by default and exits non-zero unless completed."),
     Command.withExamples([
-      { command: "tdg run \"summarize the log\"", description: "Brief a new thread and wait for its answer" },
-      { command: "tdg run \"and again\" --thread surveyor", description: "Brief a thread that already exists" }
+      { command: "tdg call message '{\"text\":\"summarize the log\"}'", description: "Call message on a new thread and wait" },
+      { command: "tdg call message '{\"text\":\"and again\"}' --thread surveyor", description: "Call message on an existing thread" }
     ])
-  )
-
-export const sendCommand = Command.make("send", {
-  thread: Argument.string("thread").pipe(Argument.withDescription("The thread to deliver to")),
-  brief: Argument.string("brief").pipe(Argument.withDescription("What to ask the actor to do")),
-  id: messageId,
-  ...remote
-}, (flags) =>
-  Effect.gen(function*() {
-    const cli = yield* Cli
-    const client = yield* clientOf(flags)
-    const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.append(flags.thread, { type: "MessageReceived", id, text: flags.brief }))
-    // The turn is the id this invocation minted: the platform echoes the two levels it knows and
-    // nothing turn-shaped, because a turn is the actor's reading of the log (contract.ts, Accepted).
-    yield* Console.log(flags.json ? jsonOf({ ...accepted, turn: id }) : `${accepted.thread} ${id}`)
-  })).pipe(
-    Command.withDescription(
-      "Deliver a brief and print the turn handle without waiting. The turn settles on the server's own loop."
-    )
   )
 
 export const lsCommand = Command.make("ls", remote, (flags) =>
@@ -433,7 +428,7 @@ export const lsCommand = Command.make("ls", remote, (flags) =>
     const threads = yield* call(() => client.list())
     yield* Console.log(flags.json ? jsonOf(threads) : threadsTable(threads))
   })).pipe(
-    Command.withDescription("List every thread a store holds, parent before child. A spawned child is a thread like any other, so a run that spawned nine lists ten rows."),
+    Command.withDescription("List every thread a store holds, parent before child. An execution that spawned nine children lists ten rows."),
     Command.withAlias("list")
   )
 
@@ -491,5 +486,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, runCommand, sendCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, methodsCommand, callCommand, lsCommand, eventsCommand])
 )

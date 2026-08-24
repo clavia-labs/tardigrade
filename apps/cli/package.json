@@ -33,8 +33,5 @@
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "start": "bun run src/main.ts"
-  },
-  "devDependencies": {
-    "tardie": "workspace:*"
   }
 }

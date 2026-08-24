@@ -27,9 +27,6 @@
         "@effect/platform-node-shared": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
       },
-      "devDependencies": {
-        "tardie": "workspace:*",
-      },
     },
     "apps/server": {
       "name": "@clavia/tardigrade-server",
@@ -94,6 +91,7 @@
       "dependencies": {
         "@clavia/tardigrade-core": "workspace:*",
         "effect": "4.0.0-rc.110",
+        "tardie": "workspace:*",
       },
     },
     "packages/code": {

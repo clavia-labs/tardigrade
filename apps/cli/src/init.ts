@@ -2,7 +2,7 @@ import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path"
 
 import { actorTemplate } from "./template"
-import { runCommandFor, shellWord } from "./workflow"
+import { callCommandFor, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 
@@ -55,11 +55,10 @@ export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()
     "",
     "next",
     `  cd ${shellWord(directory)}`,
-    `  tdg build ${shellWord(entry)}`,
     `  tdg push ${shellWord(entry)} --target local`,
     "  tdg dev",
     "",
     "then, in another terminal",
-    `  ${runCommandFor(actor.name)}`
+    `  ${callCommandFor(actor.name)}`
   ].join("\n")
 }

@@ -1,4 +1,4 @@
-import type { ActorSummary, ThreadSummary, EventRow, TurnView } from "@clavia/tardigrade-client"
+import type { ActorSummary, ThreadSummary, EventRow, MethodState, MethodSummary } from "@clavia/tardigrade-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the
@@ -86,11 +86,24 @@ export const eventsTable = (rows: ReadonlyArray<EventRow>, width = DEFAULT_DETAI
       rows.map((row) => [String(row.seq), row.event.type, truncate(detailOf(row), width)])
     )
 
-// A turn's boundary as a person reads it: the status word, then whichever of output or error the
-// projection carried.
-export const turnLines = (thread: string, view: TurnView): string => {
-  const head = `${thread} ${view.turn} ${view.status}`
-  if (view.output !== undefined) return `${head}\n${view.output}`
-  if (view.error !== undefined) return `${head}\n${view.error}`
+// methodLines renders a call handle, its durable status, and any terminal detail.
+export const methodLines = (thread: string, call: string, state: MethodState): string => {
+  const head = `${thread} ${call} ${state.status}`
+  if (state.status === "completed") {
+    const output = typeof state.output === "string" ? state.output : jsonOf(state.output)
+    return `${head}\n${output}`
+  }
+  if (state.status === "failed") return `${head}\n${state.error}`
+  if (state.status === "blocked") return `${head}\n${state.reason}`
   return head
 }
+
+// methodsLines renders each method with the input and output schemas an author calls against.
+export const methodsLines = (methods: ReadonlyArray<MethodSummary>): string =>
+  methods.length === 0
+    ? "no methods"
+    : methods.map((method) => [
+      method.name,
+      `  input  ${JSON.stringify(method.inputSchema)}`,
+      `  output ${JSON.stringify(method.outputSchema)}`
+    ].join("\n")).join("\n\n")

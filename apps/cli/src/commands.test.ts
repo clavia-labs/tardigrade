@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
 import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ProblemError, RESERVED_ACTOR, type Accepted, type ActorSummary, type ThreadSummary, type Client, type EventRow, type TurnView } from "@clavia/tardigrade-client"
+import { ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary, type Client, type EventRow, type MethodAccepted, type MethodState, type MethodSummary } from "@clavia/tardigrade-client"
 
 import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
-import { Cli, type CliProjections, type CliServices } from "./services"
+import { Cli, type CliServices } from "./services"
 
 // The command tree, driven the way a shell drives it: real arguments through the real parser, over
 // a client this file wrote. Nothing here spawns a process, and nothing here reaches a network.
@@ -20,8 +20,9 @@ const events: ReadonlyArray<EventRow> = [
 ]
 
 interface Recorded {
-  readonly appended: Array<{ thread: string; id: string; text: string }>
+  readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly asked: Array<{ thread: string; options: unknown }>
+  methodReads: number
 }
 
 const refuse = () => Promise.reject(new Error("this command should not have called that"))
@@ -34,10 +35,11 @@ const clientOf = (
     readonly list?: ReadonlyArray<ThreadSummary>
     readonly actors?: ReadonlyArray<ActorSummary>
     readonly events?: ReadonlyArray<EventRow>
-    readonly turns?: ReadonlyArray<TurnView>
+    readonly methods?: ReadonlyArray<MethodSummary>
+    readonly states?: ReadonlyArray<MethodState>
     readonly fail?: ProblemError
   }
-): Client<CliProjections> => {
+): Client => {
   let read = 0
   return {
     baseUrl: "http://localhost:0",
@@ -46,29 +48,35 @@ const clientOf = (
       ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
       : Promise.reject(answers.fail),
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
+    methods: () => answers.fail === undefined ? Promise.resolve(answers.methods ?? []) : Promise.reject(answers.fail),
     events: (thread, options) => {
       recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
     },
-    // The single turn lookup is a query on the actor's declared projection, so the stand-in answers
-    // it the way the server does: the entries that match, narrowed by `turn` when one is stated.
-    projection: ((_thread: string, _name: string, query?: { readonly turn?: string }) => {
-      const views = answers.turns ?? []
-      const view = views[Math.min(read++, views.length - 1)]
-      if (view === undefined) return refuse()
-      const wanted = query?.turn
-      return Promise.resolve(wanted === undefined || view.turn === wanted ? [view] : [])
-    }) as Client<CliProjections>["projection"],
-    append: (thread, event) => {
-      recorded.appended.push({
+    methodState: () => {
+      recorded.methodReads += 1
+      const states = answers.states ?? []
+      const state = states[Math.min(read++, states.length - 1)]
+      return state === undefined ? refuse() : Promise.resolve(state)
+    },
+    invoke: (thread, name, invocation) => {
+      recorded.invoked.push({
         thread,
-        id: String(event["id"] ?? ""),
-        text: String(event["text"] ?? "")
+        method: name,
+        id: invocation.id,
+        input: invocation.input
       })
       return answers.fail === undefined
-        ? Promise.resolve({ actor: RESERVED_ACTOR, thread } satisfies Accepted)
+        ? Promise.resolve({
+          actor: RESERVED_ACTOR,
+          thread,
+          method: name,
+          call: invocation.id
+        } satisfies MethodAccepted)
         : Promise.reject(answers.fail)
     },
+    append: refuse,
+    projection: refuse as Client["projection"],
     tree: refuse,
     resume: refuse,
     health: refuse,
@@ -95,7 +103,7 @@ const drive = async (
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
-  const recorded: Recorded = { appended: [], asked: [] }
+  const recorded: Recorded = { invoked: [], asked: [], methodReads: 0 }
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
@@ -141,11 +149,12 @@ describe("parsing", () => {
   // Every command is a declaration, so a command that exists is a command the help names. `setup`
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
   test("the tree names setup, and its help says what it writes", async () => {
-    expect((await drive([])).lines.join("\n")).toContain("setup")
-    expect((await drive([])).lines.join("\n")).toContain("init")
-    expect((await drive([])).lines.join("\n")).toContain("build")
-    expect((await drive([])).lines.join("\n")).toContain("push")
-    expect((await drive([])).lines.join("\n")).toContain("actors")
+    const root = (await drive([])).lines.join("\n")
+    for (const command of ["setup", "init", "build", "push", "actors", "methods", "call"]) {
+      expect(root).toContain(command)
+    }
+    expect(root).not.toContain("run ")
+    expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
     expect(help).toContain("~/.tardigrade/config.json")
     expect(help).toContain("0600")
@@ -263,33 +272,36 @@ describe("events", () => {
   })
 })
 
-describe("send", () => {
-  test("the turn handle is printed and nothing is waited on", async () => {
-    const ran = await drive(["send", "root", "do the thing"])
-    expect(ran.lines[0]).toBe("root minted-1")
-    expect(ran.recorded.appended).toEqual([{ thread: "root", id: "minted-1", text: "do the thing" }])
+describe("methods", () => {
+  const methods: ReadonlyArray<MethodSummary> = [{
+    name: "message",
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" } } },
+    outputSchema: { type: "string" }
+  }]
+
+  test("the human rendering shows each method and schema", async () => {
+    const ran = await drive(["methods"], { answers: { methods } })
+    expect(ran.failed).toBe(false)
+    expect(ran.lines[0]).toContain("message")
+    expect(ran.lines[0]).toContain("\"required\":[\"text\"]")
+    expect(ran.lines[0]).toContain("output {\"type\":\"string\"}")
   })
 
-  test("a stated id is the id, so a retry is absorbed", async () => {
-    const ran = await drive(["send", "root", "again", "--id", "m1"])
-    expect(ran.recorded.appended[0]?.id).toBe("m1")
-  })
-
-  test("--json prints the handle verbatim", async () => {
-    const ran = await drive(["send", "root", "again", "--json", "--id", "m1"])
-    expect(JSON.parse(ran.lines[0] ?? "")).toEqual({ actor: RESERVED_ACTOR, thread: "root", turn: "m1" })
+  test("--json prints the method catalog verbatim", async () => {
+    const ran = await drive(["methods", "--json"], { answers: { methods } })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(methods)
   })
 })
 
-describe("run", () => {
-  test("a pending turn is polled until it settles, and the output is printed", async () => {
+describe("call", () => {
+  test("a pending call is polled until it settles, and the output is printed", async () => {
     const ran = await drive(
-      ["run", "summarize", "--thread", "root", "--id", "m1", "--poll", "1"],
+      ["call", "message", "{\"text\":\"summarize\"}", "--thread", "root", "--id", "m1", "--poll", "1"],
       {
         answers: {
-          turns: [
-            { turn: "m1", status: "pending", epoch: 0 },
-            { turn: "m1", status: "completed", epoch: 0, output: "the summary" }
+          states: [
+            { status: "pending" },
+            { status: "completed", output: "the summary" }
           ]
         }
       }
@@ -298,26 +310,74 @@ describe("run", () => {
     expect(ran.lines[0]).toBe(
       "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?actor=default&thread=root"
     )
+    expect(ran.recorded.invoked).toEqual([{
+      thread: "root",
+      method: "message",
+      id: "m1",
+      input: { text: "summarize" }
+    }])
   })
 
-  test("a thread nobody named is minted, so a run births its own thread", async () => {
-    const ran = await drive(["run", "hello", "--poll", "1"], {
-      answers: { turns: [{ turn: "minted-2", status: "completed", epoch: 0, output: "hi" }] }
+  test("a custom method receives its JSON input", async () => {
+    const ran = await drive(["call", "inspect", "{\"path\":\"README.md\",\"depth\":2}", "--poll", "1"], {
+      answers: { states: [{ status: "completed", output: { findings: 3 } }] }
     })
-    expect(ran.recorded.appended).toEqual([{ thread: "minted-1", id: "minted-2", text: "hello" }])
+    expect(ran.recorded.invoked).toEqual([{
+      thread: "minted-1",
+      method: "inspect",
+      id: "minted-2",
+      input: { path: "README.md", depth: 2 }
+    }])
+    expect(ran.lines[0]).toContain('{\n  "findings": 3\n}')
   })
 
-  test("a failed turn prints its error and exits non-zero", async () => {
-    const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1"], {
-      answers: { turns: [{ turn: "m1", status: "failed", epoch: 0, error: "no model is configured" }] }
+  test("--no-wait prints the durable handle without reading state", async () => {
+    const ran = await drive(["call", "message", "{\"text\":\"again\"}", "--thread", "root", "--id", "m1", "--no-wait"])
+    expect(ran.failed).toBe(false)
+    expect(ran.lines[0]).toBe("root m1 accepted")
+    expect(ran.recorded.methodReads).toBe(0)
+  })
+
+  test("--json includes the handle and terminal state", async () => {
+    const ran = await drive(["call", "message", "{\"text\":\"again\"}", "--thread", "root", "--id", "m1", "--json"], {
+      answers: { states: [{ status: "completed", output: "done" }] }
+    })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual({
+      actor: RESERVED_ACTOR,
+      thread: "root",
+      method: "message",
+      call: "m1",
+      status: "completed",
+      output: "done"
+    })
+  })
+
+  test("malformed JSON is refused before a method is invoked", async () => {
+    const ran = await drive(["call", "message", "hello"])
+    expect(ran.failed).toBe(true)
+    expect(failureText(ran)).toContain("valid JSON")
+    expect(ran.recorded.invoked).toEqual([])
+  })
+
+  test("a failed call prints its error and exits non-zero", async () => {
+    const ran = await drive(["call", "message", "{\"text\":\"hello\"}", "--thread", "root", "--id", "m1", "--poll", "1"], {
+      answers: { states: [{ status: "failed", error: "no model is configured" }] }
     })
     expect(ran.lines[0]).toBe("root m1 failed\nno model is configured")
     expect(ran.failed).toBe(true)
   })
 
-  test("a turn that never settles gives up rather than hanging", async () => {
-    const ran = await drive(["run", "hello", "--thread", "root", "--id", "m1", "--poll", "1", "--timeout", "0"], {
-      answers: { turns: [{ turn: "m1", status: "pending", epoch: 0 }] }
+  test("a blocked call prints its reason and exits non-zero", async () => {
+    const ran = await drive(["call", "message", "{\"text\":\"hello\"}", "--thread", "root", "--id", "m1", "--poll", "1"], {
+      answers: { states: [{ status: "blocked", reason: "budget" }] }
+    })
+    expect(ran.lines[0]).toBe("root m1 blocked\nbudget")
+    expect(ran.failed).toBe(true)
+  })
+
+  test("a call that never settles gives up rather than hanging", async () => {
+    const ran = await drive(["call", "message", "{\"text\":\"hello\"}", "--thread", "root", "--id", "m1", "--poll", "1", "--timeout", "0"], {
+      answers: { states: [{ status: "pending" }] }
     })
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("still pending")
