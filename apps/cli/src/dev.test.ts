@@ -88,7 +88,7 @@ const booted = <A>(
 
 // installActor performs the final atomic directory swap of a local push.
 const installActor = (root: string, name: string, revision: string): string => {
-  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, actor: { reactors: [], keyOf: () => undefined } }\n`
+  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
   const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
   const destination = join(root, name)
   const incoming = `${destination}.incoming`

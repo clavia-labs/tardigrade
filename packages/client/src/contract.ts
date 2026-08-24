@@ -208,7 +208,7 @@ export type ActorSummary = typeof ActorSummary.Type
 
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
-    schema: Schema.Literal(1),
+    schema: Schema.Literal(2),
     name: Schema.String,
     module: Schema.String,
     digest: Schema.String

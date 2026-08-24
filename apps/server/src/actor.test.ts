@@ -4,7 +4,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { replyId } from "@clavia/tardigrade-core/message"
 import { projection, projectionsOf, RESERVED_PROJECTIONS } from "@clavia/tardigrade-client/contract"
 
-import { agentProjections } from "./actor"
+import { agentProjections, builtInActor } from "./actor"
 
 // The actor's own declaration: what it says a thread can be asked beyond its log, and what the
 // platform refuses to mount. The projections are pure functions of an event array, so the fixtures
@@ -29,6 +29,12 @@ const reply = (id: string, text = "done"): Event =>
   ({ type: "MessageReceived", id: replyId(id), text, outcome: "completed", at: at() }) as Event
 
 const turns = agentProjections.turns
+
+describe("the built-in actor", () => {
+  test("declares the message method", () => {
+    expect(Object.keys(builtInActor().methods)).toEqual(["message"])
+  })
+})
 
 describe("the turns projection", () => {
   test("one entry per inbound message, with its boundary", () => {

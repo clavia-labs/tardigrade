@@ -16,6 +16,7 @@ import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 
 // A Threads that owns nothing, so every read is the empty log a 404 is made of.
 const layerThreadsEmpty = Layer.succeed(Threads)({
+  methods: {},
   append: () => Effect.void,
   events: () => Effect.succeed([]),
   list: Effect.succeed([]),

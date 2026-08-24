@@ -199,7 +199,7 @@ describe("actors", () => {
       isolatedConfig,
       Layer.provide(layerThreads({ infer: layerScripted }), isolatedConfig)
     ])
-    const module = `export default { name: "reviewer", actor: { reactors: [], keyOf: () => undefined } }\n`
+    const module = `export default { name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
     try {
       const result = await Effect.gen(function*() {
@@ -209,7 +209,7 @@ describe("actors", () => {
         const base = `http://127.0.0.1:${port}`
         return yield* Effect.promise(async () => {
           const pushed = await put(base, "/v1/actors", {
-            manifest: { schema: 1, name: "reviewer", module: "actor.mjs", digest },
+            manifest: { schema: 2, name: "reviewer", module: "actor.mjs", digest },
             module
           })
           const summary = await pushed.json()

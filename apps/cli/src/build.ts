@@ -6,6 +6,8 @@ import { fileURLToPath, pathToFileURL } from "node:url"
 import {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
+  actorMethodsOf,
+  type ActorMethods,
   type ActorArtifactManifest,
   type ActorDefinition
 } from "tardie"
@@ -31,7 +33,7 @@ const definitionOf = async (modulePath: string): Promise<ActorDefinition<unknown
   const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?build=${crypto.randomUUID()}`)
   const definition = (loaded as { readonly default?: unknown }).default
   if (typeof definition !== "object" || definition === null) {
-    throw new Error("actor entry must default export defineActor({ name, actor })")
+    throw new Error("actor entry must default export defineActor({ name, methods, actor })")
   }
   const candidate = definition as Partial<ActorDefinition<unknown>>
   if (typeof candidate.name !== "string" || !ACTOR_NAME_PATTERN.test(candidate.name)) {
@@ -45,6 +47,10 @@ const definitionOf = async (modulePath: string): Promise<ActorDefinition<unknown
   ) {
     throw new Error("actor entry must contain an Actor in its actor field")
   }
+  if (typeof candidate.methods !== "object" || candidate.methods === null || Array.isArray(candidate.methods)) {
+    throw new Error("actor entry must declare its methods")
+  }
+  actorMethodsOf(candidate.methods as ActorMethods)
   return candidate as ActorDefinition<unknown>
 }
 

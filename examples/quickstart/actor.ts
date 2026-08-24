@@ -1,5 +1,6 @@
 import {
   actor,
+  agentMethods,
   agentsPackage,
   budget,
   codeMode,
@@ -29,6 +30,8 @@ Return a concise answer with concrete findings.
 
 export default defineActor({
   name: actorName,
+  // methods declares the typed calls this actor accepts.
+  methods: agentMethods,
   // actor carries component and output requirements into the host type.
   actor: actor(infer([
     system(actorInstructions),

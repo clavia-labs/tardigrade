@@ -30,6 +30,7 @@ setDefaultTimeout(BOOT_MS)
 // The conventions these tests are about hold over any host, so the thread routes get one that owns
 // nothing. The routes themselves are exercised against a real host in api.test.ts.
 const layerThreadsEmpty = Layer.succeed(Threads)({
+  methods: {},
   append: () => Effect.void,
   events: () => Effect.succeed([]),
   list: Effect.succeed([]),
