@@ -14,7 +14,11 @@ import {
 } from "@clavia/tardigrade-model/directory"
 import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
-import type { Env, ModelConfig } from "@clavia/tardigrade-server/config"
+import {
+  TARDIGRADE_CONFIG_VAR,
+  type Env,
+  type ModelConfig
+} from "@clavia/tardigrade-server/config"
 import {
   DEFAULT_MODEL_CATALOG_URL,
   modelsDevCatalogOf
@@ -29,9 +33,11 @@ import { parseProjectConfig, projectConfigPathIn } from "./config"
 
 // SECRETS_MODE leaves the environment file readable and writable by its owner alone.
 export const SECRETS_MODE = 0o600
-export const ENV_FILE = ".env"
+export const ENV_FILE = ".dev.vars"
+export const GITIGNORE_FILE = ".gitignore"
 
 export const envPathIn = (root: string): string => `${root.replace(/\/$/, "")}/${ENV_FILE}`
+export const gitignorePathIn = (root: string): string => `${root.replace(/\/$/, "")}/${GITIGNORE_FILE}`
 
 // DEFAULT_MODEL_LIST_TIMEOUT_MILLIS bounds the optional model catalog request.
 export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
@@ -623,6 +629,9 @@ export const setupEnvironmentOf = (raw: string): Env => {
   return env
 }
 
+// runtimeEnvironmentOf applies local development secrets before process environment values (setup.test.ts, "process credentials override local development values").
+export const runtimeEnvironmentOf = (env: Env, local: Env): Env => ({ ...local, ...env })
+
 const withAssignments = (raw: string, values: Readonly<Record<string, string>>): string => {
   const pending = new Set(Object.keys(values))
   const lines = raw.length === 0 ? [] : raw.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n")
@@ -635,6 +644,14 @@ const withAssignments = (raw: string, values: Readonly<Record<string, string>>):
   })
   for (const name of pending) next.push(`${name}=${JSON.stringify(values[name])}`)
   return `${next.join("\n")}\n`
+}
+
+const withSecretsIgnored = (raw: string): string => {
+  const normalized = raw.replace(/\r\n/g, "\n")
+  const lines = normalized.split("\n")
+  if (lines.some((line) => line.trim() === ".dev.vars" || line.trim() === ".dev.vars*")) return normalized
+  const prefix = normalized.length === 0 || normalized.endsWith("\n") ? normalized : `${normalized}\n`
+  return `${prefix}.dev.vars*\n`
 }
 
 const readOrEmpty = (fs: FileSystemService, path: string): Effect.Effect<string, PlatformError> =>
@@ -655,7 +672,7 @@ const updatedProject = (
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
   for (const provider of providers) {
-    next = applyEdits(next, modify(next, ["models", "providers", provider.provider], {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider], {
       baseUrl: provider.baseUrl,
       protocol: provider.protocol,
       env: provider.env,
@@ -663,7 +680,7 @@ const updatedProject = (
     }, { formattingOptions }))
   }
   if (selected !== undefined) {
-    next = applyEdits(next, modify(next, ["models", "default"], selected, { formattingOptions }))
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "default"], selected, { formattingOptions }))
   }
   return next.endsWith("\n") ? next : `${next}\n`
 }
@@ -709,6 +726,9 @@ const writeSetupChanges = (
       // The mode is set again after the write, because `mode` applies when a file is created and this
       // may have replaced one that already existed at a wider mode (setup.test.ts).
       yield* fs.chmod(secretsPath, SECRETS_MODE)
+      const gitignorePath = gitignorePathIn(root)
+      const gitignoreRaw = yield* readOrEmpty(fs, gitignorePath)
+      yield* fs.writeFileString(gitignorePath, withSecretsIgnored(gitignoreRaw))
     }
     return { configPath, secretsPath }
   })

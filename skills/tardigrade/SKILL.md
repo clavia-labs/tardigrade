@@ -24,7 +24,7 @@ tdg init researcher \
 cd researcher
 ```
 
-Set the named credential in the environment that runs the server. Add another provider or change the default with focused commands:
+Interactive setup writes local credentials to `.dev.vars`. Set the named credential in the platform secret store for a deployment. Add another provider or change the default with focused commands:
 
 ```bash
 tdg setup provider openai '{"env":["OPENAI_API_KEY"]}'

@@ -199,8 +199,8 @@ describe("parsing", () => {
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
-    expect(help).toContain("tardigrade.jsonc")
-    expect(help).toContain(".env")
+    expect(help).toContain("wrangler.jsonc")
+    expect(help).toContain(".dev.vars")
     expect(help).toContain("0600")
     expect(help).toContain("provider")
     expect(help).toContain("default")
@@ -230,8 +230,8 @@ describe("parsing", () => {
         '{"env":["OPENROUTER_API_KEY"]}'
       ], { cwd })
       expect(provider.failed).toBe(false)
-      expect(await readFile(join(cwd, "tardigrade.jsonc"), "utf8")).not.toContain('"default"')
-      await expect(readFile(join(cwd, ".env"), "utf8")).rejects.toThrow()
+      expect(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).not.toContain('"default"')
+      await expect(readFile(join(cwd, ".dev.vars"), "utf8")).rejects.toThrow()
 
       const selected = await drive([
         "setup",
@@ -242,7 +242,7 @@ describe("parsing", () => {
         "anthropic/claude-sonnet-4-6"
       ], { cwd })
       expect(selected.failed).toBe(false)
-      const config = await readFile(join(cwd, "tardigrade.jsonc"), "utf8")
+      const config = await readFile(join(cwd, "wrangler.jsonc"), "utf8")
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
     } finally {
@@ -272,13 +272,13 @@ describe("parsing", () => {
       ], { cwd })
       const directory = join(cwd, "researcher")
       const actor = await readFile(join(directory, "actor.ts"), "utf8")
-      const config = await readFile(join(directory, "tardigrade.jsonc"), "utf8")
+      const config = await readFile(join(directory, "wrangler.jsonc"), "utf8")
 
       expect(ran.failed).toBe(false)
       expect(actor).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
-      await expect(readFile(join(directory, ".env"), "utf8")).rejects.toThrow()
+      await expect(readFile(join(directory, ".dev.vars"), "utf8")).rejects.toThrow()
       expect(ran.lines.join("\n")).toContain('"credential": "environment"')
     } finally {
       await rm(cwd, { recursive: true, force: true })

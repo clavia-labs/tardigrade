@@ -67,23 +67,27 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
-| `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc`. Ordinary project configuration for a directly hosted server |
+| `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
 | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. Interactive `tdg setup` writes ordinary configuration to `tardigrade.jsonc` and credentials to the project `.env`. The declarative `tdg setup provider <provider> <config>` command writes the connection and leaves secret values in the deployment environment. The `provider` and `default` subcommands change those concerns independently.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. Interactive `tdg setup` writes provider configuration under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and local credentials to `.dev.vars`. The declarative `tdg setup provider <provider> <config>` command writes the connection and leaves secret values in the deployment environment. The `provider` and `default` subcommands change those concerns independently.
 
 ```jsonc
 {
-  "models": {
-    "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
-    "providers": {
-      "openrouter": {
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "protocol": "openai-chat-completions",
-        "env": ["OPENROUTER_API_KEY"]
+  "vars": {
+    "TARDIGRADE_CONFIG": {
+      "models": {
+        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+        "providers": {
+          "openrouter": {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "protocol": "openai-chat-completions",
+            "env": ["OPENROUTER_API_KEY"]
+          }
+        }
       }
     }
   }
@@ -93,6 +97,8 @@ The server boots without a provider connection and serves every read; turns fail
 ```dotenv
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
+
+`tdg dev` reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
 
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
 

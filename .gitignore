@@ -22,6 +22,7 @@ packages/core/tla/states/
 .DS_Store
 *.log
 .env*
+.dev.vars*
 
 # SQLite files and spill directories the examples write when they run
 examples/.data/

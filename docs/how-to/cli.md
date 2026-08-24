@@ -44,7 +44,7 @@ Commands that print data take `--json` where their help lists it. Remote command
 
 ## Configuration
 
-A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. This order applies to remote URL and token settings. Project model configuration lives in `tardigrade.jsonc`. Provider credentials live in `.env`.
+A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. This order applies to remote URL and token settings. Public project configuration lives in `wrangler.jsonc`. Local provider credentials live in `.dev.vars`.
 
 | | Flag | Environment | Default |
 | --- | --- | --- | --- |
@@ -53,11 +53,11 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
-| Project configuration | | `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc` |
+| Project configuration | | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc` |
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
-| Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.env` |
+| Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.dev.vars` |
 
-`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated JSONC settings, comments, environment entries, and provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc`, and stores the credential in `.dev.vars` at mode 0600. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated Wrangler settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
 An agent or CI job can avoid prompts by supplying the provider connection as JSON during initialization. The JSON names the credential environment variable and never contains its value:
 
@@ -92,13 +92,17 @@ tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","
 
 ```jsonc
 {
-  "models": {
-    "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
-    "providers": {
-      "openrouter": {
-        "baseUrl": "https://openrouter.ai/api/v1",
-        "protocol": "openai-chat-completions",
-        "env": ["OPENROUTER_API_KEY"]
+  "vars": {
+    "TARDIGRADE_CONFIG": {
+      "models": {
+        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+        "providers": {
+          "openrouter": {
+            "baseUrl": "https://openrouter.ai/api/v1",
+            "protocol": "openai-chat-completions",
+            "env": ["OPENROUTER_API_KEY"]
+          }
+        }
       }
     }
   }

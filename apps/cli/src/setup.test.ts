@@ -9,10 +9,12 @@ import { parseProjectConfig, projectConfigPathIn } from "./config"
 import {
   defaultModelFrom,
   envPathIn,
+  gitignorePathIn,
   modelsDevAt,
   PRESETS,
   providerAnswersFrom,
   readSetupEnv,
+  runtimeEnvironmentOf,
   SECRETS_MODE,
   setupAnswersFrom,
   setupJson,
@@ -197,6 +199,13 @@ describe("declarative setup", () => {
 })
 
 describe("writeSetup", () => {
+  test("process credentials override local development values", () => {
+    expect(runtimeEnvironmentOf(
+      { OPENAI_API_KEY: "deployed" },
+      { OPENAI_API_KEY: "local", LOCAL_ONLY: "value" }
+    )).toEqual({ OPENAI_API_KEY: "deployed", LOCAL_ONLY: "value" })
+  })
+
   test("the project config and private environment are written separately", async () => {
     const files = await write()
     expect(files).toEqual({
@@ -204,6 +213,7 @@ describe("writeSetup", () => {
       secretsPath: envPathIn(root)
     })
     expect((await stat(files.secretsPath)).mode & 0o777).toBe(SECRETS_MODE)
+    expect(await readFile(gitignorePathIn(root), "utf8")).toContain(".dev.vars*")
   })
 
   test("configuration is JSONC and the credential is the only environment entry", async () => {
@@ -227,9 +237,11 @@ describe("writeSetup", () => {
 
   test("unrelated environment lines and JSONC comments are kept", async () => {
     await writeFile(envPathIn(root), "# application\nAPP_NAME=release\n")
+    await writeFile(gitignorePathIn(root), "dist/\n")
     await writeFile(projectConfigPathIn(root), "{\n  // Keep this setting.\n  \"later\": true\n}\n")
     await write()
     expect(await readFile(envPathIn(root), "utf8")).toContain("# application\nAPP_NAME=release\n")
+    expect(await readFile(gitignorePathIn(root), "utf8")).toBe("dist/\n.dev.vars*\n")
     const config = await readFile(projectConfigPathIn(root), "utf8")
     expect(config).toContain("// Keep this setting.")
     expect(config).toContain('"later": true')

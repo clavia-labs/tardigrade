@@ -157,13 +157,17 @@ describe("the config file", () => {
   test("project JSONC supplies provider configuration and the environment supplies credentials", () => {
     const project = parseProjectConfig(`{
       // This file contains no credential values.
-      "models": {
-        "default": { "provider": "openai", "model_id": "file-model" },
-        "providers": {
-          "openai": {
-            "baseUrl": "https://file.example.com",
-            "protocol": "openai-responses",
-            "env": ["OPENAI_API_KEY"]
+      "vars": {
+        "TARDIGRADE_CONFIG": {
+          "models": {
+            "default": { "provider": "openai", "model_id": "file-model" },
+            "providers": {
+              "openai": {
+                "baseUrl": "https://file.example.com",
+                "protocol": "openai-responses",
+                "env": ["OPENAI_API_KEY"]
+              }
+            }
           }
         }
       }
@@ -185,7 +189,7 @@ describe("the config file", () => {
   test("the project path is configurable and JSONC comments are accepted", async () => {
     const path = projectConfigPathIn(home, { TARDIGRADE_CONFIG_PATH: "config/custom.jsonc" })
     await mkdir(join(home, "config"), { recursive: true })
-    await writeFile(path, '{ // visible\n "models": {}\n}')
+    await writeFile(path, '{ // visible\n "vars": { "TARDIGRADE_CONFIG": { "models": {} } }\n}')
     const project = await Effect.runPromise(Effect.provide(
       readProjectConfig(home, { TARDIGRADE_CONFIG_PATH: "config/custom.jsonc" }),
       BunFileSystem.layer

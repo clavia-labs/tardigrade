@@ -130,7 +130,7 @@ describe("config", () => {
 
   test("provider configuration and credentials resolve from separate sources", () => {
     const project = projectConfigOf({
-      models: {
+      vars: { TARDIGRADE_CONFIG: { models: {
         default: { provider: "openai", model_id: "gpt" },
         providers: {
           openai: {
@@ -139,7 +139,7 @@ describe("config", () => {
             env: ["OPENAI_API_KEY"]
           }
         }
-      }
+      } } }
     })
     const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
     expect(config.model).toMatchObject({
@@ -148,14 +148,15 @@ describe("config", () => {
     })
     expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
     expect(() => projectConfigOf({
-      models: { providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } }
+      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } } } }
     })).toThrow("cannot contain apiKey")
     expect(() => projectConfigOf({
-      models: { providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } }
+      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } } } }
     })).toThrow("invalid name")
     expect(() => projectConfigOf({
-      models: { default: { provider: "missing", model_id: "gpt" }, providers: {} }
+      vars: { TARDIGRADE_CONFIG: { models: { default: { provider: "missing", model_id: "gpt" }, providers: {} } } }
     })).toThrow("unconfigured provider")
+    expect(() => projectConfigOf({ models: {} })).toThrow("vars.TARDIGRADE_CONFIG")
   })
 
   test("legacy model variables print a redacted replacement", () => {
@@ -171,7 +172,7 @@ describe("config", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error)
     }
-    expect(message).toContain("tardigrade.jsonc")
+    expect(message).toContain("wrangler.jsonc")
     expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
     expect(message).toContain('"protocol":"<protocol>"')
     expect(message).toContain('"env":["<api-key-env>"]')

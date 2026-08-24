@@ -22,12 +22,15 @@ describe("initActor", () => {
     const cwd = await temporaryRoot()
     const initialized = await initActor("reviewer", { cwd, model })
     const source = await readFile(initialized.entry, "utf8")
+    const manifest = await readFile(initialized.manifest, "utf8")
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
     expect(initialized.entry).toBe(join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
+    expect(manifest).toContain('"name": "reviewer"')
+    expect(manifest).toContain('"vars": {}')
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -59,6 +62,7 @@ describe("initSummary", () => {
     const summary = initSummary(initialized, cwd)
 
     expect(summary).toContain("created reviewer/actor.ts")
+    expect(summary).toContain("created reviewer/wrangler.jsonc")
     expect(summary).toContain("cd reviewer")
     expect(summary).toContain("tdg push actor.ts --target local")
     expect(summary).not.toContain("tdg build actor.ts")

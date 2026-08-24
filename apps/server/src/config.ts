@@ -24,7 +24,10 @@ export const DEFAULT_ACTORS = ".tardigrade/actors"
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
 
 // DEFAULT_PROJECT_CONFIG_PATH is the project configuration read by the direct server.
-export const DEFAULT_PROJECT_CONFIG_PATH = "tardigrade.jsonc"
+export const DEFAULT_PROJECT_CONFIG_PATH = "wrangler.jsonc"
+
+// TARDIGRADE_CONFIG_VAR names the structured Wrangler variable that carries Tardigrade settings.
+export const TARDIGRADE_CONFIG_VAR = "TARDIGRADE_CONFIG"
 
 // DEFAULT_MODEL_CATALOG_CACHE is the last validated public snapshot used when a refresh fails.
 export const DEFAULT_MODEL_CATALOG_CACHE = ".tardigrade/models.json"
@@ -55,7 +58,7 @@ export interface ModelConfig {
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
 
-// ProjectConfig holds ordinary configuration loaded from tardigrade.jsonc.
+// ProjectConfig holds Tardigrade configuration loaded from the Wrangler manifest.
 export interface ProjectConfig {
   readonly models: ModelConfig
 }
@@ -126,20 +129,24 @@ const legacyModelError = (env: Env): Error | undefined => {
   const provider = text(env, "MODEL_PROVIDER") ?? "<provider>"
   const model_id = text(env, "MODEL_ID") ?? "<model-id>"
   const replacement = {
-    models: {
-      default: { provider, model_id },
-      providers: {
-        [provider]: {
-          baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
-          protocol: "<protocol>",
-          env: ["<api-key-env>"]
+    vars: {
+      [TARDIGRADE_CONFIG_VAR]: {
+        models: {
+          default: { provider, model_id },
+          providers: {
+            [provider]: {
+              baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
+              protocol: "<protocol>",
+              env: ["<api-key-env>"]
+            }
+          }
         }
       }
     }
   }
   return new Error(
     `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
-    `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in tardigrade.jsonc. ` +
+    `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in wrangler.jsonc. ` +
     "Replace <protocol>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
   )
 }
@@ -197,11 +204,22 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   }
 }
 
-// projectConfigOf validates the ordinary project configuration.
+// projectConfigOf reads Tardigrade settings from a Wrangler manifest.
 export const projectConfigOf = (value: unknown): ProjectConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
-  return { models: modelConfigOf(source["models"] ?? {}) }
+  if (source["models"] !== undefined) {
+    throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
+  }
+  const varsValue = source["vars"]
+  if (varsValue === undefined) return { models: modelConfigOf({}) }
+  const vars = recordOf(varsValue)
+  if (vars === undefined) throw new Error("vars must be a JSON object")
+  const configValue = vars[TARDIGRADE_CONFIG_VAR]
+  if (configValue === undefined) return { models: modelConfigOf({}) }
+  const config = recordOf(configValue)
+  if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
+  return { models: modelConfigOf(config["models"] ?? {}) }
 }
 
 const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {

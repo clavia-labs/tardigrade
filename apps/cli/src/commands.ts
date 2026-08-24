@@ -19,6 +19,7 @@ import {
   providerSetupJson,
   providerSetupSummary,
   readSetupEnv,
+  runtimeEnvironmentOf,
   setupAnswersFrom,
   setupDefaultPrompt,
   setupFlowPrompt,
@@ -255,7 +256,7 @@ export const setupProviderCommand = Command.make("provider", {
       : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Add or update one provider connection in tardigrade.jsonc."
+      "Add or update one provider connection in wrangler.jsonc."
     ),
     Command.withExamples([
       { command: "tdg setup provider", description: "Prompt for a provider connection" },
@@ -311,7 +312,7 @@ export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*
   const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
   yield* Console.log(setupPlanSummary(files, plan))
 })).pipe(
-  Command.withDescription("Add provider connections, choose the project default, then write tardigrade.jsonc and .env at 0600."),
+  Command.withDescription("Add provider connections, choose the project default, then write wrangler.jsonc and .dev.vars at 0600."),
   Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
 )
 
@@ -475,7 +476,9 @@ export const devCommand = Command.make("dev", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+    const localSecrets = yield* readSetupEnv(cli.cwd)
+    const runtimeEnv = runtimeEnvironmentOf(cli.env, localSecrets)
+    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
     const config = yield* Effect.try({
       try: () => resolveServer({
         port: Option.getOrUndefined(flags.port),
@@ -483,7 +486,7 @@ export const devCommand = Command.make("dev", {
         actors: stated(flags.actors),
         actorData: stated(flags.actorData),
         maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-      }, cli.env, project),
+      }, runtimeEnv, project),
       catch: userErrorOf
     })
     // A first boot with no model asks for one, because two commands to see anything is one too
@@ -494,11 +497,11 @@ export const devCommand = Command.make("dev", {
       ? Effect.succeed(config)
       : canAsk()
       ? Effect.gen(function*() {
-        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
-        const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
+        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, runtimeEnv), userErrorOf)
+        const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, runtimeEnv), userErrorOf)
         yield* Console.log(setupSummary(files, answers))
         const written = yield* readSetupEnv(cli.cwd)
-        const writtenProject = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+        const writtenProject = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
         return yield* Effect.try({
           try: () => resolveServer({
             port: Option.getOrUndefined(flags.port),
@@ -506,12 +509,12 @@ export const devCommand = Command.make("dev", {
             actors: stated(flags.actors),
             actorData: stated(flags.actorData),
             maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-          }, { ...cli.env, ...written }, writtenProject),
+          }, runtimeEnvironmentOf(cli.env, written), writtenProject),
           catch: userErrorOf
         })
       })
       : Effect.as(Console.log(NO_MODEL_NOTICE), config)
-    const portWasStated = Option.isSome(flags.port) || (cli.env["PORT"]?.trim().length ?? 0) > 0
+    const portWasStated = Option.isSome(flags.port) || (runtimeEnv["PORT"]?.trim().length ?? 0) > 0
     const selectedPort = portWasStated
       ? asked.port
       : yield* Effect.tryPromise({

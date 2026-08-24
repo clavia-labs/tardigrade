@@ -42,7 +42,7 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `tardigrade.jsonc`, and `.env`. The generated actor selects the provider and model you chose. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
+The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `wrangler.jsonc`, and `.dev.vars`. Public provider settings live in the Wrangler manifest and local credentials live in `.dev.vars`. The generated actor selects the provider and model you chose. Read the [Quickstart guide](docs/quickstart.md), then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
 
 ```bash
 tdg push actor.ts --target local
