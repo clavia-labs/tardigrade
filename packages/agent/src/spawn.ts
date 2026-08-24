@@ -45,6 +45,7 @@ import { replyId } from "@tardigrade/core/reply"
 // ceiling moves both (budget.ts, BudgetPolicy).
 export interface SpawnOptions {
   readonly agentOf?: () => string | undefined
+  readonly subjectOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
   // The parent's explicit world label, when its own fire named a shared world instead of taking
@@ -62,6 +63,7 @@ export const agentsPackage = (
   options: SpawnOptions = {}
 ): Package => {
   const agentOf = options.agentOf ?? (() => undefined)
+  const subjectOf = options.subjectOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
   const worldOf = options.worldOf ?? (() => undefined)
@@ -143,6 +145,7 @@ export const agentsPackage = (
           // The child works as the same member the parent does: the actor rides every brief in the
           // family, so a run's whole tree resolves connections identically.
           const actor = agentOf()
+          const subject = subjectOf()
           // The parent's own shadow reading, never the tool args: an agent cannot set or unset it, so
           // a whole run family is shadow by construction from the fire alone. `world` rides along
           // the same way, when the fire named an explicit shared one.
@@ -162,6 +165,7 @@ export const agentsPackage = (
               ...(model === undefined ? {} : { model }),
               budget,
               ...(actor === undefined ? {} : { actor }),
+              ...(subject === undefined ? {} : { subject }),
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world }),
               replyTo: self,
@@ -181,6 +185,7 @@ export const agentsPackage = (
               budget,
               escalatable: true,
               ...(actor === undefined ? {} : { actor }),
+              ...(subject === undefined ? {} : { subject }),
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world })
             })
@@ -201,6 +206,7 @@ export const agentsPackage = (
             ...(model === undefined ? {} : { model }),
             budget,
             ...(actor === undefined ? {} : { actor }),
+            ...(subject === undefined ? {} : { subject }),
             ...(shadow ? { shadow: true } : {}),
             ...(world === undefined ? {} : { world }),
             replyTo: self,

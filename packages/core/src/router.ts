@@ -40,6 +40,7 @@ export class Router extends Context.Service<
         readonly budget?: number
         readonly escalatable?: boolean
         readonly actor?: string
+        readonly subject?: string
         readonly shadow?: boolean
         readonly world?: string
       }
