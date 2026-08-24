@@ -3,6 +3,7 @@ import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/event-log"
 import type { Usage } from "./usage"
+import { ModelRef, type ModelRef as ModelRefType } from "./model"
 
 // The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
 // sees only the open envelope. The model responds by acting: its recorded decision is the
@@ -73,6 +74,7 @@ export const ToolReturned = Schema.Struct({
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
   callId: Schema.String,
+  model: Schema.optional(ModelRef),
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
   ordinal: Schema.optional(Schema.Finite),
@@ -81,6 +83,17 @@ export const ModelCalled = Schema.Struct({
   output: Schema.optional(OutputPolicy),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// ModelResolved records the model reference and catalog limits used by one turn.
+export const ModelResolved = Schema.Struct({
+  type: Schema.Literal("ModelResolved"),
+  turn: Schema.String,
+  model: ModelRef,
+  contextWindowTokens: Schema.optional(Schema.Finite),
+  maxOutputTokens: Schema.optional(Schema.Finite),
+  catalogRevision: Schema.optional(Schema.String),
   at: Schema.Finite
 })
 
@@ -261,6 +274,7 @@ export const BudgetDenied = Schema.Struct({
 
 export const AgentEvent = Schema.Union([
   MessageReceived,
+  ModelResolved,
   ModelCalled,
   TextReturned,
   ToolCalled,
@@ -321,7 +335,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
+  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -347,6 +361,8 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
+      case "ModelResolved":
+        return `mr:${String(v.turn)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -390,6 +406,7 @@ export const toolReturned = (fields: { readonly callId: string; readonly result:
 export const modelCalled = (
   fields: {
     readonly callId: string
+    readonly model?: ModelRefType
     readonly ordinal?: number
     readonly output?: {
       readonly contract: string
@@ -398,6 +415,16 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
+
+export const modelResolved = (fields: {
+  readonly turn: string
+  readonly model: ModelRefType
+  readonly contextWindowTokens?: number
+  readonly maxOutputTokens?: number
+  readonly catalogRevision?: string
+  readonly at: number
+}): Event =>
+  ({ type: "ModelResolved", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event

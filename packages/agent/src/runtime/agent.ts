@@ -12,6 +12,7 @@ import type { ToolSpec } from "../request"
 import { fallbackOf, type OutputFallback } from "../output"
 import { agentKeys } from "../events"
 import { inferReactorFor, type InferPolicy } from "./infer"
+import type { ModelRef } from "../model"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "../turn"
@@ -207,6 +208,13 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
   }
 }
 
+// InferOptions selects the provider connection and default model for an infer root. A message may
+// replace default_model for its turn, while provider remains assembly policy.
+export interface InferOptions extends Partial<Omit<InferPolicy, "model">> {
+  readonly provider: string
+  readonly default_model: string
+}
+
 // infer composes an agent's child components and adds the model loop over their final view.
 // Inference and dispatch derive from the same child projection, so a tool remains routed against
 // the view that offered it while every child transition remains part of the root derivation.
@@ -214,7 +222,7 @@ export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
   components: Cs,
-  policy: Partial<InferPolicy> = {}
+  options: InferOptions
 ): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
@@ -230,7 +238,11 @@ export const infer = <
   }
 
   renderView(viewOf([]))
-  const inference = inferReactorFor(policy, (log) => renderView(viewOf(log))) as Reactor<R>
+  if (options.provider.trim().length === 0) throw new Error("infer provider cannot be empty")
+  if (options.default_model.trim().length === 0) throw new Error("infer default_model cannot be empty")
+  const { provider, default_model, ...policy } = options
+  const model: ModelRef = { provider, model_id: default_model }
+  const inference = inferReactorFor({ ...policy, model }, (log) => renderView(viewOf(log))) as Reactor<R>
   const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
 
   return {
@@ -238,10 +250,12 @@ export const infer = <
     keys: rootKeys(combined.keys),
     derive: (log) => {
       const children = combined.derive(log)
+      const inferred = inference(log)
+      const resolvingModel = inferred.some((candidate) => candidate.key.startsWith("mr:"))
       return {
         view: children.view,
-        transitions: [
-          ...inference(log),
+        transitions: resolvingModel ? inferred : [
+          ...inferred,
           ...dispatch(log),
           ...children.transitions
         ]

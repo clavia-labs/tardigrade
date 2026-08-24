@@ -137,12 +137,15 @@ const assemblyOf = (name: string, env: Env) => {
     reply,
     budget,
     compaction({
-      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model),
+      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model?.model_id),
       ...(fireRatio === undefined ? {} : { fireRatio }),
       ...(keepRatio === undefined ? {} : { keepRatio })
     }),
     outputValidateOnce
-  ]))
+  ], {
+    provider: env.MODEL_PROVIDER ?? "unconfigured",
+    default_model: env.MODEL_ID ?? "unconfigured"
+  }))
 }
 
 // ActorHost runs one actor graph over one SQLite-backed Durable Object.

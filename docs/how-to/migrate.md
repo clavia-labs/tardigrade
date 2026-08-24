@@ -23,7 +23,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer([...])) })` |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer([...], model)) })` |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
 | `stopWhen`, maximum steps, and retry options | `budgetFor`, `infer` policy, and domain components with explicit policy values |
