@@ -43,7 +43,7 @@ Commands that print data take `--json` where their help lists it. Remote command
 
 ## Configuration
 
-A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. This order applies to remote URL and token settings. Public project configuration lives in `wrangler.jsonc`. Local provider credentials live in `.dev.vars`.
+A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. This order applies to remote URL and token settings. Public project configuration lives in `wrangler.jsonc` and `celld.jsonc`. Local provider credentials live in `.dev.vars`.
 
 | | Flag | Environment | Default |
 | --- | --- | --- | --- |
@@ -56,7 +56,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.dev.vars` |
 
-`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc`, and stores the credential in `.dev.vars` at mode 0600. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated Wrangler settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and `celld.jsonc`, and stores the credential in `.dev.vars` at mode 0600. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated platform settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
 An agent or CI job can avoid prompts by supplying the provider connection as JSON during initialization. The JSON names the credential environment variable and never contains its value:
 
@@ -150,4 +150,7 @@ tdg events root --types TurnFailed
 tdg dev --port 8080 --db runs.sqlite
 tdg dev --max-concurrent-lanes 5
 bunx wrangler deploy
+celld deploy --config celld.jsonc --bucket s3://actors
 ```
+
+The [Celld deployment guide](celld.md) covers fleet storage, Worker variables, and the current Code Mode constraint.

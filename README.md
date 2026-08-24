@@ -40,27 +40,12 @@ If you have an existing agent application, follow the [migration guide](docs/how
 bun add -g tardie
 tdg init researcher
 cd researcher
-```
-
-The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `worker.ts`, `wrangler.jsonc`, and `.dev.vars`. Public provider settings live in the Wrangler manifest and local credentials live in `.dev.vars`. The generated actor selects the provider and model you chose. Read the [Quickstart guide](docs/quickstart.md), then edit `actor.ts` to describe the agent and start it locally:
-
-```bash
 tdg dev
 ```
 
-In a non-interactive terminal, pass the provider connection as JSON. The JSON names the credential environment variable and does not contain its value:
+`tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/how-to/cli.md) covers non-interactive setup, more providers, and deployment.
 
-```bash
-tdg init researcher \
-  --provider openai \
-  --provider-config '{"env":["OPENAI_API_KEY"]}' \
-  --default-model gpt-5.2
-cd researcher
-```
-
-Set `OPENAI_API_KEY` in the environment that runs the server. The [CLI guide](docs/how-to/cli.md) covers multiple providers, custom endpoints, and catalog discovery.
-
-Keep `tdg dev` running. It builds and mounts `actor.ts` directly. Discover the actor's methods, then call `message` from another shell in the same directory:
+From another shell, discover the actor's methods and call one:
 
 ```bash
 tdg methods --actor researcher

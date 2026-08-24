@@ -3,9 +3,11 @@ import { chmod, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
+import { parse } from "jsonc-parser"
 import { BunFileSystem } from "@effect/platform-bun"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
+import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import {
   defaultModelFrom,
   envPathIn,
@@ -18,6 +20,7 @@ import {
   SECRETS_MODE,
   setupAnswersFrom,
   setupJson,
+  setupPlanSummary,
   setupSummary,
   writeDefaultSetup,
   writeProviderSetup,
@@ -247,6 +250,35 @@ describe("writeSetup", () => {
     expect(config).toContain('"later": true')
   })
 
+  test("an existing Celld manifest receives the shared model config", async () => {
+    const celldConfigPath = join(root, CELLD_PROJECT_CONFIG_PATH)
+    await writeFile(celldConfigPath, `{
+  // Keep this Celld setting.
+  "name": "reviewer",
+  "vars": { "CELLD_ONLY": "kept", "TARDIGRADE_CONFIG": "{}" }
+}\n`)
+
+    const files = await write()
+    const celld = await readFile(celldConfigPath, "utf8")
+    const config = parse(celld) as { readonly vars: Readonly<Record<string, string>> }
+
+    expect(files.celldConfigPath).toBe(celldConfigPath)
+    expect(celld).toContain("// Keep this Celld setting.")
+    expect(config.vars["CELLD_ONLY"]).toBe("kept")
+    expect(JSON.parse(config.vars["TARDIGRADE_CONFIG"]!)).toEqual({
+      models: {
+        default: { provider: "openai", model_id: "a-model" },
+        providers: {
+          openai: {
+            baseUrl: "https://api.example.com/v1",
+            protocol: "openai-responses",
+            env: ["OPENAI_API_KEY"]
+          }
+        }
+      }
+    })
+  })
+
   test("a later setup keeps prior providers and changes the default", async () => {
     await write()
     const first = await readFile(projectConfigPathIn(root), "utf8")
@@ -347,5 +379,19 @@ describe("what setup prints", () => {
     expect(json.provider).toBe("openai")
     expect(json.protocol).toBe("openai-responses")
     expect(summary).toContain("default a-model")
+  })
+
+  test("a guided summary lists both manifests and the default once", async () => {
+    const celldConfigPath = join(root, CELLD_PROJECT_CONFIG_PATH)
+    await writeFile(celldConfigPath, '{ "vars": { "TARDIGRADE_CONFIG": "{}" } }\n')
+    const files = await write()
+    const summary = setupPlanSummary(files, { providers: [answers], default: {
+      provider: answers.provider,
+      model_id: answers.model_id
+    } })
+
+    expect(summary).toContain(projectConfigPathIn(root))
+    expect(summary).toContain(celldConfigPath)
+    expect(summary.match(/default openai\/a-model/g)).toHaveLength(1)
   })
 })

@@ -199,7 +199,7 @@ describe("parsing", () => {
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
-    expect(help).toContain("wrangler.jsonc")
+    expect(help).toContain("platform manifests")
     expect(help).toContain(".dev.vars")
     expect(help).toContain("0600")
     expect(help).toContain("provider")
