@@ -1,6 +1,6 @@
 import { Effect, Layer, Schema } from "effect"
 import { SqlClient } from "effect/unstable/sql"
-import { D1Client } from "@effect/sql-d1"
+import { SqliteClient } from "@effect/sql-sqlite-do"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
   ModelCatalogRepository,
@@ -8,7 +8,7 @@ import {
   type ModelCatalogRepositoryService
 } from "@clavia/tardigrade-server/catalog-store"
 
-// DEFAULT_MODEL_CATALOG_TABLE is the D1 table used when a Cloudflare catalog repository does not select another table.
+// DEFAULT_MODEL_CATALOG_TABLE is the actor-storage table used when a repository does not select another table.
 export const DEFAULT_MODEL_CATALOG_TABLE = "model_catalog"
 
 export interface CloudflareModelCatalogRepositoryOptions {
@@ -37,9 +37,9 @@ const decodeSnapshot = (sourceUrl: string, encoded: string): Effect.Effect<Model
     Effect.map((snapshot) => ({ ...snapshot, status: "cached" as const }))
   )
 
-// layerCloudflareModelCatalogRepository persists validated snapshots in D1.
+// layerCloudflareModelCatalogRepository persists validated snapshots beside the actor log.
 export const layerCloudflareModelCatalogRepository = (
-  database: D1Database,
+  storage: DurableObjectStorage,
   options: CloudflareModelCatalogRepositoryOptions = {}
 ): Layer.Layer<ModelCatalogRepository> => {
   const table = tableOf(options.table)
@@ -72,6 +72,6 @@ export const layerCloudflareModelCatalogRepository = (
     } satisfies ModelCatalogRepositoryService
   }).pipe(Effect.orDie)
   return Layer.effect(ModelCatalogRepository, make).pipe(
-    Layer.provide(D1Client.layer({ db: database }).pipe(Layer.orDie))
+    Layer.provide(SqliteClient.layer({ storage }).pipe(Layer.orDie))
   )
 }

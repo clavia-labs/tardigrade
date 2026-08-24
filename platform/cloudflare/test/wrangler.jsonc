@@ -7,11 +7,6 @@
   "durable_objects": {
     "bindings": [{ "name": "ACTORS", "class_name": "ActorHost" }]
   },
-  "d1_databases": [{
-    "binding": "REGISTRY",
-    "database_name": "tardigrade-test-registry",
-    "database_id": "00000000-0000-0000-0000-000000000000"
-  }],
   "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorHost"] }]
 }
