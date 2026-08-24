@@ -8,8 +8,7 @@ export default defineConfig({
       bindings: {
         TARDIGRADE_TOKEN: "workers-test-token",
         TARDIGRADE_ALARM_DELAY_MILLIS: "60000"
-      },
-      d1Databases: ["REGISTRY"]
+      }
     }
   })],
   test: { include: ["test/**/*.workers.ts"] }
