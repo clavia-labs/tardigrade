@@ -3,8 +3,14 @@ import { existsSync } from "node:fs"
 import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 
+export interface ActorTemplateModel {
+  readonly provider: string
+  readonly defaultModel: string
+}
+
 export interface ActorTemplateOptions {
   readonly name: string
+  readonly model: ActorTemplateModel
   readonly instructions?: string
 }
 
@@ -34,6 +40,12 @@ export const renderActorTemplate = (source: string, options: ActorTemplateOption
     /^const actorName = .+$/gmu,
     `const actorName = ${JSON.stringify(options.name)}`,
     "actorName declaration"
+  )
+  rendered = replaceExactlyOnce(
+    rendered,
+    /^const actorModel = .+$/gmu,
+    `const actorModel = { provider: ${JSON.stringify(options.model.provider)}, default_model: ${JSON.stringify(options.model.defaultModel)} } as const`,
+    "actorModel declaration"
   )
   if (options.instructions === undefined) return rendered
 

@@ -8,11 +8,9 @@ import {
   DEFAULT_ACTOR_DATA,
   DEFAULT_DB,
   DEFAULT_MAX_CONCURRENT_LANES,
-  DEFAULT_MODEL_CATALOG_CACHE,
-  DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS,
-  DEFAULT_MODEL_CATALOG_URL,
   DEFAULT_PORT,
   layerConfig,
+  projectConfigOf,
   readConfig,
   type ServerConfigValue
 } from "./config"
@@ -81,16 +79,14 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
-      baseUrl: undefined,
-      apiKey: undefined,
-      id: undefined,
-      provider: undefined,
-      output: undefined
+      default: undefined,
+      providers: {}
     })
+    expect(config.modelCredentials).toEqual({})
     expect(config.catalog).toEqual({
-      sourceUrl: DEFAULT_MODEL_CATALOG_URL,
-      cachePath: DEFAULT_MODEL_CATALOG_CACHE,
-      timeoutMillis: DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS
+      sourceUrl: "https://models.dev/api.json",
+      cachePath: ".tardigrade/models.json",
+      timeoutMillis: 10_000
     })
   })
 
@@ -101,14 +97,7 @@ describe("config", () => {
       TARDIGRADE_ACTORS: "/var/lib/actors",
       TARDIGRADE_ACTOR_DATA: "/var/lib/actor-data",
       TARDIGRADE_MAX_CONCURRENT_LANES: "7",
-      TARDIGRADE_TOKEN: "secret",
-      MODEL_BASE_URL: "https://api.example.com",
-      MODEL_API_KEY: "key",
-      MODEL_ID: "a-model",
-      MODEL_PROVIDER: "openai",
-      TARDIGRADE_MODEL_CATALOG_URL: "https://catalog.example.com/models.json",
-      TARDIGRADE_MODEL_CATALOG_CACHE: "/var/cache/tardigrade-models.json",
-      TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "2500"
+      TARDIGRADE_TOKEN: "secret"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("/var/lib/agents.sqlite")
@@ -116,13 +105,78 @@ describe("config", () => {
     expect(config.actorData).toBe("/var/lib/actor-data")
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
-    expect(config.model.baseUrl).toBe("https://api.example.com")
-    expect(config.model.provider).toBe("openai")
+    expect(config.model).toEqual({ default: undefined, providers: {} })
+    expect(config.modelCredentials).toEqual({})
     expect(config.catalog).toEqual({
-      sourceUrl: "https://catalog.example.com/models.json",
-      cachePath: "/var/cache/tardigrade-models.json",
+      sourceUrl: "https://models.dev/api.json",
+      cachePath: ".tardigrade/models.json",
+      timeoutMillis: 10_000
+    })
+  })
+
+  test("the catalog source, cache, and timeout are configurable", () => {
+    const config = readConfig({
+      TARDIGRADE_MODEL_CATALOG_URL: "https://catalog.example/models.json",
+      TARDIGRADE_MODEL_CATALOG_CACHE: "/var/cache/tardigrade/models.json",
+      TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "2500"
+    })
+    expect(config.catalog).toEqual({
+      sourceUrl: "https://catalog.example/models.json",
+      cachePath: "/var/cache/tardigrade/models.json",
       timeoutMillis: 2500
     })
+    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
+  })
+
+  test("provider configuration and credentials resolve from separate sources", () => {
+    const project = projectConfigOf({
+      vars: { TARDIGRADE_CONFIG: { models: {
+        default: { provider: "openai", model_id: "gpt" },
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            protocol: "openai-responses",
+            env: ["OPENAI_API_KEY"]
+          }
+        }
+      } } }
+    })
+    const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
+    expect(config.model).toMatchObject({
+      default: { provider: "openai", model_id: "gpt" },
+      providers: { openai: { protocol: "openai-responses" } }
+    })
+    expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
+    expect(() => projectConfigOf({
+      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } } } }
+    })).toThrow("cannot contain apiKey")
+    expect(() => projectConfigOf({
+      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } } } }
+    })).toThrow("invalid name")
+    expect(() => projectConfigOf({
+      vars: { TARDIGRADE_CONFIG: { models: { default: { provider: "missing", model_id: "gpt" }, providers: {} } } }
+    })).toThrow("unconfigured provider")
+    expect(() => projectConfigOf({ models: {} })).toThrow("vars.TARDIGRADE_CONFIG")
+  })
+
+  test("legacy model variables print a redacted replacement", () => {
+    const env = {
+      MODEL_PROVIDER: "openai",
+      MODEL_ID: "gpt-5.2",
+      MODEL_BASE_URL: "https://api.openai.com/v1",
+      MODEL_API_KEY: "secret-that-must-not-print"
+    }
+    let message = ""
+    try {
+      readConfig(env)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain("wrangler.jsonc")
+    expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
+    expect(message).toContain('"protocol":"<protocol>"')
+    expect(message).toContain('"env":["<api-key-env>"]')
+    expect(message).not.toContain(env.MODEL_API_KEY)
   })
 
   // Listening somewhere other than where the operator asked is worse than refusing to start.
@@ -134,11 +188,6 @@ describe("config", () => {
   test("a concurrency cap that cannot schedule a lane refuses to resolve", () => {
     expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "0" })).toThrow("positive integer")
     expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "many" })).toThrow("positive integer")
-  })
-
-  test("a catalog timeout that cannot bound a request refuses to resolve", () => {
-    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
-    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "later" })).toThrow("positive integer")
   })
 })
 
@@ -196,6 +245,8 @@ describe("auth", () => {
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
     expect(health.status).toBe(200)
+    const models = await serving({ config }, (client) => client.get("/v1/models"))
+    expect(models.status).toBe(503)
   })
 })
 

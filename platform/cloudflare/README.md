@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding stores the actor registry in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the registry, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding stores the actor registry and public model catalog in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the shared database, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 ## Verify and deploy
 
@@ -26,19 +26,45 @@ cd platform/cloudflare
 bunx wrangler secret put TARDIGRADE_TOKEN
 ```
 
-Set `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_ID` to run model turns. `MODEL_API_KEY` should be a Wrangler secret. A host without model configuration records a failed turn that names the missing configuration.
+Store each provider credential as a Wrangler secret:
+
+```bash
+cd platform/cloudflare
+bunx wrangler secret put OPENAI_API_KEY
+```
+
+Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible configuration names the default model reference, provider routes, and credential variable names:
+
+```jsonc
+{
+  "vars": {
+    "TARDIGRADE_CONFIG": {
+      "models": {
+        "default": { "provider": "openai", "model_id": "gpt-5.2" },
+        "providers": {
+          "openai": {
+            "baseUrl": "https://api.openai.com/v1",
+            "protocol": "openai-responses",
+            "env": ["OPENAI_API_KEY"]
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+A host without model configuration records a failed turn that names the missing configuration. The Worker validates the public catalog from models.dev, stores the last valid snapshot in D1, and loads it into isolate memory. Provider connections and secrets stay outside the catalog.
 
 ## HTTP shapes
 
-`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public.
+`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public. The catalog routes return paginated views of the validated snapshot from isolate memory.
 
 ```json
 { "status": "resting", "dirty": 0 }
 ```
 
-Actor endpoints require `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
-
-The first catalog request in a Worker isolate refreshes models.dev and persists the validated snapshot in D1. Later requests reuse the in-memory snapshot. A failed refresh may serve the last D1 snapshot with `status: "cached"`. Both catalog endpoints accept `search`, `cursor`, and `limit`; `/v1/models` also accepts `provider`.
+Every actor endpoint requires `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
 
 `GET /v1/actors` has no input body and returns the actors registered in D1. The Worker inserts its exported `DEFAULT_ACTOR_REGISTRATION` when `default` is absent.
 
@@ -77,27 +103,17 @@ The response has status `202` and identifies the accepted destination.
 
 | Name | Default | Effect |
 | --- | --- | --- |
-| `TARDIGRADE_TOKEN` | unset | Protects actor endpoints; an unset value closes the event API |
-| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public catalog source |
-| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` once per isolate or `cache-first` when a stored snapshot should win |
-| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds the catalog refresh |
+| `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` | Limits lanes settled concurrently inside one actor object |
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `0` | Delays a newly armed actor alarm |
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
 | `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
+| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |
+| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the D1 snapshot |
+| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds a catalog refresh request |
 | `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
 | `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
-| `MODEL_BASE_URL` | unset | Selects the model API endpoint |
-| `MODEL_API_KEY` | unset | Authenticates the model API request |
-| `MODEL_ID` | unset | Selects the model |
-| `MODEL_SONNET_ID` | `MODEL_ID` | Selects the model for `sonnet` briefs |
-| `MODEL_OPUS_ID` | `MODEL_ID` | Selects the model for `opus` briefs |
-| `MODEL_HAIKU_ID` | `MODEL_ID` | Selects the model for `haiku` briefs |
-| `MODEL_PROVIDER` | unset | Supplies an optional provider hint |
-| `MODEL_CONTEXT_WINDOW_TOKENS` | `1000000` in `wrangler.jsonc`; framework fallback `128000` | Declares the default model context window used by compaction |
-| `MODEL_SONNET_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `sonnet` model context window |
-| `MODEL_OPUS_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `opus` model context window |
-| `MODEL_HAIKU_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `haiku` model context window |
+| `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model reference as visible JSON configuration in `wrangler.jsonc` |
 
-`wrangler.jsonc` also makes the D1 registry binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.
+`wrangler.jsonc` also makes the D1 binding for the registry and model catalog, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.

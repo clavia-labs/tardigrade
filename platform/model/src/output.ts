@@ -31,7 +31,7 @@ export const capabilityOf = (config: { readonly output?: OutputCapability }): Ou
 // an operator reading a failed turn knows what to set rather than which source to read.
 const UNPROVEN = (where: string, contract: string, implementation: string): string =>
   `${where} declares no structured output capability, so the "${implementation}" implementation cannot promise the contract "${contract}". ` +
-  `Declare one when this endpoint and this model honour a strict JSON schema (MODEL_OUTPUT_GUARANTEE=native with MODEL_OUTPUT_WITH_TOOLS, or the binding's \`output\` option), ` +
+  `Declare one when this endpoint and this model honour a strict JSON schema through model-directory metadata or the binding's \`output\` option, ` +
   `or mount an output implementation that needs no guarantee.`
 
 // outputModeOf selects how one attempt obtains the declared contract. Native comes first

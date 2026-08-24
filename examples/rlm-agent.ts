@@ -1,7 +1,6 @@
 // A Recursive Language Model agent, assembled from the library's parts and run on the durable
 // Bun host: bun run examples/rlm-agent.ts. The agent acts by writing JavaScript; its code can
-// spawn child agents (agents.run) and read spilled values back (workspace.read). Set
-// MODEL_BASE_URL, MODEL_API_KEY, MODEL_PROVIDER, and MODEL_ID before running.
+// spawn child agents (agents.run) and read spilled values back (workspace.read).
 
 // The workspace names resolve in this repository. Against the published package the last two
 // are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
@@ -13,22 +12,23 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 // values, so the model's system fragment lists them and the assembly's requirements carry their
 // needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
+const actorModel = { provider: "openai", default_model: "gpt-5.2" } as const
+
 const rlm = actor(inferAgent([
   codeMode([agentsPackage(), workspacePackage()]),
   reply, // reports each turn's terminal to whoever asked
   budget, // the per-turn code budget, inherited by spawned children
   compaction(), // bounded model context over long investigations
   outputValidateOnce // handles structured results without adding a retry
-], {
-  provider: process.env.MODEL_PROVIDER!,
-  default_model: process.env.MODEL_ID!
-}))
+], actorModel))
 
 const model = infer({
-  baseUrl: process.env.MODEL_BASE_URL!,
-  apiKey: process.env.MODEL_API_KEY!,
-  model: process.env.MODEL_ID!,
-  ...(process.env.MODEL_PROVIDER === undefined ? {} : { provider: process.env.MODEL_PROVIDER })
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY!,
+  provider: actorModel.provider,
+  model: actorModel.default_model,
+  protocol: "openai-responses",
+  contextWindowTokens: 400_000
 })
 
 // Every ag. lane runs the same assembly: the root, and every child a spawn births. The lane
