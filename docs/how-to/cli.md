@@ -64,7 +64,7 @@ An agent or CI job can avoid prompts by supplying the provider connection as JSO
 tdg init researcher \
   --provider openrouter \
   --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
-  --default-model anthropic/claude-sonnet-4-6
+  --default-model anthropic/claude-sonnet-4.6
 ```
 
 Partial declarative initialization fails and lists the missing options. Declarative initialization does not read or write `OPENROUTER_API_KEY`; set it in the environment that runs the server. Agents and CI can add a connection and select it as the default in two focused commands:
@@ -74,7 +74,7 @@ tdg setup provider openrouter '{"env":["OPENROUTER_API_KEY"]}'
 
 tdg setup default \
   --provider openrouter \
-  --model anthropic/claude-sonnet-4-6
+  --model anthropic/claude-sonnet-4.6
 ```
 
 Known providers supply their standard protocol and endpoint. A provider whose connection needs more fields states them in the same object. Amazon Bedrock requires its gateway endpoint and AWS region:
@@ -94,7 +94,7 @@ tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","
   "vars": {
     "TARDIGRADE_CONFIG": {
       "models": {
-        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.6" },
         "providers": {
           "openrouter": {
             "baseUrl": "https://openrouter.ai/api/v1",
