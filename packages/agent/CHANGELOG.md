@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.6.0](https://github.com/clavia-labs/tardigrade/compare/v0.5.0...v0.6.0) (2026-08-24)
+
+
+### Features
+
+* **agent:** declare actor methods ([#228](https://github.com/clavia-labs/tardigrade/issues/228)) ([6937d77](https://github.com/clavia-labs/tardigrade/commit/6937d777b04368ca2da5ab124f465c753bd7deec))
+* **agent:** preserve usage evidence ([#221](https://github.com/clavia-labs/tardigrade/issues/221)) ([6f55b1f](https://github.com/clavia-labs/tardigrade/commit/6f55b1fd5e68c236a4d6d87a85064d07f60385b1))
+* **api:** serve actor methods ([#231](https://github.com/clavia-labs/tardigrade/issues/231)) ([467518e](https://github.com/clavia-labs/tardigrade/commit/467518e5220c769606328e9898d291d5d2bdc8ff))
+* **brand:** add community logos ([#230](https://github.com/clavia-labs/tardigrade/issues/230)) ([783c0b5](https://github.com/clavia-labs/tardigrade/commit/783c0b52424fde9fc2904f0816bd1e0ab02d3934))
+* **cloudflare:** add durable actor host ([#224](https://github.com/clavia-labs/tardigrade/issues/224)) ([6a2f89f](https://github.com/clavia-labs/tardigrade/commit/6a2f89fb0b0bc3d9e786d7a439d65d8d91fb8921))
+* **cloudflare:** run durable agents ([#226](https://github.com/clavia-labs/tardigrade/issues/226)) ([328d9c3](https://github.com/clavia-labs/tardigrade/commit/328d9c312e8f9cd973f83db7b7b2880950333d38))
+* expose agent call contracts ([#219](https://github.com/clavia-labs/tardigrade/issues/219)) ([33f877e](https://github.com/clavia-labs/tardigrade/commit/33f877e96ef26b74b33b75b8260436b9dddf4a62))
+* **host:** settle lanes concurrently ([#220](https://github.com/clavia-labs/tardigrade/issues/220)) ([74f183c](https://github.com/clavia-labs/tardigrade/commit/74f183c0e891814f20b1f710969ba4fb598c339d))
+* **registry:** add platform bindings ([#225](https://github.com/clavia-labs/tardigrade/issues/225)) ([2988fe4](https://github.com/clavia-labs/tardigrade/commit/2988fe45b62682251ed5923b88503673ef6a8db2))
+* unify actor communication ([#217](https://github.com/clavia-labs/tardigrade/issues/217)) ([f8a597b](https://github.com/clavia-labs/tardigrade/commit/f8a597bd9b0c0e2af26e73f8629b02eb7fbaf0fa))
+
+
+### Bug Fixes
+
+* **ci:** close release race ([#210](https://github.com/clavia-labs/tardigrade/issues/210)) ([768377c](https://github.com/clavia-labs/tardigrade/commit/768377cc98f6532a6ff26b21c96f42af11fd8d78))
+* **ci:** report release checks ([#212](https://github.com/clavia-labs/tardigrade/issues/212)) ([c91f7fa](https://github.com/clavia-labs/tardigrade/commit/c91f7fa22331951931818267d6196063b94c0f61))
+* **ci:** scope release discovery ([#211](https://github.com/clavia-labs/tardigrade/issues/211)) ([53c3a8a](https://github.com/clavia-labs/tardigrade/commit/53c3a8a736e279e34f6a22f4300635cb1bbc3213))
+* **ci:** verify candidate tree ([#207](https://github.com/clavia-labs/tardigrade/issues/207)) ([f500555](https://github.com/clavia-labs/tardigrade/commit/f5005556ce9da93476badd549ddf6ff17de314d8))
+* **code:** stabilize agent execution ([#222](https://github.com/clavia-labs/tardigrade/issues/222)) ([df426ea](https://github.com/clavia-labs/tardigrade/commit/df426ead167dcfd061b3d565396502c24aefbbdd))
+* validate runtime policy inputs ([#218](https://github.com/clavia-labs/tardigrade/issues/218)) ([00f6f7f](https://github.com/clavia-labs/tardigrade/commit/00f6f7fcab1fe0b49c951a53bad9914013434dc3))
+
 ## [0.5.0](https://github.com/clavia-labs/tardigrade/compare/v0.5.0-rc...v0.5.0) (2026-08-22)
 
 
