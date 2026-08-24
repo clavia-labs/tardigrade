@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ThreadSummary, EventRow } from "@clavia/tardigrade-client"
 
-import { actorsTable, threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, table, turnLines } from "./render"
+import { actorsTable, threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, table } from "./render"
 
 // The human rendering. A table is plain aligned text, so these assert on columns rather than on
 // escape sequences, and a value the projection did not carry reads as absent rather than as empty.
@@ -85,16 +85,20 @@ describe("eventsTable", () => {
   })
 })
 
-describe("turnLines", () => {
-  test("a completed turn prints its output under its handle", () => {
-    expect(turnLines("root", { turn: "m1", status: "completed", epoch: 0, output: "ok" })).toBe("root m1 completed\nok")
+describe("methodLines", () => {
+  test("a completed call prints its output under its handle", () => {
+    expect(methodLines("root", "m1", { status: "completed", output: "ok" })).toBe("root m1 completed\nok")
   })
 
-  test("a failed turn prints its error", () => {
-    expect(turnLines("root", { turn: "m1", status: "failed", epoch: 0, error: "no model" })).toBe("root m1 failed\nno model")
+  test("a failed call prints its error", () => {
+    expect(methodLines("root", "m1", { status: "failed", error: "no model" })).toBe("root m1 failed\nno model")
   })
 
-  test("a pending turn is its handle alone", () => {
-    expect(turnLines("root", { turn: "m1", status: "pending", epoch: 0 })).toBe("root m1 pending")
+  test("a pending call is its handle alone", () => {
+    expect(methodLines("root", "m1", { status: "pending" })).toBe("root m1 pending")
+  })
+
+  test("a blocked call prints its reason", () => {
+    expect(methodLines("root", "m1", { status: "blocked", reason: "budget" })).toBe("root m1 blocked\nbudget")
   })
 })

@@ -1,6 +1,7 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
-import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type TurnView } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client } from "@clavia/tardigrade-client"
+import type { ActorMethodState } from "tardie"
 
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 
@@ -10,8 +11,8 @@ import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_U
 import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
-import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, turnLines } from "./render"
-import { Cli, type CliProjections } from "./services"
+import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines } from "./render"
+import { Cli, type CliMethods } from "./services"
 import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
@@ -33,10 +34,8 @@ export const DEFAULT_TIMEOUT_MILLIS = 300_000
 // overrides it for scripts, containers, and remote shells.
 export const DEFAULT_OPEN_BROWSER = true
 
-// The turn status a run is asked for. Everything else, `failed` and `parked` alike, leaves the
-// command with a non-zero exit: a script that ran a turn and got no answer should not read as
-// success (commands.test.ts, "a failed turn prints its error and exits non-zero").
-export const SETTLED: TurnView["status"] = "completed"
+// SETTLED is the method state that makes `tdg run` succeed.
+export const SETTLED: ActorMethodState<string>["status"] = "completed"
 
 // problemLine is the whole of what a failed call prints. The four fields are the server's own words
 // (packages/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
@@ -106,21 +105,17 @@ const clientOf = (flags: {
 const stated = (option: Option.Option<string>): string | undefined => Option.getOrUndefined(option)
 
 const settle = (
-  client: Client<CliProjections>,
+  client: Client<{}, CliMethods>,
   thread: string,
   turn: string,
   pollMillis: number,
   timeoutMillis: number
-): Effect.Effect<TurnView, CliError.UserError> =>
+): Effect.Effect<ActorMethodState<string>, CliError.UserError> =>
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      // The single lookup is a query on the actor's declared projection rather than a route of its
-      // own: `turn` narrows it to one entry, and a turn nobody was asked to serve matches nothing
-      // (apps/server/src/actor.ts, agentProjections).
-      const views = yield* call(() => client.projection(thread, "turns", { turn }))
-      const view = views.find((candidate) => candidate.turn === turn)
-      if (view !== undefined && view.status !== "pending") return view
+      const state = yield* call(() => client.methodState(thread, "message", turn))
+      if (state.status !== "pending") return state
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* userErrorOf(
           `turn ${turn} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
@@ -385,17 +380,17 @@ export const runCommand = Command.make("run", {
     const client = yield* clientOf(flags)
     const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.append(thread, { type: "MessageReceived", id, text: flags.brief }))
+    const accepted = yield* call(() => client.invoke(thread, "message", { id, input: { text: flags.brief } }))
     const view = yield* settle(client, accepted.thread, id, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
         ? jsonOf(view)
         : view.status === SETTLED
-        ? `${turnLines(accepted.thread, view)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
-        : turnLines(accepted.thread, view)
+        ? `${methodLines(accepted.thread, id, view)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
+        : methodLines(accepted.thread, id, view)
     )
     if (view.status !== SETTLED) {
-      return yield* userErrorOf(`turn ${view.turn} on thread ${accepted.thread} is ${view.status}`)
+      return yield* userErrorOf(`turn ${id} on thread ${accepted.thread} is ${view.status}`)
     }
   })).pipe(
     Command.withDescription(
@@ -417,10 +412,13 @@ export const sendCommand = Command.make("send", {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
     const id = stated(flags.id) ?? cli.mintId()
-    const accepted = yield* call(() => client.append(flags.thread, { type: "MessageReceived", id, text: flags.brief }))
-    // The turn is the id this invocation minted: the platform echoes the two levels it knows and
-    // nothing turn-shaped, because a turn is the actor's reading of the log (contract.ts, Accepted).
-    yield* Console.log(flags.json ? jsonOf({ ...accepted, turn: id }) : `${accepted.thread} ${id}`)
+    const accepted = yield* call(() => client.invoke(flags.thread, "message", { id, input: { text: flags.brief } }))
+    // The JSON output keeps the command's existing turn handle while the method endpoint returns its richer handle.
+    yield* Console.log(
+      flags.json
+        ? jsonOf({ actor: accepted.actor, thread: accepted.thread, turn: id })
+        : `${accepted.thread} ${id}`
+    )
   })).pipe(
     Command.withDescription(
       "Deliver a brief and print the turn handle without waiting. The turn settles on the server's own loop."

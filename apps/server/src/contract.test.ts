@@ -59,8 +59,10 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
+  ["post", "/v1/actors/{actor}/threads/{id}/methods/{method}"],
   ["get", "/v1/actors/{actor}/threads"],
   ["get", "/v1/actors/{actor}/threads/{id}/events"],
+  ["get", "/v1/actors/{actor}/threads/{id}/methods/{method}/{call}"],
   ["get", "/v1/actors/{actor}/threads/{id}/turns"],
   ["get", "/v1/actors/{actor}/threads/{id}/tree"],
   ["get", "/healthz"]

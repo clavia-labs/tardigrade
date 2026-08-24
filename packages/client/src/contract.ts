@@ -96,6 +96,12 @@ export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
 // exist (apps/server/src/api.ts, layerProjections).
 export const UnknownProjection = problemKind("unknown-projection", "Unknown Projection", 404)
 
+// UnknownMethod reports a method name the selected actor did not declare.
+export const UnknownMethod = problemKind("unknown-method", "Unknown Method", 404)
+
+// UnknownMethodCall reports a call id the selected method cannot derive from the thread log.
+export const UnknownMethodCall = problemKind("unknown-method-call", "Unknown Method Call", 404)
+
 // A resume refused before it was sent. The platform has no resume route: a resume is an appended
 // TurnResumed like any other event, and the guard that a turn's active epoch must be failed is the
 // SDK's convenience rather than the server's rule (client.ts, resume).
@@ -191,6 +197,34 @@ export const Accepted = Schema.Struct({
 
 export type Accepted = typeof Accepted.Type
 
+// MethodInvocation carries the caller-minted durable id and the selected method's encoded input.
+export const MethodInvocation = Schema.Struct({
+  id: Schema.NonEmptyString,
+  input: Schema.Unknown
+}).annotate({ identifier: "MethodInvocation" })
+
+export type MethodInvocation = typeof MethodInvocation.Type
+
+// MethodAccepted identifies the method call committed for asynchronous reconciliation.
+export const MethodAccepted = Schema.Struct({
+  actor: Schema.String,
+  thread: Schema.String,
+  method: Schema.String,
+  call: Schema.String
+}).annotate({ identifier: "MethodAccepted" }).pipe(HttpApiSchema.status(202))
+
+export type MethodAccepted = typeof MethodAccepted.Type
+
+// MethodState is the durable state any declared actor method can expose on the wire.
+export const MethodState = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("pending") }),
+  Schema.Struct({ status: Schema.Literal("blocked"), reason: Schema.String }),
+  Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Unknown }),
+  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
+]).annotate({ identifier: "MethodState" })
+
+export type MethodState = typeof MethodState.Type
+
 export const Health = Schema.Struct({
   status: Schema.Literals(["resting", "driving"]),
   dirty: Schema.Finite
@@ -250,9 +284,11 @@ const ActorParams = { actor: Schema.String }
 
 const ThreadParams = { actor: Schema.String, id: Schema.String }
 
-// The log, which is the whole of what the platform guarantees: list the threads an actor holds,
-// append an event, read the events back. A tail follows beside this group (stream.ts). Everything
-// else a thread can be asked is a projection its actor declares, mounted by name below.
+const MethodParams = { ...ThreadParams, method: Schema.String }
+
+const MethodCallParams = { ...MethodParams, call: Schema.String }
+
+// threadsGroup declares the platform's raw log operations: list threads, append an event, and read events back.
 export const threadsGroup = HttpApiGroup.make("threads").add(
   // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
@@ -278,6 +314,21 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     params: ThreadParams,
     success: ThreadNode,
     error: [UnknownActor.schema, UnknownThread.schema]
+  })
+)
+
+// methodsGroup turns typed actor input into a durable event and projects each call from the same log.
+export const methodsGroup = HttpApiGroup.make("methods").add(
+  HttpApiEndpoint.post("invoke", "/v1/actors/:actor/threads/:id/methods/:method", {
+    params: MethodParams,
+    payload: MethodInvocation,
+    success: MethodAccepted,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownMethod.schema]
+  }),
+  HttpApiEndpoint.get("methodState", "/v1/actors/:actor/threads/:id/methods/:method/:call", {
+    params: MethodCallParams,
+    success: MethodState,
+    error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   })
 )
 
@@ -389,18 +440,15 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
   { error: InvalidRequest.schema }
 ) {}
 
-// apiOf is the whole surface for one actor: the log, the projections that actor declares, and the
-// health probe. It is a function rather than a constant because the projections are not the
-// platform's to know: a server builds the API it serves from the actor it mounts
-// (apps/server/src/api.ts, ServerApi).
+// apiOf combines the actor registry, raw logs, actor methods, declared projections, and health probe.
 export const apiOf = <const P extends Projections>(projections: P) =>
-  HttpApi.make("tardigrade").add(actorsGroup, threadsGroup, projectionsGroupOf(projections), healthGroup)
+  HttpApi.make("tardigrade").add(actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
     .middleware(RequestProblems)
     .annotateMerge(
       OpenApi.annotations({
         title: "Tardigrade",
         description:
-          "Actors, threads, turns, and events: the platform holds the log, and every other read is a projection its actor declares. Every failure is an RFC 9457 problem document."
+          "Actors expose durable methods over thread logs. Raw events and declared projections remain available for inspection. Every failure is an RFC 9457 problem document."
       })
     )
 

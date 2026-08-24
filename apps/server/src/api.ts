@@ -1,4 +1,4 @@
-import { Duration, Effect, Stream } from "effect"
+import { Clock, Duration, Effect, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -11,6 +11,8 @@ import {
   RESERVED_ACTOR,
   unacceptableField,
   UnknownActor,
+  UnknownMethod,
+  UnknownMethodCall,
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
@@ -65,6 +67,17 @@ const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id
 
 const unknownActorDetail = (actor: string) =>
   `No actor named ${JSON.stringify(actor)} is available on this server.`
+
+const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unknown>>): string => {
+  const declared = Object.keys(methods)
+  const available = declared.length === 0
+    ? "This actor declares no methods."
+    : `This actor declares ${declared.map((method) => JSON.stringify(method)).join(", ")}.`
+  return `No method named ${JSON.stringify(name)} is declared. ${available}`
+}
+
+const failureMessage = (failure: unknown): string =>
+  failure instanceof Error ? failure.message : String(failure)
 
 // actorOf is the guard every declared route runs first. The actor level is a path parameter so the
 // declaration states the shape a deploy will vary (contract.ts, RESERVED_ACTOR), and this build
@@ -256,10 +269,47 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         })))
 }
 
-// ServerApi is the surface this process serves: the platform's log routes plus the projections the
-// actor it mounts declares (actor.ts, agentProjections). The OpenAPI document and the reference
-// page are derived from this value, so a projection appears in both by being declared.
+// ServerApi is the surface this process serves: the platform's log routes, actor methods, and declared projections.
 export const ServerApi = apiOf(agentProjections)
+
+// layerMethodsGroup invokes and reads the method declarations carried by the selected actor runtime.
+export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
+  handlers
+    .handle("invoke", ({ params, payload }) =>
+      Effect.gen(function*() {
+        const threads = yield* actorOf(params.actor)
+        const method = threads.methods[params.method]
+        if (method === undefined) {
+          return yield* Effect.fail(UnknownMethod.of(unknownMethodDetail(params.method, threads.methods)))
+        }
+        const at = yield* Clock.currentTimeMillis
+        const event = yield* Effect.try({
+          try: () => method.eventOf({ id: payload.id, input: payload.input, at }),
+          catch: (failure) => InvalidRequest.of(
+            `The input for method ${JSON.stringify(params.method)} is invalid. ${failureMessage(failure)}`
+          )
+        })
+        yield* threads.append(params.id, event)
+        return { actor: params.actor, thread: params.id, method: params.method, call: payload.id }
+      }))
+    .handle("methodState", ({ params }) =>
+      Effect.gen(function*() {
+        const threads = yield* actorOf(params.actor)
+        const method = threads.methods[params.method]
+        if (method === undefined) {
+          return yield* Effect.fail(UnknownMethod.of(unknownMethodDetail(params.method, threads.methods)))
+        }
+        const log = yield* logOf(threads.events, params.id)
+        const state = method.state(log, params.call)
+        if (state === undefined) {
+          return yield* Effect.fail(
+            UnknownMethodCall.of(
+              `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
+            )
+          )
+        }
+        return state
+      })))
 
 // layerProjectionsGroup implements every declared projection the same way, because there is only
 // one way: read the thread's log, hand it to `run` with the decoded query, and answer what comes

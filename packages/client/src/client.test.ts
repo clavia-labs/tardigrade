@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
+import { agentMethods, type ActorMethodState } from "tardie"
 
 import { makeClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
@@ -98,6 +99,33 @@ describe("the token", () => {
   test("no token means no header", async () => {
     await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list()
     expect(calls[0]!.headers["authorization"]).toBeUndefined()
+  })
+})
+
+describe("a declared actor method", () => {
+  test("invokes the selected method with its typed input", async () => {
+    answer = () => new Response(JSON.stringify({
+      actor: "default",
+      thread: "root",
+      method: "message",
+      call: "m1"
+    }), { status: 202, headers: { "content-type": "application/json" } })
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const accepted = await client.invoke("root", "message", { id: "m1", input: { text: "hello" } })
+    expect(accepted.call).toBe("m1")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message")
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ id: "m1", input: { text: "hello" } })
+  })
+
+  test("reads and types completed output from the declaration", async () => {
+    answer = () => new Response(JSON.stringify({ status: "completed", output: "done" }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    })
+    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const state: ActorMethodState<string> = await client.methodState("root", "message", "m1")
+    expect(state).toEqual({ status: "completed", output: "done" })
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/m1")
   })
 })
 

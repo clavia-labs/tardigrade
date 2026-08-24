@@ -138,6 +138,69 @@ const birth = async (base: string, id: string, message: { id: string; text: stri
   })
 }
 
+const callMessage = async (base: string, thread: string, call: string, text: string) => {
+  const response = await post(base, `/v1/actors/default/threads/${thread}/methods/message`, {
+    id: call,
+    input: { text }
+  })
+  expect(response.status).toBe(202)
+  expect(await response.json()).toEqual({
+    actor: RESERVED_ACTOR,
+    thread,
+    method: "message",
+    call
+  })
+  return until(`method call ${call} of ${thread}`, async () => {
+    const state = await get(base, `/v1/actors/default/threads/${thread}/methods/message/${call}`)
+    const body = await state.json() as Record<string, unknown>
+    return body["status"] === "pending" ? undefined : body
+  })
+}
+
+describe("actor methods", () => {
+  test("an invocation births a thread and exposes its completed state", async () => {
+    const state = await serving((base) => callMessage(base, "alpha", "m1", "hello"))
+    expect(state).toEqual({ status: "completed", output: "ok: hello" })
+  })
+
+  test("an invalid input is refused before it reaches the log", async () => {
+    const refusal = await serving(async (base) => {
+      const response = await post(base, "/v1/actors/default/threads/alpha/methods/message", {
+        id: "m1",
+        input: {}
+      })
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(400)
+    expect(refusal.body).toMatchObject({ title: "Invalid Request", status: 400 })
+    expect(String(refusal.body["detail"])).toContain("message")
+    expect(String(refusal.body["detail"])).toContain("text")
+  })
+
+  test("an unknown method names the methods the actor declares", async () => {
+    const refusal = await serving(async (base) => {
+      const response = await post(base, "/v1/actors/default/threads/alpha/methods/missing", {
+        id: "m1",
+        input: {}
+      })
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(404)
+    expect(refusal.body).toMatchObject({ title: "Unknown Method", status: 404 })
+    expect(String(refusal.body["detail"])).toContain('"message"')
+  })
+
+  test("a call the method cannot derive is its own 404", async () => {
+    const refusal = await serving(async (base) => {
+      await callMessage(base, "alpha", "m1", "hello")
+      const response = await get(base, "/v1/actors/default/threads/alpha/methods/message/missing")
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(404)
+    expect(refusal.body).toMatchObject({ title: "Unknown Method Call", status: 404 })
+  })
+})
+
 describe("appending", () => {
   test("an appended message births a thread and the server drives its turn to completed", async () => {
     const view = await serving((base) => birth(base, "alpha", { id: "m1", text: "hello" }))
