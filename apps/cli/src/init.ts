@@ -6,28 +6,57 @@ import { actorTemplate, type ActorTemplateModel } from "./template"
 import { callCommandFor, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
+export const DEFAULT_WORKER_ENTRY = "worker.ts"
 
 export interface InitActorOptions {
   readonly model: ActorTemplateModel
   readonly cwd?: string
   readonly directory?: string
   readonly force?: boolean
+  readonly now?: Date
 }
 
 export interface InitializedActor {
   readonly name: string
   readonly directory: string
   readonly entry: string
+  readonly worker: string
   readonly manifest: string
 }
 
 export const defaultInitDirectory = (name: string): string => name
 
-const manifestTemplate = (name: string): string => `${JSON.stringify({
+const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify({
   $schema: "./node_modules/wrangler/config-schema.json",
   name,
-  vars: {}
+  main: DEFAULT_WORKER_ENTRY,
+  compatibility_date: now.toISOString().slice(0, 10),
+  compatibility_flags: ["nodejs_compat"],
+  durable_objects: {
+    bindings: [{ name: "ACTORS", class_name: "ActorHost" }]
+  },
+  worker_loaders: [{ binding: "LOADER" }],
+  migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }],
+  observability: { enabled: true },
+  limits: { cpu_ms: 300_000 },
+  vars: {
+    TARDIGRADE_ALARM_DELAY_MILLIS: "120000",
+    TARDIGRADE_COMPACTION_FIRE_RATIO: "0.8",
+    TARDIGRADE_COMPACTION_KEEP_RATIO: "0.5",
+    TARDIGRADE_MAX_CONCURRENT_LANES: "4",
+    TARDIGRADE_MODEL_CATALOG_URL: "https://models.dev/api.json",
+    TARDIGRADE_MODEL_CATALOG_LOAD_POLICY: "refresh",
+    TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "10000",
+    TARDIGRADE_CONFIG: {}
+  }
 }, undefined, 2)}\n`
+
+const workerTemplate = `import definition from "./actor"
+import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+
+export { ActorHost }
+export default cloudflareWorker(definition)
+`
 
 const existsError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST"
@@ -36,6 +65,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const cwd = options.cwd ?? process.cwd()
   const directory = resolve(cwd, options.directory ?? defaultInitDirectory(name))
   const entry = resolve(directory, DEFAULT_ACTOR_ENTRY)
+  const worker = resolve(directory, DEFAULT_WORKER_ENTRY)
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
   const source = await actorTemplate({ name, model: options.model })
 
@@ -50,12 +80,18 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   }
 
   try {
-    await writeFile(manifest, manifestTemplate(name), { encoding: "utf8", flag: "wx" })
+    await writeFile(worker, workerTemplate, { encoding: "utf8", flag: "wx" })
   } catch (error) {
     if (!existsError(error)) throw error
   }
 
-  return { name, directory, entry, manifest }
+  try {
+    await writeFile(manifest, manifestTemplate(name, options.now ?? new Date()), { encoding: "utf8", flag: "wx" })
+  } catch (error) {
+    if (!existsError(error)) throw error
+  }
+
+  return { name, directory, entry, worker, manifest }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -65,17 +101,19 @@ const shownPath = (cwd: string, path: string): string => {
 
 export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()): string => {
   const directory = shownPath(cwd, actor.directory)
-  const entry = shownPath(actor.directory, actor.entry)
   return [
     `created ${shownPath(cwd, actor.entry)}`,
+    `created ${shownPath(cwd, actor.worker)}`,
     `created ${shownPath(cwd, actor.manifest)}`,
     "",
     "next",
     `  cd ${shellWord(directory)}`,
-    `  tdg push ${shellWord(entry)} --target local`,
     "  tdg dev",
     "",
     "then, in another terminal",
-    `  ${callCommandFor(actor.name)}`
+    `  ${callCommandFor(actor.name)}`,
+    "",
+    "deploy",
+    "  bunx wrangler deploy"
   ].join("\n")
 }

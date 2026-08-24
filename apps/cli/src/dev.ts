@@ -2,10 +2,12 @@ import { Console, Context, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
+import type { ActorDefinition } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
-import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
+import { layerActorThreads, layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
+import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { layerApp } from "@clavia/tardigrade-server/http"
 
 import { resolveAssets } from "./assets"
@@ -28,8 +30,8 @@ export const DEV_URL_HOST = "localhost"
 // occupied. The `--min-port` flag lets a caller narrow this range.
 export const DEFAULT_MIN_PORT = 1024
 
-// DEFAULT_ACTOR_REFRESH_MILLIS lets an atomic local push finish its directory swaps before tdg dev
-// reconciles the actor root. DevOptions and --actor-refresh-ms can replace it.
+// DEFAULT_ACTOR_REFRESH_MILLIS lets an atomic local push finish its directory swaps before a
+// self-hosted development server reconciles the actor root. DevOptions can replace it.
 export const DEFAULT_ACTOR_REFRESH_MILLIS = 50
 
 // The status that means the router matched nothing. It is the seam the UI is served through: the
@@ -111,6 +113,8 @@ export const layerVoyager = (root: string) =>
 
 export interface DevOptions {
   readonly config: ServerConfigValue
+  // actor mounts one project definition directly. An omitted actor enables the self-hosted registry.
+  readonly actor?: ActorDefinition<ServerR> | undefined
   // Where the built UI lives. Absent, the two layouts a build can arrive in are tried in order
   // (assets.ts, ASSET_CANDIDATES).
   readonly assets?: string | undefined
@@ -140,10 +144,15 @@ export const dev = (options: DevOptions) => {
     Layer.provide(BunFileSystem.layer)
   )
   const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
-  const threads = Layer.provide(layerThreads({
-    ...options.threads,
-    actorRefresh: { debounceMillis: actorRefreshMillis }
-  }), [config, catalog])
+  const threads = Layer.provide(
+    options.actor === undefined
+      ? layerThreads({
+          ...options.threads,
+          actorRefresh: { debounceMillis: actorRefreshMillis }
+        })
+      : layerActorThreads(options.actor, options.threads),
+    [config, catalog]
+  )
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).

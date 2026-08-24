@@ -7,7 +7,7 @@ import { Console, Effect, Exit, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ACTOR_ARTIFACT_VERSION, Infer } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, Infer, type ActorDefinition } from "tardie"
 import type { Action } from "tardie/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
@@ -47,12 +47,18 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
   react: () => Effect.succeed({ kind: "complete", output: "the scripted answer" } satisfies Action)
 })
 
+const directActor: ActorDefinition<never> = {
+  name: "reviewer",
+  methods: {},
+  actor: { reactors: [], keyOf: () => undefined }
+}
+
 // booted starts the whole command on an ephemeral port and hands the body its base URL. ":memory:"
 // keeps the store to this process, so the case owns every event it reads.
 const booted = <A>(
   body: (baseUrl: string, hostname: string, actors: string) => Promise<A>,
   env: Record<string, string | undefined> = {},
-  options: Pick<DevOptions, "onListen"> = {}
+  options: Pick<DevOptions, "actor" | "onListen"> = {}
 ): Promise<A> => {
   const actors = mkdtempSync(join(tmpdir(), "tardigrade-dev-actors-"))
   const actorData = mkdtempSync(join(tmpdir(), "tardigrade-dev-data-"))
@@ -201,6 +207,15 @@ describe("tdg dev", () => {
     expect(seen.deep.body).toBe(INDEX)
     expect(seen.ghost.status).toBe(404)
     expect(seen.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
+  })
+
+  test("a project actor mounts directly", async () => {
+    const response = await booted(async (baseUrl) => {
+      const methods = await fetch(`${baseUrl}/v1/actors/reviewer/methods`)
+      return { status: methods.status, body: await methods.json() }
+    }, {}, { actor: directActor })
+
+    expect(response).toEqual({ status: 200, body: [] })
   })
 
   test("a local push refreshes the actor registry", async () => {

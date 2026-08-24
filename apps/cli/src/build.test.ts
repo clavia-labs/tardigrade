@@ -53,7 +53,7 @@ describe("buildActor", () => {
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("must declare its methods")
   })
 
-  test("the summary hands the source to local push", async () => {
+  test("the summary identifies the artifact", async () => {
     const path = await entry(`
       import { defineActor } from "tardie"
       export default defineActor({
@@ -64,6 +64,10 @@ describe("buildActor", () => {
     `)
     const built = await buildActor(path, { cwd: root, out: "output" })
 
-    expect(buildSummary(built, "my actor.ts")).toContain("tdg push 'my actor.ts' --target local")
+    expect(buildSummary(built)).toBe([
+      "built researcher",
+      `at    ${built.directory}`,
+      `hash  ${built.manifest.digest}`
+    ].join("\n"))
   })
 })

@@ -178,7 +178,7 @@ Treat one matched model run as a sample. State any output difference or provider
 
 ## Cut over and report
 
-Prepare the production Tardigrade server, actor push, database path, credentials, health check, and client URL. Keep production deployment as a separate authorized action. The migration itself proves the local actor with `tdg build`, `tdg push --target local`, `tdg dev`, and a representative `tdg call`.
+Prepare the production Tardigrade deployment, database path, credentials, health check, and client URL. Keep production deployment as a separate authorized action. The migration itself proves the local actor with `tdg build`, `tdg dev`, and a representative `tdg call`.
 
 Keep the existing endpoint and store available for rollback. Switch traffic only after tests pass, imported threads settle, a new turn succeeds, and the application renders event progress and terminals. Remove the existing harness dependencies after a repository search finds no remaining imports and the rollback window closes.
 

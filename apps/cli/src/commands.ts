@@ -1,15 +1,17 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
+import type { ActorDefinition } from "tardie"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
 
+import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
 
-import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
+import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, loadBuiltActor } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
-import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
-import { defaultInitDirectory, initActor, initSummary } from "./init"
+import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import {
   defaultModelFrom,
@@ -384,7 +386,7 @@ export const buildCommand = Command.make("build", {
       try: () => buildActor(flags.entry, out === undefined ? {} : { out }),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built, flags.entry))
+    yield* Console.log(flags.json ? jsonOf(built) : buildSummary(built))
   })).pipe(
     Command.withDescription("Bundle and validate one named actor as a portable artifact."),
     Command.withExamples([
@@ -449,21 +451,9 @@ export const devCommand = Command.make("dev", {
     Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
     Flag.optional
   ),
-  actors: Flag.string("actors").pipe(
-    Flag.withDescription("The directory holding pushed actors. Defaults to TARDIGRADE_ACTORS."),
-    Flag.optional
-  ),
-  actorData: Flag.string("actor-data").pipe(
-    Flag.withDescription("The directory holding pushed actor databases. Defaults to TARDIGRADE_ACTOR_DATA."),
-    Flag.optional
-  ),
   maxConcurrentLanes: Flag.integer("max-concurrent-lanes").pipe(
     Flag.withDescription("The maximum actor lanes settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_LANES."),
     Flag.optional
-  ),
-  actorRefreshMillis: Flag.integer("actor-refresh-ms").pipe(
-    Flag.withDescription("Milliseconds to wait after a local actor change before refreshing the registry."),
-    Flag.withDefault(DEFAULT_ACTOR_REFRESH_MILLIS)
   ),
   ui: Flag.string("ui").pipe(
     Flag.withDescription("The directory holding the built UI. Defaults to the build shipped beside this command."),
@@ -483,8 +473,6 @@ export const devCommand = Command.make("dev", {
       try: () => resolveServer({
         port: Option.getOrUndefined(flags.port),
         db: stated(flags.db),
-        actors: stated(flags.actors),
-        actorData: stated(flags.actorData),
         maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
       }, runtimeEnv, project),
       catch: userErrorOf
@@ -506,8 +494,6 @@ export const devCommand = Command.make("dev", {
           try: () => resolveServer({
             port: Option.getOrUndefined(flags.port),
             db: stated(flags.db),
-            actors: stated(flags.actors),
-            actorData: stated(flags.actorData),
             maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
           }, runtimeEnvironmentOf(cli.env, written), writtenProject),
           catch: userErrorOf
@@ -525,11 +511,19 @@ export const devCommand = Command.make("dev", {
       yield* Console.log(`port ${asked.port} is busy; using http://${DEV_URL_HOST}:${selectedPort}`)
     }
     const config2 = selectedPort === asked.port ? asked : { ...asked, port: selectedPort }
+    const built = yield* Effect.tryPromise({
+      try: () => buildActor(DEFAULT_ACTOR_ENTRY, { cwd: cli.cwd }),
+      catch: userErrorOf
+    })
+    const definition = yield* Effect.tryPromise({
+      try: () => loadBuiltActor(built),
+      catch: userErrorOf
+    })
     const layer = yield* Effect.try({
       try: () => dev({
         config: config2,
+        actor: definition as ActorDefinition<ServerR>,
         assets: stated(flags.ui),
-        actorRefreshMillis: flags.actorRefreshMillis,
         ...(flags.open ? { onListen: openBrowser } : {})
       }),
       catch: userErrorOf
@@ -537,7 +531,7 @@ export const devCommand = Command.make("dev", {
     return yield* Effect.mapError(Layer.launch(layer), userErrorOf)
   })).pipe(
       Command.withDescription(
-        "Boot the API and serve the built UI at one URL, ungated on loopback. One process, one port: the API paths are the server's own and everything else is the UI."
+        "Build actor.ts, boot its API, and serve the built UI at one loopback URL."
       ),
       Command.withExamples([
         { command: "tdg dev", description: "Listen on PORT, or find a free port from the server's default" },

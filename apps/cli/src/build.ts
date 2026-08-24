@@ -12,8 +12,6 @@ import {
   type ActorDefinition
 } from "tardie"
 
-import { shellWord } from "./workflow"
-
 export const DEFAULT_BUILD_DIRECTORY = ".tardigrade/build"
 export const ACTOR_MODULE_FILE = "actor.mjs"
 export const ACTOR_MANIFEST_FILE = "manifest.json"
@@ -53,6 +51,10 @@ const definitionOf = async (modulePath: string): Promise<ActorDefinition<unknown
   actorMethodsOf(candidate.methods as ActorMethods)
   return candidate as ActorDefinition<unknown>
 }
+
+// loadBuiltActor returns the validated definition from one built artifact.
+export const loadBuiltActor = (built: BuiltActor): Promise<ActorDefinition<unknown>> =>
+  definitionOf(join(built.directory, ACTOR_MODULE_FILE))
 
 export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
   name: "tardie",
@@ -116,12 +118,9 @@ export const buildActor = async (entry: string, options: BuildActorOptions = {})
   }
 }
 
-export const buildSummary = (built: BuiltActor, entry: string): string =>
+export const buildSummary = (built: BuiltActor): string =>
   [
     `built ${built.manifest.name}`,
     `at    ${built.directory}`,
-    `hash  ${built.manifest.digest}`,
-    "",
-    "next",
-    `  tdg push ${shellWord(entry)} --target local`
+    `hash  ${built.manifest.digest}`
   ].join("\n")
