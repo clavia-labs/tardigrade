@@ -37,7 +37,7 @@ Install Tardigrade and initialize an editable template actor. Use Bun 1.4 or lat
 If you have an existing agent application, follow the [migration guide](docs/how-to/migrate.md) to move its harness, history, API, client, and deployment configuration.
 
 ```bash
-bun add -g tardie
+bun add -g tardie@latest
 tdg init researcher
 cd researcher
 tdg dev
