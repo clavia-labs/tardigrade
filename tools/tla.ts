@@ -5,15 +5,17 @@ import { join } from "node:path"
 export const DEFAULT_TLC_WORKERS = 1
 export const DEFAULT_TLC_TIMEOUT_MILLIS = 120_000
 
+type CheckDirectory = "communication" | "runtime" | "cloudflare"
+
 interface PassingCheck {
-  readonly directory: "communication" | "runtime"
+  readonly directory: CheckDirectory
   readonly module: string
   readonly config: string
   readonly outcome: "pass"
 }
 
 interface CounterexampleCheck {
-  readonly directory: "communication" | "runtime"
+  readonly directory: CheckDirectory
   readonly module: string
   readonly config: string
   readonly outcome: "counterexample"
@@ -74,7 +76,10 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("runtime", "Thread", "ThreadDepth.cfg", "Invariant LineageValid is violated"),
   counterexample("runtime", "Thread", "ThreadConflict.cfg", "Invariant CreationOnce is violated"),
   pass("runtime", "Totality", "Totality.cfg"),
-  counterexample("runtime", "Totality", "TotalityVoid.cfg", "Invariant NoVoidCur is violated")
+  counterexample("runtime", "Totality", "TotalityVoid.cfg", "Invariant NoVoidCur is violated"),
+  pass("cloudflare", "DurableExecution", "DurableExecution.cfg"),
+  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoTurn.cfg", "Invariant CoveredBeforeDrive is violated"),
+  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated")
 ]
 
 const jar = process.env["TLA2TOOLS_JAR"]
@@ -97,14 +102,17 @@ const known = new Set(checks.map((check) => check.module))
 const unknown = [...selected].filter((module) => !known.has(module))
 if (unknown.length > 0) throw new Error(`unknown TLA module: ${unknown.join(", ")}`)
 
-const root = join(import.meta.dir, "..", "packages", "core", "tla")
+const root = join(import.meta.dir, "..")
+const directoryOf = (directory: Check["directory"]): string => directory === "cloudflare"
+  ? join(root, "platform", "cloudflare", "tla")
+  : join(root, "packages", "core", "tla", directory)
 const declaredConfigs = checks.map((check) => `${check.directory}/${check.config}`)
 const declarations = new Set(declaredConfigs)
 if (declarations.size !== declaredConfigs.length) throw new Error("the TLA manifest contains a duplicate configuration")
 const presentConfigs = (
   await Promise.all(
-    (["communication", "runtime"] as const).map(async (directory) =>
-      (await readdir(join(root, directory)))
+    (["communication", "runtime", "cloudflare"] as const).map(async (directory) =>
+      (await readdir(directoryOf(directory)))
         .filter((file) => file.endsWith(".cfg"))
         .map((file) => `${directory}/${file}`)
     )
@@ -120,7 +128,7 @@ let failures = 0
 
 try {
   for (const check of suite) {
-    const directory = join(root, check.directory)
+    const directory = directoryOf(check.directory)
     const state = join(stateRoot, `${check.module}-${check.config}`)
     const child = Bun.spawn(
       [

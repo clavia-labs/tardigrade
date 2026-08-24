@@ -3,9 +3,12 @@ import { defineConfig } from "vitest/config"
 
 export default defineConfig({
   plugins: [cloudflareTest({
-    wrangler: { configPath: "./wrangler.jsonc" },
+    wrangler: { configPath: "./test/wrangler.jsonc" },
     miniflare: {
-      bindings: { TARDIGRADE_TOKEN: "workers-test-token" },
+      bindings: {
+        TARDIGRADE_TOKEN: "workers-test-token",
+        TARDIGRADE_ALARM_DELAY_MILLIS: "60000"
+      },
       d1Databases: ["REGISTRY"]
     }
   })],

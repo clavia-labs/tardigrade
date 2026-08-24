@@ -31,6 +31,7 @@ const sources = [
   { dir: "packages/channels", namespace: "channels" },
   { dir: "packages/client", namespace: "client" },
   { dir: "platform/bun", namespace: "bun" },
+  { dir: "platform/cloudflare", namespace: "cloudflare" },
   { dir: "platform/model", namespace: "model" },
   { dir: "apps/server", namespace: "server" },
   { dir: "apps/cli", namespace: "cli" }
@@ -223,6 +224,8 @@ try {
       "./client": "./src/client/index.ts",
       "./client/*": "./src/client/*.ts",
       "./bun/*": "./src/bun/*.ts",
+      "./cloudflare": "./src/cloudflare/index.ts",
+      "./cloudflare/*": "./src/cloudflare/*.ts",
       "./server/*": "./src/server/*.ts",
       "./cli/*": "./src/cli/*.ts",
       "./model": "./src/model/model.ts",

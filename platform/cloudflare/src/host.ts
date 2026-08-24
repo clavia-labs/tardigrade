@@ -40,7 +40,9 @@ export interface CloudflareHost {
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
   readonly lanes: () => Promise<ReadonlyArray<string>>
   readonly commit: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
+  readonly stage: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
+  readonly stageRoot: (address: string, event: Event) => Promise<void>
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
@@ -72,7 +74,8 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     target: ActorId,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorId>
+    link?: Link<unknown, ActorId>,
+    flush = true
   ): Effect.Effect<void> => {
     const address = formatActorId(target)
     return Effect.gen(function* () {
@@ -116,7 +119,7 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
         created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed]
       )
       if (appended > 0) driver.mark(lane)
-      yield* sync
+      if (flush) yield* sync
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
   }
 
@@ -177,7 +180,9 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     read: (lane) => Effect.runPromise(readEffect(lane)),
     lanes,
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link)),
+    stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, false)),
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined)),
+    stageRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined, undefined, false)),
     drive,
     recover,
     resting,
