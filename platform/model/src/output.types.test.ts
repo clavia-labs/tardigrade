@@ -31,7 +31,7 @@ const native = infer({
   model: "strict",
   provider: "test",
   contextWindowTokens: 128_000,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   output: { guarantee: "native", withTools: true }
 })
 
@@ -41,7 +41,7 @@ const toolLimited = infer({
   model: "strict-without-tools",
   provider: "test",
   contextWindowTokens: 128_000,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   output: { guarantee: "native", withTools: false }
 })
 
@@ -51,7 +51,7 @@ const unproven = infer({
   model: "unproven",
   provider: "test",
   contextWindowTokens: 128_000,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   output: { guarantee: "none" }
 })
 

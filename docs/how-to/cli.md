@@ -32,6 +32,8 @@ tdg call message '{"text":"read this repo and tell me what it does"}' --actor re
 | `tdg build <entry>` | Build and validate an actor artifact |
 | `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
 | `tdg dev` | Serve the API and the UI on one port |
+| `tdg providers` | List provider protocols and setup requirements |
+| `tdg models` | Search and page the public model catalog |
 | `tdg actors` | List actors available on the server |
 | `tdg methods` | List an actor's methods and schemas |
 | `tdg call <method> <input>` | Call a method with JSON input and wait for its result |
@@ -76,16 +78,16 @@ tdg setup default \
   --model anthropic/claude-sonnet-4-6
 ```
 
-Known providers supply their standard driver and endpoint. A provider whose connection needs more fields states them in the same object. Amazon Bedrock requires its gateway endpoint and AWS region:
+Known providers supply their standard protocol and endpoint. A provider whose connection needs more fields states them in the same object. Amazon Bedrock requires its gateway endpoint and AWS region:
 
 ```bash
 tdg setup provider amazon-bedrock '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
 ```
 
-A custom provider declares its endpoint and driver:
+A custom provider declares its endpoint and protocol:
 
 ```bash
-tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","driver":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
+tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","protocol":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
 ```
 
 ```jsonc
@@ -95,7 +97,7 @@ tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","
     "providers": {
       "openrouter": {
         "baseUrl": "https://openrouter.ai/api/v1",
-        "driver": "openai-chat-completions",
+        "protocol": "openai-chat-completions",
         "env": ["OPENROUTER_API_KEY"]
       }
     }
@@ -108,6 +110,15 @@ OPENROUTER_API_KEY='your-key'
 ```
 
 Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The first interactive run saves the validated public catalog in `.tardigrade/models.json`; later runs load that snapshot without another request. A cached list says `cached catalog`. The list omits models whose catalog entry explicitly rules out text output or tool calls. Models with missing capability data remain visible, and manual entry remains available. `tdg dev` refreshes the same cache when its server starts and keeps the resolved snapshot in memory. The server resolves model windows, output limits, and pricing from that snapshot. Set every environment variable named by a declarative provider before the server starts. Hosted platforms should inject those values through their secret store.
+
+Once a local or hosted server is running, agents can inspect the same catalog through the typed client commands:
+
+```bash
+tdg providers --search gateway --limit 20 --json
+tdg models --provider openrouter --search claude --limit 20 --json
+```
+
+Each response includes `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and an optional `next_cursor`. Pass that cursor with the same search and provider filters to read the next page. A cursor from an older catalog revision or another query is refused, so restart at the first page after either changes. These commands accept `--url` and `--token` when they address another server.
 
 ## What the actor can reach
 
@@ -128,6 +139,8 @@ tdg call message '{"text":"summarize the open PRs"}' --actor reviewer --json
 tdg call message '{"text":"take a deeper pass","model":"anthropic/claude-opus-4-6"}' --actor reviewer
 tdg call inspect '{"path":"README.md"}' --actor reviewer --no-wait
 tdg actors
+tdg providers --json
+tdg models --provider openrouter --search claude --json
 tdg build ./actors/reviewer.ts
 tdg push ./actors/reviewer.ts --target local
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"

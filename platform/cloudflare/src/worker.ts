@@ -4,13 +4,14 @@ import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerR
 import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage, type ModelCoordinate } from "tardie"
 import type { Action } from "tardie/events"
 import { infer } from "@clavia/tardigrade-model/model"
-import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { modelProtocolOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import {
   loadModelCatalog,
   type ModelCatalogLoadPolicy,
   type ModelCatalogState
 } from "@clavia/tardigrade-server/catalog"
+import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -91,7 +92,7 @@ const actorRegistry = async (env: Env) => {
 interface CloudflareProvider {
   readonly baseUrl: string
   readonly apiKey: string
-  readonly driver: ModelDriver
+  readonly protocol: ModelProtocol
   readonly env: ReadonlyArray<string>
   readonly region?: string
 }
@@ -123,7 +124,7 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
       readonly default?: unknown
       readonly providers?: Readonly<Record<string, {
       readonly baseUrl?: unknown
-      readonly driver?: unknown
+      readonly protocol?: unknown
       readonly env?: unknown
       readonly apiKey?: unknown
       readonly region?: unknown
@@ -141,8 +142,8 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
     if (provider.apiKey !== undefined) {
       throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} cannot contain apiKey; declare its Worker secret in env`)
     }
-    if (typeof provider.baseUrl !== "string" || typeof provider.driver !== "string") {
-      throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} must declare baseUrl and driver`)
+    if (typeof provider.baseUrl !== "string" || typeof provider.protocol !== "string") {
+      throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} must declare baseUrl and protocol`)
     }
     if (provider.region !== undefined && (typeof provider.region !== "string" || provider.region.trim().length === 0)) {
       throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} region must be a non-empty string`)
@@ -151,7 +152,7 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
     providers[name] = {
       baseUrl: provider.baseUrl,
       apiKey: credentialFrom(env, name, credentialEnv),
-      driver: modelDriverOf(provider.driver),
+      protocol: modelProtocolOf(provider.protocol),
       env: credentialEnv,
       ...(typeof provider.region === "string" && provider.region.trim().length > 0
         ? { region: provider.region.trim() }
@@ -211,7 +212,7 @@ const modelLayer = (models: CloudflareModels | undefined, catalog: ModelCatalogS
         baseUrl: selectedModel.provider.baseUrl,
         apiKey: selectedModel.provider.apiKey,
         model: request.model.model_id,
-        driver: selectedModel.provider.driver,
+        protocol: selectedModel.provider.protocol,
         provider: request.model.provider,
         ...(selectedModel.provider.region === undefined ? {} : { region: selectedModel.provider.region }),
         contextWindowTokens: selectedModel.contextWindowTokens,
@@ -512,6 +513,17 @@ const guard = (request: HttpServerRequest.HttpServerRequest, env: Env) => {
   return undefined
 }
 
+const catalogQueryOf = (request: HttpServerRequest.HttpServerRequest) => {
+  const query = new URL(request.url).searchParams
+  const value = (name: string): string | undefined => query.get(name) ?? undefined
+  const limit = value("limit")
+  return {
+    cursor: value("cursor"),
+    search: value("search"),
+    ...(limit === undefined ? {} : { limit: Number(limit) })
+  }
+}
+
 const protectedRoute = <E, R>(
   f: (
     request: HttpServerRequest.HttpServerRequest,
@@ -530,16 +542,42 @@ const routes = [
     const registry = yield* CloudflareActorRegistry
     return json(yield* Effect.promise(async () => (await actorStub(env, registry, DEFAULT_ACTOR_REGISTRATION.name))!.status()))
   })),
-  HttpRouter.route("GET", "/v1/models", Effect.gen(function* () {
+  HttpRouter.route("GET", "/v1/providers", Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
     const env = yield* WorkerEnv
     return yield* Effect.tryPromise({
-      try: () => modelCatalog(env),
+      try: async () => {
+        const catalog = await modelCatalog(env)
+        if (catalog.snapshot === undefined) {
+          throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        }
+        return providersPageOf(catalog.snapshot, catalogQueryOf(request))
+      },
       catch: (cause) => cause instanceof Error ? cause.message : String(cause)
     }).pipe(Effect.match({
-      onFailure: (error) => json({ error }, 503),
-      onSuccess: (catalog) => catalog.snapshot === undefined
-        ? json({ error: catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available" }, 503)
-        : json(catalog.snapshot)
+      onFailure: (error) => json({ error }, error.includes("catalog cursor") || error.includes("catalog limit") ? 400 : 503),
+      onSuccess: (page) => json(page)
+    }))
+  })),
+  HttpRouter.route("GET", "/v1/models", Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const env = yield* WorkerEnv
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const catalog = await modelCatalog(env)
+        if (catalog.snapshot === undefined) {
+          throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        }
+        const query = new URL(request.url).searchParams
+        return modelsPageOf(catalog.snapshot, {
+          ...catalogQueryOf(request),
+          provider: query.get("provider") ?? undefined
+        })
+      },
+      catch: (cause) => cause instanceof Error ? cause.message : String(cause)
+    }).pipe(Effect.match({
+      onFailure: (error) => json({ error }, error.includes("catalog cursor") || error.includes("catalog limit") ? 400 : 503),
+      onSuccess: (page) => json(page)
     }))
   })),
   HttpRouter.route("GET", "/v1/actors", protectedRoute((_request, _env) => Effect.gen(function* () {

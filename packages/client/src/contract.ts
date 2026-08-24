@@ -297,6 +297,46 @@ export const ModelCatalog = Schema.Struct({
 
 export type ModelCatalog = typeof ModelCatalog.Type
 
+const CatalogPageFields = {
+  revision: Schema.NonEmptyString,
+  status: Schema.Literals(["fresh", "cached"]),
+  refreshed_at: Schema.Finite,
+  total: Schema.Int,
+  limit: Schema.Int,
+  next_cursor: Schema.optionalKey(Schema.String)
+}
+
+export const ProviderCatalogItem = Schema.Struct({
+  id: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
+  protocol: Schema.optionalKey(Schema.String),
+  baseUrl: Schema.optionalKey(Schema.String),
+  env: Schema.Array(Schema.String),
+  required: Schema.Array(Schema.String),
+  optional: Schema.Array(Schema.String)
+}).annotate({ identifier: "ProviderCatalogItem" })
+
+export const ProviderCatalogPage = Schema.Struct({
+  ...CatalogPageFields,
+  items: Schema.Array(ProviderCatalogItem)
+}).annotate({ identifier: "ProviderCatalogPage" })
+
+export type ProviderCatalogPage = typeof ProviderCatalogPage.Type
+
+export const ModelCatalogItem = Schema.Struct({
+  provider: Schema.NonEmptyString,
+  id: Schema.NonEmptyString,
+  name: Schema.optionalKey(Schema.String),
+  metadata: ModelCatalogMetadata
+}).annotate({ identifier: "ModelCatalogItem" })
+
+export const ModelCatalogPage = Schema.Struct({
+  ...CatalogPageFields,
+  items: Schema.Array(ModelCatalogItem)
+}).annotate({ identifier: "ModelCatalogPage" })
+
+export type ModelCatalogPage = typeof ModelCatalogPage.Type
+
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
     schema: Schema.Literal(2),
@@ -405,12 +445,23 @@ export const actorsGroup = HttpApiGroup.make("actors").add(
   })
 )
 
-// modelsGroup exposes the deploy's validated public model snapshot independently of private
-// provider routes and credentials.
+const CatalogQuery = {
+  search: Schema.optionalKey(Schema.String),
+  cursor: Schema.optionalKey(Schema.String),
+  limit: Schema.optionalKey(Schema.Int)
+}
+
+// modelsGroup exposes paginated public provider and model discovery independently of private routes and credentials.
 export const modelsGroup = HttpApiGroup.make("models").add(
+  HttpApiEndpoint.get("providers", "/v1/providers", {
+    query: CatalogQuery,
+    success: ProviderCatalogPage,
+    error: [ModelCatalogUnavailable.schema, InvalidRequest.schema]
+  }),
   HttpApiEndpoint.get("models", "/v1/models", {
-    success: ModelCatalog,
-    error: [ModelCatalogUnavailable.schema]
+    query: { ...CatalogQuery, provider: Schema.optionalKey(Schema.String) },
+    success: ModelCatalogPage,
+    error: [ModelCatalogUnavailable.schema, InvalidRequest.schema]
   })
 )
 

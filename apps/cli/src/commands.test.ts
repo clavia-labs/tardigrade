@@ -5,7 +5,19 @@ import { join } from "node:path"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
 import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary, type Client, type EventRow, type MethodAccepted, type MethodState, type MethodSummary } from "@clavia/tardigrade-client"
+import {
+  ProblemError,
+  RESERVED_ACTOR,
+  type ActorSummary,
+  type Client,
+  type EventRow,
+  type MethodAccepted,
+  type MethodState,
+  type MethodSummary,
+  type ModelCatalogPage,
+  type ProviderCatalogPage,
+  type ThreadSummary
+} from "@clavia/tardigrade-client"
 
 import { NO_MODEL_NOTICE, problemLine, tdg } from "./commands"
 import { Cli, type CliServices } from "./services"
@@ -25,6 +37,7 @@ const events: ReadonlyArray<EventRow> = [
 interface Recorded {
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly asked: Array<{ thread: string; options: unknown }>
+  readonly catalog: Array<{ kind: "models" | "providers"; options: unknown }>
   methodReads: number
 }
 
@@ -39,6 +52,8 @@ const clientOf = (
     readonly actors?: ReadonlyArray<ActorSummary>
     readonly events?: ReadonlyArray<EventRow>
     readonly methods?: ReadonlyArray<MethodSummary>
+    readonly models?: ModelCatalogPage
+    readonly providers?: ProviderCatalogPage
     readonly states?: ReadonlyArray<MethodState>
     readonly fail?: ProblemError
   }
@@ -50,7 +65,28 @@ const clientOf = (
     actors: () => answers.fail === undefined
       ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
       : Promise.reject(answers.fail),
-    models: refuse,
+    providers: (options) => {
+      recorded.catalog.push({ kind: "providers", options })
+      return Promise.resolve(answers.providers ?? {
+        revision: "catalog-1",
+        status: "fresh",
+        refreshed_at: 1,
+        total: 0,
+        limit: 50,
+        items: []
+      })
+    },
+    models: (options) => {
+      recorded.catalog.push({ kind: "models", options })
+      return Promise.resolve(answers.models ?? {
+        revision: "catalog-1",
+        status: "fresh",
+        refreshed_at: 1,
+        total: 0,
+        limit: 50,
+        items: []
+      })
+    },
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
     methods: () => answers.fail === undefined ? Promise.resolve(answers.methods ?? []) : Promise.reject(answers.fail),
     events: (thread, options) => {
@@ -108,7 +144,7 @@ const drive = async (
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
-  const recorded: Recorded = { invoked: [], asked: [], methodReads: 0 }
+  const recorded: Recorded = { invoked: [], asked: [], catalog: [], methodReads: 0 }
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
@@ -156,7 +192,7 @@ describe("parsing", () => {
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
   test("the tree starts with init, and setup says what it writes", async () => {
     const root = (await drive([])).lines.join("\n")
-    for (const command of ["setup", "init", "build", "push", "actors", "methods", "call"]) {
+    for (const command of ["setup", "init", "build", "push", "providers", "models", "actors", "methods", "call"]) {
       expect(root).toContain(command)
     }
     expect(root.indexOf("init")).toBeLessThan(root.indexOf("setup"))
@@ -337,6 +373,49 @@ describe("actors", () => {
   test("--json prints the summaries verbatim", async () => {
     const ran = await drive(["actors", "--json"], { answers: { actors } })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual(actors)
+  })
+})
+
+describe("catalog discovery", () => {
+  test("providers forwards search and pagination and prints requirements", async () => {
+    const ran = await drive(["providers", "--search", "open", "--limit", "1", "--cursor", "next"], {
+      answers: {
+        providers: {
+          revision: "catalog-2",
+          status: "cached",
+          refreshed_at: 2,
+          total: 2,
+          limit: 1,
+          next_cursor: "last",
+          items: [{
+            id: "openrouter",
+            name: "OpenRouter",
+            protocol: "openai-chat-completions",
+            baseUrl: "https://openrouter.ai/api/v1",
+            env: ["OPENROUTER_API_KEY"],
+            required: ["env"],
+            optional: ["baseUrl"]
+          }]
+        }
+      }
+    })
+    expect(ran.failed).toBe(false)
+    expect(ran.recorded.catalog).toEqual([{
+      kind: "providers",
+      options: { cursor: "next", limit: 1, search: "open" }
+    }])
+    expect(ran.lines.join("\n")).toContain("openrouter")
+    expect(ran.lines.join("\n")).toContain("next cursor last")
+  })
+
+  test("models forwards its provider filter and prints the page as JSON", async () => {
+    const ran = await drive(["models", "--provider", "openrouter", "--search", "claude", "--json"])
+    expect(ran.failed).toBe(false)
+    expect(ran.recorded.catalog).toEqual([{
+      kind: "models",
+      options: { cursor: undefined, limit: undefined, provider: "openrouter", search: "claude" }
+    }])
+    expect(JSON.parse(ran.lines[0]!)).toMatchObject({ revision: "catalog-1", items: [] })
   })
 })
 

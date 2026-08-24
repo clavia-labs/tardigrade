@@ -59,14 +59,41 @@ const problemAnswer = (status: number, document: unknown) => () =>
 describe("the address a call goes to", () => {
   test("discovers models at the versioned collection", async () => {
     answer = () => Response.json({
-      source: "models.dev",
       revision: "catalog-1",
-      refreshedAt: 1,
+      refreshed_at: 1,
       status: "fresh",
-      providers: []
+      total: 0,
+      limit: 50,
+      items: []
     })
-    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).models()
-    expect(lastUrl().pathname).toBe("/v1/models")
+    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).models({
+      provider: "openrouter",
+      search: "claude",
+      cursor: "next",
+      limit: 25
+    })
+    const url = lastUrl()
+    expect(url.pathname).toBe("/v1/models")
+    expect(Object.fromEntries(url.searchParams)).toEqual({
+      provider: "openrouter",
+      search: "claude",
+      cursor: "next",
+      limit: "25"
+    })
+  })
+
+  test("discovers provider requirements at the versioned collection", async () => {
+    answer = () => Response.json({
+      revision: "catalog-1",
+      refreshed_at: 1,
+      status: "fresh",
+      total: 0,
+      limit: 50,
+      items: []
+    })
+    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).providers({ search: "google" })
+    expect(lastUrl().pathname).toBe("/v1/providers")
+    expect(lastUrl().searchParams.get("search")).toBe("google")
   })
 
   test("discovers actors at the collection", async () => {

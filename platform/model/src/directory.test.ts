@@ -7,7 +7,7 @@ import {
   googleVertexAI,
   microsoftFoundry,
   modelDirectory,
-  modelDriverOf,
+  modelProtocolOf,
   openAI,
   openAICompatible,
   openRouter,
@@ -16,23 +16,23 @@ import {
 import { declaredModelMetadata } from "./metadata"
 
 describe("model providers", () => {
-  test("each supported service states its protocol driver", () => {
-    expect(vercelAIGateway().driver).toBe("openai-responses")
-    expect(cloudflareAIGateway().driver).toBe("openai-responses")
-    expect(amazonBedrock().driver).toBe("bedrock-converse")
-    expect(microsoftFoundry().driver).toBe("openai-responses")
-    expect(googleAI().driver).toBe("openai-chat-completions")
-    expect(googleVertexAI().driver).toBe("openai-chat-completions")
-    expect(openAI().driver).toBe("openai-responses")
-    expect(anthropic().driver).toBe("anthropic-messages")
-    expect(openRouter().driver).toBe("openai-chat-completions")
-    expect(openAICompatible({ baseUrl: "https://models.example/v1" }).driver).toBe("openai-chat-completions")
+  test("each supported service states its protocol", () => {
+    expect(vercelAIGateway().protocol).toBe("openai-responses")
+    expect(cloudflareAIGateway().protocol).toBe("openai-responses")
+    expect(amazonBedrock().protocol).toBe("bedrock-converse")
+    expect(microsoftFoundry().protocol).toBe("openai-responses")
+    expect(googleAI().protocol).toBe("openai-chat-completions")
+    expect(googleVertexAI().protocol).toBe("openai-chat-completions")
+    expect(openAI().protocol).toBe("openai-responses")
+    expect(anthropic().protocol).toBe("anthropic-messages")
+    expect(openRouter().protocol).toBe("openai-chat-completions")
+    expect(openAICompatible({ baseUrl: "https://models.example/v1" }).protocol).toBe("openai-chat-completions")
   })
 
   test("a provider can state another protocol its endpoint supports", () => {
-    expect(vercelAIGateway({ driver: "anthropic-messages" }).driver).toBe("anthropic-messages")
-    expect(modelDriverOf("openai-responses")).toBe("openai-responses")
-    expect(() => modelDriverOf("provider-name")).toThrow("model driver must be one of")
+    expect(vercelAIGateway({ protocol: "anthropic-messages" }).protocol).toBe("anthropic-messages")
+    expect(modelProtocolOf("openai-responses")).toBe("openai-responses")
+    expect(() => modelProtocolOf("provider-name")).toThrow("model protocol must be one of")
   })
 })
 
@@ -66,7 +66,7 @@ describe("model directory", () => {
       pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
       output: { guarantee: "native", withTools: true },
       catalogRevision: "catalog-7",
-      route: { kind: "cloudflare-ai-gateway", driver: "openai-responses" }
+      route: { kind: "cloudflare-ai-gateway", protocol: "openai-responses" }
     })
   })
 

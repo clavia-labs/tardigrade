@@ -44,7 +44,7 @@ Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible con
         "providers": {
           "openai": {
             "baseUrl": "https://api.openai.com/v1",
-            "driver": "openai-responses",
+            "protocol": "openai-responses",
             "env": ["OPENAI_API_KEY"]
           }
         }
@@ -58,7 +58,7 @@ A host without model configuration records a failed turn that names the missing 
 
 ## HTTP shapes
 
-`GET /healthz` and `GET /v1/models` are public. The model route returns the validated public snapshot from isolate memory.
+`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public. The catalog routes return paginated views of the validated snapshot from isolate memory.
 
 ```json
 { "status": "resting", "dirty": 0 }

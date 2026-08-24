@@ -78,7 +78,10 @@ const catalog: ModelCatalog = {
     id: "openai",
     name: "OpenAI",
     env: ["OPENAI_API_KEY"],
-    models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+    models: [
+      { id: "gpt-mini", metadata: { contextWindowTokens: 64_000 } },
+      { id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }
+    ]
   }]
 }
 const catalogLayer = layerModelCatalogValue(catalog)
@@ -175,11 +178,47 @@ const callMessage = async (base: string, thread: string, call: string, text: str
 }
 
 describe("models", () => {
-  test("the public catalog exposes model metadata without private routes", async () => {
-    const response = await serving(async (base) => await (await get(base, "/v1/models")).json())
-    expect(response).toEqual(catalog)
-    expect(JSON.stringify(response)).not.toContain("apiKey")
-    expect(JSON.stringify(response)).not.toContain("baseUrl")
+  test("the public catalog pages model metadata without credentials", async () => {
+    const first = await serving(async (base) => await (await get(base, "/v1/models?provider=openai&limit=1")).json()) as {
+      readonly items: ReadonlyArray<{ readonly id: string }>
+      readonly next_cursor?: string
+      readonly limit: number
+      readonly total: number
+    }
+    expect(first).toMatchObject({ limit: 1, total: 2, items: [{ id: "gpt-mini" }] })
+    expect(typeof first.next_cursor).toBe("string")
+    const second = await serving(async (base) => await (await get(
+      base,
+      `/v1/models?provider=openai&limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`
+    )).json())
+    expect(second).toMatchObject({ items: [{ id: "gpt-test" }] })
+    expect(JSON.stringify([first, second])).not.toContain("apiKey")
+  })
+
+  test("provider discovery states connection requirements", async () => {
+    const response = await serving(async (base) => await (await get(base, "/v1/providers?search=openai")).json())
+    expect(response).toMatchObject({
+      revision: "catalog-1",
+      items: [{
+        id: "openai",
+        protocol: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        env: ["OPENAI_API_KEY"],
+        required: ["env"]
+      }]
+    })
+  })
+
+  test("a cursor cannot change its query", async () => {
+    const first = await serving(async (base) => await (await get(base, "/v1/models?limit=1")).json()) as {
+      readonly next_cursor: string
+    }
+    const response = await serving(async (base) => await get(
+      base,
+      `/v1/models?limit=1&search=gpt&cursor=${encodeURIComponent(first.next_cursor)}`
+    ))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ title: "Invalid Request", status: 400 })
   })
 })
 

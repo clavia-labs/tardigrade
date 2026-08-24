@@ -4,7 +4,7 @@ import {
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
 import type { ModelCoordinate } from "tardie"
-import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { modelProtocolOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
@@ -44,7 +44,7 @@ export interface ModelCatalogConfig {
 // catalog snapshot, so changing models does not change connection configuration.
 export interface ModelProviderConfig {
   readonly baseUrl: string | undefined
-  readonly driver: ModelDriver | undefined
+  readonly protocol: ModelProtocol | undefined
   readonly env: ReadonlyArray<string>
   readonly region?: string
 }
@@ -137,7 +137,7 @@ const legacyModelError = (env: Env): Error | undefined => {
       providers: {
         [provider]: {
           baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
-          driver: "<protocol-driver>",
+          protocol: "<protocol>",
           env: ["<api-key-env>"]
         }
       }
@@ -146,7 +146,7 @@ const legacyModelError = (env: Env): Error | undefined => {
   return new Error(
     `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
     `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in tardigrade.jsonc. ` +
-    "Replace <protocol-driver>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
+    "Replace <protocol>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
   )
 }
 
@@ -163,11 +163,11 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (provider["apiKey"] !== undefined) {
       throw new Error(`provider ${JSON.stringify(name)} cannot contain apiKey; declare its secret environment variable in env`)
     }
-    const driver = stringOf(provider["driver"])
+    const protocol = stringOf(provider["protocol"])
     const region = stringOf(provider["region"])
     providers[name] = {
       baseUrl: stringOf(provider["baseUrl"]),
-      driver: driver === undefined ? undefined : modelDriverOf(driver),
+      protocol: protocol === undefined ? undefined : modelProtocolOf(protocol),
       env: stringsOf(provider["env"]),
       ...(region === undefined ? {} : { region })
     }

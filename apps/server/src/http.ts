@@ -38,7 +38,7 @@ export { problem, type Problem, PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "
 
 // Paths the bearer gate lets through. The health probe, public model catalog, contract, and contract
 // page expose process capabilities without exposing an actor's durable state.
-export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", "/v1/models", OPENAPI_PATH, DOCS_PATH]
+export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", "/v1/providers", "/v1/models", OPENAPI_PATH, DOCS_PATH]
 
 const pathOf = (url: string): string => {
   const query = url.indexOf("?")

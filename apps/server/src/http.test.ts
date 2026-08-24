@@ -135,7 +135,7 @@ describe("config", () => {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            driver: "openai-responses",
+            protocol: "openai-responses",
             env: ["OPENAI_API_KEY"]
           }
         }
@@ -144,7 +144,7 @@ describe("config", () => {
     const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
     expect(config.model).toMatchObject({
       default: { provider: "openai", model_id: "gpt" },
-      providers: { openai: { driver: "openai-responses" } }
+      providers: { openai: { protocol: "openai-responses" } }
     })
     expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
     expect(() => projectConfigOf({
@@ -167,7 +167,7 @@ describe("config", () => {
     }
     expect(message).toContain("tardigrade.jsonc")
     expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
-    expect(message).toContain('"driver":"<protocol-driver>"')
+    expect(message).toContain('"protocol":"<protocol>"')
     expect(message).toContain('"env":["<api-key-env>"]')
     expect(message).not.toContain(env.MODEL_API_KEY)
   })

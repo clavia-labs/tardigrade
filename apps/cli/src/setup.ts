@@ -5,7 +5,7 @@ import { Prompt } from "effect/unstable/cli"
 import { applyEdits, modify } from "jsonc-parser"
 import { BunFileSystem } from "@effect/platform-bun"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { MODEL_DRIVERS, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { MODEL_PROTOCOLS, modelProviderConnectionOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import type { Env, ModelConfig } from "@clavia/tardigrade-server/config"
@@ -42,7 +42,7 @@ export interface Preset {
   readonly description: string
   readonly baseUrl?: string
   readonly provider?: string
-  readonly driver?: ModelDriver
+  readonly protocol?: ModelProtocol
   readonly modelExample?: string
   readonly credential?: string
   readonly modelsUrl?: string
@@ -56,7 +56,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     // output: that promise belongs to the endpoint and the model together, and an operator
     // states it (platform/model/src/output.ts, capabilityOf).
     provider: "openai",
-    driver: "openai-responses",
+    protocol: "openai-responses",
     baseUrl: "https://api.openai.com/v1",
     modelExample: "gpt-5.2",
     credential: "OpenAI API key",
@@ -66,7 +66,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Anthropic",
     description: "Anthropic's Messages protocol",
     provider: "anthropic",
-    driver: "anthropic-messages",
+    protocol: "anthropic-messages",
     baseUrl: "https://api.anthropic.com",
     modelExample: "claude-sonnet-4-6",
     credential: "Anthropic API key",
@@ -76,7 +76,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "OpenRouter",
     description: "One key across many providers, over the same protocol",
     provider: "openrouter",
-    driver: "openai-chat-completions",
+    protocol: "openai-chat-completions",
     baseUrl: "https://openrouter.ai/api/v1",
     modelExample: "anthropic/claude-sonnet-latest",
     credential: "OpenRouter API key",
@@ -86,7 +86,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Vercel AI Gateway",
     description: "One Vercel key across providers, over the OpenAI-compatible protocol",
     provider: "vercel",
-    driver: "openai-responses",
+    protocol: "openai-responses",
     baseUrl: "https://ai-gateway.vercel.sh/v1",
     modelExample: "anthropic/claude-opus-5",
     credential: "Vercel AI Gateway API key",
@@ -96,7 +96,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Cloudflare AI Gateway",
     description: "Cloudflare's account-scoped Responses endpoint",
     provider: "cloudflare-ai-gateway",
-    driver: "openai-responses",
+    protocol: "openai-responses",
     modelExample: "openai/gpt-5.6-luna",
     credential: "Cloudflare API token",
     modelsUrl: "https://developers.cloudflare.com/ai-gateway/models/"
@@ -105,7 +105,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Microsoft Foundry",
     description: "Microsoft Foundry's OpenAI v1 endpoint",
     provider: "azure",
-    driver: "openai-responses",
+    protocol: "openai-responses",
     modelExample: "deployment-name",
     credential: "Azure AI API key",
     modelsUrl: "https://ai.azure.com/explore/models"
@@ -114,7 +114,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Google AI",
     description: "The Gemini API from Google AI Studio",
     provider: "google",
-    driver: "openai-chat-completions",
+    protocol: "openai-chat-completions",
     baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
     modelExample: "gemini-3.7-flash",
     credential: "Gemini API key",
@@ -124,7 +124,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Google Vertex AI",
     description: "Vertex AI's OpenAI-compatible endpoint",
     provider: "google-vertex",
-    driver: "openai-chat-completions",
+    protocol: "openai-chat-completions",
     modelExample: "google/gemini-2.5-pro",
     credential: "Google access token",
     modelsUrl: "https://console.cloud.google.com/vertex-ai/model-garden"
@@ -133,7 +133,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
     title: "Amazon Bedrock",
     description: "Bedrock Converse through Cloudflare AI Gateway",
     provider: "amazon-bedrock",
-    driver: "bedrock-converse",
+    protocol: "bedrock-converse",
     credential: "AI Gateway API key"
   },
   {
@@ -147,7 +147,7 @@ export interface ProviderAnswers {
   readonly provider: string
   readonly baseUrl: string
   readonly credential?: string
-  readonly driver: ModelDriver
+  readonly protocol: ModelProtocol
   readonly env: ReadonlyArray<string>
   readonly region?: string
 }
@@ -220,7 +220,7 @@ export interface SetupPromptOptions {
     readonly provider?: string | undefined
     readonly baseUrl?: string | undefined
     readonly model_id?: string | undefined
-    readonly driver?: string | undefined
+    readonly protocol?: string | undefined
     readonly env?: ReadonlyArray<string> | undefined
     readonly region?: string | undefined
   }
@@ -319,9 +319,9 @@ const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
     ...(options.current?.provider === undefined ? {} : { default: options.current.provider }),
     validate: nonEmpty("the provider name")
   }))
-  const driver = preset.driver ?? (yield* Prompt.select<ModelDriver>({
+  const protocol = preset.protocol ?? (yield* Prompt.select<ModelProtocol>({
     message: "Which protocol does this endpoint accept?",
-    choices: MODEL_DRIVERS.map((driver) => ({ title: driver, value: driver }))
+    choices: MODEL_PROTOCOLS.map((protocol) => ({ title: protocol, value: protocol }))
   }))
   const defaultBaseUrl = (options.current?.provider === provider ? options.current.baseUrl : undefined) ?? preset.baseUrl
   const baseUrl = yield* Prompt.text({
@@ -352,7 +352,7 @@ const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
       provider,
       baseUrl,
       credential: Redacted.value(credential),
-      driver,
+      protocol,
       env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)],
       ...(region === undefined ? {} : { region })
     },
@@ -552,32 +552,32 @@ export const providerAnswersFrom = (
     throw new Error("tdg setup provider requires both <provider> and <config> when either argument is used")
   }
   const config = providerObjectOf(source)
-  const allowed = new Set(["baseUrl", "driver", "env", "region"])
+  const allowed = new Set(["baseUrl", "protocol", "env", "region"])
   const unknown = Object.keys(config).filter((name) => !allowed.has(name))
   if (unknown.length > 0) throw new Error(`provider config contains unknown ${unknown.length === 1 ? "field" : "fields"}: ${unknown.join(", ")}`)
-  const preset = PRESETS.find((candidate) => candidate.provider === provider)
-  const statedDriver = providerString(config, "driver")
-  if (statedDriver !== undefined && !MODEL_DRIVERS.some((candidate) => candidate === statedDriver)) {
-    throw new Error(`provider config driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(statedDriver)}`)
+  const connection = modelProviderConnectionOf(provider)
+  const statedProtocol = providerString(config, "protocol")
+  if (statedProtocol !== undefined && !MODEL_PROTOCOLS.some((candidate) => candidate === statedProtocol)) {
+    throw new Error(`provider config protocol must be one of ${MODEL_PROTOCOLS.join(", ")}, got ${JSON.stringify(statedProtocol)}`)
   }
-  if (preset?.driver !== undefined && statedDriver !== undefined && statedDriver !== preset.driver) {
-    throw new Error(`provider ${JSON.stringify(provider)} uses driver ${JSON.stringify(preset.driver)}`)
+  if (connection !== undefined && statedProtocol !== undefined && statedProtocol !== connection.protocol) {
+    throw new Error(`provider ${JSON.stringify(provider)} uses protocol ${JSON.stringify(connection.protocol)}`)
   }
-  const driver = preset?.driver ?? (statedDriver as ModelDriver | undefined)
-  if (driver === undefined) throw new Error(`provider ${JSON.stringify(provider)} must declare driver`)
-  const baseUrl = providerString(config, "baseUrl") ?? preset?.baseUrl
+  const protocol = connection?.protocol ?? (statedProtocol as ModelProtocol | undefined)
+  if (protocol === undefined) throw new Error(`provider ${JSON.stringify(provider)} must declare protocol`)
+  const baseUrl = providerString(config, "baseUrl") ?? connection?.baseUrl
   if (baseUrl === undefined) throw new Error(`provider ${JSON.stringify(provider)} must declare baseUrl`)
   const region = providerString(config, "region")
-  if (driver === "bedrock-converse" && region === undefined) {
-    throw new Error(`provider ${JSON.stringify(provider)} must declare region for driver ${JSON.stringify(driver)}`)
+  if (protocol === "bedrock-converse" && region === undefined) {
+    throw new Error(`provider ${JSON.stringify(provider)} must declare region for protocol ${JSON.stringify(protocol)}`)
   }
-  if (driver !== "bedrock-converse" && region !== undefined) {
-    throw new Error(`provider ${JSON.stringify(provider)} cannot declare region with driver ${JSON.stringify(driver)}`)
+  if (protocol !== "bedrock-converse" && region !== undefined) {
+    throw new Error(`provider ${JSON.stringify(provider)} cannot declare region with protocol ${JSON.stringify(protocol)}`)
   }
   return {
     provider,
     baseUrl,
-    driver,
+    protocol,
     env: providerEnv(config),
     ...(region === undefined ? {} : { region })
   }
@@ -678,7 +678,7 @@ const updatedProject = (
   for (const provider of providers) {
     next = applyEdits(next, modify(next, ["models", "providers", provider.provider], {
       baseUrl: provider.baseUrl,
-      driver: provider.driver,
+      protocol: provider.protocol,
       env: provider.env,
       ...(provider.region === undefined ? {} : { region: provider.region })
     }, { formattingOptions }))
@@ -780,7 +780,7 @@ export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =
     ...(answers.credential === undefined ? [] : [`stored credential in ${files.secretsPath}`]),
     `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
-    `wire  ${answers.driver}`,
+    `protocol ${answers.protocol}`,
     `secret ${answers.env[0]}`,
     ...(answers.region === undefined ? [] : [`region ${answers.region}`]),
     `default ${answers.model_id}`
@@ -794,7 +794,7 @@ export const providerSetupSummary = (files: SetupFiles, providers: ReadonlyArray
   ...providers.flatMap((provider) => [
     `provider ${provider.provider}`,
     `at    ${provider.baseUrl}`,
-    `wire  ${provider.driver}`,
+    `protocol ${provider.protocol}`,
     `secret ${provider.env.join(" or ")}`,
     ...(provider.region === undefined ? [] : [`region ${provider.region}`])
   ])
@@ -812,7 +812,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly baseUrl: string
   readonly provider: string
   readonly model_id: string
-  readonly driver: ModelDriver
+  readonly protocol: ModelProtocol
   readonly credential: "environment" | "stored"
   readonly env: ReadonlyArray<string>
   readonly region?: string
@@ -822,7 +822,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   provider: answers.provider,
   baseUrl: answers.baseUrl,
   model_id: answers.model_id,
-  driver: answers.driver,
+  protocol: answers.protocol,
   credential: answers.credential === undefined ? "environment" : "stored",
   env: answers.env,
   ...(answers.region === undefined ? {} : { region: answers.region })
@@ -834,7 +834,7 @@ export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<Pr
   providers: providers.map((provider) => ({
     provider: provider.provider,
     baseUrl: provider.baseUrl,
-    driver: provider.driver,
+    protocol: provider.protocol,
     credential: provider.credential === undefined ? "environment" as const : "stored" as const,
     env: provider.env,
     ...(provider.region === undefined ? {} : { region: provider.region })

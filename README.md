@@ -66,7 +66,7 @@ tdg setup provider openrouter '{"env":["OPENROUTER_API_KEY"]}'
 tdg setup default --provider openrouter --model anthropic/claude-sonnet-4-6
 ```
 
-Known providers supply their standard driver and endpoint. Provider-specific fields stay in the JSON object. For example, Amazon Bedrock states its gateway endpoint and AWS region:
+Known providers supply their standard protocol and endpoint. Provider-specific fields stay in the JSON object. For example, Amazon Bedrock states its gateway endpoint and AWS region:
 
 ```bash
 tdg setup provider amazon-bedrock '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
@@ -214,7 +214,7 @@ const model = infer({
   apiKey: process.env.OPENAI_API_KEY!,
   provider: releaseModel.provider,
   model: releaseModel.default_model,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   contextWindowTokens: 400_000
 })
 

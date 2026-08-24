@@ -32,7 +32,17 @@ import {
   writeSetup,
   writeSetupPlan
 } from "./setup"
-import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
+import {
+  actorsTable,
+  DEFAULT_DETAIL_WIDTH,
+  eventsTable,
+  jsonOf,
+  methodLines,
+  methodsLines,
+  modelsTable,
+  providersTable,
+  threadsTable
+} from "./render"
 import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
 
@@ -121,6 +131,22 @@ const callId = Flag.string("id").pipe(
 )
 
 const remote = { url, token, actor, json }
+const catalogRemote = { url, token, json }
+
+const catalogSearch = Flag.string("search").pipe(
+  Flag.withDescription("Keep entries whose ID or name contains this text."),
+  Flag.optional
+)
+
+const catalogCursor = Flag.string("cursor").pipe(
+  Flag.withDescription("Continue from a cursor returned by the same catalog query."),
+  Flag.optional
+)
+
+const catalogLimit = Flag.integer("limit").pipe(
+  Flag.withDescription("The page size. Defaults to the server's catalog page size."),
+  Flag.optional
+)
 
 // clientOf resolves where to call and opens the client, which is the one place the two sources meet
 // (config.ts, resolveRemote).
@@ -604,6 +630,55 @@ export const actorsCommand = Command.make("actors", { url, token, json }, (flags
     ])
   )
 
+export const providersCommand = Command.make("providers", {
+  search: catalogSearch,
+  cursor: catalogCursor,
+  limit: catalogLimit,
+  ...catalogRemote
+}, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const page = yield* call(() => client.providers({
+      cursor: stated(flags.cursor),
+      limit: Option.getOrUndefined(flags.limit),
+      search: stated(flags.search)
+    }))
+    yield* Console.log(flags.json ? jsonOf(page) : providersTable(page))
+  })).pipe(
+    Command.withDescription("List provider protocols, endpoints, credential names, and required configuration."),
+    Command.withExamples([
+      { command: "tdg providers", description: "List the first provider page" },
+      { command: "tdg providers --search google --json", description: "Search providers and print the page as JSON" }
+    ])
+  )
+
+export const modelsCommand = Command.make("models", {
+  provider: Flag.string("provider").pipe(
+    Flag.withDescription("Keep models from this provider."),
+    Flag.optional
+  ),
+  search: catalogSearch,
+  cursor: catalogCursor,
+  limit: catalogLimit,
+  ...catalogRemote
+}, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const page = yield* call(() => client.models({
+      cursor: stated(flags.cursor),
+      limit: Option.getOrUndefined(flags.limit),
+      provider: stated(flags.provider),
+      search: stated(flags.search)
+    }))
+    yield* Console.log(flags.json ? jsonOf(page) : modelsTable(page))
+  })).pipe(
+    Command.withDescription("Search and page the public model catalog."),
+    Command.withExamples([
+      { command: "tdg models --provider openrouter --search claude", description: "Search OpenRouter models" },
+      { command: "tdg models --cursor <cursor> --json", description: "Read the next page as JSON" }
+    ])
+  )
+
 export const eventsCommand = Command.make("events", {
   thread: Argument.string("thread").pipe(Argument.withDescription("The thread whose log to read")),
   after: Flag.integer("after").pipe(
@@ -645,5 +720,18 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([initCommand, setupCommand, buildCommand, pushCommand, devCommand, actorsCommand, methodsCommand, callCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([
+    initCommand,
+    setupCommand,
+    buildCommand,
+    pushCommand,
+    devCommand,
+    providersCommand,
+    modelsCommand,
+    actorsCommand,
+    methodsCommand,
+    callCommand,
+    lsCommand,
+    eventsCommand
+  ])
 )

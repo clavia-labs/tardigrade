@@ -36,7 +36,7 @@ const answers: SetupAnswers = {
   baseUrl: "https://api.example.com/v1",
   model_id: "a-model",
   credential: KEY,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   env: ["OPENAI_API_KEY"]
 }
 
@@ -127,7 +127,7 @@ describe("declarative setup", () => {
     expect(setupAnswersFrom(flags)).toEqual({
       provider: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
-      driver: "openai-chat-completions",
+      protocol: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"],
       model_id: "anthropic/claude-sonnet-4-6"
     })
@@ -153,7 +153,7 @@ describe("declarative setup", () => {
     })).toEqual({
       provider: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
-      driver: "openai-chat-completions",
+      protocol: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"]
     })
     expect(defaultModelFrom({ provider: "openrouter", model: flags.defaultModel })).toEqual({
@@ -162,14 +162,14 @@ describe("declarative setup", () => {
     })
   })
 
-  test("provider JSON validates fields that depend on the driver", () => {
+  test("provider JSON validates fields that depend on the protocol", () => {
     expect(providerAnswersFrom({
       provider: "amazon-bedrock",
       config: '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
     })).toEqual({
       provider: "amazon-bedrock",
       baseUrl: "https://gateway.example.com/bedrock",
-      driver: "bedrock-converse",
+      protocol: "bedrock-converse",
       env: ["CLOUDFLARE_API_TOKEN"],
       region: "ap-southeast-1"
     })
@@ -182,11 +182,11 @@ describe("declarative setup", () => {
   test("custom providers declare their transport and secrets by name", () => {
     expect(providerAnswersFrom({
       provider: "private-gateway",
-      config: '{"baseUrl":"https://models.example.com/v1","driver":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
+      config: '{"baseUrl":"https://models.example.com/v1","protocol":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
     })).toEqual({
       provider: "private-gateway",
       baseUrl: "https://models.example.com/v1",
-      driver: "openai-responses",
+      protocol: "openai-responses",
       env: ["PRIVATE_MODEL_KEY"]
     })
     expect(() => providerAnswersFrom({
@@ -214,7 +214,7 @@ describe("writeSetup", () => {
       providers: {
         openai: {
           baseUrl: "https://api.example.com/v1",
-          driver: "openai-responses",
+          protocol: "openai-responses",
           env: ["OPENAI_API_KEY"]
         }
       }
@@ -267,7 +267,7 @@ describe("writeSetup", () => {
       provider: "anthropic",
       baseUrl: "https://api.anthropic.com",
       credential: "anthropic-key",
-      driver: "anthropic-messages",
+      protocol: "anthropic-messages",
       env: ["ANTHROPIC_API_KEY"]
     }
     await Effect.runPromise(Effect.orDie(Effect.provide(writeProviderSetup(root, [anthropic]), BunFileSystem.layer)))
@@ -288,7 +288,7 @@ describe("writeSetup", () => {
       provider: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
       credential: "router-key",
-      driver: "openai-chat-completions",
+      protocol: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"]
     }
     await Effect.runPromise(Effect.orDie(Effect.provide(writeSetupPlan(root, {
@@ -333,7 +333,7 @@ describe("what setup prints", () => {
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.credential).toBe("stored")
     expect(json.provider).toBe("openai")
-    expect(json.driver).toBe("openai-responses")
+    expect(json.protocol).toBe("openai-responses")
     expect(summary).toContain("default a-model")
   })
 })

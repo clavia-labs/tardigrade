@@ -28,7 +28,7 @@ import {
 } from "./output"
 import { NATIVE_MODE, type OutputMode } from "tardie/output"
 import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
-import type { ModelDriver } from "./directory"
+import type { ModelProtocol } from "./directory"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -169,7 +169,7 @@ export interface ModelConfig {
   readonly baseUrl: string
   readonly apiKey: string
   readonly model: string
-  readonly driver: ModelDriver
+  readonly protocol: ModelProtocol
   readonly provider: string
   // region selects the AWS region for a Bedrock Converse connection.
   readonly region?: string
@@ -660,7 +660,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     const stamped = (action: Action): Action => (req.output === undefined ? action : { ...action, mode })
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
-    // response, and the ladder would climb nowhere (the removed driver learned this). Rung zero
+    // response, and the ladder would climb nowhere (the removed adapter learned this). Rung zero
     // keeps the bare key, so crash-retries of the same request still collapse.
     const keyForRung = key === undefined ? undefined : rung === 0 ? key : `${key}/mt${maxTokens}`
     const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
@@ -670,9 +670,9 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     const held: { tokens?: TokenUsage } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
     const stops: { stopReason?: string } = {}
-    const adapter = config.driver === "bedrock-converse"
+    const adapter = config.protocol === "bedrock-converse"
       ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops, reported)
-      : config.driver === "anthropic-messages"
+      : config.protocol === "anthropic-messages"
         ? createAnthropicChat(config.model as never, config.apiKey, {
             baseURL: config.baseUrl,
             maxRetries: 0,
@@ -682,7 +682,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
             name: "tardigrade",
             baseURL: config.baseUrl,
             apiKey: config.apiKey,
-            api: config.driver === "openai-responses" ? "responses" : "chat-completions",
+            api: config.protocol === "openai-responses" ? "responses" : "chat-completions",
             // The OpenAI client retries a throttle-shaped failure on its own schedule by
             // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
             // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
@@ -693,10 +693,10 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     // compatible leg's provider-options seam, and `outputConfig` through the Converse leg's
     // buildInput above. Both are absent under an implementation that asked for no guarantee, so
     // no endpoint is handed a schema it never promised to keep.
-    const responseFormat = config.driver === "openai-responses" || config.driver === "openai-chat-completions"
+    const responseFormat = config.protocol === "openai-responses" || config.protocol === "openai-chat-completions"
       ? compatibleResponseFormat(req.output, mode)
       : undefined
-    const outputSchema = config.driver === "anthropic-messages" && req.output?.kind === "contract" && mode.kind === "native"
+    const outputSchema = config.protocol === "anthropic-messages" && req.output?.kind === "contract" && mode.kind === "native"
       ? req.output.contract.schema
       : undefined
     // The fallback's own instruction rides the request and reaches the model only on an attempt
@@ -784,7 +784,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
       attributes: {
         "gen_ai.operation.name": "chat",
         "gen_ai.request.model": config.model,
-        "gen_ai.provider.name": config.driver === "bedrock-converse" ? "aws.bedrock" : (config.provider ?? config.driver)
+        "gen_ai.provider.name": config.protocol === "bedrock-converse" ? "aws.bedrock" : (config.provider ?? config.protocol)
       }
     })(function* (request: InferRequest, key?: string) {
       // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it

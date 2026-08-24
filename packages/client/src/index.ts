@@ -11,9 +11,11 @@ export {
   UNREADABLE_EXCHANGE_TITLE,
   type Client,
   type ClientOptions,
+  type CatalogPageOptions,
   type EventsOptions,
   type FollowOptions,
-  type MethodCall
+  type MethodCall,
+  type ModelPageOptions
 } from "./client"
 export { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 // The vocabulary's top level, and where the versioned routes live. A consumer that builds a URL by
@@ -32,6 +34,8 @@ export type {
   MethodSummary,
   MethodState,
   ModelCatalog,
+  ModelCatalogPage,
+  ProviderCatalogPage,
   Problem,
   ThreadNode,
   ThreadStatus,

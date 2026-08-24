@@ -29,7 +29,7 @@ import {
   throttleDelayMs
 } from "./model"
 import type { ModelConfig } from "./model"
-import type { ModelDriver } from "./directory"
+import type { ModelProtocol } from "./directory"
 import {
   capabilityOf,
   converseOutputConfig,
@@ -40,8 +40,8 @@ import {
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 
-const testInfer = <const C extends Omit<ModelConfig, "driver" | "provider" | "contextWindowTokens"> & { readonly driver?: ModelDriver }>(config: C) =>
-  infer({ driver: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config })
+const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(config: C) =>
+  infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config })
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -178,7 +178,7 @@ describe("the Converse output surface", () => {
   })
 
   test("buildInput sets the native surface, and never a forced tool", () => {
-    const config = { baseUrl: "https://bedrock.test/us-east-1", apiKey: "k", model: "anthropic.claude-sonnet", driver: "bedrock-converse" as const, provider: "bedrock", contextWindowTokens: 128_000 }
+    const config = { baseUrl: "https://bedrock.test/us-east-1", apiKey: "k", model: "anthropic.claude-sonnet", protocol: "bedrock-converse" as const, provider: "bedrock", contextWindowTokens: 128_000 }
     const options = { model: config.model, messages: [{ role: "user", content: "go" }], systemPrompts: ["be brief"], tools: [] }
     const withContract = bedrockAdapter(config, 4096, DEFAULT_STREAM_BOUNDS, request, NATIVE_MODE).buildInput(options as never)
     expect(withContract.outputConfig).toEqual(converseOutputConfig(request, NATIVE_MODE)!)

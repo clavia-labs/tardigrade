@@ -162,7 +162,7 @@ describe("the config file", () => {
         "providers": {
           "openai": {
             "baseUrl": "https://file.example.com",
-            "driver": "openai-responses",
+            "protocol": "openai-responses",
             "env": ["OPENAI_API_KEY"]
           }
         }
@@ -174,7 +174,7 @@ describe("the config file", () => {
       providers: {
         openai: {
           baseUrl: "https://file.example.com",
-          driver: "openai-responses",
+          protocol: "openai-responses",
           env: ["OPENAI_API_KEY"]
         }
       }

@@ -1,4 +1,12 @@
-import type { ActorSummary, ThreadSummary, EventRow, MethodState, MethodSummary } from "@clavia/tardigrade-client"
+import type {
+  ActorSummary,
+  EventRow,
+  MethodState,
+  MethodSummary,
+  ModelCatalogPage,
+  ProviderCatalogPage,
+  ThreadSummary
+} from "@clavia/tardigrade-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the
@@ -66,6 +74,50 @@ export const actorsTable = (actors: ReadonlyArray<ActorSummary>): string =>
         actor.digest ?? ABSENT
       ])
     )
+
+const catalogFooter = (page: {
+  readonly revision: string
+  readonly status: "fresh" | "cached"
+  readonly total: number
+  readonly limit: number
+  readonly next_cursor?: string
+}): string => [
+  `${page.total} total, limit ${page.limit}, ${page.status}, revision ${page.revision}`,
+  ...(page.next_cursor === undefined ? [] : [`next cursor ${page.next_cursor}`])
+].join("\n")
+
+export const providersTable = (page: ProviderCatalogPage): string => {
+  const body = page.items.length === 0
+    ? "no providers"
+    : table(
+      ["PROVIDER", "PROTOCOL", "ENDPOINT", "REQUIRED", "ENV"],
+      page.items.map((provider) => [
+        provider.id,
+        provider.protocol ?? ABSENT,
+        provider.baseUrl ?? ABSENT,
+        provider.required.join(",") || ABSENT,
+        provider.env.join(",") || ABSENT
+      ])
+    )
+  return `${body}\n\n${catalogFooter(page)}`
+}
+
+export const modelsTable = (page: ModelCatalogPage): string => {
+  const body = page.items.length === 0
+    ? "no models"
+    : table(
+      ["PROVIDER", "MODEL", "NAME", "CONTEXT", "OUTPUT", "TOOLS"],
+      page.items.map((model) => [
+        model.provider,
+        model.id,
+        model.name ?? ABSENT,
+        model.metadata.contextWindowTokens === undefined ? ABSENT : String(model.metadata.contextWindowTokens),
+        model.metadata.maxOutputTokens === undefined ? ABSENT : String(model.metadata.maxOutputTokens),
+        model.metadata.toolCall === undefined ? ABSENT : String(model.metadata.toolCall)
+      ])
+    )
+  return `${body}\n\n${catalogFooter(page)}`
+}
 
 // The fields of an event other than its type, as one compact object. The type is already a column,
 // and what remains is what tells two events of one type apart.

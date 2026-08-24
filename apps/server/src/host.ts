@@ -98,7 +98,7 @@ interface SelectedModel {
   readonly provider: string
   readonly baseUrl: string
   readonly apiKey: string
-  readonly driver: NonNullable<ModelConfig["providers"][string]["driver"]>
+  readonly protocol: NonNullable<ModelConfig["providers"][string]["protocol"]>
   readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
@@ -109,7 +109,7 @@ interface SelectedModel {
 interface ProviderConnection {
   readonly baseUrl: string
   readonly apiKey: string
-  readonly driver: NonNullable<ModelConfig["providers"][string]["driver"]>
+  readonly protocol: NonNullable<ModelConfig["providers"][string]["protocol"]>
   readonly region?: string
 }
 
@@ -127,7 +127,7 @@ const connectionFrom = (
     )
   }
   if (provider.baseUrl === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no base URL`)
-  if (provider.driver === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no protocol driver`)
+  if (provider.protocol === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no protocol`)
   if (provider.env.length === 0) {
     throw new Error(`provider ${JSON.stringify(selected.provider)} names no credential environment variables; run \`tdg setup\``)
   }
@@ -140,7 +140,7 @@ const connectionFrom = (
   return {
     baseUrl: provider.baseUrl,
     apiKey,
-    driver: provider.driver,
+    protocol: provider.protocol,
     ...(provider.region === undefined ? {} : { region: provider.region })
   }
 }
@@ -187,7 +187,7 @@ export const selectedModelFrom = (
     ...selected,
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
-    driver: provider.driver,
+    protocol: provider.protocol,
     ...(provider.region === undefined ? {} : { region: provider.region }),
     contextWindowTokens: metadata.contextWindowTokens,
     ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
@@ -242,7 +242,7 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
         baseUrl: selected.baseUrl,
         apiKey: selected.apiKey,
         model: selected.model_id,
-        driver: selected.driver,
+        protocol: selected.protocol,
         provider: selected.provider,
         ...(selected.region === undefined ? {} : { region: selected.region }),
         contextWindowTokens: selected.contextWindowTokens,

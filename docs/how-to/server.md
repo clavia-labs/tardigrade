@@ -16,7 +16,8 @@ Base path `/v1`. The built-in actor is named `default`.
 
 | | |
 | --- | --- |
-| `GET /v1/models` | Read the validated public provider and model catalog |
+| `GET /v1/providers` | Search and page provider setup requirements. `search`, `cursor`, `limit` |
+| `GET /v1/models` | Search and page public model metadata. `provider`, `search`, `cursor`, `limit` |
 | `GET /v1/actors` | List actors |
 | `PUT /v1/actors` | Push an actor artifact |
 | `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
@@ -65,7 +66,7 @@ Every failure is `application/problem+json`.
 | `PORT` | `4242` |
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
-| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
+| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc`. Ordinary project configuration for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
 | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
@@ -81,7 +82,7 @@ The server boots without a provider connection and serves every read; turns fail
     "providers": {
       "openrouter": {
         "baseUrl": "https://openrouter.ai/api/v1",
-        "driver": "openai-chat-completions",
+        "protocol": "openai-chat-completions",
         "env": ["OPENROUTER_API_KEY"]
       }
     }
@@ -93,7 +94,9 @@ The server boots without a provider connection and serves every read; turns fail
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
 
-The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and `GET /v1/models` do not read the cache file on each request. With no valid source or cache, `GET /v1/models` answers 503. Its response includes the source revision and refresh time. Provider connections and credentials never appear in the catalog.
+The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
+
+Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 
 ## Clients
 

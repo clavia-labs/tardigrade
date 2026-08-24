@@ -78,7 +78,7 @@ describe("model selection", () => {
     providers: {
       openrouter: {
         baseUrl: "https://openrouter.ai/api/v1",
-        driver: "openai-chat-completions" as const,
+        protocol: "openai-chat-completions" as const,
         env: ["OPENROUTER_API_KEY"]
       }
     }

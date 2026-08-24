@@ -27,7 +27,7 @@ const model = infer({
   apiKey: process.env.OPENAI_API_KEY!,
   provider: coordinate.provider,
   model: coordinate.default_model,
-  driver: "openai-responses",
+  protocol: "openai-responses",
   contextWindowTokens: 400_000
 })
 
