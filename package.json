@@ -1,6 +1,6 @@
 {
   "name": "tardigrade",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "type": "module",
   "engines": {
     "bun": ">=1.4.0"
