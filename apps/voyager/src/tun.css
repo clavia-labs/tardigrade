@@ -297,14 +297,20 @@ textarea {
   transition: width var(--base) var(--ease);
 }
 
-/* The rail's header: the wordmark and the toggle that closes the list. Collapsed, the toggle is all
-   that is left, and it centers on the narrow column. */
+/* The rail header holds the product identity and the current section. */
 .rail-head {
   display: flex;
   height: 100%;
-  align-items: flex-end;
+  align-items: flex-start;
   justify-content: space-between;
   padding: var(--space-3) var(--space-4);
+}
+
+.rail-identity {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+  justify-content: space-between;
 }
 
 .rail-wordmark {
@@ -324,21 +330,11 @@ textarea {
   letter-spacing: 0;
 }
 
-.rail-section-title,
-.actor-label {
+.rail-section-title {
   color: var(--faint);
   font-size: 10.5px;
   letter-spacing: 0.07em;
   text-transform: uppercase;
-}
-
-.actor-rail {
-  display: flex;
-  flex-direction: column;
-  flex-shrink: 0;
-  min-height: 0;
-  border-right: 1px solid var(--hair);
-  background: var(--bg);
 }
 
 .pane-chrome {
@@ -347,133 +343,7 @@ textarea {
   border-bottom: 1px solid var(--hair);
 }
 
-.actor-head {
-  display: flex;
-  height: 100%;
-  align-items: flex-start;
-  justify-content: space-between;
-  padding: var(--space-3) var(--space-4);
-}
-
-.actor-identity {
-  display: flex;
-  height: 100%;
-  flex-direction: column;
-  justify-content: space-between;
-}
-
-.actor-search-wrap {
-  padding: 10px var(--space-3);
-}
-
-.actor-search {
-  width: 100%;
-  height: 30px;
-}
-
-.actor-problem {
-  margin: 0 var(--space-3) var(--space-3);
-}
-
-.actor-list {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 0 var(--space-2) var(--space-3);
-}
-
-.actor-row {
-  display: flex;
-  width: 100%;
-  min-height: var(--row-h);
-  align-items: center;
-  gap: var(--space-2);
-  padding: 0 var(--space-2);
-  border: 0;
-  border-radius: var(--radius);
-  background: transparent;
-  color: var(--ink-2);
-  cursor: pointer;
-  text-align: left;
-  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease);
-}
-
-.actor-row:hover {
-  background: var(--sunken);
-  color: var(--ink);
-}
-
-.actor-row:active {
-  transform: scale(0.97);
-}
-
-.actor-row-selected,
-.actor-row-selected:hover {
-  background: var(--moss-wash);
-  color: var(--moss-ink);
-}
-
-.actor-name {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.actor-kind {
-  flex-shrink: 0;
-  margin-left: auto;
-  color: var(--faint);
-  font-size: 9.5px;
-}
-
-.actor-mark-list {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-1);
-  padding: var(--space-2) 0;
-  overflow-y: auto;
-}
-
-.actor-mark-button {
-  display: grid;
-  width: 100%;
-  min-height: var(--row-h);
-  padding: 0;
-  place-items: center;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-
-.actor-mark {
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius);
-  background: var(--sunken);
-  color: var(--ink-2);
-  font-size: 9.5px;
-  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
-}
-
-.actor-mark-button:hover .actor-mark {
-  color: var(--ink);
-}
-
-.actor-mark-button:active .actor-mark {
-  transform: scale(0.97);
-}
-
-.actor-mark-selected .actor-mark,
-.actor-mark-selected:hover .actor-mark {
-  background: var(--moss-wash);
-  color: var(--moss-ink);
-}
-
-.actor-footer {
+.rail-footer {
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
@@ -483,7 +353,7 @@ textarea {
   border-top: 1px solid var(--hair);
 }
 
-.actor-api {
+.rail-utility {
   display: flex;
   width: 100%;
   min-height: var(--row-h);
@@ -499,24 +369,19 @@ textarea {
   transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease);
 }
 
-.actor-api:hover {
+.rail-utility:hover {
   background: var(--sunken);
   color: var(--ink);
 }
 
-.actor-api-active,
-.actor-api-active:hover {
+.rail-utility-active,
+.rail-utility-active:hover {
   background: var(--moss-wash);
   color: var(--moss-ink);
 }
 
-.actor-api:active {
+.rail-utility:active {
   transform: scale(0.97);
-}
-
-.actor-rail-collapsed .actor-api {
-  justify-content: center;
-  padding: 0;
 }
 
 .api-view {
@@ -1125,16 +990,6 @@ textarea {
   .api-operation-examples {
     position: static;
   }
-}
-
-/* Everything a collapsed actor pane hides. The toggle is outside the class, so the pane can always
-   be opened again from where it was closed. */
-.actor-rail-collapsed .actor-only {
-  display: none;
-}
-
-.actor-rail-collapsed .actor-head {
-  justify-content: center;
 }
 
 .rail-search {

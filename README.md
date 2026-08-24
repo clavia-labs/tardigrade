@@ -63,8 +63,15 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg call` 
 
 Deploy the generated Worker with either platform CLI:
 
+Cloudflare:
+
 ```bash
 bunx wrangler deploy
+```
+
+Celld:
+
+```bash
 celld deploy --config celld.jsonc
 ```
 

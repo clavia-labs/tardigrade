@@ -2,29 +2,13 @@
 // policy value the app applies (AGENTS.md, "Design"). A screen imports the default and takes an
 // override at the call site rather than reading a literal.
 
-// The list rail width in pixels. Actor, run, and API panes share the Flamecast v6 thread rail
+// The list rail width in pixels. Thread and API panes share the Flamecast v6 thread rail
 // measure (flamecast-v6/apps/web/src/system.css, .chat-split).
 export const RAIL_WIDTH = 236
 
 // The shared identity-row height in pixels. Each pane's title begins on the same horizontal datum,
 // and each pane accepts another height when embedded in a tighter shell.
 export const PANE_HEADER_HEIGHT = 64
-
-// The width the actor pane keeps when it is collapsed, in pixels. It holds the toggle and nothing
-// else, so a reader can always open the list again from where they closed it.
-export const COLLAPSED_ACTOR_RAIL_WIDTH = 48
-
-// The hexadecimal characters shown from a pushed actor's digest. ActorRail accepts another length
-// when an embedding has a wider or narrower actor pane.
-export const ACTOR_DIGEST_CHARS = 7
-
-// The characters a collapsed actor's monogram keeps. ActorRail accepts another count when names
-// in an embedding need a shorter or longer mark.
-export const ACTOR_MARK_CHARS = 2
-
-// The collapsed actor monogram's square size in pixels. ActorRail accepts another size when its
-// collapsed width changes.
-export const ACTOR_MARK_SIZE = 28
 
 // How many nested object levels the API explorer renders before naming the remaining schema. The
 // explorer accepts another depth when a larger surface needs to show more of a recursive model.

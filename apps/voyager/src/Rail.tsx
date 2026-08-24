@@ -1,9 +1,12 @@
 import { useState, type ReactElement } from "react"
 
 import type { ProblemError } from "@clavia/tardigrade-client"
+import { BracketsCurly } from "@phosphor-icons/react"
 import { navigate } from "./nav"
-import { PANE_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
+import { ICON_SIZE, PANE_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
+import { ProductMark } from "./ProductMark"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
+import { ThemeToggle } from "./ThemeToggle"
 
 // The rail: the run's roots and nothing else (mock.html, the aside). A root is a run, and the tree
 // under it is the run's own business, so the rail lists the six things a reader chooses between
@@ -69,7 +72,10 @@ export const Rail = ({
     <aside className="rail" style={{ width }}>
       <div className="pane-chrome" style={{ height: headerHeight }}>
         <div className="rail-head">
-          <div className="mono rail-section-title">runs</div>
+          <div className="rail-identity">
+            <ProductMark />
+            <div className="mono rail-section-title">threads</div>
+          </div>
         </div>
       </div>
       <div style={{ padding: "10px var(--space-3)" }}>
@@ -91,6 +97,17 @@ export const Rail = ({
         {rows.map((row) => (
           <Row key={row.id} row={row} now={now} selected={row.id === selected} />
         ))}
+      </div>
+      <div className="rail-footer">
+        <button
+          type="button"
+          className="rail-utility"
+          onClick={() => navigate({ thread: undefined, view: "api", operation: undefined, from: undefined, to: undefined })}
+        >
+          <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <span>API</span>
+        </button>
+        <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
       </div>
     </aside>
   )
