@@ -2,6 +2,8 @@ import { applyEdits, modify, parse, printParseErrorCode, type ParseError } from 
 
 export const CELLD_PROJECT_CONFIG_PATH = "celld.jsonc"
 export const CELLD_OMITTED_KEYS = ["limits", "observability", "worker_loaders"] as const
+export const CELLD_SANDBOX_TRANSPORT_VAR = "TARDIGRADE_SANDBOX_TRANSPORT"
+export const CELLD_SANDBOX_TRANSPORT = "replay"
 
 export interface CelldConfig {
   readonly source: string
@@ -34,11 +36,19 @@ export const celldConfigOf = (raw: string, path = "wrangler.jsonc"): CelldConfig
   const omitted = CELLD_OMITTED_KEYS.filter((key) => key in source)
   const omittedSet = new Set<string>(omitted)
   const config = Object.fromEntries(Object.entries(source).filter(([key]) => !omittedSet.has(key)))
-  if (typeof config["vars"] === "object" && config["vars"] !== null && !Array.isArray(config["vars"])) {
-    config["vars"] = Object.fromEntries(Object.entries(config["vars"] as Record<string, unknown>).map(([name, value]) => [
+  const rawVars = config["vars"]
+  if (rawVars !== undefined && (typeof rawVars !== "object" || rawVars === null || Array.isArray(rawVars))) {
+    throw new Error(`${path} vars must contain a JSON object`)
+  }
+  const vars = rawVars === undefined
+    ? {}
+    : Object.fromEntries(Object.entries(rawVars as Record<string, unknown>).map(([name, value]) => [
       name,
       celldVar(name, value)
     ]))
+  config["vars"] = {
+    ...vars,
+    [CELLD_SANDBOX_TRANSPORT_VAR]: CELLD_SANDBOX_TRANSPORT
   }
   return { source: `${JSON.stringify(config, undefined, 2)}\n`, omitted }
 }
