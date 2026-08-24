@@ -29,9 +29,6 @@ export const DEFAULT_TIMEOUT_MILLIS = 300_000
 // overrides it for scripts, containers, and remote shells.
 export const DEFAULT_OPEN_BROWSER = true
 
-// SETTLED is the method state that makes `tdg call` succeed.
-export const SETTLED: MethodState["status"] = "completed"
-
 // problemLine is the whole of what a failed call prints. The four fields are the server's own words
 // (packages/client/src/problem.ts), and a status of NO_ANSWER means the call never reached a
 // response, so there is no status line to quote.
@@ -74,9 +71,9 @@ const actor = Flag.string("actor").pipe(
   Flag.withDefault(RESERVED_ACTOR)
 )
 
-const invocationId = Flag.string("id").pipe(
+const callId = Flag.string("id").pipe(
   Flag.withDescription(
-    "The call id and dedup key. A fresh one is minted per invocation, so state it to make a retry absorbed rather than duplicated."
+    "The call id. A fresh id is minted unless stated; reuse it for an idempotent retry."
   ),
   Flag.optional
 )
@@ -109,18 +106,18 @@ const settle = (
   client: Client,
   thread: string,
   method: string,
-  invocation: string,
+  callId: string,
   pollMillis: number,
   timeoutMillis: number
 ): Effect.Effect<MethodState, CliError.UserError> =>
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      const state = yield* call(() => client.methodState(thread, method, invocation))
+      const state = yield* call(() => client.methodState(thread, method, callId))
       if (state.status !== "pending") return state
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* userErrorOf(
-          `call ${invocation} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
+          `call ${callId} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
         )
       }
       yield* Effect.sleep(pollMillis)
@@ -366,7 +363,7 @@ export const methodsCommand = Command.make("methods", remote, (flags) =>
     const methods = yield* call(() => client.methods())
     yield* Console.log(flags.json ? jsonOf(methods) : methodsLines(methods))
   })).pipe(
-    Command.withDescription("List the actor's callable methods and their input and output schemas."),
+    Command.withDescription("List method names and their input and output schemas."),
     Command.withExamples([
       { command: "tdg methods --actor researcher", description: "Inspect an actor's callable interface" },
       { command: "tdg methods --actor researcher --json", description: "Print the method catalog as JSON" }
@@ -377,10 +374,10 @@ export const callCommand = Command.make("call", {
   method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
   input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
   thread: Flag.string("thread").pipe(
-    Flag.withDescription("The thread to call. A fresh id is minted when this flag is absent."),
+    Flag.withDescription("The thread id. A fresh id is minted unless stated."),
     Flag.optional
   ),
-  id: invocationId,
+  id: callId,
   wait: Flag.boolean("wait").pipe(
     Flag.withDescription("Wait for the method call to leave pending."),
     Flag.withDefault(true)
@@ -409,22 +406,19 @@ export const callCommand = Command.make("call", {
     const state = yield* settle(client, accepted.thread, accepted.method, accepted.call, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
-        ? jsonOf({ ...accepted, state })
-        : state.status === SETTLED
+        ? jsonOf({ ...accepted, ...state })
+        : state.status === "completed"
         ? `${methodLines(accepted.thread, accepted.call, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
         : methodLines(accepted.thread, accepted.call, state)
     )
-    if (state.status !== SETTLED) {
+    if (state.status !== "completed") {
       return yield* userErrorOf(`call ${accepted.call} on thread ${accepted.thread} is ${state.status}`)
     }
   })).pipe(
-    Command.withDescription(
-      "Call a declared actor method with JSON input and wait for its durable state. Exits non-zero unless the call completes."
-    ),
+    Command.withDescription("Call an actor method with JSON input. Waits by default and exits non-zero unless completed."),
     Command.withExamples([
       { command: "tdg call message '{\"text\":\"summarize the log\"}'", description: "Call message on a new thread and wait" },
-      { command: "tdg call message '{\"text\":\"and again\"}' --thread surveyor", description: "Call message on an existing thread" },
-      { command: "tdg call inspect '{\"path\":\"README.md\"}' --no-wait", description: "Call a custom method without waiting" }
+      { command: "tdg call message '{\"text\":\"and again\"}' --thread surveyor", description: "Call message on an existing thread" }
     ])
   )
 

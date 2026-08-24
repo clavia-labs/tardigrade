@@ -285,9 +285,7 @@ const ActorParams = { actor: Schema.String }
 
 const ThreadParams = { actor: Schema.String, id: Schema.String }
 
-const MethodParams = { ...ThreadParams, method: Schema.String }
-
-const MethodCallParams = { ...MethodParams, call: Schema.String }
+const MethodCallParams = { ...ThreadParams, method: Schema.String, call: Schema.String }
 
 // threadsGroup declares the platform's raw log operations: list threads, append an event, and read events back.
 export const threadsGroup = HttpApiGroup.make("threads").add(

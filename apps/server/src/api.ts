@@ -280,6 +280,13 @@ const jsonSchemaOf = (schema: Schema.Constraint): unknown => {
     : { ...document.schema, $defs: document.definitions }
 }
 
+const methodOf = (threads: ActorThreads, name: string) => {
+  const method = threads.methods[name]
+  return method === undefined
+    ? Effect.fail(UnknownMethod.of(unknownMethodDetail(name, threads.methods)))
+    : Effect.succeed(method)
+}
+
 // layerMethodsGroup invokes and reads the method declarations carried by the selected actor runtime.
 export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
   handlers
@@ -293,10 +300,7 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
         const threads = yield* actorOf(params.actor)
-        const method = threads.methods[params.method]
-        if (method === undefined) {
-          return yield* Effect.fail(UnknownMethod.of(unknownMethodDetail(params.method, threads.methods)))
-        }
+        const method = yield* methodOf(threads, params.method)
         const at = yield* Clock.currentTimeMillis
         const event = yield* Effect.try({
           try: () => method.eventOf({ id: params.call, input: payload, at }),
@@ -310,10 +314,7 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
         const threads = yield* actorOf(params.actor)
-        const method = threads.methods[params.method]
-        if (method === undefined) {
-          return yield* Effect.fail(UnknownMethod.of(unknownMethodDetail(params.method, threads.methods)))
-        }
+        const method = yield* methodOf(threads, params.method)
         const log = yield* logOf(threads.events, params.id)
         const state = method.state(log, params.call)
         if (state === undefined) {

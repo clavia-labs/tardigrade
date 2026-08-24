@@ -149,15 +149,12 @@ describe("parsing", () => {
   // Every command is a declaration, so a command that exists is a command the help names. `setup`
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
   test("the tree names setup, and its help says what it writes", async () => {
-    expect((await drive([])).lines.join("\n")).toContain("setup")
-    expect((await drive([])).lines.join("\n")).toContain("init")
-    expect((await drive([])).lines.join("\n")).toContain("build")
-    expect((await drive([])).lines.join("\n")).toContain("push")
-    expect((await drive([])).lines.join("\n")).toContain("actors")
-    expect((await drive([])).lines.join("\n")).toContain("methods")
-    expect((await drive([])).lines.join("\n")).toContain("call")
-    expect((await drive([])).lines.join("\n")).not.toContain("run ")
-    expect((await drive([])).lines.join("\n")).not.toContain("send")
+    const root = (await drive([])).lines.join("\n")
+    for (const command of ["setup", "init", "build", "push", "actors", "methods", "call"]) {
+      expect(root).toContain(command)
+    }
+    expect(root).not.toContain("run ")
+    expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
     expect(help).toContain("~/.tardigrade/config.json")
     expect(help).toContain("0600")
@@ -350,7 +347,8 @@ describe("call", () => {
       thread: "root",
       method: "message",
       call: "m1",
-      state: { status: "completed", output: "done" }
+      status: "completed",
+      output: "done"
     })
   })
 
