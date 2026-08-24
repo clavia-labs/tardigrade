@@ -37,7 +37,7 @@ Commands that print data take `--json` where their help lists it. Remote command
 
 ## Configuration
 
-A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default.
+A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. The user-level file holds the remote URL and token. Project model connections come from the environment.
 
 | | Flag | Environment | Default |
 | --- | --- | --- | --- |
@@ -46,11 +46,16 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
-| Provider connections | | | what `tdg setup` saved |
+| Provider connections | | `TARDIGRADE_MODELS` and provider key variables | what `tdg setup` saved |
 
-`tdg setup` writes the file at mode 0600 and never prints the key back. Run it again to add another provider connection or change the default model. Each run preserves earlier provider connections and selects the new `{ provider, model_id }` coordinate as the default. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg setup` updates the project `.env` at mode 0600 and never prints the key back. `TARDIGRADE_MODELS` holds provider routes, protocols, credential variable names, and the default coordinate. Each provider key has its own environment entry. Run setup again to add another provider connection or change the default model. Each run preserves unrelated environment entries and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
-Setup offers OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. It uses [models.dev](https://models.dev) for the searchable default-model list. The private file stores the connection and default coordinate. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
+```dotenv
+TARDIGRADE_MODELS='{"default":{"provider":"openrouter","model_id":"anthropic/claude-sonnet-4-6"},"providers":{"openrouter":{"baseUrl":"https://openrouter.ai/api/v1","driver":"openai-chat-completions","env":["OPENROUTER_API_KEY"]}}}'
+OPENROUTER_API_KEY='your-key'
+```
+
+Setup offers OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. It uses [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
 
 ## What the actor can reach
 

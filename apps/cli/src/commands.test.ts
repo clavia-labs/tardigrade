@@ -108,6 +108,7 @@ const drive = async (
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
+    cwd: process.cwd(),
     openClient: () => clientOf(recorded, options.answers ?? {}),
     mintId: () => minted.shift() ?? "exhausted"
   }
@@ -157,7 +158,7 @@ describe("parsing", () => {
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
-    expect(help).toContain("~/.tardigrade/config.json")
+    expect(help).toContain(".env")
     expect(help).toContain("0600")
   })
 

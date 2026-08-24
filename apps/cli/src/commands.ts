@@ -9,7 +9,7 @@ import { readFileConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
-import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
+import { readSetupEnv, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
 import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
@@ -138,17 +138,15 @@ const canAsk = (): boolean => process.stdin.isTTY === true
 export const setupCommand = Command.make("setup", { json }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const home = homeOf(cli.env)
-    if (home === undefined) return yield* userErrorOf(HOME_MISSING)
     const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
-    const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
+    const path = yield* Effect.mapError(writeSetup(cli.cwd, answers), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
   })).pipe(
     Command.withDescription(
-      "Ask for a provider connection and default model, then write them to ~/.tardigrade/config.json at 0600. The key is stored and never printed back."
+      "Ask for a provider connection and default model, then write project environment entries to .env at 0600. The credential is stored and never printed back."
     ),
     Command.withExamples([
-      { command: "tdg setup", description: "Answer four prompts and write the file" }
+      { command: "tdg setup", description: "Answer the prompts and update .env" }
     ])
   )
 
@@ -288,7 +286,6 @@ export const devCommand = Command.make("dev", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const file = yield* readFileConfig(cli.env)
     const config = yield* Effect.try({
       try: () => resolveServer({
         port: Option.getOrUndefined(flags.port),
@@ -296,7 +293,7 @@ export const devCommand = Command.make("dev", {
         actors: stated(flags.actors),
         actorData: stated(flags.actorData),
         maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-      }, cli.env, file),
+      }, cli.env),
       catch: userErrorOf
     })
     // A first boot with no model asks for one, because two commands to see anything is one too
@@ -307,12 +304,10 @@ export const devCommand = Command.make("dev", {
       ? Effect.succeed(config)
       : canAsk()
       ? Effect.gen(function*() {
-        const home = homeOf(cli.env)
-        if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
         const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
-        const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
+        const path = yield* Effect.mapError(writeSetup(cli.cwd, answers), userErrorOf)
         yield* Console.log(setupSummary(path, answers))
-        const written = yield* readFileConfig(cli.env)
+        const written = yield* readSetupEnv(cli.cwd)
         return yield* Effect.try({
           try: () => resolveServer({
             port: Option.getOrUndefined(flags.port),
@@ -320,7 +315,7 @@ export const devCommand = Command.make("dev", {
             actors: stated(flags.actors),
             actorData: stated(flags.actorData),
             maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-          }, cli.env, written),
+          }, { ...cli.env, ...written }),
           catch: userErrorOf
         })
       })

@@ -82,6 +82,7 @@ interface CloudflareProvider {
   readonly baseUrl: string
   readonly apiKey: string
   readonly driver: ModelDriver
+  readonly env: ReadonlyArray<string>
   readonly models: Readonly<Record<string, CloudflareModelMetadata>>
 }
 
@@ -90,14 +91,30 @@ interface CloudflareModels {
   readonly providers: Readonly<Record<string, CloudflareProvider>>
 }
 
+const stringsOf = (value: unknown): ReadonlyArray<string> =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => typeof entry === "string" && entry.trim().length > 0 ? [entry.trim()] : [])
+    : []
+
+const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<string>): string => {
+  if (names.length === 0) throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(provider)} must declare env`)
+  const values = workerEnv as unknown as Readonly<Record<string, unknown>>
+  for (const name of names) {
+    const value = values[name]
+    if (typeof value === "string" && value.trim().length > 0) return value.trim()
+  }
+  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret`)
+}
+
 const modelsFrom = (env: Env): CloudflareModels | undefined => {
   if (env.TARDIGRADE_MODELS === undefined) return undefined
   const parsed = JSON.parse(env.TARDIGRADE_MODELS) as {
     readonly default?: unknown
     readonly providers?: Readonly<Record<string, {
       readonly baseUrl?: unknown
-      readonly apiKey?: unknown
       readonly driver?: unknown
+      readonly env?: unknown
+      readonly apiKey?: unknown
       readonly models?: Readonly<Record<string, CloudflareModelMetadata>>
     }>>
   }
@@ -107,13 +124,18 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
   }
   const providers: Record<string, CloudflareProvider> = {}
   for (const [name, provider] of Object.entries(parsed.providers ?? {})) {
-    if (typeof provider.baseUrl !== "string" || typeof provider.apiKey !== "string" || typeof provider.driver !== "string") {
-      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} must declare baseUrl, apiKey, and driver`)
+    if (provider.apiKey !== undefined) {
+      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} cannot contain apiKey; declare its Worker secret in env`)
     }
+    if (typeof provider.baseUrl !== "string" || typeof provider.driver !== "string") {
+      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} must declare baseUrl and driver`)
+    }
+    const credentialEnv = stringsOf(provider.env)
     providers[name] = {
       baseUrl: provider.baseUrl,
-      apiKey: provider.apiKey,
+      apiKey: credentialFrom(env, name, credentialEnv),
       driver: modelDriverOf(provider.driver),
+      env: credentialEnv,
       models: provider.models ?? {}
     }
   }

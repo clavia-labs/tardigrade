@@ -33,7 +33,7 @@ import {
 } from "@clavia/tardigrade-client/contract"
 
 import { builtInActor, type ServerR } from "./actor"
-import { ServerConfig, type ModelConfig, type ServerConfigValue } from "./config"
+import { ServerConfig, type ModelConfig, type ModelCredentials, type ServerConfigValue } from "./config"
 import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { DriverGauge } from "./http"
 
@@ -113,6 +113,7 @@ interface ProviderConnection {
 
 const connectionFrom = (
   config: ModelConfig,
+  credentials: ModelCredentials,
   selected: ModelCoordinate
 ): ProviderConnection => {
   const provider = config.providers[selected.provider]
@@ -124,9 +125,17 @@ const connectionFrom = (
     )
   }
   if (provider.baseUrl === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no base URL`)
-  if (provider.apiKey === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no API key; run \`tdg setup\``)
   if (provider.driver === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no protocol driver`)
-  return { baseUrl: provider.baseUrl, apiKey: provider.apiKey, driver: provider.driver }
+  if (provider.env.length === 0) {
+    throw new Error(`provider ${JSON.stringify(selected.provider)} names no credential environment variables; run \`tdg setup\``)
+  }
+  const apiKey = provider.env.flatMap((name) => credentials[name] === undefined ? [] : [credentials[name]!])[0]
+  if (apiKey === undefined) {
+    throw new Error(
+      `provider ${JSON.stringify(selected.provider)} needs a credential; set ${provider.env.join(" or ")} as a secret environment variable`
+    )
+  }
+  return { baseUrl: provider.baseUrl, apiKey, driver: provider.driver }
 }
 
 const catalogModelFrom = (
@@ -152,12 +161,13 @@ const catalogModelFrom = (
 // process catalog snapshot.
 export const selectedModelFrom = (
   config: ModelConfig,
+  credentials: ModelCredentials,
   catalog: ModelCatalogState,
   reference?: ModelCoordinate
 ): SelectedModel => {
   const selected = reference ?? config.default
   if (selected === undefined) throw new Error("the built-in actor has no model coordinate; run `tdg setup`")
-  const provider = connectionFrom(config, selected)
+  const provider = connectionFrom(config, credentials, selected)
   if (catalog.snapshot === undefined) {
     throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
   }
@@ -184,7 +194,7 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
   (() => {
     try {
       if (config.model.default === undefined) return false
-      connectionFrom(config.model, config.model.default)
+      connectionFrom(config.model, config.modelCredentials, config.model.default)
       return true
     } catch {
       return false
@@ -201,7 +211,7 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
   }
   return Layer.succeed(Infer, {
     resolve: (coordinate) => {
-      const selected = selectedModelFrom(config.model, catalog, coordinate)
+      const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, coordinate)
       return {
         model: coordinate,
         contextWindowTokens: selected.contextWindowTokens,
@@ -212,7 +222,7 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
     react: (request, key) => Effect.suspend(() => {
       let selected: SelectedModel
       try {
-        selected = selectedModelFrom(config.model, catalog, request.model)
+        selected = selectedModelFrom(config.model, config.modelCredentials, catalog, request.model)
       } catch (error) {
         return Effect.succeed<Action>({
           kind: "fail",
@@ -439,7 +449,7 @@ const make = (options: ThreadsOptions) =>
       ? builtInActor({
           provider: config.model.default!.provider,
           default_model: config.model.default!.model_id,
-          contextWindowTokens: (model) => selectedModelFrom(config.model, catalog, model).contextWindowTokens
+          contextWindowTokens: (model) => selectedModelFrom(config.model, config.modelCredentials, catalog, model).contextWindowTokens
         })
       : builtInActor()
     const root = resolve(config.actors)

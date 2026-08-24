@@ -1,28 +1,26 @@
-import { Console, Effect, Redacted } from "effect"
+import { Console, Data, Effect, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 import { MODEL_DRIVERS, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { modelConfigOf, type Env, type ModelConfig } from "@clavia/tardigrade-server/config"
 import {
   DEFAULT_MODEL_CATALOG_URL,
   modelsDevCatalogOf
 } from "@clavia/tardigrade-model/metadata"
 
-import { configPathIn, parseFileConfig, type Env, type FileConfig } from "./config"
-
-// `tdg setup` asks for a provider connection and default model, then writes them down, so the first
-// command a person runs is the one that makes every later command work. It never reads a key out
-// of the environment to store it.
+// `tdg setup` asks for a provider connection and default model, then writes the project's
+// environment so the first command a person runs makes every later command work.
 //
-// The key is written and never shown. It is not in the printed summary, not in `--json`, and not in
+// The credential is written and never shown. It is not in the printed summary, not in `--json`, and not in
 // any failure this module raises: a person who ran the command in a shared terminal, a screen
 // share, or CI has no line to scrub afterwards (setup.test.ts, "the key is never echoed").
 
-// CONFIG_MODE is what the file is left at: readable and writable by its owner alone. The directory
-// is made at the matching 0700, because a directory anyone can list is a directory that names the
-// file inside it.
+// CONFIG_MODE leaves the environment file readable and writable by its owner alone.
 export const CONFIG_MODE = 0o600
-export const CONFIG_DIR_MODE = 0o700
+export const ENV_FILE = ".env"
+
+export const envPathIn = (root: string): string => `${root.replace(/\/$/, "")}/${ENV_FILE}`
 
 // DEFAULT_MODEL_LIST_TIMEOUT_MILLIS bounds the optional model catalog request.
 export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
@@ -144,8 +142,9 @@ export interface SetupAnswers {
   readonly provider: string
   readonly baseUrl: string
   readonly model_id: string
-  readonly apiKey: string
+  readonly credential: string
   readonly driver: ModelDriver
+  readonly env: ReadonlyArray<string>
 }
 
 const nonEmpty = (what: string) => (value: string): Effect.Effect<string, string> =>
@@ -167,6 +166,7 @@ export interface SetupPromptOptions {
     readonly provider?: string | undefined
     readonly model_id?: string | undefined
     readonly driver?: string | undefined
+    readonly env?: ReadonlyArray<string> | undefined
   }
   readonly catalog?: ModelCatalogOptions
 }
@@ -176,7 +176,11 @@ type ModelPick = { readonly tag: "model"; readonly model: ListedModel } | { read
 export const modelsDevAt = async (
   provider: string,
   options: ModelCatalogOptions = {}
-): Promise<{ readonly revision: string; readonly models: ReadonlyArray<ListedModel> }> => {
+): Promise<{
+  readonly revision: string
+  readonly env: ReadonlyArray<string>
+  readonly models: ReadonlyArray<ListedModel>
+}> => {
   const fetcher = options.fetch ?? globalThis.fetch
   const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
   const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
@@ -189,6 +193,7 @@ export const modelsDevAt = async (
   const found = modelsDevCatalogOf(await response.json(), revision).find((entry) => entry.id === provider)
   return {
     revision,
+    env: found?.env ?? [],
     models: found?.models.map((model) => ({
       id: model.id,
       ...(model.name === undefined ? {} : { name: model.name })
@@ -218,13 +223,19 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     ...(preset.baseUrl === undefined ? {} : { default: preset.baseUrl }),
     validate: nonEmpty("the base URL")
   })
-  const apiKey = yield* Prompt.password({
-    message: preset.credential ?? "API key",
-    validate: nonEmpty("the API key")
-  })
   const catalogResult = yield* Effect.tryPromise(() => modelsDevAt(provider, options.catalog)).pipe(
     Effect.match({ onFailure: () => undefined, onSuccess: (result) => result })
   )
+  const suggestedEnv = options.current?.env?.[0] ?? catalogResult?.env[0]
+  const credentialEnv = yield* Prompt.text({
+    message: "Credential environment variable",
+    ...(suggestedEnv === undefined ? {} : { default: suggestedEnv }),
+    validate: nonEmpty("the credential environment variable")
+  })
+  const credential = yield* Prompt.password({
+    message: `${preset.credential ?? "API key"} for ${credentialEnv}`,
+    validate: nonEmpty("the API key")
+  })
   const loaded = catalogResult?.models
   const current = options.current?.model_id?.trim()
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
@@ -262,58 +273,118 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     provider,
     baseUrl,
     model_id: selected.id,
-    apiKey: Redacted.value(apiKey),
-    driver
+    credential: Redacted.value(credential),
+    driver,
+    env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)]
   } satisfies SetupAnswers
 })
 
-// homeOf names where the file goes. A machine with no home directory is a machine this command
-// cannot write to, and saying so is better than writing somewhere nobody will look again.
-export const HOME_MISSING = "no home directory: HOME names where `~/.tardigrade/config.json` goes, and it is unset"
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+const assignment = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/
 
-export const homeOf = (env: Env): string | undefined => {
-  const home = env["HOME"]?.trim()
-  return home === undefined || home.length === 0 ? undefined : home
+class SetupConfigError extends Data.TaggedError("SetupConfigError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+const valueOf = (source: string): string => {
+  const value = source.trim()
+  if (value.startsWith('"')) {
+    try {
+      const parsed = JSON.parse(value) as unknown
+      return typeof parsed === "string" ? parsed : value
+    } catch {
+      return value
+    }
+  }
+  if (value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1)
+  return value.replace(/\s+#.*$/, "").trim()
 }
 
-// writeSetup merges the answers into whatever the file already held and writes it back at 0600. The
-// merge is what keeps a `url` or a `token` a person put there by hand: this command owns the
-// `model` block and nothing else (config.ts, FileConfig).
+// setupEnvironmentOf reads assignments written by common dotenv formats. It is also used after an
+// interactive first boot so that process configuration and the file written during that process agree.
+export const setupEnvironmentOf = (raw: string): Env => {
+  const env: Record<string, string> = {}
+  for (const line of raw.split(/\r?\n/)) {
+    const found = assignment.exec(line)
+    if (found !== null) env[found[1]!] = valueOf(found[2]!)
+  }
+  return env
+}
+
+const withAssignments = (raw: string, values: Readonly<Record<string, string>>): string => {
+  const pending = new Set(Object.keys(values))
+  const lines = raw.length === 0 ? [] : raw.replace(/\r\n/g, "\n").replace(/\n$/, "").split("\n")
+  const next = lines.flatMap((line) => {
+    const found = assignment.exec(line)
+    if (found === null || values[found[1]!] === undefined) return [line]
+    const name = found[1]!
+    if (!pending.delete(name)) return []
+    return [`${name}=${JSON.stringify(values[name])}`]
+  })
+  for (const name of pending) next.push(`${name}=${JSON.stringify(values[name])}`)
+  return `${next.join("\n")}\n`
+}
+
+const modelFromEnvironment = (env: Env): ModelConfig => {
+  const raw = env["TARDIGRADE_MODELS"]?.trim()
+  if (raw === undefined || raw.length === 0) return { default: undefined, providers: {} }
+  try {
+    return modelConfigOf(JSON.parse(raw) as unknown)
+  } catch (cause) {
+    throw new Error(`existing TARDIGRADE_MODELS is invalid: ${cause instanceof Error ? cause.message : String(cause)}`)
+  }
+}
+
+// writeSetup merges one connection into the project environment and leaves the file at 0600.
 export const writeSetup = (
-  home: string,
+  root: string,
   answers: SetupAnswers
-): Effect.Effect<string, PlatformError, FileSystem> =>
+): Effect.Effect<string, PlatformError | SetupConfigError, FileSystem> =>
   Effect.gen(function*() {
     const fs = yield* FileSystem
-    const path = configPathIn(home)
-    const directory = path.slice(0, path.lastIndexOf("/"))
-    const held: FileConfig = yield* fs.readFileString(path).pipe(
-      Effect.map(parseFileConfig),
-      Effect.orElseSucceed(() => ({}) as FileConfig)
-    )
-    const next: FileConfig = {
-      ...held,
-      model: {
-        default: { provider: answers.provider, model_id: answers.model_id },
-        providers: {
-          ...held.model?.providers,
-          [answers.provider]: {
-            baseUrl: answers.baseUrl,
-            apiKey: answers.apiKey,
-            driver: answers.driver
-          }
+    if (!ENV_NAME.test(answers.env[0] ?? "")) {
+      return yield* new SetupConfigError({ message: `credential environment variable must match ${ENV_NAME}` })
+    }
+    const path = envPathIn(root)
+    const raw = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""))
+    const held = yield* Effect.try({
+      try: () => modelFromEnvironment(setupEnvironmentOf(raw)),
+      catch: (cause) => new SetupConfigError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause
+      })
+    })
+    const model: ModelConfig = {
+      default: { provider: answers.provider, model_id: answers.model_id },
+      providers: {
+        ...held.providers,
+        [answers.provider]: {
+          baseUrl: answers.baseUrl,
+          driver: answers.driver,
+          env: answers.env
         }
       }
     }
-    yield* fs.makeDirectory(directory, { recursive: true, mode: CONFIG_DIR_MODE })
-    yield* fs.writeFileString(path, `${JSON.stringify(next, undefined, 2)}\n`, { mode: CONFIG_MODE })
+    const next = withAssignments(raw, {
+      TARDIGRADE_MODELS: JSON.stringify(model),
+      [answers.env[0]!]: answers.credential
+    })
+    yield* fs.writeFileString(path, next, { mode: CONFIG_MODE })
     // The mode is set again after the write, because `mode` applies when a file is created and this
     // may have replaced one that already existed at a wider mode (setup.test.ts).
     yield* fs.chmod(path, CONFIG_MODE)
     return path
   })
 
-// setupSummary is what the command prints. The key is stated as stored rather than shown, and the
+export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem> =>
+  Effect.gen(function*() {
+    const fs = yield* FileSystem
+    const raw = yield* fs.readFileString(envPathIn(root)).pipe(Effect.orElseSucceed(() => ""))
+    return setupEnvironmentOf(raw)
+  })
+
+// setupSummary is what the command prints. The credential is stated as stored rather than shown, and the
 // same is true of the `--json` rendering, so neither output can be the place a key leaks.
 export const setupSummary = (path: string, answers: SetupAnswers): string =>
   [
@@ -321,6 +392,7 @@ export const setupSummary = (path: string, answers: SetupAnswers): string =>
     `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
     `wire  ${answers.driver}`,
+    `secret ${answers.env[0]}`,
     `default ${answers.model_id}`
   ].join("\n")
 
@@ -330,12 +402,14 @@ export const setupJson = (path: string, answers: SetupAnswers): {
   readonly provider: string
   readonly model_id: string
   readonly driver: ModelDriver
-  readonly apiKey: "stored"
+  readonly credential: "stored"
+  readonly env: ReadonlyArray<string>
 } => ({
   path,
   provider: answers.provider,
   baseUrl: answers.baseUrl,
   model_id: answers.model_id,
   driver: answers.driver,
-  apiKey: "stored"
+  credential: "stored",
+  env: answers.env
 })

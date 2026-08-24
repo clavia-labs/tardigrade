@@ -81,6 +81,7 @@ describe("config", () => {
       default: undefined,
       providers: {}
     })
+    expect(config.modelCredentials).toEqual({})
     expect(config.catalog).toEqual({
       sourceUrl: "https://models.dev/api.json",
       cachePath: ".tardigrade/models.json",
@@ -104,6 +105,7 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
     expect(config.model).toEqual({ default: undefined, providers: {} })
+    expect(config.modelCredentials).toEqual({})
     expect(config.catalog).toEqual({
       sourceUrl: "https://models.dev/api.json",
       cachePath: ".tardigrade/models.json",
@@ -132,17 +134,24 @@ describe("config", () => {
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
-            apiKey: "secret",
-            driver: "openai-responses"
+            driver: "openai-responses",
+            env: ["OPENAI_API_KEY"]
           }
         }
-      })
+      }),
+      OPENAI_API_KEY: "secret"
     })
     expect(config.model).toMatchObject({
       default: { provider: "openai", model_id: "gpt" },
       providers: { openai: { driver: "openai-responses" } }
     })
+    expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
     expect(() => readConfig({ TARDIGRADE_MODELS: "{" })).toThrow("TARDIGRADE_MODELS is invalid")
+    expect(() => readConfig({
+      TARDIGRADE_MODELS: JSON.stringify({
+        providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } }
+      })
+    })).toThrow("cannot contain apiKey")
   })
 
   test("legacy model variables print a redacted replacement", () => {
@@ -161,6 +170,7 @@ describe("config", () => {
     expect(message).toContain("TARDIGRADE_MODELS")
     expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
     expect(message).toContain('"driver":"<protocol-driver>"')
+    expect(message).toContain('"env":["<api-key-env>"]')
     expect(message).not.toContain(env.MODEL_API_KEY)
   })
 

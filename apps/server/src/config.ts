@@ -43,8 +43,8 @@ export interface ModelCatalogConfig {
 // catalog snapshot, so changing models does not change connection configuration.
 export interface ModelProviderConfig {
   readonly baseUrl: string | undefined
-  readonly apiKey: string | undefined
   readonly driver: ModelDriver | undefined
+  readonly env: ReadonlyArray<string>
 }
 
 // ModelConfig holds private provider connections and the coordinate used by the built-in actor.
@@ -52,6 +52,10 @@ export interface ModelConfig {
   readonly default: ModelCoordinate | undefined
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
+
+// ModelCredentials holds environment values separately from the provider configuration that
+// names them.
+export type ModelCredentials = Readonly<Record<string, string>>
 
 export interface ServerConfigValue {
   readonly port: number
@@ -63,6 +67,7 @@ export interface ServerConfigValue {
   // makes a bearer token required on actor routes. Process metadata stays public (http.ts).
   readonly token: string | undefined
   readonly model: ModelConfig
+  readonly modelCredentials: ModelCredentials
   readonly catalog: ModelCatalogConfig
 }
 
@@ -84,6 +89,14 @@ const recordOf = (value: unknown): Record<string, unknown> | undefined =>
 
 const stringOf = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+
+const stringsOf = (value: unknown): ReadonlyArray<string> =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const found = stringOf(entry)
+        return found === undefined ? [] : [found]
+      })
+    : []
 
 const coordinateOf = (value: unknown): ModelCoordinate | undefined => {
   const source = recordOf(value)
@@ -112,15 +125,15 @@ const legacyModelError = (env: Env): Error | undefined => {
     providers: {
       [provider]: {
         baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
-        apiKey: "<api-key>",
-        driver: "<protocol-driver>"
+        driver: "<protocol-driver>",
+        env: ["<api-key-env>"]
       }
     }
   }
   return new Error(
     `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
     `Run \`tdg setup\`, or set TARDIGRADE_MODELS to ${JSON.stringify(replacement)}. ` +
-    "Replace <api-key> and <protocol-driver>; the legacy API key was not printed."
+    "Replace <protocol-driver>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
   )
 }
 
@@ -134,11 +147,14 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
     const provider = recordOf(rawProvider)
     if (provider === undefined) throw new Error(`provider ${JSON.stringify(name)} must be an object`)
+    if (provider["apiKey"] !== undefined) {
+      throw new Error(`provider ${JSON.stringify(name)} cannot contain apiKey; declare its secret environment variable in env`)
+    }
     const driver = stringOf(provider["driver"])
     providers[name] = {
       baseUrl: stringOf(provider["baseUrl"]),
-      apiKey: stringOf(provider["apiKey"]),
-      driver: driver === undefined ? undefined : modelDriverOf(driver)
+      driver: driver === undefined ? undefined : modelDriverOf(driver),
+      env: stringsOf(provider["env"])
     }
   }
   const selected = coordinateOf(source["default"])
@@ -146,6 +162,17 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     default: selected,
     providers
   }
+}
+
+const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
+  const credentials: Record<string, string> = {}
+  for (const provider of Object.values(model.providers)) {
+    for (const name of provider.env) {
+      const value = text(env, name)
+      if (value !== undefined) credentials[name] = value
+    }
+  }
+  return credentials
 }
 
 const modelsFrom = (env: Env): ModelConfig => {
@@ -199,6 +226,7 @@ const modelCatalogTimeout = (env: Env): number => {
 
 // readConfig resolves the environment into the value the process runs on.
 export const readConfig = (env: Env): ServerConfigValue => {
+  const model = modelsFrom(env)
   return {
     port: port(env),
     db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
@@ -206,7 +234,8 @@ export const readConfig = (env: Env): ServerConfigValue => {
     actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
     maxConcurrentLanes: maxConcurrentLanes(env),
     token: text(env, "TARDIGRADE_TOKEN"),
-    model: modelsFrom(env),
+    model,
+    modelCredentials: modelCredentialsFrom(model, env),
     catalog: {
       sourceUrl: text(env, "TARDIGRADE_MODEL_CATALOG_URL") ?? DEFAULT_MODEL_CATALOG_URL,
       cachePath: text(env, "TARDIGRADE_MODEL_CATALOG_CACHE") ?? DEFAULT_MODEL_CATALOG_CACHE,

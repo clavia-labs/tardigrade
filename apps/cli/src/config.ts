@@ -7,13 +7,9 @@ import {
   type Env,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
-import type { ModelCoordinate } from "tardie"
-import { modelDriverOf } from "@clavia/tardigrade-model/directory"
 
-// Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
-// the command line, then the environment, then the file `tdg setup` wrote, then the exported
-// default. The order is the whole of the rule, so a value a person can see on the command line
-// always beats a value they cannot (config.test.ts).
+// Where a remote client value comes from, decided once. Three sources apply in one order: a flag,
+// the environment, the user-level file, then the exported default (config.test.ts).
 
 export type { Env }
 
@@ -34,25 +30,14 @@ export const resolve = (
 ): string | undefined => text(flag) ?? text(variable) ?? text(file)
 
 // CONFIG_RELATIVE is where the file lives under the home directory, and configPathIn joins it. The
-// path is a constant rather than a string each command spells, so `tdg setup` writes what every
-// other command reads (setup.ts).
+// path is a constant rather than a string each command spells, so every command reads the same file.
 export const CONFIG_RELATIVE = ".tardigrade/config.json"
 
 export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE}`
 
-// FileConfig is the file's whole shape. `model` is what `tdg setup` asks for; `url` and `token` are
-// there because the resolution order is one order for every value, and a person who points every
-// command at the same remote writes them once instead of exporting them per shell. The API key is
-// the one value nothing ever prints back (setup.ts).
+// FileConfig is the user-level file's whole shape. It holds remote client settings that apply
+// across projects. Model connections belong to each project's environment (setup.ts).
 export interface FileConfig {
-  readonly model?: {
-    readonly default?: ModelCoordinate
-    readonly providers?: Readonly<Record<string, {
-      readonly baseUrl?: string
-      readonly apiKey?: string
-      readonly driver?: string
-    }>>
-  }
   readonly url?: string
   readonly token?: string
 }
@@ -60,30 +45,6 @@ export interface FileConfig {
 const stringField = (source: Record<string, unknown>, name: string): string | undefined => {
   const value = source[name]
   return typeof value === "string" ? value : undefined
-}
-
-const modelCoordinateField = (value: unknown): ModelCoordinate | undefined => {
-  if (typeof value !== "object" || value === null) return undefined
-  const source = value as Record<string, unknown>
-  const provider = stringField(source, "provider")?.trim()
-  const model_id = stringField(source, "model_id")?.trim()
-  if (provider === undefined || provider.length === 0 || model_id === undefined || model_id.length === 0) return undefined
-  return { provider, model_id }
-}
-
-const fileProvidersOf = (value: unknown): NonNullable<NonNullable<FileConfig["model"]>["providers"]> => {
-  if (typeof value !== "object" || value === null) return {}
-  const providers: Record<string, NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]> = {}
-  for (const [name, raw] of Object.entries(value)) {
-    if (typeof raw !== "object" || raw === null) continue
-    const source = raw as Record<string, unknown>
-    providers[name] = {
-      ...(stringField(source, "baseUrl") === undefined ? {} : { baseUrl: stringField(source, "baseUrl")! }),
-      ...(stringField(source, "apiKey") === undefined ? {} : { apiKey: stringField(source, "apiKey")! }),
-      ...(stringField(source, "driver") === undefined ? {} : { driver: stringField(source, "driver")! })
-    }
-  }
-  return providers
 }
 
 // parseFileConfig reads what it recognizes and ignores the rest. A file with a key nobody declared
@@ -98,14 +59,7 @@ export const parseFileConfig = (raw: string): FileConfig => {
   }
   if (typeof parsed !== "object" || parsed === null) return {}
   const source = parsed as Record<string, unknown>
-  const model = typeof source["model"] === "object" && source["model"] !== null
-    ? (source["model"] as Record<string, unknown>)
-    : {}
   return {
-    model: {
-      ...(modelCoordinateField(model["default"]) === undefined ? {} : { default: modelCoordinateField(model["default"])! }),
-      providers: fileProvidersOf(model["providers"])
-    },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
     ...(stringField(source, "token") === undefined ? {} : { token: stringField(source, "token")! })
   }
@@ -153,8 +107,7 @@ export interface ServerFlags {
 
 // resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
 // variable the server honours is a variable this command honours and the two can never disagree,
-// and then lets the file fill what the environment left absent and a flag win over both. A PORT
-// that is not a port still refuses to resolve, because the reader is the server's
+// and then lets a flag win over it. A PORT that is not a port still refuses to resolve, because the reader is the server's
 // (apps/server/src/config.ts, readConfig).
 //
 // The token is dropped, `TARDIGRADE_TOKEN` in the environment included. `tdg dev` is the local
@@ -162,17 +115,8 @@ export interface ServerFlags {
 // than a secret. A server meant to be reachable by anyone else is the server run directly with a
 // token set (docs/how-to/server.md; config.test.ts, "the token is dropped, so the local server is
 // ungated").
-export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {}): ServerConfigValue => {
+export const resolveServer = (flags: ServerFlags, env: Env): ServerConfigValue => {
   const base = readConfig(env)
-  const model = file.model ?? {}
-  const fileProviders = Object.fromEntries(Object.entries(model.providers ?? {}).map(([name, provider]) => [
-    name,
-    {
-      baseUrl: text(provider.baseUrl),
-      apiKey: text(provider.apiKey),
-      driver: text(provider.driver) === undefined ? undefined : modelDriverOf(text(provider.driver)!)
-    }
-  ]))
   return {
     ...base,
     port: flags.port ?? base.port,
@@ -180,10 +124,6 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     actors: text(flags.actors) ?? base.actors,
     actorData: text(flags.actorData) ?? base.actorData,
     maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
-    token: undefined,
-    model: {
-      default: model.default,
-      providers: fileProviders
-    }
+    token: undefined
   }
 }

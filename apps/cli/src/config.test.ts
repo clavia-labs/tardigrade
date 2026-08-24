@@ -140,34 +140,33 @@ describe("the config file", () => {
   })
 
   test("a key nobody declared is ignored, and the rest still reads", () => {
-    expect(parseFileConfig(JSON.stringify({ model: { default: { provider: "openai", model_id: "a-model" }, weird: 3 }, later: true }))).toEqual({
-      model: { default: { provider: "openai", model_id: "a-model" }, providers: {} }
-    })
+    expect(parseFileConfig(JSON.stringify({ model: { old: true }, later: true, url: "https://example.com" })))
+      .toEqual({ url: "https://example.com" })
   })
 
-  test("the file supplies provider connections and a default model", async () => {
-    await put(JSON.stringify({ model: {
+  test("the project environment supplies provider configuration and credentials", () => {
+    const config = JSON.stringify({
       default: { provider: "openai", model_id: "file-model" },
       providers: {
         openai: {
           baseUrl: "https://file.example.com",
-          apiKey: "file-key",
-          driver: "openai-responses"
-        }
-      }
-    } }))
-    const file = await read({ HOME: home })
-    const fromFile = resolveServer({}, {}, file)
-    expect(fromFile.model).toEqual({
-      default: { provider: "openai", model_id: "file-model" },
-      providers: {
-        openai: {
-          baseUrl: "https://file.example.com",
-          apiKey: "file-key",
-          driver: "openai-responses"
+          driver: "openai-responses",
+          env: ["OPENAI_API_KEY"]
         }
       }
     })
+    const resolved = resolveServer({}, { TARDIGRADE_MODELS: config, OPENAI_API_KEY: "environment-key" })
+    expect(resolved.model).toEqual({
+      default: { provider: "openai", model_id: "file-model" },
+      providers: {
+        openai: {
+          baseUrl: "https://file.example.com",
+          driver: "openai-responses",
+          env: ["OPENAI_API_KEY"]
+        }
+      }
+    })
+    expect(resolved.modelCredentials).toEqual({ OPENAI_API_KEY: "environment-key" })
   })
 
   test("the file is the third source for the remote, and a flag beats both", async () => {

@@ -78,11 +78,12 @@ describe("model selection", () => {
     providers: {
       openrouter: {
         baseUrl: "https://openrouter.ai/api/v1",
-        apiKey: "secret",
-        driver: "openai-chat-completions" as const
+        driver: "openai-chat-completions" as const,
+        env: ["OPENROUTER_API_KEY"]
       }
     }
   }
+  const credentials = { OPENROUTER_API_KEY: "secret" }
   const catalog = {
     snapshot: {
       source: "models.dev" as const,
@@ -109,7 +110,7 @@ describe("model selection", () => {
   }
 
   test("a connection can select any model in its catalog", () => {
-    expect(selectedModelFrom(model, catalog, {
+    expect(selectedModelFrom(model, credentials, catalog, {
       provider: "openrouter",
       model_id: "openai/gpt-5.2"
     })).toMatchObject({
@@ -122,8 +123,17 @@ describe("model selection", () => {
     })
   })
 
+  test("a connection uses the first available named credential", () => {
+    expect(selectedModelFrom({
+      ...model,
+      providers: {
+        openrouter: { ...model.providers.openrouter!, env: ["PRIMARY_KEY", "OPENROUTER_API_KEY"] }
+      }
+    }, credentials, catalog)?.apiKey).toBe("secret")
+  })
+
   test("an unknown model names the catalog revision", () => {
-    expect(() => selectedModelFrom(model, catalog, {
+    expect(() => selectedModelFrom(model, credentials, catalog, {
       provider: "openrouter",
       model_id: "missing"
     })).toThrow("catalog revision \"catalog-1\"")
