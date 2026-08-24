@@ -11,8 +11,9 @@ import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 
 import { openStreams } from "./api"
+import { layerModelCatalogValue } from "./catalog"
 import { layerConfig, readConfig } from "./config"
-import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow } from "@clavia/tardigrade-client/contract"
+import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { layerThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import type { TurnViewShape as TurnView } from "./actor"
@@ -68,10 +69,28 @@ const config = layerConfig(readConfig({
   TARDIGRADE_ACTORS: `/tmp/tardigrade-api-test-${process.pid}`
 }))
 
+const catalog: ModelCatalog = {
+  source: "models.dev",
+  revision: "catalog-1",
+  refreshedAt: 1_700_000_000_000,
+  status: "fresh",
+  providers: [{
+    id: "openai",
+    name: "OpenAI",
+    env: ["OPENAI_API_KEY"],
+    models: [
+      { id: "gpt-mini", metadata: { contextWindowTokens: 64_000 } },
+      { id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }
+    ]
+  }]
+}
+const catalogLayer = layerModelCatalogValue(catalog)
+
 const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
   BunHttpServer.layer({ port: 0 }),
   config,
-  Layer.provide(layerThreads({ infer: layerScripted }), config)
+  catalogLayer,
+  Layer.provide(layerThreads({ infer: layerScripted }), [config, catalogLayer])
 ])
 
 // Boots the process and hands the body its base URL. The body is plain fetch, because a client of
@@ -158,19 +177,65 @@ const callMessage = async (base: string, thread: string, call: string, text: str
   })
 }
 
+describe("models", () => {
+  test("the public catalog pages model metadata without credentials", async () => {
+    const first = await serving(async (base) => await (await get(base, "/v1/models?provider=openai&limit=1")).json()) as {
+      readonly items: ReadonlyArray<{ readonly id: string }>
+      readonly next_cursor?: string
+      readonly limit: number
+      readonly total: number
+    }
+    expect(first).toMatchObject({ limit: 1, total: 2, items: [{ id: "gpt-mini" }] })
+    expect(typeof first.next_cursor).toBe("string")
+    const second = await serving(async (base) => await (await get(
+      base,
+      `/v1/models?provider=openai&limit=1&cursor=${encodeURIComponent(first.next_cursor!)}`
+    )).json())
+    expect(second).toMatchObject({ items: [{ id: "gpt-test" }] })
+    expect(JSON.stringify([first, second])).not.toContain("apiKey")
+  })
+
+  test("provider discovery states connection requirements", async () => {
+    const response = await serving(async (base) => await (await get(base, "/v1/providers?search=openai")).json())
+    expect(response).toMatchObject({
+      revision: "catalog-1",
+      items: [{
+        id: "openai",
+        protocol: "openai-responses",
+        baseUrl: "https://api.openai.com/v1",
+        env: ["OPENAI_API_KEY"],
+        required: ["env"]
+      }]
+    })
+  })
+
+  test("a cursor cannot change its query", async () => {
+    const first = await serving(async (base) => await (await get(base, "/v1/models?limit=1")).json()) as {
+      readonly next_cursor: string
+    }
+    const response = await serving(async (base) => await get(
+      base,
+      `/v1/models?limit=1&search=gpt&cursor=${encodeURIComponent(first.next_cursor)}`
+    ))
+    expect(response.status).toBe(400)
+    expect(await response.json()).toMatchObject({ title: "Invalid Request", status: 400 })
+  })
+})
+
 describe("actor methods", () => {
   test("the actor exposes its method schemas", async () => {
     const methods = await serving(async (base) =>
       await (await get(base, "/v1/actors/default/methods")).json() as ReadonlyArray<{
         readonly name: string
-        readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, unknown> }
+        readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, { readonly properties?: Record<string, unknown> }> }
         readonly outputSchema: { readonly type?: unknown }
       }>)
     expect(methods.map((method) => method.name)).toEqual(["message"])
     expect(methods[0]?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
-      required: ["text"]
+      required: ["text"],
+      properties: { model: { type: "string" } }
     })
     expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
   })
@@ -286,10 +351,12 @@ describe("actors", () => {
       TARDIGRADE_ACTORS: root,
       TARDIGRADE_ACTOR_DATA: actorData
     }))
+    const isolatedCatalog = layerModelCatalogValue(catalog)
     const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
       BunHttpServer.layer({ port: 0 }),
       isolatedConfig,
-      Layer.provide(layerThreads({ infer: layerScripted }), isolatedConfig)
+      isolatedCatalog,
+      Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
     ])
     const module = `export default { name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`

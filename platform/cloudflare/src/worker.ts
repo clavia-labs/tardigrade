@@ -4,6 +4,9 @@ import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerR
 import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
 import type { Action } from "tardie/events"
 import { infer, modelAskOf, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
+import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
+import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-server/catalog"
+import { CatalogCursorError, modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -26,6 +29,7 @@ import {
   layerCloudflareActorRegistry,
   type CloudflareActorRegistration
 } from "./registry"
+import { layerCloudflareModelCatalogRepository } from "./catalog"
 
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
@@ -43,6 +47,9 @@ export interface Env {
   readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
   readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
   readonly TARDIGRADE_TOKEN?: string
+  readonly TARDIGRADE_MODEL_CATALOG_URL?: string
+  readonly TARDIGRADE_MODEL_CATALOG_LOAD_POLICY?: string
+  readonly TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS?: string
   readonly TARDIGRADE_MAX_CONCURRENT_LANES?: string
   readonly TARDIGRADE_ALARM_DELAY_MILLIS?: string
   readonly TARDIGRADE_COMPACTION_FIRE_RATIO?: string
@@ -66,6 +73,13 @@ export const DEFAULT_ACTOR_REGISTRATION: CloudflareActorRegistration = {
 
 const assemblies = new Set([DEFAULT_ACTOR_REGISTRATION.assembly])
 const registryRuntimes = new WeakMap<D1Database, ManagedRuntime.ManagedRuntime<CloudflareActorRegistry, never>>()
+const modelCatalogStates = new WeakMap<D1Database, Promise<ModelCatalogState>>()
+
+// DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh in one Worker isolate.
+export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
+
+// DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the persisted snapshot once per Worker isolate.
+export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
 
 const actorRegistry = async (env: Env) => {
   let runtime = registryRuntimes.get(env.REGISTRY)
@@ -105,6 +119,34 @@ const positiveInteger = (raw: string | undefined, fallback: number, name: string
   const value = Number(raw)
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`${name} must be a positive integer, got ${JSON.stringify(raw)}`)
   return value
+}
+
+const modelCatalogLoadPolicyOf = (raw: string | undefined): ModelCatalogLoadPolicy => {
+  const selected = raw ?? DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY
+  if (selected === "cache-first" || selected === "refresh") return selected
+  throw new Error(`TARDIGRADE_MODEL_CATALOG_LOAD_POLICY must be "cache-first" or "refresh", got ${JSON.stringify(raw)}`)
+}
+
+const modelCatalog = (env: Env): Promise<ModelCatalogState> => {
+  let state = modelCatalogStates.get(env.REGISTRY)
+  if (state !== undefined) return state
+  state = Effect.runPromise(loadModelCatalog({
+    sourceUrl: env.TARDIGRADE_MODEL_CATALOG_URL?.trim() || DEFAULT_MODEL_CATALOG_URL,
+    timeoutMillis: positiveInteger(
+      env.TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS,
+      DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS,
+      "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS"
+    ),
+    policy: modelCatalogLoadPolicyOf(env.TARDIGRADE_MODEL_CATALOG_LOAD_POLICY)
+  }).pipe(
+    Effect.provide(layerCloudflareModelCatalogRepository(env.REGISTRY)),
+    Effect.tap((catalog) => Effect.all([
+      catalog.refreshError === undefined ? Effect.void : Effect.logWarning(`model catalog refresh failed: ${catalog.refreshError}`),
+      catalog.cacheError === undefined ? Effect.void : Effect.logWarning(`model catalog cache failed: ${catalog.cacheError}`)
+    ], { discard: true }))
+  ))
+  modelCatalogStates.set(env.REGISTRY, state)
+  return state
 }
 
 const nonNegativeInteger = (raw: string | undefined, fallback: number, name: string): number => {
@@ -345,6 +387,22 @@ const guard = (request: HttpServerRequest.HttpServerRequest, env: Env) => {
   return undefined
 }
 
+const catalogQueryOf = (request: HttpServerRequest.HttpServerRequest) => {
+  const query = new URL(request.url).searchParams
+  const value = (name: string): string | undefined => query.get(name) ?? undefined
+  const limit = value("limit")
+  return {
+    cursor: value("cursor"),
+    search: value("search"),
+    ...(limit === undefined ? {} : { limit: Number(limit) })
+  }
+}
+
+const catalogFailure = (cause: unknown) => ({
+  error: cause instanceof Error ? cause.message : String(cause),
+  status: cause instanceof CatalogCursorError ? 400 : 503
+})
+
 const protectedRoute = <E, R>(
   f: (
     request: HttpServerRequest.HttpServerRequest,
@@ -362,6 +420,40 @@ const routes = [
     const env = yield* WorkerEnv
     const registry = yield* CloudflareActorRegistry
     return json(yield* Effect.promise(async () => (await actorStub(env, registry, DEFAULT_ACTOR_REGISTRATION.name))!.status()))
+  })),
+  HttpRouter.route("GET", "/v1/providers", Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const env = yield* WorkerEnv
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const catalog = await modelCatalog(env)
+        if (catalog.snapshot === undefined) throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        return providersPageOf(catalog.snapshot, catalogQueryOf(request))
+      },
+      catch: catalogFailure
+    }).pipe(Effect.match({
+      onFailure: (failure) => json({ error: failure.error }, failure.status),
+      onSuccess: (page) => json(page)
+    }))
+  })),
+  HttpRouter.route("GET", "/v1/models", Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const env = yield* WorkerEnv
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const catalog = await modelCatalog(env)
+        if (catalog.snapshot === undefined) throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        const query = new URL(request.url).searchParams
+        return modelsPageOf(catalog.snapshot, {
+          ...catalogQueryOf(request),
+          provider: query.get("provider") ?? undefined
+        })
+      },
+      catch: catalogFailure
+    }).pipe(Effect.match({
+      onFailure: (failure) => json({ error: failure.error }, failure.status),
+      onSuccess: (page) => json(page)
+    }))
   })),
   HttpRouter.route("GET", "/v1/actors", protectedRoute((_request, _env) => Effect.gen(function* () {
     const registry = yield* CloudflareActorRegistry

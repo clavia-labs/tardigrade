@@ -1,8 +1,10 @@
 import { Console, Context, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
-import { BunHttpServer } from "@effect/platform-bun"
+import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
+import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
+import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
 import { layerApp } from "@clavia/tardigrade-server/http"
 
@@ -114,6 +116,8 @@ export interface DevOptions {
   readonly assets?: string | undefined
   // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
   readonly threads?: ThreadsOptions | undefined
+  // catalog replaces the startup-refreshed public model catalog for an embedding or test.
+  readonly catalog?: Layer.Layer<ModelCatalogStore> | undefined
   // actorRefreshMillis is the visible debounce applied to local actor-root changes.
   readonly actorRefreshMillis?: number | undefined
   readonly disableLogger?: boolean | undefined
@@ -132,6 +136,10 @@ export const dev = (options: DevOptions) => {
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
+  const catalogRepository = layerFileModelCatalogRepository(options.config.catalog.cachePath).pipe(
+    Layer.provide(BunFileSystem.layer)
+  )
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
   const threads = Layer.provide(layerThreads({
     ...options.threads,
     actorRefresh: { debounceMillis: actorRefreshMillis }
@@ -144,7 +152,7 @@ export const dev = (options: DevOptions) => {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
-    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads]
+    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads, catalog]
   )
   if (options.onListen === undefined) return running
   return Layer.tap(running, (context) => {

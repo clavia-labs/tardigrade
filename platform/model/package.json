@@ -29,15 +29,15 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-core": "workspace:*",
-    "tardie": "workspace:*",
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@clavia/tardigrade-core": "workspace:*",
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",
     "@tanstack/ai": "0.46.0",
     "@tanstack/ai-bedrock": "0.2.3",
     "@tanstack/ai-openai": "0.20.0",
-    "effect": "4.0.0-rc.110"
+    "effect": "4.0.0-rc.110",
+    "tardie": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

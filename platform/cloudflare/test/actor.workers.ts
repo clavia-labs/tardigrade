@@ -1,7 +1,10 @@
 import { env, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime } from "effect"
 import { describe, expect, test } from "vitest"
+import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
 import type { Env } from "../src/worker"
+import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { CloudflareActorRegistry, layerCloudflareActorRegistry } from "../src/registry"
 
 const authorization = { authorization: "Bearer workers-test-token" }
@@ -19,6 +22,33 @@ const trajectory = async (): Promise<ReadonlyArray<{ readonly seq: number; reado
 }
 
 describe("cloudflare actor", () => {
+  test("D1 persists model catalog snapshots", async () => {
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).REGISTRY))
+    const snapshot: ModelCatalog = {
+      source: "models.dev",
+      revision: "workers-catalog-test",
+      refreshedAt: 1,
+      status: "fresh",
+      providers: [{
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+      }]
+    }
+    try {
+      const repository = await runtime.runPromise(ModelCatalogRepository)
+      await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
+      expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
+        ...snapshot,
+        status: "cached"
+      })
+      expect(await Effect.runPromise(repository.read("https://other.test/catalog.json"))).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test("D1 persists actor registry replacements and removals", async () => {
     const runtime = ManagedRuntime.make(layerCloudflareActorRegistry((env as Env).REGISTRY))
     try {
