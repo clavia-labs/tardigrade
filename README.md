@@ -6,9 +6,12 @@
   </picture>
 </p>
 
-# Tardigrade
+<p align="center">
+  <a href="https://www.npmjs.com/package/tardie"><img alt="npm version" src="https://img.shields.io/npm/v/tardie.svg"></a>
+  <a href="https://discord.gg/Z74jwRxz4k"><img alt="Join Discord" src="https://img.shields.io/badge/Discord-join-5865F2?logo=discord&amp;logoColor=white"></a>
+</p>
 
-[![npm version](https://img.shields.io/npm/v/tardie.svg)](https://www.npmjs.com/package/tardie)
+# Tardigrade
 
 Tardigrade is a typescript framework for building durable, modular agents that can run at the edge. It is inspired by [React](https://react.dev/)'s declarative approach to building user interfaces.
 
