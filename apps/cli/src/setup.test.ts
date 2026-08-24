@@ -152,17 +152,50 @@ describe("declarative setup", () => {
   test("provider and default flags resolve independently", () => {
     expect(providerAnswersFrom({
       provider: flags.provider,
-      baseUrl: flags.baseUrl,
-      driver: flags.driver,
-      credentialEnv: flags.credentialEnv
-    }, { OPENROUTER_API_KEY: KEY })).toMatchObject({
+      config: '{"env":["OPENROUTER_API_KEY"]}'
+    })).toEqual({
       provider: "openrouter",
-      credential: KEY
+      baseUrl: "https://openrouter.ai/api/v1",
+      driver: "openai-chat-completions",
+      env: ["OPENROUTER_API_KEY"]
     })
     expect(defaultModelFrom({ provider: "openrouter", model: flags.defaultModel })).toEqual({
       provider: "openrouter",
       model_id: "anthropic/claude-sonnet-4-6"
     })
+  })
+
+  test("provider JSON validates fields that depend on the driver", () => {
+    expect(providerAnswersFrom({
+      provider: "amazon-bedrock",
+      config: '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
+    })).toEqual({
+      provider: "amazon-bedrock",
+      baseUrl: "https://gateway.example.com/bedrock",
+      driver: "bedrock-converse",
+      env: ["CLOUDFLARE_API_TOKEN"],
+      region: "ap-southeast-1"
+    })
+    expect(() => providerAnswersFrom({
+      provider: "amazon-bedrock",
+      config: '{"baseUrl":"https://gateway.example.com/bedrock","env":["CLOUDFLARE_API_TOKEN"]}'
+    })).toThrow("must declare region")
+  })
+
+  test("custom providers declare their transport and secrets by name", () => {
+    expect(providerAnswersFrom({
+      provider: "private-gateway",
+      config: '{"baseUrl":"https://models.example.com/v1","driver":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
+    })).toEqual({
+      provider: "private-gateway",
+      baseUrl: "https://models.example.com/v1",
+      driver: "openai-responses",
+      env: ["PRIVATE_MODEL_KEY"]
+    })
+    expect(() => providerAnswersFrom({
+      provider: "openrouter",
+      config: '{"env":["OPENROUTER_API_KEY"],"apiKey":"secret"}'
+    })).toThrow("unknown field: apiKey")
   })
 })
 

@@ -171,6 +171,8 @@ export interface ModelConfig {
   readonly model: string
   readonly driver: ModelDriver
   readonly provider: string
+  // region selects the AWS region for a Bedrock Converse connection.
+  readonly region?: string
   readonly contextWindowTokens: number
   // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
   // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
@@ -365,7 +367,8 @@ export const bedrockAdapter = (
   reported: { usage?: unknown } = {}
 ) => {
   const handler = bedrockHandler(config, bounds)
-  const region = config.baseUrl.split("/").filter((s) => s !== "").at(-1) ?? "us-east-1"
+  const region = config.region ?? config.baseUrl.split("/").filter((s) => s !== "").at(-1)
+  if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
   return new (class extends BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]> {
     protected override importBedrockRuntime(): Promise<typeof BedrockRuntime> {
       return Promise.resolve(BedrockRuntime)

@@ -72,7 +72,7 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. `tdg setup` writes ordinary configuration to `tardigrade.jsonc` and credentials to the project `.env`. Its `provider` and `default` subcommands change those concerns independently.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. Interactive `tdg setup` writes ordinary configuration to `tardigrade.jsonc` and credentials to the project `.env`. The declarative `tdg setup provider <provider> <config>` command writes the connection and leaves secret values in the deployment environment. The `provider` and `default` subcommands change those concerns independently.
 
 ```jsonc
 {

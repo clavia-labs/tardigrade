@@ -93,6 +93,7 @@ interface CloudflareProvider {
   readonly apiKey: string
   readonly driver: ModelDriver
   readonly env: ReadonlyArray<string>
+  readonly region?: string
 }
 
 interface CloudflareModels {
@@ -125,6 +126,7 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
       readonly driver?: unknown
       readonly env?: unknown
       readonly apiKey?: unknown
+      readonly region?: unknown
       }>>
     }
   }
@@ -142,12 +144,18 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
     if (typeof provider.baseUrl !== "string" || typeof provider.driver !== "string") {
       throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} must declare baseUrl and driver`)
     }
+    if (provider.region !== undefined && (typeof provider.region !== "string" || provider.region.trim().length === 0)) {
+      throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} region must be a non-empty string`)
+    }
     const credentialEnv = stringsOf(provider.env)
     providers[name] = {
       baseUrl: provider.baseUrl,
       apiKey: credentialFrom(env, name, credentialEnv),
       driver: modelDriverOf(provider.driver),
-      env: credentialEnv
+      env: credentialEnv,
+      ...(typeof provider.region === "string" && provider.region.trim().length > 0
+        ? { region: provider.region.trim() }
+        : {})
     }
   }
   return { default: coordinate as ModelCoordinate, providers }
@@ -205,6 +213,7 @@ const modelLayer = (models: CloudflareModels | undefined, catalog: ModelCatalogS
         model: request.model.model_id,
         driver: selectedModel.provider.driver,
         provider: request.model.provider,
+        ...(selectedModel.provider.region === undefined ? {} : { region: selectedModel.provider.region }),
         contextWindowTokens: selectedModel.contextWindowTokens,
         ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
         ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })

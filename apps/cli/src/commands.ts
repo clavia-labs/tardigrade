@@ -204,17 +204,21 @@ const setupPromptIn = (root: string, env: Readonly<Record<string, string | undef
 export const NON_INTERACTIVE_SETUP =
   "tdg setup needs an interactive terminal; use `tdg setup provider` and `tdg setup default` in scripts"
 export const NON_INTERACTIVE_PROVIDER_SETUP =
-  "tdg setup provider needs all provider flags when stdin is not interactive; see `tdg setup provider --help`"
+  "tdg setup provider needs <provider> and <config> when stdin is not interactive; see `tdg setup provider --help`"
 export const NON_INTERACTIVE_DEFAULT_SETUP =
   "tdg setup default needs --provider and --model when stdin is not interactive; see `tdg setup default --help`"
 export const NON_INTERACTIVE_INIT =
   "tdg init needs all provider flags when stdin is not interactive; see `tdg init --help`"
 
 export const setupProviderCommand = Command.make("provider", {
-  provider: setupProvider,
-  baseUrl: setupBaseUrl,
-  driver: setupDriver,
-  credentialEnv: setupCredentialEnv,
+  provider: Argument.string("provider").pipe(
+    Argument.withDescription("The provider name used by actor model coordinates."),
+    Argument.optional
+  ),
+  config: Argument.string("config").pipe(
+    Argument.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
+    Argument.optional
+  ),
   json
 }, (flags) =>
   Effect.gen(function*() {
@@ -222,10 +226,8 @@ export const setupProviderCommand = Command.make("provider", {
     const declared = yield* Effect.try({
       try: () => providerAnswersFrom({
         provider: stated(flags.provider),
-        baseUrl: stated(flags.baseUrl),
-        driver: stated(flags.driver),
-        credentialEnv: stated(flags.credentialEnv)
-      }, cli.env),
+        config: stated(flags.config)
+      }),
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
@@ -237,13 +239,13 @@ export const setupProviderCommand = Command.make("provider", {
       : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Add or update one provider connection in tardigrade.jsonc and store its credential in .env at 0600."
+      "Add or update one provider connection in tardigrade.jsonc."
     ),
     Command.withExamples([
       { command: "tdg setup provider", description: "Prompt for a provider connection" },
       {
-        command: "tdg setup provider --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY",
-        description: "Add a provider from explicit values"
+        command: "tdg setup provider openrouter '{\"env\":[\"OPENROUTER_API_KEY\"]}'",
+        description: "Add a provider from JSON"
       }
     ])
   )

@@ -132,6 +132,15 @@ describe("model selection", () => {
     }, credentials, catalog)?.apiKey).toBe("secret")
   })
 
+  test("a connection carries its configured region", () => {
+    expect(selectedModelFrom({
+      ...model,
+      providers: {
+        openrouter: { ...model.providers.openrouter!, region: "ap-southeast-1" }
+      }
+    }, credentials, catalog)?.region).toBe("ap-southeast-1")
+  })
+
   test("an unknown model names the catalog revision", () => {
     expect(() => selectedModelFrom(model, credentials, catalog, {
       provider: "openrouter",

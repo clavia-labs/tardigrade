@@ -99,6 +99,7 @@ interface SelectedModel {
   readonly baseUrl: string
   readonly apiKey: string
   readonly driver: NonNullable<ModelConfig["providers"][string]["driver"]>
+  readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
   readonly pricing?: import("tardie/usage").ModelPricing
@@ -109,6 +110,7 @@ interface ProviderConnection {
   readonly baseUrl: string
   readonly apiKey: string
   readonly driver: NonNullable<ModelConfig["providers"][string]["driver"]>
+  readonly region?: string
 }
 
 const connectionFrom = (
@@ -135,7 +137,12 @@ const connectionFrom = (
       `provider ${JSON.stringify(selected.provider)} needs a credential; set ${provider.env.join(" or ")} as a secret environment variable`
     )
   }
-  return { baseUrl: provider.baseUrl, apiKey, driver: provider.driver }
+  return {
+    baseUrl: provider.baseUrl,
+    apiKey,
+    driver: provider.driver,
+    ...(provider.region === undefined ? {} : { region: provider.region })
+  }
 }
 
 const catalogModelFrom = (
@@ -181,6 +188,7 @@ export const selectedModelFrom = (
     baseUrl: provider.baseUrl,
     apiKey: provider.apiKey,
     driver: provider.driver,
+    ...(provider.region === undefined ? {} : { region: provider.region }),
     contextWindowTokens: metadata.contextWindowTokens,
     ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
     ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
@@ -236,6 +244,7 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
         model: selected.model_id,
         driver: selected.driver,
         provider: selected.provider,
+        ...(selected.region === undefined ? {} : { region: selected.region }),
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
         ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })

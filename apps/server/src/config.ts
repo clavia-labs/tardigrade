@@ -46,6 +46,7 @@ export interface ModelProviderConfig {
   readonly baseUrl: string | undefined
   readonly driver: ModelDriver | undefined
   readonly env: ReadonlyArray<string>
+  readonly region?: string
 }
 
 // ModelConfig holds private provider connections and the coordinate used by the built-in actor.
@@ -163,10 +164,12 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
       throw new Error(`provider ${JSON.stringify(name)} cannot contain apiKey; declare its secret environment variable in env`)
     }
     const driver = stringOf(provider["driver"])
+    const region = stringOf(provider["region"])
     providers[name] = {
       baseUrl: stringOf(provider["baseUrl"]),
       driver: driver === undefined ? undefined : modelDriverOf(driver),
-      env: stringsOf(provider["env"])
+      env: stringsOf(provider["env"]),
+      ...(region === undefined ? {} : { region })
     }
   }
   const selected = coordinateOf(source["default"])

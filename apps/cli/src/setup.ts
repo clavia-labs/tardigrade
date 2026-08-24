@@ -16,9 +16,9 @@ import {
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
 
-// `tdg setup` collects provider connections and chooses the project default before writing either file.
+// Interactive `tdg setup` collects provider connections and chooses the project default before writing either file.
 //
-// The credential is written and never shown. It is absent from the printed summary, `--json`, and
+// An entered credential is written and never shown. It is absent from the printed summary, `--json`, and
 // failures, so a shared terminal has no value to scrub (setup.test.ts, "the key is never echoed").
 
 // SECRETS_MODE leaves the environment file readable and writable by its owner alone.
@@ -131,7 +131,7 @@ export const PRESETS: ReadonlyArray<Preset> = [
   },
   {
     title: "Amazon Bedrock",
-    description: "Bedrock's own protocol. The base URL is your region's runtime endpoint",
+    description: "Bedrock Converse through Cloudflare AI Gateway",
     provider: "amazon-bedrock",
     driver: "bedrock-converse",
     credential: "AI Gateway API key"
@@ -142,13 +142,14 @@ export const PRESETS: ReadonlyArray<Preset> = [
   }
 ]
 
-// ProviderAnswers is one private provider connection and its credential.
+// ProviderAnswers is one provider connection and an optional credential entered at a prompt.
 export interface ProviderAnswers {
   readonly provider: string
   readonly baseUrl: string
-  readonly credential: string
+  readonly credential?: string
   readonly driver: ModelDriver
   readonly env: ReadonlyArray<string>
+  readonly region?: string
 }
 
 // SetupAnswers is one provider connection paired with the model selected as the host default.
@@ -221,6 +222,7 @@ export interface SetupPromptOptions {
     readonly model_id?: string | undefined
     readonly driver?: string | undefined
     readonly env?: ReadonlyArray<string> | undefined
+    readonly region?: string | undefined
   }
   readonly catalog?: ModelCatalogOptions
 }
@@ -323,10 +325,17 @@ const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
   }))
   const defaultBaseUrl = (options.current?.provider === provider ? options.current.baseUrl : undefined) ?? preset.baseUrl
   const baseUrl = yield* Prompt.text({
-    message: preset.provider === "amazon-bedrock" ? "Bedrock runtime endpoint" : "Base URL",
+    message: preset.provider === "amazon-bedrock" ? "AI Gateway Bedrock endpoint" : "Base URL",
     ...(defaultBaseUrl === undefined ? {} : { default: defaultBaseUrl }),
     validate: nonEmpty("the base URL")
   })
+  const region = provider === "amazon-bedrock" ? yield* Prompt.text({
+    message: "AWS region",
+    ...(options.current?.provider === provider && options.current.region !== undefined
+      ? { default: options.current.region }
+      : {}),
+    validate: nonEmpty("the AWS region")
+  }) : undefined
   const catalogResult = yield* catalogResultFor(provider, options)
   const suggestedEnv = (options.current?.provider === provider ? options.current.env?.[0] : undefined) ?? catalogResult?.env[0]
   const credentialEnv = yield* Prompt.text({
@@ -344,7 +353,8 @@ const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
       baseUrl,
       credential: Redacted.value(credential),
       driver,
-      env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)]
+      env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)],
+      ...(region === undefined ? {} : { region })
     },
     preset,
     ...(catalogResult === undefined ? {} : { catalog: catalogResult })
@@ -431,7 +441,10 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
 
 export const setupPlanReview = (plan: SetupPlan): string => [
   "providers",
-  ...plan.providers.map((provider) => `  ${provider.provider}  ${provider.baseUrl}  ${provider.env[0]}`),
+  ...plan.providers.map((provider) => [
+    `  ${provider.provider}  ${provider.baseUrl}  ${provider.env[0]}`,
+    ...(provider.region === undefined ? [] : [`    region  ${provider.region}`])
+  ].join("\n")),
   `default  ${plan.default.provider}/${plan.default.model_id}`
 ].join("\n")
 
@@ -485,45 +498,90 @@ export interface SetupFlags {
   readonly defaultModel?: string | undefined
 }
 
-export type ProviderSetupFlags = Omit<SetupFlags, "defaultModel">
+export interface ProviderSetupInput {
+  readonly provider?: string | undefined
+  readonly config?: string | undefined
+}
 
 export interface DefaultSetupFlags {
   readonly provider?: string | undefined
   readonly model?: string | undefined
 }
 
-// providerAnswersFrom resolves one complete declarative provider connection without selecting a default.
+const providerObjectOf = (source: string): Record<string, unknown> => {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(source)
+  } catch {
+    throw new Error("provider config must be valid JSON")
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    throw new Error("provider config must be a JSON object")
+  }
+  return parsed as Record<string, unknown>
+}
+
+const providerString = (config: Record<string, unknown>, name: string): string | undefined => {
+  const value = config[name]
+  if (value === undefined) return undefined
+  if (typeof value !== "string" || value.trim().length === 0) {
+    throw new Error(`provider config ${name} must be a non-empty string`)
+  }
+  return value.trim()
+}
+
+const providerEnv = (config: Record<string, unknown>): ReadonlyArray<string> => {
+  if (!Array.isArray(config["env"]) || config["env"].length === 0) {
+    throw new Error("provider config env must be a non-empty array of environment variable names")
+  }
+  const env = config["env"].map((value) => {
+    if (typeof value !== "string" || !ENV_NAME.test(value.trim())) {
+      throw new Error(`provider config env entries must match ${ENV_NAME}`)
+    }
+    return value.trim()
+  })
+  return [...new Set(env)]
+}
+
+// providerAnswersFrom resolves one declarative provider connection without reading its secrets.
 export const providerAnswersFrom = (
-  flags: ProviderSetupFlags,
-  env: Env
+  input: ProviderSetupInput
 ): ProviderAnswers | undefined => {
-  const fields = {
-    provider: flags.provider?.trim(),
-    "base-url": flags.baseUrl?.trim(),
-    driver: flags.driver?.trim(),
-    "credential-env": flags.credentialEnv?.trim()
+  const provider = input.provider?.trim()
+  const source = input.config?.trim()
+  if (provider === undefined && source === undefined) return undefined
+  if (provider === undefined || provider.length === 0 || source === undefined || source.length === 0) {
+    throw new Error("tdg setup provider requires both <provider> and <config> when either argument is used")
   }
-  if (Object.values(fields).every((value) => value === undefined)) return undefined
-  const missing = Object.entries(fields).flatMap(([name, value]) => value === undefined || value.length === 0 ? [`--${name}`] : [])
-  if (missing.length > 0) throw new Error(`tdg setup provider requires ${missing.join(", ")} when provider flags are used`)
-  const driver = fields.driver!
-  if (!MODEL_DRIVERS.some((candidate) => candidate === driver)) {
-    throw new Error(`--driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(driver)}`)
+  const config = providerObjectOf(source)
+  const allowed = new Set(["baseUrl", "driver", "env", "region"])
+  const unknown = Object.keys(config).filter((name) => !allowed.has(name))
+  if (unknown.length > 0) throw new Error(`provider config contains unknown ${unknown.length === 1 ? "field" : "fields"}: ${unknown.join(", ")}`)
+  const preset = PRESETS.find((candidate) => candidate.provider === provider)
+  const statedDriver = providerString(config, "driver")
+  if (statedDriver !== undefined && !MODEL_DRIVERS.some((candidate) => candidate === statedDriver)) {
+    throw new Error(`provider config driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(statedDriver)}`)
   }
-  const credentialEnv = fields["credential-env"]!
-  if (!ENV_NAME.test(credentialEnv)) {
-    throw new Error(`--credential-env must match ${ENV_NAME}, got ${JSON.stringify(credentialEnv)}`)
+  if (preset?.driver !== undefined && statedDriver !== undefined && statedDriver !== preset.driver) {
+    throw new Error(`provider ${JSON.stringify(provider)} uses driver ${JSON.stringify(preset.driver)}`)
   }
-  const credential = env[credentialEnv]?.trim()
-  if (credential === undefined || credential.length === 0) {
-    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun tdg setup provider`)
+  const driver = preset?.driver ?? (statedDriver as ModelDriver | undefined)
+  if (driver === undefined) throw new Error(`provider ${JSON.stringify(provider)} must declare driver`)
+  const baseUrl = providerString(config, "baseUrl") ?? preset?.baseUrl
+  if (baseUrl === undefined) throw new Error(`provider ${JSON.stringify(provider)} must declare baseUrl`)
+  const region = providerString(config, "region")
+  if (driver === "bedrock-converse" && region === undefined) {
+    throw new Error(`provider ${JSON.stringify(provider)} must declare region for driver ${JSON.stringify(driver)}`)
+  }
+  if (driver !== "bedrock-converse" && region !== undefined) {
+    throw new Error(`provider ${JSON.stringify(provider)} cannot declare region with driver ${JSON.stringify(driver)}`)
   }
   return {
-    provider: fields.provider!,
-    baseUrl: fields["base-url"]!,
-    driver: driver as ModelDriver,
-    env: [credentialEnv],
-    credential
+    provider,
+    baseUrl,
+    driver,
+    env: providerEnv(config),
+    ...(region === undefined ? {} : { region })
   }
 }
 
@@ -638,7 +696,8 @@ const updatedProject = (
     next = applyEdits(next, modify(next, ["models", "providers", provider.provider], {
       baseUrl: provider.baseUrl,
       driver: provider.driver,
-      env: provider.env
+      env: provider.env,
+      ...(provider.region === undefined ? {} : { region: provider.region })
     }, { formattingOptions }))
   }
   if (selected !== undefined) {
@@ -656,7 +715,7 @@ const writeSetupChanges = (
   Effect.gen(function*() {
     const fs = yield* FileSystem
     for (const provider of providers) {
-      if (!ENV_NAME.test(provider.env[0] ?? "")) {
+      if (provider.env.length === 0 || provider.env.some((name) => !ENV_NAME.test(name))) {
         return yield* new SetupConfigError({ message: `credential environment variable must match ${ENV_NAME}` })
       }
     }
@@ -675,9 +734,11 @@ const writeSetupChanges = (
       configPath,
       updatedProject(configRaw, selected, providers)
     )
-    if (providers.length > 0) {
+    const credentials = Object.fromEntries(providers.flatMap((provider) =>
+      provider.credential === undefined ? [] : [[provider.env[0]!, provider.credential]]
+    ))
+    if (Object.keys(credentials).length > 0) {
       const secretsRaw = yield* readOrEmpty(fs, secretsPath)
-      const credentials = Object.fromEntries(providers.map((provider) => [provider.env[0]!, provider.credential]))
       yield* fs.writeFileString(
         secretsPath,
         withAssignments(secretsRaw, credentials),
@@ -738,17 +799,21 @@ export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =
     `at    ${answers.baseUrl}`,
     `wire  ${answers.driver}`,
     `secret ${answers.env[0]}`,
+    ...(answers.region === undefined ? [] : [`region ${answers.region}`]),
     `default ${answers.model_id}`
   ].join("\n")
 
 export const providerSetupSummary = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>): string => [
   `wrote ${files.configPath}`,
-  `stored credentials in ${files.secretsPath}`,
+  ...(providers.some((provider) => provider.credential !== undefined)
+    ? [`stored credentials in ${files.secretsPath}`]
+    : []),
   ...providers.flatMap((provider) => [
     `provider ${provider.provider}`,
     `at    ${provider.baseUrl}`,
     `wire  ${provider.driver}`,
-    `secret ${provider.env[0]}`
+    `secret ${provider.env.join(" or ")}`,
+    ...(provider.region === undefined ? [] : [`region ${provider.region}`])
   ])
 ].join("\n")
 
@@ -767,6 +832,7 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly driver: ModelDriver
   readonly credential: "stored"
   readonly env: ReadonlyArray<string>
+  readonly region?: string
 } => ({
   ...files,
   provider: answers.provider,
@@ -774,17 +840,20 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   model_id: answers.model_id,
   driver: answers.driver,
   credential: "stored",
-  env: answers.env
+  env: answers.env,
+  ...(answers.region === undefined ? {} : { region: answers.region })
 })
 
 export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>) => ({
-  ...files,
+  configPath: files.configPath,
+  ...(providers.some((provider) => provider.credential !== undefined) ? { secretsPath: files.secretsPath } : {}),
   providers: providers.map((provider) => ({
     provider: provider.provider,
     baseUrl: provider.baseUrl,
     driver: provider.driver,
-    credential: "stored" as const,
-    env: provider.env
+    credential: provider.credential === undefined ? "environment" as const : "stored" as const,
+    env: provider.env,
+    ...(provider.region === undefined ? {} : { region: provider.region })
   }))
 })
 

@@ -169,9 +169,9 @@ describe("parsing", () => {
     expect(help).toContain("provider")
     expect(help).toContain("default")
     const providerHelp = (await drive(["setup", "provider", "--help"])).lines.join("\n")
-    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env"]) {
-      expect(providerHelp).toContain(flag)
-    }
+    expect(providerHelp).toContain("<provider>")
+    expect(providerHelp).toContain("<config>")
+    expect(providerHelp).not.toContain("--base-url")
     const defaultHelp = (await drive(["setup", "default", "--help"])).lines.join("\n")
     expect(defaultHelp).toContain("--provider")
     expect(defaultHelp).toContain("--model")
@@ -190,17 +190,12 @@ describe("parsing", () => {
       const provider = await drive([
         "setup",
         "provider",
-        "--provider",
         "openrouter",
-        "--base-url",
-        "https://openrouter.ai/api/v1",
-        "--driver",
-        "openai-chat-completions",
-        "--credential-env",
-        "OPENROUTER_API_KEY"
-      ], { cwd, env: { OPENROUTER_API_KEY: "private-key" } })
+        '{"env":["OPENROUTER_API_KEY"]}'
+      ], { cwd })
       expect(provider.failed).toBe(false)
       expect(await readFile(join(cwd, "tardigrade.jsonc"), "utf8")).not.toContain('"default"')
+      await expect(readFile(join(cwd, ".env"), "utf8")).rejects.toThrow()
 
       const selected = await drive([
         "setup",
