@@ -9,7 +9,7 @@ import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from 
 import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
-import { readSetupEnv, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
+import { readSetupEnv, setupAnswersFrom, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
 import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
@@ -64,6 +64,31 @@ const token = Flag.string("token").pipe(
 const json = Flag.boolean("json").pipe(
   Flag.withDescription("Print the client's value verbatim as JSON instead of a table."),
   Flag.withDefault(false)
+)
+
+const setupProvider = Flag.string("provider").pipe(
+  Flag.withDescription("The provider name used by actor model coordinates."),
+  Flag.optional
+)
+
+const setupBaseUrl = Flag.string("base-url").pipe(
+  Flag.withDescription("The provider API base URL."),
+  Flag.optional
+)
+
+const setupDriver = Flag.string("driver").pipe(
+  Flag.withDescription("The provider protocol driver."),
+  Flag.optional
+)
+
+const setupCredentialEnv = Flag.string("credential-env").pipe(
+  Flag.withDescription("The environment variable holding the provider credential."),
+  Flag.optional
+)
+
+const setupDefaultModel = Flag.string("default-model").pipe(
+  Flag.withDescription("The provider model ID used as the host default."),
+  Flag.optional
 )
 
 const actor = Flag.string("actor").pipe(
@@ -135,10 +160,32 @@ export const NO_MODEL_NOTICE =
 // notice instead (commands.test.ts, "dev asks only where someone can answer").
 const canAsk = (): boolean => process.stdin.isTTY === true
 
-export const setupCommand = Command.make("setup", { json }, (flags) =>
+export const NON_INTERACTIVE_SETUP =
+  "tdg setup needs all declarative flags when stdin is not interactive; see `tdg setup --help`"
+
+export const setupCommand = Command.make("setup", {
+  provider: setupProvider,
+  baseUrl: setupBaseUrl,
+  driver: setupDriver,
+  credentialEnv: setupCredentialEnv,
+  defaultModel: setupDefaultModel,
+  json
+}, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
+    const declared = yield* Effect.try({
+      try: () => setupAnswersFrom({
+        provider: stated(flags.provider),
+        baseUrl: stated(flags.baseUrl),
+        driver: stated(flags.driver),
+        credentialEnv: stated(flags.credentialEnv),
+        defaultModel: stated(flags.defaultModel)
+      }, cli.env),
+      catch: userErrorOf
+    })
+    const answers = declared ?? (canAsk()
+      ? yield* Effect.mapError(setupPrompt(), userErrorOf)
+      : yield* userErrorOf(NON_INTERACTIVE_SETUP))
     const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(files, answers)) : setupSummary(files, answers))
   })).pipe(
@@ -146,7 +193,11 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
       "Ask for a provider connection and default model, then update tardigrade.jsonc and store the credential in .env at 0600."
     ),
     Command.withExamples([
-      { command: "tdg setup", description: "Write project config and its credential" }
+      { command: "tdg setup", description: "Prompt for a provider and credential" },
+      {
+        command: "tdg setup --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY --default-model anthropic/claude-sonnet-4-6",
+        description: "Configure a provider from explicit values"
+      }
     ])
   )
 

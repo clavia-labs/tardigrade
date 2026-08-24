@@ -161,6 +161,15 @@ describe("parsing", () => {
     expect(help).toContain("tardigrade.jsonc")
     expect(help).toContain(".env")
     expect(help).toContain("0600")
+    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env", "--default-model"]) {
+      expect(help).toContain(flag)
+    }
+  })
+
+  test("setup gives agents a declarative path instead of prompting", async () => {
+    const ran = await drive(["setup"])
+    expect(ran.failed).toBe(true)
+    expect(failureText(ran)).toContain("all declarative flags")
   })
 
   test("a command's help names its flags", async () => {

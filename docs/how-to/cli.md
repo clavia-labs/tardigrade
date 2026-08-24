@@ -51,6 +51,19 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 
 `tdg setup` updates `tardigrade.jsonc` and stores the credential in the project `.env` at mode 0600. It never prints the credential back. Run setup again to add another provider connection or change the default model. Each run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
+An agent or CI job can avoid prompts by stating every setup value. The credential value comes from the environment variable named by `--credential-env` and never appears in the command arguments:
+
+```bash
+tdg setup \
+  --provider openrouter \
+  --base-url https://openrouter.ai/api/v1 \
+  --driver openai-chat-completions \
+  --credential-env OPENROUTER_API_KEY \
+  --default-model anthropic/claude-sonnet-4-6
+```
+
+Partial declarative setup fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before either file changes.
+
 ```jsonc
 {
   "models": {

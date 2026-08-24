@@ -45,8 +45,20 @@ cd researcher
 The `init` command creates `researcher/actor.ts` from the bundled template. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
 
 ```bash
+tdg setup
 tdg push actor.ts --target local
 tdg dev
+```
+
+In a non-interactive terminal, state every setup value and inject the credential through the environment variable named by `--credential-env`:
+
+```bash
+tdg setup \
+  --provider openai \
+  --base-url https://api.openai.com/v1 \
+  --driver openai-responses \
+  --credential-env OPENAI_API_KEY \
+  --default-model gpt-5.2
 ```
 
 Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:

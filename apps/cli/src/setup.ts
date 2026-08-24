@@ -289,6 +289,48 @@ class SetupConfigError extends Data.TaggedError("SetupConfigError")<{
   readonly cause?: unknown
 }> {}
 
+export interface SetupFlags {
+  readonly provider?: string | undefined
+  readonly baseUrl?: string | undefined
+  readonly driver?: string | undefined
+  readonly credentialEnv?: string | undefined
+  readonly defaultModel?: string | undefined
+}
+
+// setupAnswersFrom resolves a complete declarative setup and reads its credential by name.
+export const setupAnswersFrom = (flags: SetupFlags, env: Env): SetupAnswers | undefined => {
+  const fields = {
+    provider: flags.provider?.trim(),
+    "base-url": flags.baseUrl?.trim(),
+    driver: flags.driver?.trim(),
+    "credential-env": flags.credentialEnv?.trim(),
+    "default-model": flags.defaultModel?.trim()
+  }
+  if (Object.values(fields).every((value) => value === undefined)) return undefined
+  const missing = Object.entries(fields).flatMap(([name, value]) => value === undefined || value.length === 0 ? [`--${name}`] : [])
+  if (missing.length > 0) throw new Error(`declarative setup requires ${missing.join(", ")}`)
+  const driver = fields.driver!
+  if (!MODEL_DRIVERS.some((candidate) => candidate === driver)) {
+    throw new Error(`--driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(driver)}`)
+  }
+  const credentialEnv = fields["credential-env"]!
+  if (!ENV_NAME.test(credentialEnv)) {
+    throw new Error(`--credential-env must match ${ENV_NAME}, got ${JSON.stringify(credentialEnv)}`)
+  }
+  const credential = env[credentialEnv]?.trim()
+  if (credential === undefined || credential.length === 0) {
+    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun tdg setup`)
+  }
+  return {
+    provider: fields.provider!,
+    baseUrl: fields["base-url"]!,
+    driver: driver as ModelDriver,
+    env: [credentialEnv],
+    model_id: fields["default-model"]!,
+    credential
+  }
+}
+
 const valueOf = (source: string): string => {
   const value = source.trim()
   if (value.startsWith('"')) {

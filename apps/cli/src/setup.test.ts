@@ -12,6 +12,7 @@ import {
   PRESETS,
   readSetupEnv,
   SECRETS_MODE,
+  setupAnswersFrom,
   setupJson,
   setupSummary,
   writeSetup,
@@ -82,6 +83,40 @@ describe("model discovery", () => {
       env: ["OPENROUTER_API_KEY"],
       models: [{ id: "anthropic/claude" }]
     })
+  })
+})
+
+describe("declarative setup", () => {
+  const flags = {
+    provider: "openrouter",
+    baseUrl: "https://openrouter.ai/api/v1",
+    driver: "openai-chat-completions",
+    credentialEnv: "OPENROUTER_API_KEY",
+    defaultModel: "anthropic/claude-sonnet-4-6"
+  }
+
+  test("all flags resolve the credential by environment name", () => {
+    expect(setupAnswersFrom(flags, { OPENROUTER_API_KEY: KEY })).toEqual({
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      driver: "openai-chat-completions",
+      env: ["OPENROUTER_API_KEY"],
+      model_id: "anthropic/claude-sonnet-4-6",
+      credential: KEY
+    })
+  })
+
+  test("no flags leaves setup interactive", () => {
+    expect(setupAnswersFrom({}, {})).toBeUndefined()
+  })
+
+  test("partial flags name every missing value", () => {
+    expect(() => setupAnswersFrom({ provider: "openrouter" }, {}))
+      .toThrow("--base-url, --driver, --credential-env, --default-model")
+  })
+
+  test("the named credential must already be injected", () => {
+    expect(() => setupAnswersFrom(flags, {})).toThrow("OPENROUTER_API_KEY is not set")
   })
 })
 
