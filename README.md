@@ -49,19 +49,28 @@ tdg push actor.ts --target local
 tdg dev
 ```
 
-In a non-interactive terminal, state every provider value during initialization and inject the credential through the environment variable named by `--credential-env`:
+In a non-interactive terminal, an agent can initialize the same project with provider JSON. The JSON names the credential environment variable and does not contain its value:
 
 ```bash
 tdg init researcher \
   --provider openai \
-  --base-url https://api.openai.com/v1 \
-  --driver openai-responses \
-  --credential-env OPENAI_API_KEY \
+  --provider-config '{"env":["OPENAI_API_KEY"]}' \
   --default-model gpt-5.2
 cd researcher
 ```
 
-Run `tdg setup` inside the actor directory later to add provider connections and choose the project default. Use `tdg setup provider` or `tdg setup default` for one focused change.
+Declarative initialization writes `actor.ts` and `tardigrade.jsonc` without reading or writing the secret. Set `OPENAI_API_KEY` in the environment that runs the server. Run `tdg setup` inside the actor directory later to add provider connections and choose the project default. Use the focused commands when only one concern changes:
+
+```bash
+tdg setup provider openrouter '{"env":["OPENROUTER_API_KEY"]}'
+tdg setup default --provider openrouter --model anthropic/claude-sonnet-4-6
+```
+
+Known providers supply their standard driver and endpoint. Provider-specific fields stay in the JSON object. For example, Amazon Bedrock states its gateway endpoint and AWS region:
+
+```bash
+tdg setup provider amazon-bedrock '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
+```
 
 Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:
 

@@ -57,18 +57,16 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 
 `tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated JSONC settings, comments, environment entries, and provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
-An agent or CI job can avoid prompts by stating every provider value during initialization. The credential value comes from the environment variable named by `--credential-env` and never appears in the command arguments:
+An agent or CI job can avoid prompts by supplying the provider connection as JSON during initialization. The JSON names the credential environment variable and never contains its value:
 
 ```bash
 tdg init researcher \
   --provider openrouter \
-  --base-url https://openrouter.ai/api/v1 \
-  --driver openai-chat-completions \
-  --credential-env OPENROUTER_API_KEY \
+  --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
   --default-model anthropic/claude-sonnet-4-6
 ```
 
-Partial declarative initialization fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before any project file changes. Agents and CI can add a connection and select it as the default in two focused commands:
+Partial declarative initialization fails and lists the missing options. Declarative initialization does not read or write `OPENROUTER_API_KEY`; set it in the environment that runs the server. Agents and CI can add a connection and select it as the default in two focused commands:
 
 ```bash
 tdg setup provider openrouter '{"env":["OPENROUTER_API_KEY"]}'

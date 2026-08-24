@@ -492,9 +492,7 @@ class SetupConfigError extends Data.TaggedError("SetupConfigError")<{
 
 export interface SetupFlags {
   readonly provider?: string | undefined
-  readonly baseUrl?: string | undefined
-  readonly driver?: string | undefined
-  readonly credentialEnv?: string | undefined
+  readonly providerConfig?: string | undefined
   readonly defaultModel?: string | undefined
 }
 
@@ -598,41 +596,26 @@ export const defaultModelFrom = (flags: DefaultSetupFlags): NonNullable<ModelCon
   return { provider: provider!, model_id: model_id! }
 }
 
-// setupAnswersFrom resolves a complete declarative provider selection and reads its credential by name.
+// setupAnswersFrom resolves a declarative provider connection and its initial default model.
 export const setupAnswersFrom = (
   flags: SetupFlags,
-  env: Env,
   command: "tdg init" | "tdg setup" = "tdg setup"
 ): SetupAnswers | undefined => {
   const fields = {
     provider: flags.provider?.trim(),
-    "base-url": flags.baseUrl?.trim(),
-    driver: flags.driver?.trim(),
-    "credential-env": flags.credentialEnv?.trim(),
+    "provider-config": flags.providerConfig?.trim(),
     "default-model": flags.defaultModel?.trim()
   }
   if (Object.values(fields).every((value) => value === undefined)) return undefined
   const missing = Object.entries(fields).flatMap(([name, value]) => value === undefined || value.length === 0 ? [`--${name}`] : [])
-  if (missing.length > 0) throw new Error(`${command} requires ${missing.join(", ")} when provider flags are used`)
-  const driver = fields.driver!
-  if (!MODEL_DRIVERS.some((candidate) => candidate === driver)) {
-    throw new Error(`--driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(driver)}`)
-  }
-  const credentialEnv = fields["credential-env"]!
-  if (!ENV_NAME.test(credentialEnv)) {
-    throw new Error(`--credential-env must match ${ENV_NAME}, got ${JSON.stringify(credentialEnv)}`)
-  }
-  const credential = env[credentialEnv]?.trim()
-  if (credential === undefined || credential.length === 0) {
-    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun ${command}`)
-  }
+  if (missing.length > 0) throw new Error(`${command} requires ${missing.join(", ")} when declarative provider options are used`)
+  const provider = providerAnswersFrom({
+    provider: fields.provider,
+    config: fields["provider-config"]
+  })!
   return {
-    provider: fields.provider!,
-    baseUrl: fields["base-url"]!,
-    driver: driver as ModelDriver,
-    env: [credentialEnv],
-    model_id: fields["default-model"]!,
-    credential
+    ...provider,
+    model_id: fields["default-model"]!
   }
 }
 
@@ -790,11 +773,11 @@ export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem
     return setupEnvironmentOf(raw)
   })
 
-// setupSummary prints where the credential was stored without showing its value.
+// setupSummary prints where an entered credential was stored without showing its value.
 export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =>
   [
     `wrote ${files.configPath}`,
-    `stored credential in ${files.secretsPath}`,
+    ...(answers.credential === undefined ? [] : [`stored credential in ${files.secretsPath}`]),
     `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
     `wire  ${answers.driver}`,
@@ -825,21 +808,22 @@ export const setupPlanSummary = (files: SetupFiles, plan: SetupPlan): string =>
 
 export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly configPath: string
-  readonly secretsPath: string
+  readonly secretsPath?: string
   readonly baseUrl: string
   readonly provider: string
   readonly model_id: string
   readonly driver: ModelDriver
-  readonly credential: "stored"
+  readonly credential: "environment" | "stored"
   readonly env: ReadonlyArray<string>
   readonly region?: string
 } => ({
-  ...files,
+  configPath: files.configPath,
+  ...(answers.credential === undefined ? {} : { secretsPath: files.secretsPath }),
   provider: answers.provider,
   baseUrl: answers.baseUrl,
   model_id: answers.model_id,
   driver: answers.driver,
-  credential: "stored",
+  credential: answers.credential === undefined ? "environment" : "stored",
   env: answers.env,
   ...(answers.region === undefined ? {} : { region: answers.region })
 })

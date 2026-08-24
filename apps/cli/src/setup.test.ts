@@ -119,34 +119,31 @@ describe("model discovery", () => {
 describe("declarative setup", () => {
   const flags = {
     provider: "openrouter",
-    baseUrl: "https://openrouter.ai/api/v1",
-    driver: "openai-chat-completions",
-    credentialEnv: "OPENROUTER_API_KEY",
+    providerConfig: '{"env":["OPENROUTER_API_KEY"]}',
     defaultModel: "anthropic/claude-sonnet-4-6"
   }
 
-  test("all flags resolve the credential by environment name", () => {
-    expect(setupAnswersFrom(flags, { OPENROUTER_API_KEY: KEY })).toEqual({
+  test("provider JSON and a default model resolve initialization", () => {
+    expect(setupAnswersFrom(flags)).toEqual({
       provider: "openrouter",
       baseUrl: "https://openrouter.ai/api/v1",
       driver: "openai-chat-completions",
       env: ["OPENROUTER_API_KEY"],
-      model_id: "anthropic/claude-sonnet-4-6",
-      credential: KEY
+      model_id: "anthropic/claude-sonnet-4-6"
     })
   })
 
-  test("no flags leaves setup interactive", () => {
-    expect(setupAnswersFrom({}, {})).toBeUndefined()
+  test("no options leave setup interactive", () => {
+    expect(setupAnswersFrom({})).toBeUndefined()
   })
 
-  test("partial flags name every missing value", () => {
-    expect(() => setupAnswersFrom({ provider: "openrouter" }, {}))
-      .toThrow("--base-url, --driver, --credential-env, --default-model")
+  test("partial options name every missing value", () => {
+    expect(() => setupAnswersFrom({ provider: "openrouter" }))
+      .toThrow("--provider-config, --default-model")
   })
 
-  test("the named credential must already be injected", () => {
-    expect(() => setupAnswersFrom(flags, {})).toThrow("OPENROUTER_API_KEY is not set")
+  test("declarative initialization does not read the secret", () => {
+    expect(JSON.stringify(setupAnswersFrom(flags))).not.toContain(KEY)
   })
 
   test("provider and default flags resolve independently", () => {

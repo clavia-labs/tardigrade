@@ -217,10 +217,10 @@ describe("parsing", () => {
   test("init gives agents a declarative path instead of prompting", async () => {
     const ran = await drive(["init", "researcher"])
     expect(ran.failed).toBe(true)
-    expect(failureText(ran)).toContain("all provider flags")
+    expect(failureText(ran)).toContain("--provider-config")
   })
 
-  test("init writes one matching actor, connection, and credential", async () => {
+  test("agent init writes one matching actor and connection", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tdg-init-command-"))
     try {
       const ran = await drive([
@@ -228,27 +228,22 @@ describe("parsing", () => {
         "researcher",
         "--provider",
         "openrouter",
-        "--base-url",
-        "https://openrouter.ai/api/v1",
-        "--driver",
-        "openai-chat-completions",
-        "--credential-env",
-        "OPENROUTER_API_KEY",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
         "--default-model",
         "anthropic/claude-sonnet-4-6",
         "--json"
-      ], { cwd, env: { OPENROUTER_API_KEY: "private-key" } })
+      ], { cwd })
       const directory = join(cwd, "researcher")
       const actor = await readFile(join(directory, "actor.ts"), "utf8")
       const config = await readFile(join(directory, "tardigrade.jsonc"), "utf8")
-      const secrets = await readFile(join(directory, ".env"), "utf8")
 
       expect(ran.failed).toBe(false)
       expect(actor).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
-      expect(secrets).toContain('OPENROUTER_API_KEY="private-key"')
-      expect(ran.lines.join("\n")).not.toContain("private-key")
+      await expect(readFile(join(directory, ".env"), "utf8")).rejects.toThrow()
+      expect(ran.lines.join("\n")).toContain('"credential": "environment"')
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }
@@ -274,9 +269,10 @@ describe("parsing", () => {
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
     expect(initHelp).toContain("--force")
-    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env", "--default-model"]) {
+    for (const flag of ["--provider", "--provider-config", "--default-model"]) {
       expect(initHelp).toContain(flag)
     }
+    expect(initHelp).not.toContain("--base-url")
   })
 
   test("push requires an explicit target", async () => {

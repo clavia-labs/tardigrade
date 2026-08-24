@@ -93,18 +93,8 @@ const setupProvider = Flag.string("provider").pipe(
   Flag.optional
 )
 
-const setupBaseUrl = Flag.string("base-url").pipe(
-  Flag.withDescription("The provider API base URL."),
-  Flag.optional
-)
-
-const setupDriver = Flag.string("driver").pipe(
-  Flag.withDescription("The provider protocol driver."),
-  Flag.optional
-)
-
-const setupCredentialEnv = Flag.string("credential-env").pipe(
-  Flag.withDescription("The environment variable holding the provider credential."),
+const setupProviderConfig = Flag.string("provider-config").pipe(
+  Flag.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
   Flag.optional
 )
 
@@ -208,7 +198,7 @@ export const NON_INTERACTIVE_PROVIDER_SETUP =
 export const NON_INTERACTIVE_DEFAULT_SETUP =
   "tdg setup default needs --provider and --model when stdin is not interactive; see `tdg setup default --help`"
 export const NON_INTERACTIVE_INIT =
-  "tdg init needs all provider flags when stdin is not interactive; see `tdg init --help`"
+  "tdg init needs --provider, --provider-config, and --default-model when stdin is not interactive; see `tdg init --help`"
 
 export const setupProviderCommand = Command.make("provider", {
   provider: Argument.string("provider").pipe(
@@ -310,9 +300,7 @@ export const initCommand = Command.make("init", {
     Flag.withDefault(false)
   ),
   provider: setupProvider,
-  baseUrl: setupBaseUrl,
-  driver: setupDriver,
-  credentialEnv: setupCredentialEnv,
+  providerConfig: setupProviderConfig,
   defaultModel: setupDefaultModel,
   json
 }, (flags) =>
@@ -323,11 +311,9 @@ export const initCommand = Command.make("init", {
     const declared = yield* Effect.try({
       try: () => setupAnswersFrom({
         provider: stated(flags.provider),
-        baseUrl: stated(flags.baseUrl),
-        driver: stated(flags.driver),
-        credentialEnv: stated(flags.credentialEnv),
+        providerConfig: stated(flags.providerConfig),
         defaultModel: stated(flags.defaultModel)
-      }, cli.env, "tdg init"),
+      }, "tdg init"),
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
@@ -351,8 +337,8 @@ export const initCommand = Command.make("init", {
     Command.withExamples([
       { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
       {
-        command: "tdg init researcher --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY --default-model anthropic/claude-sonnet-4-6",
-        description: "Create a ready actor from explicit values"
+        command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4-6",
+        description: "Create a ready actor from provider JSON"
       }
     ])
   )
