@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.7.0](https://github.com/clavia-labs/tardigrade/compare/v0.6.0...v0.7.0) (2026-08-24)
+
+
+### Features
+
+* **agent:** select model references ([#236](https://github.com/clavia-labs/tardigrade/issues/236)) ([d3baba5](https://github.com/clavia-labs/tardigrade/commit/d3baba557a953717e50c4856e09499bd70c2be5d))
+* **celld:** replay package calls ([#243](https://github.com/clavia-labs/tardigrade/issues/243)) ([7563067](https://github.com/clavia-labs/tardigrade/commit/7563067ce908c223f825e265c33c837226fb64b7))
+* **cli:** configure model providers ([#238](https://github.com/clavia-labs/tardigrade/issues/238)) ([2b0de55](https://github.com/clavia-labs/tardigrade/commit/2b0de557d6dc973ba31835fa25ac7b318980f79d))
+* **cli:** scaffold actor project ([#241](https://github.com/clavia-labs/tardigrade/issues/241)) ([e410551](https://github.com/clavia-labs/tardigrade/commit/e41055131eeb0312e9c26da2b45c5a1c7b11ec58))
+* **cli:** scaffold Celld deployment ([#242](https://github.com/clavia-labs/tardigrade/issues/242)) ([8085de7](https://github.com/clavia-labs/tardigrade/commit/8085de74b68aaaf3df31fa45c5833a6356f6747d))
+* **cloudflare:** mount actor methods ([#239](https://github.com/clavia-labs/tardigrade/issues/239)) ([527e8e6](https://github.com/clavia-labs/tardigrade/commit/527e8e602e15dfa3fd0b1a1d852a6f0682cd73ef))
+* **models:** serve provider directory ([#237](https://github.com/clavia-labs/tardigrade/issues/237)) ([b318beb](https://github.com/clavia-labs/tardigrade/commit/b318beb3ee1bf367c7ef522ca8dcfeb1f8695691))
+
+
+### Bug Fixes
+
+* **ci:** find stable baseline ([#232](https://github.com/clavia-labs/tardigrade/issues/232)) ([0bbc6e9](https://github.com/clavia-labs/tardigrade/commit/0bbc6e9bd4c8ad97e36abe71646115604de1db91))
+
 ## [0.6.0](https://github.com/clavia-labs/tardigrade/compare/v0.5.0...v0.6.0) (2026-08-24)
 
 
