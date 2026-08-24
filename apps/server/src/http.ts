@@ -171,9 +171,7 @@ export const layerApp = (options: ApiOptions = {}) =>
     ),
     HttpApiScalar.layer(ServerApi, { path: DOCS_PATH }),
     layerStream(options),
-    // After the declared routes and before the catch-all: a literal segment beats a parameter in
-    // this router, so a projection the actor declared is served and every other name under a thread
-    // is told what does exist (api.ts, layerUnknownProjection).
+    // layerUnknownProjection names the declared projections when a lookup misses.
     layerUnknownProjection,
     layerNotFound,
     layerCors,

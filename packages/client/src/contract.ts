@@ -197,14 +197,6 @@ export const Accepted = Schema.Struct({
 
 export type Accepted = typeof Accepted.Type
 
-// MethodInvocation carries the caller-minted durable id and the selected method's encoded input.
-export const MethodInvocation = Schema.Struct({
-  id: Schema.NonEmptyString,
-  input: Schema.Unknown
-}).annotate({ identifier: "MethodInvocation" })
-
-export type MethodInvocation = typeof MethodInvocation.Type
-
 // MethodAccepted identifies the method call committed for asynchronous reconciliation.
 export const MethodAccepted = Schema.Struct({
   actor: Schema.String,
@@ -225,11 +217,11 @@ export const MethodState = Schema.Union([
 
 export type MethodState = typeof MethodState.Type
 
-// MethodSummary exposes one declared method and the JSON Schema documents for its input and output.
+// MethodSummary exposes one declared method and standalone JSON Schemas for its input and output.
 export const MethodSummary = Schema.Struct({
   name: Schema.String,
-  input: Schema.Unknown,
-  output: Schema.Unknown
+  inputSchema: Schema.Unknown,
+  outputSchema: Schema.Unknown
 }).annotate({ identifier: "MethodSummary" })
 
 export type MethodSummary = typeof MethodSummary.Type
@@ -333,13 +325,13 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
     success: Schema.Array(MethodSummary),
     error: [UnknownActor.schema]
   }),
-  HttpApiEndpoint.post("invoke", "/v1/actors/:actor/threads/:id/methods/:method", {
-    params: MethodParams,
-    payload: MethodInvocation,
+  HttpApiEndpoint.put("invoke", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
+    params: MethodCallParams,
+    payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownActor.schema, UnknownMethod.schema]
   }),
-  HttpApiEndpoint.get("methodState", "/v1/actors/:actor/threads/:id/methods/:method/:call", {
+  HttpApiEndpoint.get("methodState", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
     params: MethodCallParams,
     success: MethodState,
     error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
@@ -385,27 +377,8 @@ export const projection = <Params extends Schema.Struct.Fields, Result extends S
   }
 ): typeof declaration => declaration
 
-// The two names a projection may not claim. The log is not a projection of itself: `events` is the
-// log read back and `stream` is the same log followed, and both are the platform's own guarantee
-// rather than anything an actor derives (projectionsOf refuses either, the way infer refuses a
-// duplicate tool).
-export const RESERVED_PROJECTIONS: ReadonlyArray<string> = ["events", "stream"]
-
-// projectionsOf is the constructor an actor declares through. It refuses a reserved name where the
-// declaration is written rather than where a request arrives, so a build that would shadow the log
-// never starts (apps/server/src/actor.test.ts, "a projection may not claim a reserved name").
-export const projectionsOf = <const P extends Projections>(projections: P): P => {
-  for (const name of Object.keys(projections)) {
-    if (RESERVED_PROJECTIONS.includes(name)) {
-      throw new Error(
-        `a projection may not be named ${JSON.stringify(name)}: ${
-          RESERVED_PROJECTIONS.map((reserved) => JSON.stringify(reserved)).join(" and ")
-        } are the log itself`
-      )
-    }
-  }
-  return projections
-}
+// projectionsOf preserves the names and schemas used to build the projection routes.
+export const projectionsOf = <const P extends Projections>(projections: P): P => projections
 
 // One endpoint from one declaration. The schemas are type parameters of this function rather than
 // fields reached through one declaration parameter, because inference through an indexed access
@@ -415,7 +388,7 @@ const projectionEndpoint = <
   Params extends Schema.Struct.Fields,
   Result extends Schema.Top
 >(name: Name, params: Params, result: Result) =>
-  HttpApiEndpoint.get(name, `/v1/actors/:actor/threads/:id/${name}` as const, {
+  HttpApiEndpoint.get(name, `/v1/actors/:actor/threads/:id/projections/${name}` as const, {
     params: ThreadParams,
     query: params,
     success: result,

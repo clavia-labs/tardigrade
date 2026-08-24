@@ -16,24 +16,32 @@ Base path `/v1`. The built-in actor is named `default`.
 
 | | |
 | --- | --- |
+| `GET /v1/actors` | List actors |
+| `PUT /v1/actors` | Push an actor artifact |
+| `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
 | `GET /v1/actors/{actor}/threads` | List threads |
+| `PUT /v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
+| `GET /v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
 | `POST /v1/actors/{actor}/threads/{id}/events` | Append an event, creating the thread if new |
 | `GET /v1/actors/{actor}/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
 | `GET /v1/actors/{actor}/threads/{id}/events/stream` | Follow the log. Server-sent events, resumes from `Last-Event-ID` |
-| `GET /v1/actors/{actor}/threads/{id}/{projection}` | A projection the actor declares. `agent` declares `turns` |
+| `GET /v1/actors/{actor}/threads/{id}/projections/{projection}` | Read a projection the actor declares. `default` declares `turns` |
 | `GET /v1/actors/{actor}/threads/{id}/tree` | The spawn family |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
 ```bash
-curl -X POST localhost:4242/v1/actors/default/threads/inv-81/events \
-  -d '{"id":"m1","type":"MessageReceived","text":"audit the deploy"}'
-# {"actor":"agent","thread":"inv-81"}
+curl -X PUT localhost:4242/v1/actors/default/threads/inv-81/methods/message/calls/m1 \
+  -H 'content-type: application/json' \
+  -d '{"text":"audit the deploy"}'
+# {"actor":"default","thread":"inv-81","method":"message","call":"m1"}
 
-curl localhost:4242/v1/actors/default/threads/inv-81/turns
-# [{"turn":"m1","status":"completed","output":"…","epoch":0}]
+curl localhost:4242/v1/actors/default/threads/inv-81/methods/message/calls/m1
+# {"status":"completed","output":"…"}
 ```
 
-Appending is how a root thread is created, messaged, and intervened in. The host atomically records `ThreadCreated` before the first delivered event. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming. The message id is the dedup key, so sending the same message twice changes nothing.
+Calling a method is the application ingress. The caller chooses the thread and call ids, and the method schema validates the body. Repeating the same call URL is absorbed by the log.
+
+Appending is the lower-level ingress for channels and interventions. The host atomically records `ThreadCreated` before the first delivered event. A spawned child records its parent address and depth in that creation event, so the tree survives changes to thread naming.
 
 Reads are projections of the log, so `?at=<seq>` answers as of that point in history.
 
@@ -67,8 +75,9 @@ The server boots without a model and serves every read; turns fail naming what i
 `tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
 
 ```ts
+import { agentMethods } from "tardie"
 import { makeClient } from "tardie/client"
 
-const client = makeClient({ baseUrl: "http://localhost:4242" })
-await client.append("inv-81", { id: "m1", type: "MessageReceived", text: "audit the deploy" })
+const client = makeClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
+await client.invoke("inv-81", "message", { id: "m1", input: { text: "audit the deploy" } })
 ```

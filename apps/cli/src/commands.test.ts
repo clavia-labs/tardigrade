@@ -278,8 +278,8 @@ describe("events", () => {
 describe("methods", () => {
   const methods: ReadonlyArray<MethodSummary> = [{
     name: "message",
-    input: { schema: { type: "object", required: ["text"], properties: { text: { type: "string" } } } },
-    output: { schema: { type: "string" } }
+    inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" } } },
+    outputSchema: { type: "string" }
   }]
 
   test("the human rendering shows each method and schema", async () => {

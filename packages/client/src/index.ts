@@ -29,7 +29,6 @@ export type {
   EventRow,
   Health,
   MethodAccepted,
-  MethodInvocation,
   MethodSummary,
   MethodState,
   Problem,

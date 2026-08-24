@@ -98,26 +98,12 @@ export const methodLines = (thread: string, call: string, state: MethodState): s
   return head
 }
 
-const documentSchema = (document: unknown): unknown => {
-  if (typeof document !== "object" || document === null || !("schema" in document)) return document
-  const value = document as { readonly schema: unknown; readonly definitions?: unknown }
-  if (
-    typeof value.schema === "object" && value.schema !== null && "$ref" in value.schema &&
-    typeof value.schema.$ref === "string" && value.schema.$ref.startsWith("#/$defs/") &&
-    typeof value.definitions === "object" && value.definitions !== null
-  ) {
-    const name = value.schema.$ref.slice("#/$defs/".length)
-    return (value.definitions as Record<string, unknown>)[name] ?? value.schema
-  }
-  return value.schema
-}
-
 // methodsLines renders each method with the input and output schemas an author calls against.
 export const methodsLines = (methods: ReadonlyArray<MethodSummary>): string =>
   methods.length === 0
     ? "no methods"
     : methods.map((method) => [
       method.name,
-      `  input  ${JSON.stringify(documentSchema(method.input))}`,
-      `  output ${JSON.stringify(documentSchema(method.output))}`
+      `  input  ${JSON.stringify(method.inputSchema)}`,
+      `  output ${JSON.stringify(method.outputSchema)}`
     ].join("\n")).join("\n\n")

@@ -12,6 +12,7 @@ import { ProblemError } from "./problem"
 
 interface Call {
   readonly url: string
+  readonly method: string
   readonly headers: Record<string, string>
   readonly body: string | undefined
 }
@@ -38,6 +39,7 @@ const stub = ((input: string | URL | Request, init?: RequestInit) => {
   const headers = new Headers(init?.headers ?? {})
   calls.push({
     url: String(input),
+    method: init?.method ?? "GET",
     headers: Object.fromEntries(headers.entries()),
     body: bodyOf(init?.body)
   })
@@ -106,8 +108,8 @@ describe("a declared actor method", () => {
   test("discovers method schemas at the actor", async () => {
     answer = () => new Response(JSON.stringify([{
       name: "message",
-      input: { dialect: "draft-2020-12", schema: { type: "object" }, definitions: {} },
-      output: { dialect: "draft-2020-12", schema: { type: "string" }, definitions: {} }
+      inputSchema: { type: "object" },
+      outputSchema: { type: "string" }
     }]), { status: 200, headers: { "content-type": "application/json" } })
     const methods = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).methods()
     expect(methods[0]?.name).toBe("message")
@@ -124,8 +126,9 @@ describe("a declared actor method", () => {
     const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
     const accepted = await client.invoke("root", "message", { id: "m1", input: { text: "hello" } })
     expect(accepted.call).toBe("m1")
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message")
-    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ id: "m1", input: { text: "hello" } })
+    expect(calls[0]?.method).toBe("PUT")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
   })
 
   test("reads and types completed output from the declaration", async () => {
@@ -136,7 +139,7 @@ describe("a declared actor method", () => {
     const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
     const state: ActorMethodState<string> = await client.methodState("root", "message", "m1")
     expect(state).toEqual({ status: "completed", output: "done" })
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/m1")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
   })
 })
 
@@ -204,7 +207,7 @@ describe("a declared projection", () => {
   test("serves at the name it was declared under, and carries its own query", async () => {
     const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     await client.projection("root", "turns", { at: 3 })
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/turns")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/projections/turns")
     expect(lastUrl().searchParams.get("at")).toBe("3")
   })
 
@@ -279,7 +282,7 @@ describe("resuming a turn", () => {
     // Two calls: the projection it read, then the append it made.
     expect(calls).toHaveLength(2)
     const read = new URL(calls[0]!.url)
-    expect(read.pathname).toBe("/v1/actors/default/threads/root/turns")
+    expect(read.pathname).toBe("/v1/actors/default/threads/root/projections/turns")
     expect(read.searchParams.get("turn")).toBe("m1")
     const appended = new URL(calls[1]!.url)
     expect(appended.pathname).toBe("/v1/actors/default/threads/root/events")

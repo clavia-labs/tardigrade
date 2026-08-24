@@ -272,6 +272,14 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
 // ServerApi is the surface this process serves: the platform's log routes, actor methods, and declared projections.
 export const ServerApi = apiOf(agentProjections)
 
+// jsonSchemaOf attaches every generated definition to the root schema that references it.
+const jsonSchemaOf = (schema: Schema.Constraint): unknown => {
+  const document = Schema.toJsonSchemaDocument(schema)
+  return Object.keys(document.definitions).length === 0
+    ? document.schema
+    : { ...document.schema, $defs: document.definitions }
+}
+
 // layerMethodsGroup invokes and reads the method declarations carried by the selected actor runtime.
 export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
   handlers
@@ -279,8 +287,8 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
       Effect.map(actorOf(params.actor), (threads) =>
         Object.entries(threads.methods).map(([name, method]) => ({
           name,
-          input: Schema.toJsonSchemaDocument(method.input),
-          output: Schema.toJsonSchemaDocument(method.output)
+          inputSchema: jsonSchemaOf(method.input),
+          outputSchema: jsonSchemaOf(method.output)
         }))))
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
@@ -291,13 +299,13 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         }
         const at = yield* Clock.currentTimeMillis
         const event = yield* Effect.try({
-          try: () => method.eventOf({ id: payload.id, input: payload.input, at }),
+          try: () => method.eventOf({ id: params.call, input: payload, at }),
           catch: (failure) => InvalidRequest.of(
             `The input for method ${JSON.stringify(params.method)} is invalid. ${failureMessage(failure)}`
           )
         })
         yield* threads.append(params.id, event)
-        return { actor: params.actor, thread: params.id, method: params.method, call: payload.id }
+        return { actor: params.actor, thread: params.id, method: params.method, call: params.call }
       }))
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
@@ -355,10 +363,7 @@ export const layerProjectionsGroup = HttpApiBuilder.group(ServerApi, "projection
   return handlers.handleAll(served)
 })
 
-// The name a request asked for, when the actor never declared it. The declared names are literal
-// paths, and a literal segment beats a parameter in this router, so this route is reached only by a
-// name that matched nothing (api.test.ts, "a name the actor never declared says what does exist").
-// `events` and `stream` never reach here either, for the same reason: they are the log's own routes.
+// The name a request asked for when the actor never declared it.
 const declaredProjections = Object.keys(agentProjections)
 const declaredDetail = declaredProjections.length === 0
   ? "This actor declares no projections."
@@ -366,7 +371,7 @@ const declaredDetail = declaredProjections.length === 0
 
 export const layerUnknownProjection = HttpRouter.add(
   "GET",
-  "/v1/actors/:actor/threads/:id/:name",
+  "/v1/actors/:actor/threads/:id/projections/:name",
   Effect.gen(function*() {
     const params = yield* HttpRouter.params
     const actor = paramOf(params, "actor")

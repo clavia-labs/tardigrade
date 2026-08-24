@@ -269,8 +269,8 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
     methods: () => run(api.methods.methods({ params: { actor } })),
     invoke: (thread, name, call) =>
       run(api.methods.invoke({
-        params: { actor, id: thread, method: name },
-        payload: call
+        params: { actor, id: thread, method: name, call: call.id },
+        payload: call.input
       })),
     methodState: (thread, name, call) =>
       run(api.methods.methodState({

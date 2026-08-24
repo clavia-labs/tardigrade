@@ -107,12 +107,8 @@ describe("methodsLines", () => {
   test("shows the root schemas for a method", () => {
     expect(methodsLines([{
       name: "message",
-      input: {
-        dialect: "draft-2020-12",
-        schema: { $ref: "#/$defs/AgentMessageInput" },
-        definitions: { AgentMessageInput: { type: "object", required: ["text"] } }
-      },
-      output: { dialect: "draft-07", schema: { type: "string" }, definitions: {} }
+      inputSchema: { type: "object", required: ["text"] },
+      outputSchema: { type: "string" }
     }])).toBe(
       "message\n  input  {\"type\":\"object\",\"required\":[\"text\"]}\n  output {\"type\":\"string\"}"
     )
