@@ -166,15 +166,57 @@ describe("parsing", () => {
     expect(help).toContain("tardigrade.jsonc")
     expect(help).toContain(".env")
     expect(help).toContain("0600")
-    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env", "--default-model"]) {
-      expect(help).toContain(flag)
+    expect(help).toContain("provider")
+    expect(help).toContain("default")
+    const providerHelp = (await drive(["setup", "provider", "--help"])).lines.join("\n")
+    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env"]) {
+      expect(providerHelp).toContain(flag)
     }
+    const defaultHelp = (await drive(["setup", "default", "--help"])).lines.join("\n")
+    expect(defaultHelp).toContain("--provider")
+    expect(defaultHelp).toContain("--model")
   })
 
   test("setup gives agents a declarative path instead of prompting", async () => {
     const ran = await drive(["setup"])
     expect(ran.failed).toBe(true)
-    expect(failureText(ran)).toContain("all declarative flags")
+    expect(failureText(ran)).toContain("setup provider")
+    expect(failureText(ran)).toContain("setup default")
+  })
+
+  test("setup provider and default are independent declarative operations", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-setup-command-"))
+    try {
+      const provider = await drive([
+        "setup",
+        "provider",
+        "--provider",
+        "openrouter",
+        "--base-url",
+        "https://openrouter.ai/api/v1",
+        "--driver",
+        "openai-chat-completions",
+        "--credential-env",
+        "OPENROUTER_API_KEY"
+      ], { cwd, env: { OPENROUTER_API_KEY: "private-key" } })
+      expect(provider.failed).toBe(false)
+      expect(await readFile(join(cwd, "tardigrade.jsonc"), "utf8")).not.toContain('"default"')
+
+      const selected = await drive([
+        "setup",
+        "default",
+        "--provider",
+        "openrouter",
+        "--model",
+        "anthropic/claude-sonnet-4-6"
+      ], { cwd })
+      expect(selected.failed).toBe(false)
+      const config = await readFile(join(cwd, "tardigrade.jsonc"), "utf8")
+      expect(config).toContain('"provider": "openrouter"')
+      expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   test("init gives agents a declarative path instead of prompting", async () => {

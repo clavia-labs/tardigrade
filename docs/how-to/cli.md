@@ -26,7 +26,9 @@ tdg call message '{"text":"read this repo and tell me what it does"}' --actor re
 | Command | |
 | --- | --- |
 | `tdg init <name>` | Create an actor and configure its first provider connection |
-| `tdg setup` | Save a provider connection and choose the default model |
+| `tdg setup` | Add provider connections, then choose the default model |
+| `tdg setup provider` | Add or update one provider connection |
+| `tdg setup default` | Choose the default model from configured providers |
 | `tdg build <entry>` | Build and validate an actor artifact |
 | `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
 | `tdg dev` | Serve the API and the UI on one port |
@@ -53,7 +55,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what `tdg init` or `tdg setup` saved in `.env` |
 
-`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory later to add another provider connection or change the project default. Each setup run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated JSONC settings, comments, environment entries, and provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
 An agent or CI job can avoid prompts by stating every provider value during initialization. The credential value comes from the environment variable named by `--credential-env` and never appears in the command arguments:
 
@@ -66,7 +68,19 @@ tdg init researcher \
   --default-model anthropic/claude-sonnet-4-6
 ```
 
-Partial declarative initialization fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before any project file changes. The same provider flags work with `tdg setup` after initialization.
+Partial declarative initialization fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before any project file changes. Agents and CI can add a connection and select it as the default in two focused commands:
+
+```bash
+tdg setup provider \
+  --provider openrouter \
+  --base-url https://openrouter.ai/api/v1 \
+  --driver openai-chat-completions \
+  --credential-env OPENROUTER_API_KEY
+
+tdg setup default \
+  --provider openrouter \
+  --model anthropic/claude-sonnet-4-6
+```
 
 ```jsonc
 {

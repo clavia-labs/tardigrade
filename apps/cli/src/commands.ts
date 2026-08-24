@@ -11,7 +11,27 @@ import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from 
 import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { defaultInitDirectory, initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
-import { readSetupEnv, setupAnswersFrom, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
+import {
+  defaultModelFrom,
+  defaultSetupJson,
+  defaultSetupSummary,
+  providerAnswersFrom,
+  providerSetupJson,
+  providerSetupSummary,
+  readSetupEnv,
+  setupAnswersFrom,
+  setupDefaultPrompt,
+  setupFlowPrompt,
+  setupJson,
+  setupPlanSummary,
+  setupPrompt,
+  setupProviderPrompt,
+  setupSummary,
+  writeDefaultSetup,
+  writeProviderSetup,
+  writeSetup,
+  writeSetupPlan
+} from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
 import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
@@ -93,6 +113,11 @@ const setupDefaultModel = Flag.string("default-model").pipe(
   Flag.optional
 )
 
+const setupModel = Flag.string("model").pipe(
+  Flag.withDescription("The provider model ID used as the host default."),
+  Flag.optional
+)
+
 const actor = Flag.string("actor").pipe(
   Flag.withDescription(`The actor to address. Defaults to ${RESERVED_ACTOR}.`),
   Flag.withDefault(RESERVED_ACTOR)
@@ -162,59 +187,115 @@ export const NO_MODEL_NOTICE =
 // notice instead (commands.test.ts, "dev asks only where someone can answer").
 const canAsk = (): boolean => process.stdin.isTTY === true
 
-const setupPromptIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
+const setupPromptOptionsIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
   const catalog = modelCatalogConfigOf(env)
-  return setupPrompt({
+  return {
     catalog: {
       cachePath: resolve(root, catalog.cachePath),
       timeoutMillis: catalog.timeoutMillis,
       url: catalog.sourceUrl
     }
-  })
+  }
 }
 
+const setupPromptIn = (root: string, env: Readonly<Record<string, string | undefined>>) =>
+  setupPrompt(setupPromptOptionsIn(root, env))
+
 export const NON_INTERACTIVE_SETUP =
-  "tdg setup needs all declarative flags when stdin is not interactive; see `tdg setup --help`"
+  "tdg setup needs an interactive terminal; use `tdg setup provider` and `tdg setup default` in scripts"
+export const NON_INTERACTIVE_PROVIDER_SETUP =
+  "tdg setup provider needs all provider flags when stdin is not interactive; see `tdg setup provider --help`"
+export const NON_INTERACTIVE_DEFAULT_SETUP =
+  "tdg setup default needs --provider and --model when stdin is not interactive; see `tdg setup default --help`"
 export const NON_INTERACTIVE_INIT =
   "tdg init needs all provider flags when stdin is not interactive; see `tdg init --help`"
 
-export const setupCommand = Command.make("setup", {
+export const setupProviderCommand = Command.make("provider", {
   provider: setupProvider,
   baseUrl: setupBaseUrl,
   driver: setupDriver,
   credentialEnv: setupCredentialEnv,
-  defaultModel: setupDefaultModel,
   json
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
     const declared = yield* Effect.try({
-      try: () => setupAnswersFrom({
+      try: () => providerAnswersFrom({
         provider: stated(flags.provider),
         baseUrl: stated(flags.baseUrl),
         driver: stated(flags.driver),
-        credentialEnv: stated(flags.credentialEnv),
-        defaultModel: stated(flags.defaultModel)
+        credentialEnv: stated(flags.credentialEnv)
       }, cli.env),
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
-      ? yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
-      : yield* userErrorOf(NON_INTERACTIVE_SETUP))
-    const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
-    yield* Console.log(flags.json ? jsonOf(setupJson(files, answers)) : setupSummary(files, answers))
+      ? yield* Effect.mapError(setupProviderPrompt(setupPromptOptionsIn(cli.cwd, cli.env)), userErrorOf)
+      : yield* userErrorOf(NON_INTERACTIVE_PROVIDER_SETUP))
+    const files = yield* Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
+    yield* Console.log(flags.json
+      ? jsonOf(providerSetupJson(files, [answers]))
+      : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Ask for a provider connection and default model, then update tardigrade.jsonc and store the credential in .env at 0600."
+      "Add or update one provider connection in tardigrade.jsonc and store its credential in .env at 0600."
     ),
     Command.withExamples([
-      { command: "tdg setup", description: "Prompt for a provider and credential" },
+      { command: "tdg setup provider", description: "Prompt for a provider connection" },
       {
-        command: "tdg setup --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY --default-model anthropic/claude-sonnet-4-6",
-        description: "Configure a provider from explicit values"
+        command: "tdg setup provider --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY",
+        description: "Add a provider from explicit values"
       }
     ])
   )
+
+export const setupDefaultCommand = Command.make("default", {
+  provider: setupProvider,
+  model: setupModel,
+  json
+}, (flags) => Effect.gen(function*() {
+  const cli = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const declared = yield* Effect.try({
+    try: () => defaultModelFrom({ provider: stated(flags.provider), model: stated(flags.model) }),
+    catch: userErrorOf
+  })
+  const selected = declared ?? (canAsk()
+    ? yield* Effect.mapError(setupDefaultPrompt(Object.keys(project.models.providers), {
+      ...setupPromptOptionsIn(cli.cwd, cli.env),
+      ...(project.models.default === undefined ? {} : { current: project.models.default })
+    }), userErrorOf)
+    : yield* userErrorOf(NON_INTERACTIVE_DEFAULT_SETUP))
+  if (project.models.providers[selected.provider] === undefined) {
+    return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
+  }
+  const files = yield* Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
+  yield* Console.log(flags.json ? jsonOf(defaultSetupJson(files, selected)) : defaultSetupSummary(files, selected))
+})).pipe(
+  Command.withDescription("Choose the default model from configured provider connections."),
+  Command.withExamples([
+    { command: "tdg setup default", description: "Choose the default provider and model" },
+    { command: "tdg setup default --provider openrouter --model anthropic/claude-sonnet-4-6", description: "Select a default from explicit values" }
+  ])
+)
+
+export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*() {
+  if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
+  const cli = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const plan = yield* Effect.mapError(setupFlowPrompt({
+    ...setupPromptOptionsIn(cli.cwd, cli.env),
+    existing: project.models
+  }), userErrorOf)
+  if (plan === undefined) {
+    yield* Console.log("setup cancelled")
+    return
+  }
+  const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
+  yield* Console.log(setupPlanSummary(files, plan))
+})).pipe(
+  Command.withDescription("Add provider connections, choose the project default, then write tardigrade.jsonc and .env at 0600."),
+  Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
+)
 
 export const initCommand = Command.make("init", {
   name: Argument.string("name").pipe(Argument.withDescription("The actor name")),

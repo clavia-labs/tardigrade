@@ -61,7 +61,7 @@ tdg init researcher \
 cd researcher
 ```
 
-Run `tdg setup` inside the actor directory later to add a provider connection or change the project default.
+Run `tdg setup` inside the actor directory later to add provider connections and choose the project default. Use `tdg setup provider` or `tdg setup default` for one focused change.
 
 Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:
 

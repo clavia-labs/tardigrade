@@ -7,15 +7,21 @@ import { BunFileSystem } from "@effect/platform-bun"
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
 import {
+  defaultModelFrom,
   envPathIn,
   modelsDevAt,
   PRESETS,
+  providerAnswersFrom,
   readSetupEnv,
   SECRETS_MODE,
   setupAnswersFrom,
   setupJson,
   setupSummary,
+  writeDefaultSetup,
+  writeProviderSetup,
   writeSetup,
+  writeSetupPlan,
+  type ProviderAnswers,
   type SetupAnswers
 } from "./setup"
 
@@ -142,6 +148,22 @@ describe("declarative setup", () => {
   test("the named credential must already be injected", () => {
     expect(() => setupAnswersFrom(flags, {})).toThrow("OPENROUTER_API_KEY is not set")
   })
+
+  test("provider and default flags resolve independently", () => {
+    expect(providerAnswersFrom({
+      provider: flags.provider,
+      baseUrl: flags.baseUrl,
+      driver: flags.driver,
+      credentialEnv: flags.credentialEnv
+    }, { OPENROUTER_API_KEY: KEY })).toMatchObject({
+      provider: "openrouter",
+      credential: KEY
+    })
+    expect(defaultModelFrom({ provider: "openrouter", model: flags.defaultModel })).toEqual({
+      provider: "openrouter",
+      model_id: "anthropic/claude-sonnet-4-6"
+    })
+  })
 })
 
 describe("writeSetup", () => {
@@ -207,6 +229,47 @@ describe("writeSetup", () => {
     expect(await readFile(projectConfigPathIn(root), "utf8")).toContain("// Keep this provider note.")
     expect(held.OPENAI_API_KEY).toBe(KEY)
     expect(held.OPENROUTER_API_KEY).toBe("secondary-key")
+  })
+
+  test("provider and default writes remain independent", async () => {
+    await write()
+    const anthropic: ProviderAnswers = {
+      provider: "anthropic",
+      baseUrl: "https://api.anthropic.com",
+      credential: "anthropic-key",
+      driver: "anthropic-messages",
+      env: ["ANTHROPIC_API_KEY"]
+    }
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeProviderSetup(root, [anthropic]), BunFileSystem.layer)))
+    let project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+    expect(project.models.default).toEqual({ provider: "openai", model_id: "a-model" })
+    expect(Object.keys(project.models.providers).sort()).toEqual(["anthropic", "openai"])
+
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeDefaultSetup(root, {
+      provider: "anthropic",
+      model_id: "claude-sonnet-4-6"
+    }), BunFileSystem.layer)))
+    project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+    expect(project.models.default).toEqual({ provider: "anthropic", model_id: "claude-sonnet-4-6" })
+  })
+
+  test("a guided plan writes several providers and one default", async () => {
+    const second: ProviderAnswers = {
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      credential: "router-key",
+      driver: "openai-chat-completions",
+      env: ["OPENROUTER_API_KEY"]
+    }
+    await Effect.runPromise(Effect.orDie(Effect.provide(writeSetupPlan(root, {
+      providers: [answers, second],
+      default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" }
+    }), BunFileSystem.layer)))
+    const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+    const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
+    expect(Object.keys(project.models.providers).sort()).toEqual(["openai", "openrouter"])
+    expect(project.models.default).toEqual({ provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" })
+    expect(held).toMatchObject({ OPENAI_API_KEY: KEY, OPENROUTER_API_KEY: "router-key" })
   })
 
   // A rerun over a file left readable by everyone must narrow it, and `mode` on a write applies

@@ -16,8 +16,7 @@ import {
 
 import { parseProjectConfig, projectConfigPathIn } from "./config"
 
-// `tdg setup` asks for a provider connection and default model, then writes project configuration
-// and its credential so the first command a person runs makes every later command work.
+// `tdg setup` collects provider connections and chooses the project default before writing either file.
 //
 // The credential is written and never shown. It is absent from the printed summary, `--json`, and
 // failures, so a shared terminal has no value to scrub (setup.test.ts, "the key is never echoed").
@@ -143,14 +142,24 @@ export const PRESETS: ReadonlyArray<Preset> = [
   }
 ]
 
-// SetupAnswers is one private provider connection and the model selected as the host default.
-export interface SetupAnswers {
+// ProviderAnswers is one private provider connection and its credential.
+export interface ProviderAnswers {
   readonly provider: string
   readonly baseUrl: string
-  readonly model_id: string
   readonly credential: string
   readonly driver: ModelDriver
   readonly env: ReadonlyArray<string>
+}
+
+// SetupAnswers is one provider connection paired with the model selected as the host default.
+export interface SetupAnswers extends ProviderAnswers {
+  readonly model_id: string
+}
+
+// SetupPlan holds every connection and the default coordinate confirmed by the guided flow.
+export interface SetupPlan {
+  readonly providers: ReadonlyArray<ProviderAnswers>
+  readonly default: NonNullable<ModelConfig["default"]>
 }
 
 const nonEmpty = (what: string) => (value: string): Effect.Effect<string, string> =>
@@ -208,11 +217,16 @@ const selectionLabel = (policy: ModelSelectionPolicy): string => {
 export interface SetupPromptOptions {
   readonly current?: {
     readonly provider?: string | undefined
+    readonly baseUrl?: string | undefined
     readonly model_id?: string | undefined
     readonly driver?: string | undefined
     readonly env?: ReadonlyArray<string> | undefined
   }
   readonly catalog?: ModelCatalogOptions
+}
+
+export interface SetupFlowPromptOptions extends SetupPromptOptions {
+  readonly existing?: ModelConfig
 }
 
 type ModelPick = { readonly tag: "model"; readonly model: ListedModel } | { readonly tag: "manual" }
@@ -277,10 +291,23 @@ export const modelsDevAt = async (
   }
 }
 
-// setupPrompt is the conversation: provider, base URL, credential, then a searchable model list.
-// The password prompt keeps the credential redacted, and a failed discovery request falls back to
-// manual entry without blocking setup.
-export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(function*() {
+type ModelCatalogResult = Awaited<ReturnType<typeof modelsDevAt>>
+
+interface PromptedProvider {
+  readonly answers: ProviderAnswers
+  readonly catalog?: ModelCatalogResult
+  readonly preset: Preset
+}
+
+const catalogResultFor = (provider: string, options: SetupPromptOptions) =>
+  Effect.tryPromise(() => modelsDevAt(provider, options.catalog)).pipe(
+    Effect.match({ onFailure: () => undefined, onSuccess: (result) => result })
+  )
+
+const presetFor = (provider: string): Preset =>
+  PRESETS.find((preset) => preset.provider === provider) ?? PRESETS[PRESETS.length - 1]!
+
+const providerPrompt = (options: SetupPromptOptions) => Effect.gen(function*() {
   const preset = yield* Prompt.select({
     message: "Which model provider?",
     choices: PRESETS.map((preset) => ({ title: preset.title, value: preset, description: preset.description }))
@@ -294,15 +321,14 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     message: "Which protocol does this endpoint accept?",
     choices: MODEL_DRIVERS.map((driver) => ({ title: driver, value: driver }))
   }))
+  const defaultBaseUrl = (options.current?.provider === provider ? options.current.baseUrl : undefined) ?? preset.baseUrl
   const baseUrl = yield* Prompt.text({
     message: preset.provider === "amazon-bedrock" ? "Bedrock runtime endpoint" : "Base URL",
-    ...(preset.baseUrl === undefined ? {} : { default: preset.baseUrl }),
+    ...(defaultBaseUrl === undefined ? {} : { default: defaultBaseUrl }),
     validate: nonEmpty("the base URL")
   })
-  const catalogResult = yield* Effect.tryPromise(() => modelsDevAt(provider, options.catalog)).pipe(
-    Effect.match({ onFailure: () => undefined, onSuccess: (result) => result })
-  )
-  const suggestedEnv = options.current?.env?.[0] ?? catalogResult?.env[0]
+  const catalogResult = yield* catalogResultFor(provider, options)
+  const suggestedEnv = (options.current?.provider === provider ? options.current.env?.[0] : undefined) ?? catalogResult?.env[0]
   const credentialEnv = yield* Prompt.text({
     message: "Credential environment variable",
     ...(suggestedEnv === undefined ? {} : { default: suggestedEnv }),
@@ -312,8 +338,28 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     message: `${preset.credential ?? "API key"} for ${credentialEnv}`,
     validate: nonEmpty("the API key")
   })
+  return {
+    answers: {
+      provider,
+      baseUrl,
+      credential: Redacted.value(credential),
+      driver,
+      env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)]
+    },
+    preset,
+    ...(catalogResult === undefined ? {} : { catalog: catalogResult })
+  } satisfies PromptedProvider
+})
+
+const modelPrompt = (
+  provider: string,
+  preset: Preset,
+  options: SetupPromptOptions,
+  discovered?: ModelCatalogResult
+) => Effect.gen(function*() {
+  const catalogResult = discovered ?? (yield* catalogResultFor(provider, options))
   const loaded = catalogResult?.models
-  const current = options.current?.model_id?.trim()
+  const current = options.current?.provider === provider ? options.current.model_id?.trim() : undefined
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
   const cache = catalogResult?.status === "cached" ? " · cached catalog" : ""
   const selection = selectionLabel(options.catalog?.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
@@ -347,14 +393,80 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     })
     selected = picked.tag === "model" ? picked.model : { id: yield* manual() }
   }
+  return selected.id
+})
+
+// setupProviderPrompt collects one provider connection without changing the project default.
+export const setupProviderPrompt = (options: SetupPromptOptions = {}) =>
+  Effect.map(providerPrompt(options), (prompted) => prompted.answers)
+
+// setupDefaultPrompt chooses a model coordinate from configured provider connections.
+export const setupDefaultPrompt = (
+  providers: ReadonlyArray<string>,
+  options: SetupPromptOptions = {}
+) => Effect.gen(function*() {
+  if (providers.length === 0) return yield* Effect.fail("no provider connection is configured; run `tdg setup provider`")
+  const provider = yield* Prompt.select<string>({
+    message: "Which provider should be the project default?",
+    choices: [...providers].sort().map((provider) => ({
+      title: provider,
+      value: provider,
+      ...(provider === options.current?.provider ? { selected: true } : {})
+    }))
+  })
   return {
     provider,
-    baseUrl,
-    model_id: selected.id,
-    credential: Redacted.value(credential),
-    driver,
-    env: [credentialEnv, ...(catalogResult?.env ?? []).filter((name) => name !== credentialEnv)]
+    model_id: yield* modelPrompt(provider, presetFor(provider), options)
+  }
+})
+
+// setupPrompt collects the single provider and default used during project initialization.
+export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(function*() {
+  const prompted = yield* providerPrompt(options)
+  return {
+    ...prompted.answers,
+    model_id: yield* modelPrompt(prompted.answers.provider, prompted.preset, options, prompted.catalog)
   } satisfies SetupAnswers
+})
+
+export const setupPlanReview = (plan: SetupPlan): string => [
+  "providers",
+  ...plan.providers.map((provider) => `  ${provider.provider}  ${provider.baseUrl}  ${provider.env[0]}`),
+  `default  ${plan.default.provider}/${plan.default.model_id}`
+].join("\n")
+
+// setupFlowPrompt collects provider connections, chooses the default once, and confirms the write.
+export const setupFlowPrompt = (options: SetupFlowPromptOptions = {}) => Effect.gen(function*() {
+  const added = new Map<string, PromptedProvider>()
+  for (;;) {
+    const prompted = yield* providerPrompt(options)
+    added.set(prompted.answers.provider, prompted)
+    const more = yield* Prompt.confirm({ message: "Add another provider?", initial: false })
+    if (!more) break
+  }
+  const providerNames = [...new Set([
+    ...Object.keys(options.existing?.providers ?? {}),
+    ...added.keys()
+  ])]
+  const provider = yield* Prompt.select<string>({
+    message: "Which provider should be the project default?",
+    choices: providerNames.sort().map((provider) => ({
+      title: provider,
+      value: provider,
+      ...(provider === options.existing?.default?.provider ? { selected: true } : {})
+    }))
+  })
+  const prompted = added.get(provider)
+  const current = options.existing?.default
+  const defaultModel = yield* modelPrompt(provider, prompted?.preset ?? presetFor(provider), current === undefined
+    ? options
+    : { ...options, current: { provider: current.provider, model_id: current.model_id } }, prompted?.catalog)
+  const plan: SetupPlan = {
+    providers: [...added.values()].map((entry) => entry.answers),
+    default: { provider, model_id: defaultModel }
+  }
+  yield* Console.log(setupPlanReview(plan))
+  return (yield* Prompt.confirm({ message: "Continue?", initial: true })) ? plan : undefined
 })
 
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
@@ -371,6 +483,61 @@ export interface SetupFlags {
   readonly driver?: string | undefined
   readonly credentialEnv?: string | undefined
   readonly defaultModel?: string | undefined
+}
+
+export type ProviderSetupFlags = Omit<SetupFlags, "defaultModel">
+
+export interface DefaultSetupFlags {
+  readonly provider?: string | undefined
+  readonly model?: string | undefined
+}
+
+// providerAnswersFrom resolves one complete declarative provider connection without selecting a default.
+export const providerAnswersFrom = (
+  flags: ProviderSetupFlags,
+  env: Env
+): ProviderAnswers | undefined => {
+  const fields = {
+    provider: flags.provider?.trim(),
+    "base-url": flags.baseUrl?.trim(),
+    driver: flags.driver?.trim(),
+    "credential-env": flags.credentialEnv?.trim()
+  }
+  if (Object.values(fields).every((value) => value === undefined)) return undefined
+  const missing = Object.entries(fields).flatMap(([name, value]) => value === undefined || value.length === 0 ? [`--${name}`] : [])
+  if (missing.length > 0) throw new Error(`tdg setup provider requires ${missing.join(", ")} when provider flags are used`)
+  const driver = fields.driver!
+  if (!MODEL_DRIVERS.some((candidate) => candidate === driver)) {
+    throw new Error(`--driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(driver)}`)
+  }
+  const credentialEnv = fields["credential-env"]!
+  if (!ENV_NAME.test(credentialEnv)) {
+    throw new Error(`--credential-env must match ${ENV_NAME}, got ${JSON.stringify(credentialEnv)}`)
+  }
+  const credential = env[credentialEnv]?.trim()
+  if (credential === undefined || credential.length === 0) {
+    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun tdg setup provider`)
+  }
+  return {
+    provider: fields.provider!,
+    baseUrl: fields["base-url"]!,
+    driver: driver as ModelDriver,
+    env: [credentialEnv],
+    credential
+  }
+}
+
+// defaultModelFrom resolves one declarative default coordinate without changing its provider connection.
+export const defaultModelFrom = (flags: DefaultSetupFlags): NonNullable<ModelConfig["default"]> | undefined => {
+  const provider = flags.provider?.trim()
+  const model_id = flags.model?.trim()
+  if (provider === undefined && model_id === undefined) return undefined
+  const missing = [
+    ...(provider === undefined || provider.length === 0 ? ["--provider"] : []),
+    ...(model_id === undefined || model_id.length === 0 ? ["--model"] : [])
+  ]
+  if (missing.length > 0) throw new Error(`tdg setup default requires ${missing.join(", ")} when default flags are used`)
+  return { provider: provider!, model_id: model_id! }
 }
 
 // setupAnswersFrom resolves a complete declarative provider selection and reads its credential by name.
@@ -462,27 +629,36 @@ export interface SetupFiles {
 
 const updatedProject = (
   raw: string,
-  selected: NonNullable<ModelConfig["default"]>,
-  provider: string,
-  connection: ModelConfig["providers"][string]
+  selected: NonNullable<ModelConfig["default"]> | undefined,
+  providers: ReadonlyArray<ProviderAnswers>
 ): string => {
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
-  next = applyEdits(next, modify(next, ["models", "default"], selected, { formattingOptions }))
-  next = applyEdits(next, modify(next, ["models", "providers", provider], connection, { formattingOptions }))
+  for (const provider of providers) {
+    next = applyEdits(next, modify(next, ["models", "providers", provider.provider], {
+      baseUrl: provider.baseUrl,
+      driver: provider.driver,
+      env: provider.env
+    }, { formattingOptions }))
+  }
+  if (selected !== undefined) {
+    next = applyEdits(next, modify(next, ["models", "default"], selected, { formattingOptions }))
+  }
   return next.endsWith("\n") ? next : `${next}\n`
 }
 
-// writeSetup merges one connection into project JSONC and writes only its credential to .env.
-export const writeSetup = (
+const writeSetupChanges = (
   root: string,
-  answers: SetupAnswers,
+  providers: ReadonlyArray<ProviderAnswers>,
+  selected: NonNullable<ModelConfig["default"]> | undefined,
   env: Env = {}
 ): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
   Effect.gen(function*() {
     const fs = yield* FileSystem
-    if (!ENV_NAME.test(answers.env[0] ?? "")) {
-      return yield* new SetupConfigError({ message: `credential environment variable must match ${ENV_NAME}` })
+    for (const provider of providers) {
+      if (!ENV_NAME.test(provider.env[0] ?? "")) {
+        return yield* new SetupConfigError({ message: `credential environment variable must match ${ENV_NAME}` })
+      }
     }
     const configPath = projectConfigPathIn(root, env)
     const foundConfig = yield* readOrEmpty(fs, configPath)
@@ -494,28 +670,57 @@ export const writeSetup = (
         cause
       })
     })
-    const selected = { provider: answers.provider, model_id: answers.model_id }
-    const connection = {
-      baseUrl: answers.baseUrl,
-      driver: answers.driver,
-      env: answers.env
-    }
     const secretsPath = envPathIn(root)
-    const secretsRaw = yield* readOrEmpty(fs, secretsPath)
     yield* fs.writeFileString(
       configPath,
-      updatedProject(configRaw, selected, answers.provider, connection)
+      updatedProject(configRaw, selected, providers)
     )
-    yield* fs.writeFileString(
-      secretsPath,
-      withAssignments(secretsRaw, { [answers.env[0]!]: answers.credential }),
-      { mode: SECRETS_MODE }
-    )
-    // The mode is set again after the write, because `mode` applies when a file is created and this
-    // may have replaced one that already existed at a wider mode (setup.test.ts).
-    yield* fs.chmod(secretsPath, SECRETS_MODE)
+    if (providers.length > 0) {
+      const secretsRaw = yield* readOrEmpty(fs, secretsPath)
+      const credentials = Object.fromEntries(providers.map((provider) => [provider.env[0]!, provider.credential]))
+      yield* fs.writeFileString(
+        secretsPath,
+        withAssignments(secretsRaw, credentials),
+        { mode: SECRETS_MODE }
+      )
+      // The mode is set again after the write, because `mode` applies when a file is created and this
+      // may have replaced one that already existed at a wider mode (setup.test.ts).
+      yield* fs.chmod(secretsPath, SECRETS_MODE)
+    }
     return { configPath, secretsPath }
   })
+
+// writeSetup merges one connection and selects its model as the project default.
+export const writeSetup = (
+  root: string,
+  answers: SetupAnswers,
+  env: Env = {}
+): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
+  writeSetupChanges(root, [answers], { provider: answers.provider, model_id: answers.model_id }, env)
+
+// writeProviderSetup merges provider connections without changing the project default.
+export const writeProviderSetup = (
+  root: string,
+  providers: ReadonlyArray<ProviderAnswers>,
+  env: Env = {}
+): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
+  writeSetupChanges(root, providers, undefined, env)
+
+// writeDefaultSetup changes the project default without writing credentials.
+export const writeDefaultSetup = (
+  root: string,
+  selected: NonNullable<ModelConfig["default"]>,
+  env: Env = {}
+): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
+  writeSetupChanges(root, [], selected, env)
+
+// writeSetupPlan writes every collected connection and the selected default in one pass.
+export const writeSetupPlan = (
+  root: string,
+  plan: SetupPlan,
+  env: Env = {}
+): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
+  writeSetupChanges(root, plan.providers, plan.default, env)
 
 export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem> =>
   Effect.gen(function*() {
@@ -536,6 +741,23 @@ export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =
     `default ${answers.model_id}`
   ].join("\n")
 
+export const providerSetupSummary = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>): string => [
+  `wrote ${files.configPath}`,
+  `stored credentials in ${files.secretsPath}`,
+  ...providers.flatMap((provider) => [
+    `provider ${provider.provider}`,
+    `at    ${provider.baseUrl}`,
+    `wire  ${provider.driver}`,
+    `secret ${provider.env[0]}`
+  ])
+].join("\n")
+
+export const defaultSetupSummary = (files: SetupFiles, selected: NonNullable<ModelConfig["default"]>): string =>
+  [`wrote ${files.configPath}`, `default ${selected.provider}/${selected.model_id}`].join("\n")
+
+export const setupPlanSummary = (files: SetupFiles, plan: SetupPlan): string =>
+  `${providerSetupSummary(files, plan.providers)}\n${defaultSetupSummary(files, plan.default).split("\n")[1]}`
+
 export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   readonly configPath: string
   readonly secretsPath: string
@@ -553,4 +775,20 @@ export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
   driver: answers.driver,
   credential: "stored",
   env: answers.env
+})
+
+export const providerSetupJson = (files: SetupFiles, providers: ReadonlyArray<ProviderAnswers>) => ({
+  ...files,
+  providers: providers.map((provider) => ({
+    provider: provider.provider,
+    baseUrl: provider.baseUrl,
+    driver: provider.driver,
+    credential: "stored" as const,
+    env: provider.env
+  }))
+})
+
+export const defaultSetupJson = (files: SetupFiles, selected: NonNullable<ModelConfig["default"]>) => ({
+  configPath: files.configPath,
+  default: selected
 })
