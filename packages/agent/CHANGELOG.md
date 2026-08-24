@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/clavia-labs/tardigrade/compare/v0.7.0...v0.7.1) (2026-08-24)
+
+
+### Bug Fixes
+
+* **ci:** refresh release candidates ([#246](https://github.com/clavia-labs/tardigrade/issues/246)) ([caf35c6](https://github.com/clavia-labs/tardigrade/commit/caf35c6f8b5d60e8a77e5863228410ef5c581016))
+* **cli:** complete published deploys ([#248](https://github.com/clavia-labs/tardigrade/issues/248)) ([39ef10a](https://github.com/clavia-labs/tardigrade/commit/39ef10a7acf3fde4371f7c28a584150fb016eed3))
+
 ## [0.7.0](https://github.com/clavia-labs/tardigrade/compare/v0.6.0...v0.7.0) (2026-08-24)
 
 
