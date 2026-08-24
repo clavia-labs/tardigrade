@@ -1,5 +1,5 @@
-// DEFAULT_ALARM_DELAY_MILLIS is the delay for newly committed work.
-export const DEFAULT_ALARM_DELAY_MILLIS = 0
+// DEFAULT_ALARM_DELAY_MILLIS is the watchdog delay for work whose immediate drive does not settle.
+export const DEFAULT_ALARM_DELAY_MILLIS = 120_000
 
 export interface AlarmPolicy {
   readonly delayMillis: number
@@ -22,15 +22,4 @@ export const alarmPolicyOf = (policy: Partial<AlarmPolicy> = {}): AlarmPolicy =>
 export const armAt = (due: number | null, now: number, delayMillis: number): number | null => {
   const at = now + delayMillis
   return due === null || due <= now || due > at ? at : null
-}
-
-// nextAlarm preserves an alarm scheduled during the active pass and folds in remaining debt.
-export const nextAlarm = (
-  armedDuringPass: number | null,
-  owed: boolean,
-  now: number,
-  policy: AlarmPolicy = DEFAULT_ALARM_POLICY
-): number | null => {
-  if (armedDuringPass !== null) return armedDuringPass
-  return owed ? now + policy.delayMillis : null
 }
