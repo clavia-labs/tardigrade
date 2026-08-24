@@ -13,6 +13,10 @@ on:
         description: Pack without publishing
         type: boolean
         default: true
+      release_ref:
+        description: Git ref to publish. Defaults to the workflow revision
+        type: string
+        default: ""
 
 concurrency:
   group: publish-${{ github.ref }}
@@ -22,6 +26,9 @@ env:
   PUBLISHED_PACKAGE: tardie
   RC_TYPE: rc
   RC_NPM_TAG: next
+  RELEASE_PR_AUTHOR: github-actions[bot]
+  RELEASE_PR_BRANCH_PREFIX: release-please--
+  RELEASE_PR_LABEL: "autorelease: pending"
   STABLE_NPM_TAG: latest
 
 jobs:
@@ -46,16 +53,23 @@ jobs:
           config-file: release-please-config.json
       - name: Pin release candidate
         id: candidate
-        if: steps.release.outputs.prs_created == 'true'
+        if: steps.release.outputs.release_created != 'true'
         env:
-          RELEASE_PR: ${{ steps.release.outputs.pr }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          candidate_head=$(jq -er '.sha | select(type == "string" and length > 0)' <<< "$RELEASE_PR")
-          echo "head=$candidate_head" >> "$GITHUB_OUTPUT"
+          candidates=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=open&base=main&per_page=100" | jq -c --arg author "$RELEASE_PR_AUTHOR" --arg label "$RELEASE_PR_LABEL" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '[.[] | select(.user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix)) and any(.labels[]; .name == $label))]')
+          count=$(jq length <<< "$candidates")
+          if (( count > 1 )); then
+            echo "::error::Found ${count} open Release Please PRs against main."
+            exit 1
+          fi
+          if (( count == 1 )); then
+            echo "head=$(jq -r '.[0].head.sha' <<< "$candidates")" >> "$GITHUB_OUTPUT"
+          fi
 
   publish-candidate:
     needs: release-please
-    if: needs.release-please.outputs.candidate_head != ''
+    if: ${{ always() && (needs.release-please.outputs.candidate_head != '' || (github.event_name == 'workflow_dispatch' && !inputs.dry-run)) }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -67,16 +81,18 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          ref: ${{ needs.release-please.outputs.candidate_base }}
+          ref: ${{ inputs.release_ref || needs.release-please.outputs.candidate_base || github.sha }}
       - name: Apply release candidate
-        id: candidate-tree
+        if: github.event_name == 'push'
         env:
           CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
         run: |
           git fetch --no-tags origin "$CANDIDATE_HEAD"
           candidate_tree=$(git merge-tree --write-tree HEAD "$CANDIDATE_HEAD")
           git read-tree --reset -u "$candidate_tree"
-          echo "sha=$candidate_tree" >> "$GITHUB_OUTPUT"
+      - name: Read candidate tree
+        id: candidate-tree
+        run: echo "sha=$(git write-tree)" >> "$GITHUB_OUTPUT"
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: canary
@@ -92,6 +108,7 @@ jobs:
       - name: Publish candidate
         run: bun run tools/publish.ts --version ${{ steps.candidate.outputs.version }} --tag ${RC_NPM_TAG} --source-tree ${{ steps.candidate-tree.outputs.sha }}
       - name: Record release PR checks
+        if: needs.release-please.outputs.candidate_head != ''
         env:
           CANDIDATE_HEAD: ${{ needs.release-please.outputs.candidate_head }}
           GH_TOKEN: ${{ github.token }}
@@ -101,8 +118,8 @@ jobs:
           done
 
   publish-stable:
-    needs: release-please
-    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') }}
+    needs: [release-please, publish-candidate]
+    if: ${{ always() && (needs.release-please.outputs.release_created == 'true' || github.event_name == 'workflow_dispatch') && (needs.publish-candidate.result == 'success' || needs.publish-candidate.result == 'skipped') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment: npm
@@ -112,7 +129,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          ref: ${{ needs.release-please.outputs.release_sha || github.sha }}
+          ref: ${{ inputs.release_ref || needs.release-please.outputs.release_sha || github.sha }}
       - name: Read stable tree
         id: stable-tree
         run: echo "sha=$(git rev-parse HEAD^{tree})" >> "$GITHUB_OUTPUT"
