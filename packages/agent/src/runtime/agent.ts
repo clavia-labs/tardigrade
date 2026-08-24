@@ -251,10 +251,10 @@ export const infer = <
     derive: (log) => {
       const children = combined.derive(log)
       const inferred = inference(log)
-      const selectingModel = inferred.some((candidate) => candidate.key.startsWith("ms:"))
+      const resolvingModel = inferred.some((candidate) => candidate.key.startsWith("mr:"))
       return {
         view: children.view,
-        transitions: selectingModel ? inferred : [
+        transitions: resolvingModel ? inferred : [
           ...inferred,
           ...dispatch(log),
           ...children.transitions

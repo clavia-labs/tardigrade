@@ -127,7 +127,7 @@ describe("infer component", () => {
     )
     expect(seen[0]?.model).toEqual({ provider: "vercel", model_id: "openai/gpt-5.2" })
     expect(seen[0]?.context?.contextWindowTokens).toBe(200_000)
-    expect(events.find((event) => event.type === "ModelSelected")).toMatchObject({
+    expect(events.find((event) => event.type === "ModelResolved")).toMatchObject({
       turn: "m1",
       model: { provider: "vercel", model_id: "openai/gpt-5.2" }
     })

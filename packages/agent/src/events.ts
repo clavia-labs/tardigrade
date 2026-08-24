@@ -86,23 +86,14 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
-// ModelSelected records the infer component's model choice for one turn before work uses it.
-export const ModelSelected = Schema.Struct({
-  type: Schema.Literal("ModelSelected"),
+// ModelResolved records the model coordinate and catalog limits used by one turn.
+export const ModelResolved = Schema.Struct({
+  type: Schema.Literal("ModelResolved"),
   turn: Schema.String,
   model: ModelCoordinate,
   contextWindowTokens: Schema.optional(Schema.Finite),
   maxOutputTokens: Schema.optional(Schema.Finite),
   catalogRevision: Schema.optional(Schema.String),
-  at: Schema.Finite
-})
-
-// ModelSelectionFailed records a model reference that the host could not resolve for one turn.
-export const ModelSelectionFailed = Schema.Struct({
-  type: Schema.Literal("ModelSelectionFailed"),
-  turn: Schema.String,
-  requested: ModelCoordinate,
-  error: Schema.String,
   at: Schema.Finite
 })
 
@@ -283,8 +274,7 @@ export const BudgetDenied = Schema.Struct({
 
 export const AgentEvent = Schema.Union([
   MessageReceived,
-  ModelSelected,
-  ModelSelectionFailed,
+  ModelResolved,
   ModelCalled,
   TextReturned,
   ToolCalled,
@@ -345,7 +335,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "ms:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
+  prefixes: ["tr:", "bdec:", "brr:", "rd:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -371,9 +361,8 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
-      case "ModelSelected":
-      case "ModelSelectionFailed":
-        return `ms:${String(v.turn)}`
+      case "ModelResolved":
+        return `mr:${String(v.turn)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -427,7 +416,7 @@ export const modelCalled = (
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
 
-export const modelSelected = (fields: {
+export const modelResolved = (fields: {
   readonly turn: string
   readonly model: ModelCoordinateType
   readonly contextWindowTokens?: number
@@ -435,7 +424,7 @@ export const modelSelected = (fields: {
   readonly catalogRevision?: string
   readonly at: number
 }): Event =>
-  ({ type: "ModelSelected", ...fields }) as Event
+  ({ type: "ModelResolved", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event

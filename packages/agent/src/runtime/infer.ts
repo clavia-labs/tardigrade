@@ -1,7 +1,7 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { modelCalled, modelSelected, outputRejected, textReturned, turnFailed } from "../events"
+import { modelCalled, modelResolved, outputRejected, textReturned, turnFailed } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "../events"
 import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/turns"
@@ -84,9 +84,9 @@ export const selectedModelOf = (
   return coordinate ?? model ?? policy
 }
 
-const recordedModelOf = (events: ReadonlyArray<Event>): ModelCoordinate | undefined => {
-  const selected = events.find((event) => event.type === "ModelSelected") as { readonly model?: unknown } | undefined
-  return selected?.model as ModelCoordinate | undefined
+const resolvedModelOf = (events: ReadonlyArray<Event>): ModelCoordinate | undefined => {
+  const resolved = events.find((event) => event.type === "ModelResolved") as { readonly model?: unknown } | undefined
+  return resolved?.model as ModelCoordinate | undefined
 }
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
@@ -269,7 +269,7 @@ const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
   for (let i = turn.length - 1; i >= 0; i--) {
     const event = turn[i]!
     if (event.type === "ModelCalled" && Number((event as { epoch?: unknown }).epoch ?? 0) === epoch) n += 1
-    else if (event.type === "ModelSelected") continue
+    else if (event.type === "ModelResolved") continue
     else break
   }
   return n
@@ -323,12 +323,12 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
   const trajectory = trajectoryOf(log)
-  const recordedModel = recordedModelOf(slice)
-  const model = recordedModel ?? selectedModelOf(head, policy.model)
-  if (model !== undefined && recordedModel === undefined) {
+  const resolvedModel = resolvedModelOf(slice)
+  const model = resolvedModel ?? selectedModelOf(head, policy.model)
+  if (model !== undefined && resolvedModel === undefined) {
     return [
       transition({
-        key: `ms:${turn}`,
+        key: `mr:${turn}`,
         input: { turn, model },
         act: (input) =>
           Effect.gen(function* () {
@@ -338,15 +338,8 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
               try: () => binding.resolve?.(input.model) ?? { model: input.model },
               catch: (error) => error instanceof Error ? error.message : String(error)
             }).pipe(Effect.match({
-              onSuccess: (resolved) => [modelSelected({ turn: input.turn, ...resolved, at })],
+              onSuccess: (resolved) => [modelResolved({ turn: input.turn, ...resolved, at })],
               onFailure: (message) => [
-                {
-                  type: "ModelSelectionFailed",
-                  turn: input.turn,
-                  requested: input.model,
-                  error: message,
-                  at
-                } as Event,
                 turnFailed({
                   error: message,
                   cause: "inference_error",

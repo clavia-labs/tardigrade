@@ -83,15 +83,15 @@ const ratio = (value: number, name: string): number => {
   return value
 }
 
-// modelOf returns the latest model choice recorded by infer for the open thread.
-const modelSelectionOf = (log: ReadonlyArray<Event>): {
+// modelResolutionOf returns the latest model facts recorded by infer for the open thread.
+const modelResolutionOf = (log: ReadonlyArray<Event>): {
   readonly model: ModelCoordinate | undefined
   readonly contextWindowTokens: number | undefined
 } => {
   let model: ModelCoordinate | undefined
   let contextWindowTokens: number | undefined
   for (const event of log) {
-    if (event.type !== "ModelSelected") continue
+    if (event.type !== "ModelResolved") continue
     const selected = (event as { readonly model?: unknown }).model
     if (
       typeof selected === "object" &&
@@ -341,7 +341,7 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
 export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer> => (log) => {
-  const selection = modelSelectionOf(log)
+  const selection = modelResolutionOf(log)
   const model = selection.model
   const resolved = contextPolicyOf(
     selection.contextWindowTokens === undefined ? policy : { ...policy, contextWindowTokens: selection.contextWindowTokens },
@@ -418,7 +418,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     name: "compaction",
     derive: (log) => ({
       ...(() => {
-        const selection = modelSelectionOf(log)
+        const selection = modelResolutionOf(log)
         const resolved = contextPolicyOf(
           selection.contextWindowTokens === undefined ? policy : { ...policy, contextWindowTokens: selection.contextWindowTokens },
           selection.model

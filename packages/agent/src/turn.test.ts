@@ -147,7 +147,7 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelSelected",
+      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "CodeDispatched",
@@ -372,7 +372,7 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelSelected",
+      "ModelResolved",
       "ModelCalled",
       "TurnCompleted",
       "ReplyDelivered"
@@ -935,7 +935,7 @@ describe("the mind on a native surface", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelSelected",
+      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "ToolReturned",
