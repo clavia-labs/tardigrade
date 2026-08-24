@@ -1,18 +1,7 @@
 import {
-  actor,
-  agentMethods,
-  agentsPackage,
-  budget,
-  codeMode,
-  compaction,
-  defineActor,
-  fetchPackage,
-  filesPackage,
-  infer,
-  outputValidateOnce,
-  reply,
-  system,
-  workspacePackage
+  actor, agentMethods, agentsPackage, budget, codeMode,
+  compaction, defineActor, fetchPackage, filesPackage, infer,
+  outputValidateOnce, reply, system, workspacePackage
 } from "tardie"
 
 // actorName is the stable name used by build, push, and run.
