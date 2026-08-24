@@ -45,6 +45,7 @@ export const receive = <R, T = unknown>(
     readonly id: string
     readonly text: string
     readonly input?: unknown
+    readonly model?: string
     readonly output?: OutputContract<T>
   }
 ): Effect.Effect<void, never, EventLog | R> =>
@@ -59,6 +60,7 @@ export const receive = <R, T = unknown>(
       id: message.id,
       text: message.text,
       ...(message.input === undefined ? {} : { input: message.input }),
+      ...(message.model === undefined ? {} : { model: message.model }),
       ...(message.output === undefined ? {} : { output: { name: message.output.name, schema: message.output.schema } }),
       at
     })

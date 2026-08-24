@@ -9,8 +9,9 @@ import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
-import { Threads, layerThreads } from "./host"
+import { Threads, layerThreads, selectedModelFrom } from "./host"
 import { DriverGauge } from "./http"
+import { layerModelCatalogUnavailable } from "./catalog"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
 // other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
@@ -62,7 +63,7 @@ const running = <A, E>(
     Effect.provide(Layer.provide(layerThreads({
       infer: options.infer ?? layerScripted,
       providers: [{ name: "test", send: () => Effect.void }]
-    }), options.config ?? config)),
+    }), [options.config ?? config, layerModelCatalogUnavailable])),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
@@ -70,6 +71,64 @@ const running = <A, E>(
 // One brief, as the event it is. The platform requires only `type`; `id` and `text` are the
 // assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/message.ts).
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
+
+describe("model selection", () => {
+  const model = {
+    default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
+    providers: {
+      openrouter: {
+        baseUrl: "https://openrouter.ai/api/v1",
+        apiKey: "secret",
+        driver: "openai-chat-completions" as const
+      }
+    }
+  }
+  const catalog = {
+    snapshot: {
+      source: "models.dev" as const,
+      revision: "catalog-1",
+      refreshedAt: 1,
+      status: "fresh" as const,
+      providers: [{
+        id: "openrouter",
+        name: "OpenRouter",
+        env: [],
+        models: [
+          { id: "anthropic/claude-sonnet-4-6", metadata: { contextWindowTokens: 200_000 } },
+          {
+            id: "openai/gpt-5.2",
+            metadata: {
+              contextWindowTokens: 400_000,
+              maxOutputTokens: 128_000,
+              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 }
+            }
+          }
+        ]
+      }]
+    }
+  }
+
+  test("a connection can select any model in its catalog", () => {
+    expect(selectedModelFrom(model, catalog, {
+      provider: "openrouter",
+      model_id: "openai/gpt-5.2"
+    })).toMatchObject({
+      provider: "openrouter",
+      model_id: "openai/gpt-5.2",
+      contextWindowTokens: 400_000,
+      maxOutputTokens: 128_000,
+      pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
+      catalogRevision: "catalog-1"
+    })
+  })
+
+  test("an unknown model names the catalog revision", () => {
+    expect(() => selectedModelFrom(model, catalog, {
+      provider: "openrouter",
+      model_id: "missing"
+    })).toThrow("catalog revision \"catalog-1\"")
+  })
+})
 
 describe("the threads service", () => {
   test("retains the built-in actor methods", async () => {

@@ -145,34 +145,14 @@ describe("the config file", () => {
     })
   })
 
-  // The capability is the operator's whole statement: a native guarantee has to say whether it
-  // survives beside a tool list, because a turn that offers tools and declares a contract sends
-  // both on one call (platform/model/src/output.ts, outputModeOf).
-  test("the output capability resolves in the same order every value does", async () => {
-    await put(JSON.stringify({ model: {
-      default: { provider: "openai", model_id: "m" },
-      providers: { openai: { models: { m: { output: "native", outputWithTools: "true" } } } }
-    } }))
-    const file = await read({ HOME: home })
-    expect(resolveServer({}, {}, file).model.providers.openai?.models.m?.output).toEqual({ guarantee: "native", withTools: true })
-    expect(resolveServer({}, {}, {}).model.providers).toEqual({})
-  })
-
-  test("a capability nobody stated whole refuses to resolve, rather than leaving one field guessed", async () => {
-    await put(JSON.stringify({ model: { providers: { openai: { models: { m: { output: "probably" } } } } } }))
-    const file = await read({ HOME: home })
-    expect(() => resolveServer({}, {}, file)).toThrow("model output guarantee must be one of")
-  })
-
-  test("the file supplies provider routes and model metadata", async () => {
+  test("the file supplies provider connections and a default model", async () => {
     await put(JSON.stringify({ model: {
       default: { provider: "openai", model_id: "file-model" },
       providers: {
         openai: {
           baseUrl: "https://file.example.com",
           apiKey: "file-key",
-          driver: "openai-responses",
-          models: { "file-model": { contextWindowTokens: 128000 } }
+          driver: "openai-responses"
         }
       }
     } }))
@@ -184,14 +164,7 @@ describe("the config file", () => {
         openai: {
           baseUrl: "https://file.example.com",
           apiKey: "file-key",
-          driver: "openai-responses",
-          models: {
-            "file-model": {
-              contextWindowTokens: 128000,
-              maxOutputTokens: undefined,
-              output: undefined
-            }
-          }
+          driver: "openai-responses"
         }
       }
     })

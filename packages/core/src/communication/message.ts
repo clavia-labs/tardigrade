@@ -16,6 +16,8 @@ export const MessageReceived = Schema.Struct({
   // outcome marks a terminal report whose reaction turn settles locally without sending a reply (packages/agent/src/components/reply.test.ts, "terminal reports cannot start reply chains").
   outcome: Schema.optional(Schema.Literals(["completed", "failed", "requesting"])),
   input: Schema.optional(Schema.Unknown),
+  // model carries consumer-owned selection data. The receiving actor defines its shape and meaning.
+  model: Schema.optional(Schema.Unknown),
   data: Schema.optional(Schema.Unknown),
   at: Schema.Finite
 })

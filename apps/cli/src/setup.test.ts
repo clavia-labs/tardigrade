@@ -29,12 +29,7 @@ const answers: SetupAnswers = {
   baseUrl: "https://api.example.com/v1",
   model_id: "a-model",
   apiKey: KEY,
-  driver: "openai-responses",
-  contextWindowTokens: 128_000,
-  maxOutputTokens: 16_384,
-  pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
-  output: "native",
-  outputWithTools: "true"
+  driver: "openai-responses"
 }
 
 let home = ""
@@ -82,7 +77,7 @@ describe("model discovery", () => {
     }, { headers: { etag: "catalog-7" } })) as typeof fetch
     expect(await modelsDevAt("openrouter", { fetch: fetcher })).toMatchObject({
       revision: "catalog-7",
-      models: [{ id: "anthropic/claude", metadata: { contextWindowTokens: { value: 200_000 } } }]
+      models: [{ id: "anthropic/claude" }]
     })
   })
 })
@@ -106,16 +101,7 @@ describe("writeSetup", () => {
         openai: {
           baseUrl: "https://api.example.com/v1",
           apiKey: KEY,
-          driver: "openai-responses",
-          models: {
-            "a-model": {
-              contextWindowTokens: 128_000,
-              maxOutputTokens: 16_384,
-              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
-              output: "native",
-              outputWithTools: "true"
-            }
-          }
+          driver: "openai-responses"
         }
       }
     })
@@ -145,8 +131,8 @@ describe("writeSetup", () => {
     const held = parseFileConfig(await readFile(path, "utf8"))
     expect(Object.keys(held.model?.providers ?? {}).sort()).toEqual(["openai", "openrouter"])
     expect(held.model?.default).toEqual({ provider: "openrouter", model_id: "another-model" })
-    expect(held.model?.providers?.openai?.models?.["a-model"]?.contextWindowTokens).toBe(128_000)
-    expect(held.model?.providers?.openrouter?.models?.["another-model"]?.contextWindowTokens).toBe(128_000)
+    expect(held.model?.providers?.openai?.baseUrl).toBe("https://api.example.com/v1")
+    expect(held.model?.providers?.openrouter?.baseUrl).toBe("https://secondary.example.com/v1")
   })
 
   // A rerun over a file left readable by everyone must narrow it, and `mode` on a write applies
@@ -168,38 +154,12 @@ describe("writeSetup", () => {
         openai: {
           baseUrl: "https://api.example.com/v1",
           apiKey: KEY,
-          driver: "openai-responses",
-          models: {
-            "a-model": {
-              contextWindowTokens: 128_000,
-              maxOutputTokens: 16_384,
-              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
-              output: "native",
-              outputWithTools: "true"
-            }
-          }
+          driver: "openai-responses"
         }
       }
     })
   })
 
-  test("a setup with no native guarantee writes the whole alternative", async () => {
-    const path = await write({
-      provider: answers.provider,
-      baseUrl: answers.baseUrl,
-      model_id: answers.model_id,
-      apiKey: answers.apiKey,
-      driver: answers.driver,
-      contextWindowTokens: answers.contextWindowTokens,
-      ...(answers.maxOutputTokens === undefined ? {} : { maxOutputTokens: answers.maxOutputTokens }),
-      output: "none"
-    })
-    expect(parseFileConfig(await readFile(path, "utf8")).model?.providers?.openai?.models?.["a-model"]).toEqual({
-      contextWindowTokens: 128_000,
-      maxOutputTokens: 16_384,
-      output: "none"
-    })
-  })
 })
 
 describe("what setup prints", () => {
@@ -217,10 +177,7 @@ describe("what setup prints", () => {
     expect(json.apiKey).toBe("stored")
     expect(json.provider).toBe("openai")
     expect(json.driver).toBe("openai-responses")
-    expect(json.contextWindowTokens).toBe(128_000)
-    expect(json.output).toBe("native")
-    expect(json.outputWithTools).toBe(true)
-    expect(summary).toContain("output native (with tools)")
+    expect(summary).toContain("default a-model")
   })
 })
 

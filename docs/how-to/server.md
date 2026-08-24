@@ -66,15 +66,15 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
-| `TARDIGRADE_MODELS` | Unset. JSON model directory for a directly hosted server |
+| `TARDIGRADE_MODELS` | Unset. JSON provider connections and default model for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
 | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
-| Model directory | `tdg setup` writes provider routes, credentials, model metadata, and the default `{ provider, model_id }` coordinate to `~/.tardigrade/config.json` for `tdg dev` |
+| Provider connections | `tdg setup` writes private routes, credentials, protocols, and the default `{ provider, model_id }` coordinate to `~/.tardigrade/config.json` for `tdg dev` |
 
-The server boots without a model and serves every read; turns fail naming what is missing. A pushed actor may select any exact coordinate present in the directory. The built-in actor uses the configured default.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default.
 
-The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. With no valid source or cache, `GET /v1/models` answers 503. Its response includes the source revision and refresh time. Private provider routes and credentials stay in the model directory and never appear in the catalog.
+The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. With no valid source or cache, `GET /v1/models` answers 503. Its response includes the source revision and refresh time. Private provider connections and credentials stay in private configuration and never appear in the catalog.
 
 ## Clients
 

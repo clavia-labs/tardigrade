@@ -60,14 +60,15 @@ export interface ModelResolution {
   readonly catalogRevision?: string
 }
 
-// selectedModelOf applies the visible model-selection order for one turn. The request is durable
-// input, so its selection wins over the actor default recorded in the assembly.
+// selectedModelOf applies the visible model-selection order for one turn. A public message may
+// replace the model id while the assembly keeps its provider connection. Internal deliveries may
+// carry a complete coordinate. Either durable request wins over the assembly default.
 export const selectedModelOf = (
   head: Event,
   policy?: ModelCoordinate
 ): ModelCoordinate | undefined => {
   const selected = (head as { readonly model?: unknown }).model
-  const requested = (
+  const coordinate = (
     typeof selected === "object" &&
     selected !== null &&
     typeof (selected as { readonly provider?: unknown }).provider === "string" &&
@@ -77,7 +78,10 @@ export const selectedModelOf = (
   )
       ? selected as ModelCoordinate
       : undefined
-  return requested ?? policy
+  const model = typeof selected === "string" && selected.trim().length > 0 && policy !== undefined
+    ? { provider: policy.provider, model_id: selected.trim() }
+    : undefined
+  return coordinate ?? model ?? policy
 }
 
 const recordedModelOf = (events: ReadonlyArray<Event>): ModelCoordinate | undefined => {

@@ -12,21 +12,21 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 // values, so the model's system fragment lists them and the assembly's requirements carry their
 // needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
-const coordinate = { provider: "openai", model_id: "gpt-5.2" } as const
+const coordinate = { provider: "openai", default_model: "gpt-5.2" } as const
 
-const rlm = actor(inferAgent(coordinate, [
+const rlm = actor(inferAgent([
   codeMode([agentsPackage(), workspacePackage()]),
   reply, // reports each turn's terminal to whoever asked
   budget, // the per-turn code budget, inherited by spawned children
   compaction(), // bounded model context over long investigations
   outputValidateOnce // handles structured results without adding a retry
-]))
+], coordinate))
 
 const model = infer({
   baseUrl: "https://api.openai.com/v1",
   apiKey: process.env.OPENAI_API_KEY!,
   provider: coordinate.provider,
-  model: coordinate.model_id,
+  model: coordinate.default_model,
   driver: "openai-responses",
   contextWindowTokens: 400_000
 })

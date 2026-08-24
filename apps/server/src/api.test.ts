@@ -81,12 +81,13 @@ const catalog: ModelCatalog = {
     models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
   }]
 }
+const catalogLayer = layerModelCatalogValue(catalog)
 
 const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
   BunHttpServer.layer({ port: 0 }),
   config,
-  layerModelCatalogValue(catalog),
-  Layer.provide(layerThreads({ infer: layerScripted }), config)
+  catalogLayer,
+  Layer.provide(layerThreads({ infer: layerScripted }), [config, catalogLayer])
 ])
 
 // Boots the process and hands the body its base URL. The body is plain fetch, because a client of
@@ -187,14 +188,15 @@ describe("actor methods", () => {
     const methods = await serving(async (base) =>
       await (await get(base, "/v1/actors/default/methods")).json() as ReadonlyArray<{
         readonly name: string
-        readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, unknown> }
+        readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, { readonly properties?: Record<string, unknown> }> }
         readonly outputSchema: { readonly type?: unknown }
       }>)
     expect(methods.map((method) => method.name)).toEqual(["message"])
     expect(methods[0]?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
-      required: ["text"]
+      required: ["text"],
+      properties: { model: { type: "string" } }
     })
     expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
   })
@@ -310,11 +312,12 @@ describe("actors", () => {
       TARDIGRADE_ACTORS: root,
       TARDIGRADE_ACTOR_DATA: actorData
     }))
+    const isolatedCatalog = layerModelCatalogValue(catalog)
     const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
       BunHttpServer.layer({ port: 0 }),
       isolatedConfig,
-      layerModelCatalogValue(catalog),
-      Layer.provide(layerThreads({ infer: layerScripted }), isolatedConfig)
+      isolatedCatalog,
+      Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
     ])
     const module = `export default { name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`

@@ -25,10 +25,16 @@ import type { Action } from "tardie/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
-import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
+import {
+  RESERVED_ACTOR,
+  type ActorArtifact,
+  type ActorSummary,
+  type ModelCatalog
+} from "@clavia/tardigrade-client/contract"
 
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ModelConfig, type ServerConfigValue } from "./config"
+import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { DriverGauge } from "./http"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
@@ -96,13 +102,19 @@ interface SelectedModel {
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
   readonly pricing?: import("tardie/usage").ModelPricing
-  readonly output?: NonNullable<ModelConfig["providers"][string]["models"][string]["output"]>
+  readonly catalogRevision: string
 }
 
-// selectedModelFrom resolves an actor coordinate against host providers and their declared metadata.
-export const selectedModelFrom = (config: ModelConfig, reference?: ModelCoordinate): SelectedModel => {
-  const selected = reference ?? config.default
-  if (selected === undefined) throw new Error("the built-in actor has no model coordinate; run `tdg setup`")
+interface ProviderConnection {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly driver: NonNullable<ModelConfig["providers"][string]["driver"]>
+}
+
+const connectionFrom = (
+  config: ModelConfig,
+  selected: ModelCoordinate
+): ProviderConnection => {
   const provider = config.providers[selected.provider]
   if (provider === undefined) {
     const available = Object.keys(config.providers).sort()
@@ -111,14 +123,49 @@ export const selectedModelFrom = (config: ModelConfig, reference?: ModelCoordina
       `run \`tdg setup\`${available.length === 0 ? "" : `; configured providers: ${available.join(", ")}`}`
     )
   }
-  const metadata = provider.models[selected.model_id]
-  if (metadata === undefined) {
-    throw new Error(`model metadata is missing for ${selected.provider}/${selected.model_id}; run \`tdg setup\` to add that model`)
-  }
   if (provider.baseUrl === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no base URL`)
   if (provider.apiKey === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no API key; run \`tdg setup\``)
   if (provider.driver === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} has no protocol driver`)
-  if (metadata.contextWindowTokens === undefined) throw new Error(`model ${selected.provider}/${selected.model_id} has no context window`)
+  return { baseUrl: provider.baseUrl, apiKey: provider.apiKey, driver: provider.driver }
+}
+
+const catalogModelFrom = (
+  snapshot: ModelCatalog,
+  selected: ModelCoordinate
+): ModelCatalog["providers"][number]["models"][number] => {
+  const provider = snapshot.providers.find((candidate) => candidate.id === selected.provider)
+  if (provider === undefined) {
+    throw new Error(
+      `provider ${JSON.stringify(selected.provider)} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
+    )
+  }
+  const model = provider.models.find((candidate) => candidate.id === selected.model_id)
+  if (model === undefined) {
+    throw new Error(
+      `model ${selected.provider}/${selected.model_id} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
+    )
+  }
+  return model
+}
+
+// selectedModelFrom combines one private provider connection with public metadata from the
+// process catalog snapshot.
+export const selectedModelFrom = (
+  config: ModelConfig,
+  catalog: ModelCatalogState,
+  reference?: ModelCoordinate
+): SelectedModel => {
+  const selected = reference ?? config.default
+  if (selected === undefined) throw new Error("the built-in actor has no model coordinate; run `tdg setup`")
+  const provider = connectionFrom(config, selected)
+  if (catalog.snapshot === undefined) {
+    throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
+  }
+  const catalogModel = catalogModelFrom(catalog.snapshot, selected)
+  const metadata = catalogModel.metadata
+  if (metadata.contextWindowTokens === undefined) {
+    throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
+  }
   return {
     ...selected,
     baseUrl: provider.baseUrl,
@@ -127,7 +174,7 @@ export const selectedModelFrom = (config: ModelConfig, reference?: ModelCoordina
     contextWindowTokens: metadata.contextWindowTokens,
     ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
     ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
-    ...(metadata.output === undefined ? {} : { output: metadata.output })
+    catalogRevision: catalog.snapshot.revision
   }
 }
 
@@ -136,14 +183,15 @@ export const selectedModelFrom = (config: ModelConfig, reference?: ModelCoordina
 export const modelIsConfigured = (config: ServerConfigValue): boolean =>
   (() => {
     try {
-      selectedModelFrom(config.model)
+      if (config.model.default === undefined) return false
+      connectionFrom(config.model, config.model.default)
       return true
     } catch {
       return false
     }
   })()
 
-const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
+const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): Layer.Layer<Infer> => {
   if (Object.keys(config.model.providers).length === 0) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({
@@ -153,19 +201,18 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
   }
   return Layer.succeed(Infer, {
     resolve: (coordinate) => {
-      const selected = selectedModelFrom(config.model, coordinate)
+      const selected = selectedModelFrom(config.model, catalog, coordinate)
       return {
         model: coordinate,
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing }),
-        ...(config.model.revision === undefined ? {} : { catalogRevision: config.model.revision })
+        catalogRevision: selected.catalogRevision
       }
     },
     react: (request, key) => Effect.suspend(() => {
       let selected: SelectedModel
       try {
-        selected = selectedModelFrom(config.model, request.model)
+        selected = selectedModelFrom(config.model, catalog, request.model)
       } catch (error) {
         return Effect.succeed<Action>({
           kind: "fail",
@@ -181,7 +228,7 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
         provider: selected.provider,
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        ...(selected.output === undefined ? {} : { output: selected.output })
+        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
       })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(binding))
     })
@@ -192,9 +239,9 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
-const layerLane = (config: ServerConfigValue, options: ThreadsOptions) =>
+const layerLane = (config: ServerConfigValue, catalog: ModelCatalogState, options: ThreadsOptions) =>
   Layer.mergeAll(
-    options.infer ?? layerInferFrom(config),
+    options.infer ?? layerInferFrom(config, catalog),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -383,14 +430,16 @@ const manifestOf = async (directory: string): Promise<{ readonly manifest: Actor
 const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
-    const lane = layerLane(config, options)
+    const catalog = yield* ModelCatalogStore
+    const lane = layerLane(config, catalog, options)
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
     const builtIn = modelIsConfigured(config)
       ? builtInActor({
-          model: config.model.default!,
-          contextWindowTokens: (model) => selectedModelFrom(config.model, model).contextWindowTokens
+          provider: config.model.default!.provider,
+          default_model: config.model.default!.model_id,
+          contextWindowTokens: (model) => selectedModelFrom(config.model, catalog, model).contextWindowTokens
         })
       : builtInActor()
     const root = resolve(config.actors)
@@ -561,5 +610,5 @@ const make = (options: ThreadsOptions) =>
 
 // layerThreads is the host, the assembly, and the driver: the Threads the routes consume and the
 // DriverGauge /healthz reads, built once and closed with the scope.
-export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig> =>
+export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(make(options))

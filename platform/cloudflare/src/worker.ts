@@ -199,7 +199,7 @@ const assemblyOf = (name: string, env: Env) => {
   const selected = models?.default ?? { provider: "unconfigured", model_id: "unconfigured" }
   const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
   const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
-  return actor(inferAgent(selected, [
+  return actor(inferAgent([
     codeMode([agentsPackage(), workspacePackage(), fetchPackage()]),
     reply,
     budget,
@@ -212,7 +212,10 @@ const assemblyOf = (name: string, env: Env) => {
       ...(keepRatio === undefined ? {} : { keepRatio })
     }),
     outputValidateOnce
-  ]))
+  ], {
+    provider: selected.provider,
+    default_model: selected.model_id
+  }))
 }
 
 // ActorHost runs one actor graph over one SQLite-backed Durable Object.

@@ -171,6 +171,7 @@ export {
   type FallbackOutputFragment,
   type OutputFallbackComponent,
   type OutputFragment,
+  type InferOptions,
   type Rendered
 } from "./runtime/agent"
 export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./components/code"

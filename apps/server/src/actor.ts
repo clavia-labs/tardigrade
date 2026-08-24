@@ -14,14 +14,14 @@ import {
   infer,
   outputValidateOnce,
   reply,
-  workspacePackage
+  workspacePackage,
+  type ModelCoordinateType
 } from "tardie"
 import { turnEpochOf } from "@clavia/tardigrade-code/turns"
 import { boundaryOf } from "tardie/boundary"
 import { projection, projectionsOf, RESERVED_ACTOR, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"
-import type { ModelCoordinate } from "tardie"
 
 // The actor this build serves: the reactors it runs, and the projections it declares over the logs
 // they write. Both halves belong together, because a projection is only meaningful to whoever knows
@@ -40,23 +40,30 @@ import type { ModelCoordinate } from "tardie"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export interface AssemblyModelPolicy {
-  readonly model: ModelCoordinate
-  readonly contextWindowTokens?: number | ((model: ModelCoordinate | undefined) => number)
+  readonly provider: string
+  readonly default_model: string
+  readonly contextWindowTokens?: number | ((model: ModelCoordinateType | undefined) => number)
 }
 
-export const UNCONFIGURED_MODEL: ModelCoordinate = { provider: "unconfigured", model_id: "unconfigured" }
+export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
+  provider: "unconfigured",
+  default_model: "unconfigured"
+}
 
-export const assemblyOf = (models: AssemblyModelPolicy = { model: UNCONFIGURED_MODEL }) =>
-  actor(infer(models.model, [
+export const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
+  actor(infer([
     codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
     compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
     outputValidateOnce
-  ]))
+  ], {
+    provider: models.provider,
+    default_model: models.default_model
+  }))
 
 // builtInActor declares the built-in assembly and its callable interface together.
-export const builtInActor = (models: AssemblyModelPolicy = { model: UNCONFIGURED_MODEL }) => defineActor({
+export const builtInActor = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) => defineActor({
   name: RESERVED_ACTOR,
   methods: agentMethods,
   actor: assemblyOf(models)

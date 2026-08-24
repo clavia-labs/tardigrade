@@ -135,11 +135,11 @@ export const dev = (options: DevOptions) => {
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
   const threads = Layer.provide(layerThreads({
     ...options.threads,
     actorRefresh: { debounceMillis: actorRefreshMillis }
-  }), config)
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
+  }), [config, catalog])
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).

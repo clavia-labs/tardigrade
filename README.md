@@ -125,12 +125,12 @@ const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
-const releaseModel = { provider: "openai", model_id: "gpt-5.2" } as const
+const releaseModel = { provider: "openai", default_model: "gpt-5.2" } as const
 
 const releaseAnalyst = defineActor({
   name: "release-analyst",
   methods: agentMethods,
-  actor: actor(infer(releaseModel, [
+  actor: actor(infer([
     instructions, // the agent's system prompt
     deploys,     // recent_deploys and its paired handler
     codeMode([
@@ -143,13 +143,13 @@ const releaseAnalyst = defineActor({
     compaction(), // bounded model context
     reply,       // results for parent agents
     outputValidateOnce // validates one structured result without correction
-  ]))
+  ], releaseModel))
 })
 ```
 
-`infer` selects an exact `{ provider, model_id }` coordinate and composes the components into an agent loop. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input? }` input and a string result.
+`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result. `model` is a model ID for that turn; it cannot change the actor's provider connection.
 
-`compaction(policy?)` bounds model context. The host resolves the selected model's window from its model directory. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
+`compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 
 ```ts
 const boundedContext = compaction({
@@ -190,7 +190,7 @@ const model = infer({
   baseUrl: "https://api.openai.com/v1",
   apiKey: process.env.OPENAI_API_KEY!,
   provider: releaseModel.provider,
-  model: releaseModel.model_id,
+  model: releaseModel.default_model,
   driver: "openai-responses",
   contextWindowTokens: 400_000
 })
@@ -223,7 +223,7 @@ console.log(completed)
 await host.close()
 ```
 
-The actor coordinate and model binding must match. The binding states its protocol and context window, so selection is checked before a request spends tokens.
+The actor provider and default model must match the binding. The binding states its protocol and context window, so selection is checked before a request spends tokens.
 
 </details>
 

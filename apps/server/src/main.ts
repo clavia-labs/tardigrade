@@ -21,8 +21,8 @@ const configLayer = layerFromEnv(process.env)
 
 // The host is built from the same configuration the routes read, and closed with the scope the
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
-const threads = Layer.provide(layerThreads(), configLayer)
 const catalog = Layer.provide(layerModelCatalog(), configLayer)
+const threads = Layer.provide(layerThreads(), [configLayer, catalog])
 
 const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
 

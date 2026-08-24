@@ -23,7 +23,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer({ provider, model_id }, [...]))) })` |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer([...], { provider, default_model })) })` |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
 | `stopWhen`, maximum steps, and retry options | `budgetFor`, `infer` policy, and domain components with explicit policy values |
@@ -60,7 +60,7 @@ Convert each structured result to `output({ name, schema })`. Send that contract
 
 ### Model binding
 
-Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to add its provider route, credential, model metadata, and exact `{ provider, model_id }` coordinate.
+Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to add the private provider connection and choose its default model. The server resolves model metadata from its catalog snapshot.
 
 List every existing model option and confirm that the selected binding represents it. A custom transport or required option belongs in an application-owned `Infer` layer and custom host. Do not silently drop a temperature, provider option, retry bound, output guarantee, or timeout that affects behavior.
 

@@ -3,18 +3,16 @@ import type { PlatformError } from "effect/PlatformError"
 import { FileSystem } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 import { MODEL_DRIVERS, type ModelDriver } from "@clavia/tardigrade-model/directory"
-import type { ModelPricing } from "tardie/usage"
 import {
   DEFAULT_MODEL_CATALOG_URL,
-  modelsDevCatalogOf,
-  type ModelMetadata
+  modelsDevCatalogOf
 } from "@clavia/tardigrade-model/metadata"
 
 import { configPathIn, parseFileConfig, type Env, type FileConfig } from "./config"
 
-// `tdg setup` asks for the endpoint coordinates and its output capability, then writes them down,
-// so the first command a person runs is the one that makes every later command work. It asks; it
-// never guesses, and it never reads a key out of the environment to store it.
+// `tdg setup` asks for a provider connection and default model, then writes them down, so the first
+// command a person runs is the one that makes every later command work. It never reads a key out
+// of the environment to store it.
 //
 // The key is written and never shown. It is not in the printed summary, not in `--json`, and not in
 // any failure this module raises: a person who ran the command in a shared terminal, a screen
@@ -141,42 +139,21 @@ export const PRESETS: ReadonlyArray<Preset> = [
   }
 ]
 
-// SetupAnswers is what the prompts collected: the values that become the file's `model` block.
-// A native guarantee includes the tool combination in the type, so neither the prompt nor a
-// programmatic caller can write half a capability (apps/server/src/config.ts, outputCapabilityOf).
-interface SetupCoordinates {
+// SetupAnswers is one private provider connection and the model selected as the host default.
+export interface SetupAnswers {
   readonly provider: string
   readonly baseUrl: string
   readonly model_id: string
   readonly apiKey: string
   readonly driver: ModelDriver
-  readonly contextWindowTokens: number
-  readonly maxOutputTokens?: number
-  readonly pricing?: ModelPricing
-  readonly catalogRevision?: string
 }
-
-export type SetupAnswers = SetupCoordinates &
-  (
-    | { readonly output: "native"; readonly outputWithTools: "true" | "false" }
-    | { readonly output: "none"; readonly outputWithTools?: never }
-  )
 
 const nonEmpty = (what: string) => (value: string): Effect.Effect<string, string> =>
   value.trim().length === 0 ? Effect.fail(`${what} cannot be empty`) : Effect.succeed(value.trim())
 
-const positiveIntegerText = (what: string) => (value: string): Effect.Effect<string, string> => {
-  const number = Number(value)
-  return Number.isSafeInteger(number) && number > 0 ? Effect.succeed(String(number)) : Effect.fail(`${what} must be a positive integer`)
-}
-
-const optionalPositiveIntegerText = (what: string) => (value: string): Effect.Effect<string, string> =>
-  value.trim() === "" ? Effect.succeed("") : positiveIntegerText(what)(value)
-
 export interface ListedModel {
   readonly id: string
   readonly name?: string
-  readonly metadata?: ModelMetadata
 }
 
 export interface ModelCatalogOptions {
@@ -190,17 +167,11 @@ export interface SetupPromptOptions {
     readonly provider?: string | undefined
     readonly model_id?: string | undefined
     readonly driver?: string | undefined
-    readonly contextWindowTokens?: number | undefined
-    readonly maxOutputTokens?: number | undefined
   }
   readonly catalog?: ModelCatalogOptions
 }
 
 type ModelPick = { readonly tag: "model"; readonly model: ListedModel } | { readonly tag: "manual" }
-
-type OutputPick =
-  | { readonly output: "native"; readonly outputWithTools: "true" | "false" }
-  | { readonly output: "none"; readonly outputWithTools?: never }
 
 export const modelsDevAt = async (
   provider: string,
@@ -220,8 +191,7 @@ export const modelsDevAt = async (
     revision,
     models: found?.models.map((model) => ({
       id: model.id,
-      ...(model.name === undefined ? {} : { name: model.name }),
-      metadata: model.metadata
+      ...(model.name === undefined ? {} : { name: model.name })
     })) ?? []
   }
 }
@@ -259,7 +229,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
   const current = options.current?.model_id?.trim()
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
   const manual = () => Prompt.text({
-    message: `${preset.modelExample === undefined ? "Model ID" : `Model ID, for example ${preset.modelExample}`}${catalog}`,
+    message: `${preset.modelExample === undefined ? "Default model ID" : `Default model ID, for example ${preset.modelExample}`}${catalog}`,
     ...(current === undefined || current.length === 0 ? {} : { default: current }),
     validate: nonEmpty("the model ID")
   })
@@ -273,7 +243,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
       models.unshift({ id: current, name: "Currently configured" })
     }
     const picked = yield* Prompt.autoComplete<ModelPick>({
-      message: `Choose a model${catalog}`,
+      message: `Choose the default model${catalog}`,
       filterLabel: "model",
       filterPlaceholder: "type to filter",
       choices: [
@@ -288,55 +258,12 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
     })
     selected = picked.tag === "model" ? picked.model : { id: yield* manual() }
   }
-  const discoveredContext = selected.metadata?.contextWindowTokens?.value
-  const contextWindowTokens = Number(yield* Prompt.text({
-    message: "Context window tokens",
-    ...((discoveredContext ?? options.current?.contextWindowTokens) === undefined
-      ? {}
-      : { default: String(discoveredContext ?? options.current?.contextWindowTokens) }),
-    validate: positiveIntegerText("the context window")
-  }))
-  const discoveredOutput = selected.metadata?.maxOutputTokens?.value
-  const maxOutput = yield* Prompt.text({
-    message: "Maximum output tokens, blank when the endpoint does not declare one",
-    ...((discoveredOutput ?? options.current?.maxOutputTokens) === undefined
-      ? {}
-      : { default: String(discoveredOutput ?? options.current?.maxOutputTokens) }),
-    validate: optionalPositiveIntegerText("the maximum output")
-  })
-  const maxOutputTokens = maxOutput.trim() === "" ? undefined : Number(maxOutput)
-  const pricing = selected.metadata?.pricing?.value
-  const output = yield* Prompt.select<OutputPick>({
-    message: "What structured output does this endpoint and model guarantee?",
-    choices: [
-      {
-        title: "Native, including tool calls",
-        description: "The provider accepts a strict response schema beside a tool list.",
-        value: { output: "native", outputWithTools: "true" }
-      },
-      {
-        title: "Native, without tool calls",
-        description: "The provider accepts a strict response schema only when the call offers no tools.",
-        value: { output: "native", outputWithTools: "false" }
-      },
-      {
-        title: "No native guarantee",
-        description: "Structured turns require an explicit local, repair, or delegated fallback.",
-        value: { output: "none" }
-      }
-    ]
-  })
   return {
     provider,
     baseUrl,
     model_id: selected.id,
     apiKey: Redacted.value(apiKey),
-    driver,
-    contextWindowTokens,
-    ...(maxOutputTokens === undefined ? {} : { maxOutputTokens }),
-    ...(pricing === undefined ? {} : { pricing }),
-    ...(catalogResult === undefined ? {} : { catalogRevision: catalogResult.revision }),
-    ...output
+    driver
   } satisfies SetupAnswers
 })
 
@@ -368,23 +295,12 @@ export const writeSetup = (
       ...held,
       model: {
         default: { provider: answers.provider, model_id: answers.model_id },
-        ...(answers.catalogRevision === undefined ? {} : { revision: answers.catalogRevision }),
         providers: {
           ...held.model?.providers,
           [answers.provider]: {
             baseUrl: answers.baseUrl,
             apiKey: answers.apiKey,
-            driver: answers.driver,
-            models: {
-              ...held.model?.providers?.[answers.provider]?.models,
-              [answers.model_id]: {
-                contextWindowTokens: answers.contextWindowTokens,
-                ...(answers.maxOutputTokens === undefined ? {} : { maxOutputTokens: answers.maxOutputTokens }),
-                ...(answers.pricing === undefined ? {} : { pricing: answers.pricing }),
-                output: answers.output,
-                ...(answers.outputWithTools === undefined ? {} : { outputWithTools: answers.outputWithTools })
-              }
-            }
+            driver: answers.driver
           }
         }
       }
@@ -402,12 +318,10 @@ export const writeSetup = (
 export const setupSummary = (path: string, answers: SetupAnswers): string =>
   [
     `wrote ${path}`,
-    `model ${answers.provider}/${answers.model_id}`,
+    `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
     `wire  ${answers.driver}`,
-    `input ${answers.contextWindowTokens} tokens`,
-    `limit ${answers.maxOutputTokens === undefined ? "undeclared" : `${answers.maxOutputTokens} output tokens`}`,
-    `output ${answers.output === "native" ? `native (${answers.outputWithTools === "true" ? "with tools" : "without tools"})` : "none"}`
+    `default ${answers.model_id}`
   ].join("\n")
 
 export const setupJson = (path: string, answers: SetupAnswers): {
@@ -416,11 +330,6 @@ export const setupJson = (path: string, answers: SetupAnswers): {
   readonly provider: string
   readonly model_id: string
   readonly driver: ModelDriver
-  readonly contextWindowTokens: number
-  readonly maxOutputTokens?: number
-  readonly pricing?: ModelPricing
-  readonly output: "native" | "none"
-  readonly outputWithTools?: boolean
   readonly apiKey: "stored"
 } => ({
   path,
@@ -428,10 +337,5 @@ export const setupJson = (path: string, answers: SetupAnswers): {
   baseUrl: answers.baseUrl,
   model_id: answers.model_id,
   driver: answers.driver,
-  contextWindowTokens: answers.contextWindowTokens,
-  ...(answers.maxOutputTokens === undefined ? {} : { maxOutputTokens: answers.maxOutputTokens }),
-  ...(answers.pricing === undefined ? {} : { pricing: answers.pricing }),
-  output: answers.output,
-  ...(answers.outputWithTools === undefined ? {} : { outputWithTools: answers.outputWithTools === "true" }),
   apiKey: "stored"
 })

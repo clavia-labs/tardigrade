@@ -16,7 +16,7 @@ import { actor, budgetFor, codeMode, compaction, infer, nativeOutput, reply, too
 import type { RlmR } from "./turn"
 
 const ROOT_LANE = "ag.root"
-const TEST_MODEL = { provider: "test", model_id: "test-model" } as const
+const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 
 // The headline: one ask, an emergent graph, one answer, library only.
 // The root's code spawns two children; the host births their lanes,
@@ -78,7 +78,7 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
 // in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
 const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
-  hosted(actor(infer(TEST_MODEL, [...components, reply, budgetFor({}), compaction(), nativeOutput])), mind, log)
+  hosted(actor(infer([...components, reply, budgetFor({}), compaction(), nativeOutput], TEST_MODEL)), mind, log)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {

@@ -125,33 +125,43 @@ describe("config", () => {
     expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
   })
 
-  test("the model directory resolves from one explicit JSON value", () => {
+  test("provider connections resolve from one explicit JSON value", () => {
     const config = readConfig({
       TARDIGRADE_MODELS: JSON.stringify({
         default: { provider: "openai", model_id: "gpt" },
-        revision: "catalog-1",
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
             apiKey: "secret",
-            driver: "openai-responses",
-            models: {
-              gpt: {
-                contextWindowTokens: 400_000,
-                pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
-                output: { guarantee: "native", withTools: true }
-              }
-            }
+            driver: "openai-responses"
           }
         }
       })
     })
     expect(config.model).toMatchObject({
       default: { provider: "openai", model_id: "gpt" },
-      revision: "catalog-1",
-      providers: { openai: { driver: "openai-responses", models: { gpt: { contextWindowTokens: 400_000 } } } }
+      providers: { openai: { driver: "openai-responses" } }
     })
     expect(() => readConfig({ TARDIGRADE_MODELS: "{" })).toThrow("TARDIGRADE_MODELS is invalid")
+  })
+
+  test("legacy model variables print a redacted replacement", () => {
+    const env = {
+      MODEL_PROVIDER: "openai",
+      MODEL_ID: "gpt-5.2",
+      MODEL_BASE_URL: "https://api.openai.com/v1",
+      MODEL_API_KEY: "secret-that-must-not-print"
+    }
+    let message = ""
+    try {
+      readConfig(env)
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+    expect(message).toContain("TARDIGRADE_MODELS")
+    expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
+    expect(message).toContain('"driver":"<protocol-driver>"')
+    expect(message).not.toContain(env.MODEL_API_KEY)
   })
 
   // Listening somewhere other than where the operator asked is worse than refusing to start.

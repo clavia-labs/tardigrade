@@ -4,7 +4,6 @@ import {
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
 import type { ModelCoordinate } from "tardie"
-import type { ModelPricing } from "tardie/usage"
 import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
@@ -40,42 +39,19 @@ export interface ModelCatalogConfig {
   readonly timeoutMillis: number
 }
 
-export interface ConfiguredModel {
-  readonly contextWindowTokens: number | undefined
-  readonly maxOutputTokens: number | undefined
-  readonly pricing?: ModelPricing
-  // What this endpoint and this model promise about a turn's declared output contract. A
-  // provider name proves nothing here: structured output is a property of the endpoint AND the
-  // model behind it, so an operator states it. Absent, a turn that declares a contract fails
-  // before it spends (platform/model/src/output.ts, capabilityOf).
-  readonly output: OutputCapabilityValue | undefined
-}
-
-// ModelProviderConfig is one provider route and the metadata for models selected through it.
+// ModelProviderConfig is one private provider connection. Public model metadata belongs to the
+// catalog snapshot, so changing models does not change connection configuration.
 export interface ModelProviderConfig {
   readonly baseUrl: string | undefined
   readonly apiKey: string | undefined
   readonly driver: ModelDriver | undefined
-  readonly models: Readonly<Record<string, ConfiguredModel>>
 }
 
-// ModelConfig holds provider routes and the coordinate used by the server's built-in actor.
+// ModelConfig holds private provider connections and the coordinate used by the built-in actor.
 export interface ModelConfig {
   readonly default: ModelCoordinate | undefined
-  readonly revision?: string
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
-
-export const OUTPUT_GUARANTEES = ["native", "none"] as const
-
-export type OutputGuarantee = (typeof OUTPUT_GUARANTEES)[number]
-
-// OutputCapabilityValue is the whole capability, so nothing about it is a default this process
-// chose. `withTools` says whether the schema may ride the same call as a tool list, which an
-// operator must state alongside a native guarantee rather than inherit.
-export type OutputCapabilityValue =
-  | { readonly guarantee: "none" }
-  | { readonly guarantee: "native"; readonly withTools: boolean }
 
 export interface ServerConfigValue {
   readonly port: number
@@ -109,31 +85,6 @@ const recordOf = (value: unknown): Record<string, unknown> | undefined =>
 const stringOf = (value: unknown): string | undefined =>
   typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
 
-const positiveIntegerOf = (value: unknown): number | undefined =>
-  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
-
-const pricingOf = (value: unknown): ModelPricing | undefined => {
-  const source = recordOf(value)
-  if (source === undefined) return undefined
-  const rate = (name: string): number | undefined => {
-    const found = source[name]
-    return typeof found === "number" && Number.isFinite(found) && found >= 0 ? found : undefined
-  }
-  const promptUsdPerToken = rate("promptUsdPerToken")
-  const completionUsdPerToken = rate("completionUsdPerToken")
-  if (promptUsdPerToken === undefined || completionUsdPerToken === undefined) {
-    throw new Error("model pricing must state non-negative promptUsdPerToken and completionUsdPerToken")
-  }
-  const cachedPromptUsdPerToken = rate("cachedPromptUsdPerToken")
-  const cacheWritePromptUsdPerToken = rate("cacheWritePromptUsdPerToken")
-  return {
-    promptUsdPerToken,
-    completionUsdPerToken,
-    ...(cachedPromptUsdPerToken === undefined ? {} : { cachedPromptUsdPerToken }),
-    ...(cacheWritePromptUsdPerToken === undefined ? {} : { cacheWritePromptUsdPerToken })
-  }
-}
-
 const coordinateOf = (value: unknown): ModelCoordinate | undefined => {
   const source = recordOf(value)
   if (source === undefined) return undefined
@@ -142,20 +93,41 @@ const coordinateOf = (value: unknown): ModelCoordinate | undefined => {
   return provider === undefined || model_id === undefined ? undefined : { provider, model_id }
 }
 
-const capabilityOf = (value: unknown): OutputCapabilityValue | undefined => {
-  if (value === undefined) return undefined
-  const source = recordOf(value)
-  if (source?.["guarantee"] === "none") return { guarantee: "none" }
-  if (source?.["guarantee"] === "native" && typeof source["withTools"] === "boolean") {
-    return { guarantee: "native", withTools: source["withTools"] }
+const LEGACY_MODEL_ENV = [
+  "MODEL_BASE_URL",
+  "MODEL_API_KEY",
+  "MODEL_ID",
+  "MODEL_PROVIDER",
+  "MODEL_OUTPUT_GUARANTEE",
+  "MODEL_OUTPUT_WITH_TOOLS"
+] as const
+
+const legacyModelError = (env: Env): Error | undefined => {
+  const present = LEGACY_MODEL_ENV.filter((name) => text(env, name) !== undefined)
+  if (present.length === 0) return undefined
+  const provider = text(env, "MODEL_PROVIDER") ?? "<provider>"
+  const model_id = text(env, "MODEL_ID") ?? "<model-id>"
+  const replacement = {
+    default: { provider, model_id },
+    providers: {
+      [provider]: {
+        baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
+        apiKey: "<api-key>",
+        driver: "<protocol-driver>"
+      }
+    }
   }
-  throw new Error("model output must be { guarantee: \"none\" } or { guarantee: \"native\", withTools: boolean }")
+  return new Error(
+    `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
+    `Run \`tdg setup\`, or set TARDIGRADE_MODELS to ${JSON.stringify(replacement)}. ` +
+    "Replace <api-key> and <protocol-driver>; the legacy API key was not printed."
+  )
 }
 
-// modelConfigOf validates the provider directory used by a directly hosted server.
+// modelConfigOf validates provider connections used by a directly hosted server.
 export const modelConfigOf = (value: unknown): ModelConfig => {
   const source = recordOf(value)
-  if (source === undefined) throw new Error("the model directory must be a JSON object")
+  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
   const providersSource = recordOf(source["providers"]) ?? {}
   const providers: Record<string, ModelProviderConfig> = {}
   for (const [name, rawProvider] of Object.entries(providersSource)) {
@@ -163,37 +135,22 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
     const provider = recordOf(rawProvider)
     if (provider === undefined) throw new Error(`provider ${JSON.stringify(name)} must be an object`)
     const driver = stringOf(provider["driver"])
-    const modelsSource = recordOf(provider["models"]) ?? {}
-    const models: Record<string, ConfiguredModel> = {}
-    for (const [modelId, rawModel] of Object.entries(modelsSource)) {
-      if (modelId.trim().length === 0) throw new Error(`provider ${JSON.stringify(name)} has an empty model id`)
-      const model = recordOf(rawModel)
-      if (model === undefined) throw new Error(`model ${name}/${modelId} must be an object`)
-      const pricing = model["pricing"] === undefined ? undefined : pricingOf(model["pricing"])
-      models[modelId] = {
-        contextWindowTokens: positiveIntegerOf(model["contextWindowTokens"]),
-        maxOutputTokens: positiveIntegerOf(model["maxOutputTokens"]),
-        ...(pricing === undefined ? {} : { pricing }),
-        output: capabilityOf(model["output"])
-      }
-    }
     providers[name] = {
       baseUrl: stringOf(provider["baseUrl"]),
       apiKey: stringOf(provider["apiKey"]),
-      driver: driver === undefined ? undefined : modelDriverOf(driver),
-      models
+      driver: driver === undefined ? undefined : modelDriverOf(driver)
     }
   }
   const selected = coordinateOf(source["default"])
-  const revision = stringOf(source["revision"])
   return {
     default: selected,
-    ...(revision === undefined ? {} : { revision }),
     providers
   }
 }
 
 const modelsFrom = (env: Env): ModelConfig => {
+  const legacy = legacyModelError(env)
+  if (legacy !== undefined) throw legacy
   const raw = text(env, "TARDIGRADE_MODELS")
   if (raw === undefined) return { default: undefined, providers: {} }
   try {
@@ -201,28 +158,6 @@ const modelsFrom = (env: Env): ModelConfig => {
   } catch (error) {
     throw new Error(`TARDIGRADE_MODELS is invalid: ${error instanceof Error ? error.message : String(error)}`)
   }
-}
-
-// outputCapabilityOf reads the complete structured-output promise stored by the CLI.
-export const outputCapabilityOf = (
-  guarantee: string | undefined,
-  withTools: string | undefined
-): OutputCapabilityValue | undefined => {
-  if (guarantee === undefined) {
-    if (withTools !== undefined) {
-      throw new Error("the model output capability states a tool combination with no guarantee; set the guarantee too")
-    }
-    return undefined
-  }
-  if (!(OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(guarantee)) {
-    throw new Error(`the model output guarantee must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(guarantee)}`)
-  }
-  if (guarantee === "none") return { guarantee: "none" }
-  if (withTools === "true") return { guarantee: "native", withTools: true }
-  if (withTools === "false") return { guarantee: "native", withTools: false }
-  throw new Error(
-    `a native model output guarantee must state whether it survives beside a tool list: set the tool combination to true or false, got ${JSON.stringify(withTools)}`
-  )
 }
 
 // A PORT that is not a number is an operator error, not a reason to fall back: silently listening

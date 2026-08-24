@@ -3,13 +3,11 @@ import { FileSystem } from "effect/FileSystem"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
   maxConcurrentLanesOf,
-  outputCapabilityOf,
   readConfig,
   type Env,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
 import type { ModelCoordinate } from "tardie"
-import type { ModelPricing } from "tardie/usage"
 import { modelDriverOf } from "@clavia/tardigrade-model/directory"
 
 // Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
@@ -49,18 +47,10 @@ export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE
 export interface FileConfig {
   readonly model?: {
     readonly default?: ModelCoordinate
-    readonly revision?: string
     readonly providers?: Readonly<Record<string, {
       readonly baseUrl?: string
       readonly apiKey?: string
       readonly driver?: string
-      readonly models?: Readonly<Record<string, {
-        readonly contextWindowTokens?: number
-        readonly maxOutputTokens?: number
-        readonly pricing?: ModelPricing
-        readonly output?: string
-        readonly outputWithTools?: string
-      }>>
     }>>
   }
   readonly url?: string
@@ -72,31 +62,6 @@ const stringField = (source: Record<string, unknown>, name: string): string | un
   return typeof value === "string" ? value : undefined
 }
 
-const positiveIntegerField = (source: Record<string, unknown>, name: string): number | undefined => {
-  const value = source[name]
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
-}
-
-const pricingField = (value: unknown): ModelPricing | undefined => {
-  if (typeof value !== "object" || value === null) return undefined
-  const source = value as Record<string, unknown>
-  const rate = (name: string): number | undefined => {
-    const found = source[name]
-    return typeof found === "number" && Number.isFinite(found) && found >= 0 ? found : undefined
-  }
-  const promptUsdPerToken = rate("promptUsdPerToken")
-  const completionUsdPerToken = rate("completionUsdPerToken")
-  if (promptUsdPerToken === undefined || completionUsdPerToken === undefined) return undefined
-  const cachedPromptUsdPerToken = rate("cachedPromptUsdPerToken")
-  const cacheWritePromptUsdPerToken = rate("cacheWritePromptUsdPerToken")
-  return {
-    promptUsdPerToken,
-    completionUsdPerToken,
-    ...(cachedPromptUsdPerToken === undefined ? {} : { cachedPromptUsdPerToken }),
-    ...(cacheWritePromptUsdPerToken === undefined ? {} : { cacheWritePromptUsdPerToken })
-  }
-}
-
 const modelCoordinateField = (value: unknown): ModelCoordinate | undefined => {
   if (typeof value !== "object" || value === null) return undefined
   const source = value as Record<string, unknown>
@@ -104,23 +69,6 @@ const modelCoordinateField = (value: unknown): ModelCoordinate | undefined => {
   const model_id = stringField(source, "model_id")?.trim()
   if (provider === undefined || provider.length === 0 || model_id === undefined || model_id.length === 0) return undefined
   return { provider, model_id }
-}
-
-const fileModelsOf = (value: unknown): NonNullable<NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]["models"]> => {
-  if (typeof value !== "object" || value === null) return {}
-  const models: Record<string, NonNullable<NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]["models"]>[string]> = {}
-  for (const [id, raw] of Object.entries(value)) {
-    if (typeof raw !== "object" || raw === null) continue
-    const source = raw as Record<string, unknown>
-    models[id] = {
-      ...(positiveIntegerField(source, "contextWindowTokens") === undefined ? {} : { contextWindowTokens: positiveIntegerField(source, "contextWindowTokens")! }),
-      ...(positiveIntegerField(source, "maxOutputTokens") === undefined ? {} : { maxOutputTokens: positiveIntegerField(source, "maxOutputTokens")! }),
-      ...(pricingField(source["pricing"]) === undefined ? {} : { pricing: pricingField(source["pricing"])! }),
-      ...(stringField(source, "output") === undefined ? {} : { output: stringField(source, "output")! }),
-      ...(stringField(source, "outputWithTools") === undefined ? {} : { outputWithTools: stringField(source, "outputWithTools")! })
-    }
-  }
-  return models
 }
 
 const fileProvidersOf = (value: unknown): NonNullable<NonNullable<FileConfig["model"]>["providers"]> => {
@@ -132,8 +80,7 @@ const fileProvidersOf = (value: unknown): NonNullable<NonNullable<FileConfig["mo
     providers[name] = {
       ...(stringField(source, "baseUrl") === undefined ? {} : { baseUrl: stringField(source, "baseUrl")! }),
       ...(stringField(source, "apiKey") === undefined ? {} : { apiKey: stringField(source, "apiKey")! }),
-      ...(stringField(source, "driver") === undefined ? {} : { driver: stringField(source, "driver")! }),
-      models: fileModelsOf(source["models"])
+      ...(stringField(source, "driver") === undefined ? {} : { driver: stringField(source, "driver")! })
     }
   }
   return providers
@@ -157,7 +104,6 @@ export const parseFileConfig = (raw: string): FileConfig => {
   return {
     model: {
       ...(modelCoordinateField(model["default"]) === undefined ? {} : { default: modelCoordinateField(model["default"])! }),
-      ...(stringField(model, "revision") === undefined ? {} : { revision: stringField(model, "revision")! }),
       providers: fileProvidersOf(model["providers"])
     },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
@@ -224,16 +170,7 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     {
       baseUrl: text(provider.baseUrl),
       apiKey: text(provider.apiKey),
-      driver: text(provider.driver) === undefined ? undefined : modelDriverOf(text(provider.driver)!),
-      models: Object.fromEntries(Object.entries(provider.models ?? {}).map(([id, metadata]) => [
-        id,
-        {
-          contextWindowTokens: metadata.contextWindowTokens,
-          maxOutputTokens: metadata.maxOutputTokens,
-          ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
-          output: outputCapabilityOf(text(metadata.output), text(metadata.outputWithTools))
-        }
-      ]))
+      driver: text(provider.driver) === undefined ? undefined : modelDriverOf(text(provider.driver)!)
     }
   ]))
   return {
@@ -246,7 +183,6 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     token: undefined,
     model: {
       default: model.default,
-      ...(model.revision === undefined ? {} : { revision: model.revision }),
       providers: fileProviders
     }
   }

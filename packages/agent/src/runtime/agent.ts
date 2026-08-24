@@ -208,15 +208,21 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
   }
 }
 
+// InferOptions selects the provider connection and default model for an infer root. A message may
+// replace default_model for its turn, while provider remains assembly policy.
+export interface InferOptions extends Partial<Omit<InferPolicy, "model">> {
+  readonly provider: string
+  readonly default_model: string
+}
+
 // infer composes an agent's child components and adds the model loop over their final view.
 // Inference and dispatch derive from the same child projection, so a tool remains routed against
 // the view that offered it while every child transition remains part of the root derivation.
 export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
-  model: ModelCoordinate,
   components: Cs,
-  policy: Partial<Omit<InferPolicy, "model">> = {}
+  options: InferOptions
 ): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
@@ -232,6 +238,10 @@ export const infer = <
   }
 
   renderView(viewOf([]))
+  if (options.provider.trim().length === 0) throw new Error("infer provider cannot be empty")
+  if (options.default_model.trim().length === 0) throw new Error("infer default_model cannot be empty")
+  const { provider, default_model, ...policy } = options
+  const model: ModelCoordinate = { provider, model_id: default_model }
   const inference = inferReactorFor({ ...policy, model }, (log) => renderView(viewOf(log))) as Reactor<R>
   const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
 

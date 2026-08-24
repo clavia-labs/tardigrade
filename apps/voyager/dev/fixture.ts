@@ -66,7 +66,7 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // loop wants: the forest on screen is the forest this session made.
 const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:", PORT: String(FIXTURE_PORT) }))
 
-const threads = Layer.provide(layerThreads({ infer: layerScripted }), config)
+const threads = Layer.provide(layerThreads({ infer: layerScripted }), [config, layerModelCatalogUnavailable])
 
 const app = Layer.provideMerge(serve({ disableLogger: true }), [
   BunHttpServer.layer({ port: FIXTURE_PORT }),

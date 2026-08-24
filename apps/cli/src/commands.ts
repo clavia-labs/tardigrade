@@ -128,7 +128,7 @@ const settle = (
 // that fixes it and stops there: the process still boots, still answers every read, and every turn
 // it is asked to run fails with the server's own sentence.
 export const NO_MODEL_NOTICE =
-  "no model is configured, so reads work and turns fail. Run `tdg setup` to configure a provider and default model."
+  "no provider connection is configured, so reads work and turns fail. Run `tdg setup` to configure a provider and default model."
 
 // asking is only honest at a terminal. A boot inside CI, a container, or a script has no one to
 // answer, and a prompt there waits forever on input that never arrives, so those boots take the
@@ -145,7 +145,7 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
   })).pipe(
     Command.withDescription(
-      "Ask for a provider, a model id, and an API key, and write them to ~/.tardigrade/config.json at 0600. The key is stored and never printed back."
+      "Ask for a provider connection and default model, then write them to ~/.tardigrade/config.json at 0600. The key is stored and never printed back."
     ),
     Command.withExamples([
       { command: "tdg setup", description: "Answer four prompts and write the file" }
