@@ -15,6 +15,7 @@ import {
   type EventRow,
   type Health,
   type MethodAccepted,
+  type MethodSummary,
   type Projections,
   type TurnView
 } from "./contract"
@@ -121,6 +122,8 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (thread: string, event: Append) => Promise<Accepted>
+  // methods lists the selected actor's callable interface and JSON Schema documents.
+  readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // invoke commits one declared method call and returns its durable handle.
   readonly invoke: <const Name extends keyof M & string>(
     thread: string,
@@ -263,6 +266,7 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
     events: (thread, events = {}) =>
       run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
     append,
+    methods: () => run(api.methods.methods({ params: { actor } })),
     invoke: (thread, name, call) =>
       run(api.methods.invoke({
         params: { actor, id: thread, method: name },

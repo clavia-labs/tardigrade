@@ -246,9 +246,9 @@ describe("tdg dev", () => {
     expect(seen.index).toBe(200)
   })
 
-  test("run drives a brief to a completed turn with no model credentials", async () => {
+  test("call drives a message to completed with no model credentials", async () => {
     const seen = await booted(async (baseUrl) => {
-      const ran = await drive(baseUrl, ["run", "survey the log", "--thread", "root", "--id", "m1", "--poll", "10"])
+      const ran = await drive(baseUrl, ["call", "message", "{\"text\":\"survey the log\"}", "--thread", "root", "--id", "m1", "--poll", "10"])
       const listed = await drive(baseUrl, ["ls", "--json"])
       const logged = await drive(baseUrl, ["events", "root", "--types", "MessageReceived"])
       const ghost = await drive(baseUrl, ["events", "ghost"])

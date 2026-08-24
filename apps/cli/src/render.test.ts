@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { ThreadSummary, EventRow } from "@clavia/tardigrade-client"
 
-import { actorsTable, threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, table } from "./render"
+import { actorsTable, threadsTable, ABSENT, DEFAULT_DETAIL_WIDTH, ELLIPSIS, eventsTable, methodLines, methodsLines, table } from "./render"
 
 // The human rendering. A table is plain aligned text, so these assert on columns rather than on
 // escape sequences, and a value the projection did not carry reads as absent rather than as empty.
@@ -100,5 +100,25 @@ describe("methodLines", () => {
 
   test("a blocked call prints its reason", () => {
     expect(methodLines("root", "m1", { status: "blocked", reason: "budget" })).toBe("root m1 blocked\nbudget")
+  })
+})
+
+describe("methodsLines", () => {
+  test("shows the root schemas for a method", () => {
+    expect(methodsLines([{
+      name: "message",
+      input: {
+        dialect: "draft-2020-12",
+        schema: { $ref: "#/$defs/AgentMessageInput" },
+        definitions: { AgentMessageInput: { type: "object", required: ["text"] } }
+      },
+      output: { dialect: "draft-07", schema: { type: "string" }, definitions: {} }
+    }])).toBe(
+      "message\n  input  {\"type\":\"object\",\"required\":[\"text\"]}\n  output {\"type\":\"string\"}"
+    )
+  })
+
+  test("an actor with no methods says so", () => {
+    expect(methodsLines([])).toBe("no methods")
   })
 })

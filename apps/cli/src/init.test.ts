@@ -58,8 +58,9 @@ describe("initSummary", () => {
 
     expect(summary).toContain("created reviewer/actor.ts")
     expect(summary).toContain("cd reviewer")
-    expect(summary).toContain("tdg build actor.ts")
     expect(summary).toContain("tdg push actor.ts --target local")
+    expect(summary).not.toContain("tdg build actor.ts")
+    expect(summary).toContain("tdg call message")
     expect(summary).toContain("tdg dev")
     expect(summary).toContain('--actor reviewer')
   })

@@ -30,6 +30,7 @@ export type {
   Health,
   MethodAccepted,
   MethodInvocation,
+  MethodSummary,
   MethodState,
   Problem,
   ThreadNode,

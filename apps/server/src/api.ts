@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, Stream } from "effect"
+import { Clock, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -275,6 +275,13 @@ export const ServerApi = apiOf(agentProjections)
 // layerMethodsGroup invokes and reads the method declarations carried by the selected actor runtime.
 export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
   handlers
+    .handle("methods", ({ params }) =>
+      Effect.map(actorOf(params.actor), (threads) =>
+        Object.entries(threads.methods).map(([name, method]) => ({
+          name,
+          input: Schema.toJsonSchemaDocument(method.input),
+          output: Schema.toJsonSchemaDocument(method.output)
+        }))))
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
         const threads = yield* actorOf(params.actor)

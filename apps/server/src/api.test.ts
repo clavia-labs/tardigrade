@@ -158,6 +158,21 @@ const callMessage = async (base: string, thread: string, call: string, text: str
 }
 
 describe("actor methods", () => {
+  test("the actor exposes its method schemas", async () => {
+    const methods = await serving(async (base) =>
+      await (await get(base, "/v1/actors/default/methods")).json() as ReadonlyArray<{
+        readonly name: string
+        readonly input: { readonly schema?: unknown; readonly definitions?: Record<string, unknown> }
+        readonly output: { readonly schema?: unknown }
+      }>)
+    expect(methods.map((method) => method.name)).toEqual(["message"])
+    expect(methods[0]?.input.definitions?.["AgentMessageInput"]).toMatchObject({
+      type: "object",
+      required: ["text"]
+    })
+    expect(methods[0]?.output.schema).toMatchObject({ type: "string" })
+  })
+
   test("an invocation births a thread and exposes its completed state", async () => {
     const state = await serving((base) => callMessage(base, "alpha", "m1", "hello"))
     expect(state).toEqual({ status: "completed", output: "ok: hello" })

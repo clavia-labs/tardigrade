@@ -5,7 +5,7 @@ import { join, resolve } from "node:path"
 import type { ActorArtifactManifest } from "tardie"
 
 import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE, buildActor, type BuildActorOptions, type BuiltActor } from "./build"
-import { runCommandFor } from "./workflow"
+import { callCommandFor } from "./workflow"
 
 export const DEFAULT_ACTOR_DIRECTORY = ".tardigrade/actors"
 export const PUSH_PATH = "/v1/actors"
@@ -113,7 +113,7 @@ export const pushSummary = (pushed: PushedActor): string => {
       "  tdg dev",
       "",
       "then, in another terminal",
-      `  ${runCommandFor(pushed.manifest.name)}`
+      `  ${callCommandFor(pushed.manifest.name)}`
     )
   }
   return summary.join("\n")

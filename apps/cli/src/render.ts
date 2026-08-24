@@ -1,5 +1,4 @@
-import type { ActorSummary, ThreadSummary, EventRow } from "@clavia/tardigrade-client"
-import type { ActorMethodState } from "tardie"
+import type { ActorSummary, ThreadSummary, EventRow, MethodState, MethodSummary } from "@clavia/tardigrade-client"
 
 // What a command puts on stdout. Two renderings of the same value: aligned text for a person and
 // the client's own value for a pipe (`--json`), which is why every function here takes what the
@@ -88,10 +87,37 @@ export const eventsTable = (rows: ReadonlyArray<EventRow>, width = DEFAULT_DETAI
     )
 
 // methodLines renders a call handle, its durable status, and any terminal detail.
-export const methodLines = (thread: string, call: string, state: ActorMethodState<string>): string => {
+export const methodLines = (thread: string, call: string, state: MethodState): string => {
   const head = `${thread} ${call} ${state.status}`
-  if (state.status === "completed") return `${head}\n${state.output}`
+  if (state.status === "completed") {
+    const output = typeof state.output === "string" ? state.output : jsonOf(state.output)
+    return `${head}\n${output}`
+  }
   if (state.status === "failed") return `${head}\n${state.error}`
   if (state.status === "blocked") return `${head}\n${state.reason}`
   return head
 }
+
+const documentSchema = (document: unknown): unknown => {
+  if (typeof document !== "object" || document === null || !("schema" in document)) return document
+  const value = document as { readonly schema: unknown; readonly definitions?: unknown }
+  if (
+    typeof value.schema === "object" && value.schema !== null && "$ref" in value.schema &&
+    typeof value.schema.$ref === "string" && value.schema.$ref.startsWith("#/$defs/") &&
+    typeof value.definitions === "object" && value.definitions !== null
+  ) {
+    const name = value.schema.$ref.slice("#/$defs/".length)
+    return (value.definitions as Record<string, unknown>)[name] ?? value.schema
+  }
+  return value.schema
+}
+
+// methodsLines renders each method with the input and output schemas an author calls against.
+export const methodsLines = (methods: ReadonlyArray<MethodSummary>): string =>
+  methods.length === 0
+    ? "no methods"
+    : methods.map((method) => [
+      method.name,
+      `  input  ${JSON.stringify(documentSchema(method.input))}`,
+      `  output ${JSON.stringify(documentSchema(method.output))}`
+    ].join("\n")).join("\n\n")

@@ -58,6 +58,7 @@ setDefaultTimeout(BOOT_MS)
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
+  ["get", "/v1/actors/{actor}/methods"],
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
   ["post", "/v1/actors/{actor}/threads/{id}/methods/{method}"],
   ["get", "/v1/actors/{actor}/threads"],

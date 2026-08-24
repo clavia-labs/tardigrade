@@ -225,6 +225,15 @@ export const MethodState = Schema.Union([
 
 export type MethodState = typeof MethodState.Type
 
+// MethodSummary exposes one declared method and the JSON Schema documents for its input and output.
+export const MethodSummary = Schema.Struct({
+  name: Schema.String,
+  input: Schema.Unknown,
+  output: Schema.Unknown
+}).annotate({ identifier: "MethodSummary" })
+
+export type MethodSummary = typeof MethodSummary.Type
+
 export const Health = Schema.Struct({
   status: Schema.Literals(["resting", "driving"]),
   dirty: Schema.Finite
@@ -319,6 +328,11 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
 
 // methodsGroup turns typed actor input into a durable event and projects each call from the same log.
 export const methodsGroup = HttpApiGroup.make("methods").add(
+  HttpApiEndpoint.get("methods", "/v1/actors/:actor/methods", {
+    params: ActorParams,
+    success: Schema.Array(MethodSummary),
+    error: [UnknownActor.schema]
+  }),
   HttpApiEndpoint.post("invoke", "/v1/actors/:actor/threads/:id/methods/:method", {
     params: MethodParams,
     payload: MethodInvocation,

@@ -103,6 +103,17 @@ describe("the token", () => {
 })
 
 describe("a declared actor method", () => {
+  test("discovers method schemas at the actor", async () => {
+    answer = () => new Response(JSON.stringify([{
+      name: "message",
+      input: { dialect: "draft-2020-12", schema: { type: "object" }, definitions: {} },
+      output: { dialect: "draft-2020-12", schema: { type: "string" }, definitions: {} }
+    }]), { status: 200, headers: { "content-type": "application/json" } })
+    const methods = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).methods()
+    expect(methods[0]?.name).toBe("message")
+    expect(lastUrl().pathname).toBe("/v1/actors/default/methods")
+  })
+
   test("invokes the selected method with its typed input", async () => {
     answer = () => new Response(JSON.stringify({
       actor: "default",
