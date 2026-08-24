@@ -162,6 +162,8 @@ const canAsk = (): boolean => process.stdin.isTTY === true
 
 export const NON_INTERACTIVE_SETUP =
   "tdg setup needs all declarative flags when stdin is not interactive; see `tdg setup --help`"
+export const NON_INTERACTIVE_INIT =
+  "tdg init needs all provider flags when stdin is not interactive; see `tdg init --help`"
 
 export const setupCommand = Command.make("setup", {
   provider: setupProvider,
@@ -211,23 +213,50 @@ export const initCommand = Command.make("init", {
     Flag.withDescription("Replace actor.ts when it already exists."),
     Flag.withDefault(false)
   ),
+  provider: setupProvider,
+  baseUrl: setupBaseUrl,
+  driver: setupDriver,
+  credentialEnv: setupCredentialEnv,
+  defaultModel: setupDefaultModel,
   json
 }, (flags) =>
   Effect.gen(function*() {
+    const cli = yield* Cli
     const directory = stated(flags.dir)
+    const declared = yield* Effect.try({
+      try: () => setupAnswersFrom({
+        provider: stated(flags.provider),
+        baseUrl: stated(flags.baseUrl),
+        driver: stated(flags.driver),
+        credentialEnv: stated(flags.credentialEnv),
+        defaultModel: stated(flags.defaultModel)
+      }, cli.env, "tdg init"),
+      catch: userErrorOf
+    })
+    const answers = declared ?? (canAsk()
+      ? yield* Effect.mapError(setupPrompt(), userErrorOf)
+      : yield* userErrorOf(NON_INTERACTIVE_INIT))
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(flags.name, {
+        cwd: cli.cwd,
         ...(directory === undefined ? {} : { directory }),
+        model: { provider: answers.provider, defaultModel: answers.model_id },
         force: flags.force
       }),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf(initialized) : initSummary(initialized))
+    const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+    yield* Console.log(flags.json
+      ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
+      : `${setupSummary(files, answers)}\n\n${initSummary(initialized, cli.cwd)}`)
   })).pipe(
-    Command.withDescription("Create an editable actor from the bundled quickstart."),
+    Command.withDescription("Create an editable actor and configure its first provider connection."),
     Command.withExamples([
-      { command: "tdg init researcher", description: "Create researcher/actor.ts and print the local workflow" },
-      { command: "tdg init reviewer --dir actors/reviewer", description: "Create the actor in a stated directory" }
+      { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
+      {
+        command: "tdg init researcher --provider openrouter --base-url https://openrouter.ai/api/v1 --driver openai-chat-completions --credential-env OPENROUTER_API_KEY --default-model anthropic/claude-sonnet-4-6",
+        description: "Create a ready actor from explicit values"
+      }
     ])
   )
 
@@ -533,5 +562,5 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, methodsCommand, callCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([initCommand, setupCommand, buildCommand, pushCommand, devCommand, actorsCommand, methodsCommand, callCommand, lsCommand, eventsCommand])
 )

@@ -297,8 +297,12 @@ export interface SetupFlags {
   readonly defaultModel?: string | undefined
 }
 
-// setupAnswersFrom resolves a complete declarative setup and reads its credential by name.
-export const setupAnswersFrom = (flags: SetupFlags, env: Env): SetupAnswers | undefined => {
+// setupAnswersFrom resolves a complete declarative provider selection and reads its credential by name.
+export const setupAnswersFrom = (
+  flags: SetupFlags,
+  env: Env,
+  command: "tdg init" | "tdg setup" = "tdg setup"
+): SetupAnswers | undefined => {
   const fields = {
     provider: flags.provider?.trim(),
     "base-url": flags.baseUrl?.trim(),
@@ -308,7 +312,7 @@ export const setupAnswersFrom = (flags: SetupFlags, env: Env): SetupAnswers | un
   }
   if (Object.values(fields).every((value) => value === undefined)) return undefined
   const missing = Object.entries(fields).flatMap(([name, value]) => value === undefined || value.length === 0 ? [`--${name}`] : [])
-  if (missing.length > 0) throw new Error(`declarative setup requires ${missing.join(", ")}`)
+  if (missing.length > 0) throw new Error(`${command} requires ${missing.join(", ")} when provider flags are used`)
   const driver = fields.driver!
   if (!MODEL_DRIVERS.some((candidate) => candidate === driver)) {
     throw new Error(`--driver must be one of ${MODEL_DRIVERS.join(", ")}, got ${JSON.stringify(driver)}`)
@@ -319,7 +323,7 @@ export const setupAnswersFrom = (flags: SetupFlags, env: Env): SetupAnswers | un
   }
   const credential = env[credentialEnv]?.trim()
   if (credential === undefined || credential.length === 0) {
-    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun tdg setup`)
+    throw new Error(`${credentialEnv} is not set; inject it as a secret environment variable and rerun ${command}`)
   }
   return {
     provider: fields.provider!,

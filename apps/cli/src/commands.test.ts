@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
 import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
@@ -101,6 +104,7 @@ const drive = async (
     readonly answers?: Parameters<typeof clientOf>[1]
     readonly env?: Record<string, string | undefined>
     readonly ids?: ReadonlyArray<string>
+    readonly cwd?: string
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
@@ -108,7 +112,7 @@ const drive = async (
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
-    cwd: process.cwd(),
+    cwd: options.cwd ?? process.cwd(),
     openClient: () => clientOf(recorded, options.answers ?? {}),
     mintId: () => minted.shift() ?? "exhausted"
   }
@@ -148,13 +152,14 @@ describe("parsing", () => {
     expect(ran.lines.join("\n")).toContain("events")
   })
 
-  // Every command is a declaration, so a command that exists is a command the help names. `setup`
+  // Every command is a declaration, so a command that exists is a command the help names. `init`
   // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
-  test("the tree names setup, and its help says what it writes", async () => {
+  test("the tree starts with init, and setup says what it writes", async () => {
     const root = (await drive([])).lines.join("\n")
     for (const command of ["setup", "init", "build", "push", "actors", "methods", "call"]) {
       expect(root).toContain(command)
     }
+    expect(root.indexOf("init")).toBeLessThan(root.indexOf("setup"))
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
@@ -170,6 +175,46 @@ describe("parsing", () => {
     const ran = await drive(["setup"])
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("all declarative flags")
+  })
+
+  test("init gives agents a declarative path instead of prompting", async () => {
+    const ran = await drive(["init", "researcher"])
+    expect(ran.failed).toBe(true)
+    expect(failureText(ran)).toContain("all provider flags")
+  })
+
+  test("init writes one matching actor, connection, and credential", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-init-command-"))
+    try {
+      const ran = await drive([
+        "init",
+        "researcher",
+        "--provider",
+        "openrouter",
+        "--base-url",
+        "https://openrouter.ai/api/v1",
+        "--driver",
+        "openai-chat-completions",
+        "--credential-env",
+        "OPENROUTER_API_KEY",
+        "--default-model",
+        "anthropic/claude-sonnet-4-6",
+        "--json"
+      ], { cwd, env: { OPENROUTER_API_KEY: "private-key" } })
+      const directory = join(cwd, "researcher")
+      const actor = await readFile(join(directory, "actor.ts"), "utf8")
+      const config = await readFile(join(directory, "tardigrade.jsonc"), "utf8")
+      const secrets = await readFile(join(directory, ".env"), "utf8")
+
+      expect(ran.failed).toBe(false)
+      expect(actor).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
+      expect(config).toContain('"provider": "openrouter"')
+      expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
+      expect(secrets).toContain('OPENROUTER_API_KEY="private-key"')
+      expect(ran.lines.join("\n")).not.toContain("private-key")
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   test("a command's help names its flags", async () => {
@@ -192,6 +237,9 @@ describe("parsing", () => {
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
     expect(initHelp).toContain("--force")
+    for (const flag of ["--provider", "--base-url", "--driver", "--credential-env", "--default-model"]) {
+      expect(initHelp).toContain(flag)
+    }
   })
 
   test("push requires an explicit target", async () => {

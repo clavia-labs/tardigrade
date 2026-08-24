@@ -13,16 +13,19 @@ Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 ## Quickstart
 
 ```bash
-tdg setup                  # provider connection and default model
-tdg dev                    # API and UI on http://localhost:4242
-tdg methods
-tdg call message '{"text":"read this repo and tell me what it does"}'
+tdg init researcher
+cd researcher
+tdg push actor.ts --target local
+tdg dev
+tdg methods --actor researcher
+tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
 ```
 
 ## Commands
 
 | Command | |
 | --- | --- |
+| `tdg init <name>` | Create an actor and configure its first provider connection |
 | `tdg setup` | Save a provider connection and choose the default model |
 | `tdg build <entry>` | Build and validate an actor artifact |
 | `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
@@ -47,14 +50,14 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
 | Project configuration | | `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc` |
-| Provider credentials | | Variables named by each provider's `env` list | what `tdg setup` saved in `.env` |
+| Provider credentials | | Variables named by each provider's `env` list | what `tdg init` or `tdg setup` saved in `.env` |
 
-`tdg setup` updates `tardigrade.jsonc` and stores the credential in the project `.env` at mode 0600. It never prints the credential back. Run setup again to add another provider connection or change the default model. Each run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory later to add another provider connection or change the project default. Each setup run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
-An agent or CI job can avoid prompts by stating every setup value. The credential value comes from the environment variable named by `--credential-env` and never appears in the command arguments:
+An agent or CI job can avoid prompts by stating every provider value during initialization. The credential value comes from the environment variable named by `--credential-env` and never appears in the command arguments:
 
 ```bash
-tdg setup \
+tdg init researcher \
   --provider openrouter \
   --base-url https://openrouter.ai/api/v1 \
   --driver openai-chat-completions \
@@ -62,7 +65,7 @@ tdg setup \
   --default-model anthropic/claude-sonnet-4-6
 ```
 
-Partial declarative setup fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before either file changes.
+Partial declarative initialization fails and lists the missing flags. A missing `OPENROUTER_API_KEY` also fails before any project file changes. The same provider flags work with `tdg setup` after initialization.
 
 ```jsonc
 {
@@ -83,7 +86,7 @@ Partial declarative setup fails and lists the missing flags. A missing `OPENROUT
 OPENROUTER_API_KEY='your-key'
 ```
 
-Setup offers OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. It uses [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
+Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
 
 ## What the actor can reach
 
