@@ -26,7 +26,32 @@ cd platform/cloudflare
 bunx wrangler secret put TARDIGRADE_TOKEN
 ```
 
-Set `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_ID` to run model turns. `MODEL_API_KEY` should be a Wrangler secret. A host without model configuration records a failed turn that names the missing configuration.
+Store the model directory as a Wrangler secret:
+
+```bash
+cd platform/cloudflare
+bunx wrangler secret put TARDIGRADE_MODELS
+```
+
+The value is JSON. It names the default coordinate, provider routes, credentials, and metadata used before a model request spends tokens:
+
+```json
+{
+  "default": { "provider": "openai", "model_id": "gpt-5.2" },
+  "providers": {
+    "openai": {
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "...",
+      "driver": "openai-responses",
+      "models": {
+        "gpt-5.2": { "contextWindowTokens": 400000, "maxOutputTokens": 128000 }
+      }
+    }
+  }
+}
+```
+
+A host without model configuration records a failed turn that names the missing configuration.
 
 ## HTTP shapes
 
@@ -83,16 +108,6 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
 | `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
-| `MODEL_BASE_URL` | unset | Selects the model API endpoint |
-| `MODEL_API_KEY` | unset | Authenticates the model API request |
-| `MODEL_ID` | unset | Selects the model |
-| `MODEL_SONNET_ID` | `MODEL_ID` | Selects the model for `sonnet` briefs |
-| `MODEL_OPUS_ID` | `MODEL_ID` | Selects the model for `opus` briefs |
-| `MODEL_HAIKU_ID` | `MODEL_ID` | Selects the model for `haiku` briefs |
-| `MODEL_PROVIDER` | unset | Supplies an optional provider hint |
-| `MODEL_CONTEXT_WINDOW_TOKENS` | `1000000` in `wrangler.jsonc`; framework fallback `128000` | Declares the default model context window used by compaction |
-| `MODEL_SONNET_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `sonnet` model context window |
-| `MODEL_OPUS_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `opus` model context window |
-| `MODEL_HAIKU_CONTEXT_WINDOW_TOKENS` | default model window | Declares the `haiku` model context window |
+| `TARDIGRADE_MODELS` | unset | Supplies the model directory as secret JSON |
 
 `wrangler.jsonc` also makes the D1 registry binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.

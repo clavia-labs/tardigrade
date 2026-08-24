@@ -76,11 +76,8 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
-      baseUrl: undefined,
-      apiKey: undefined,
-      id: undefined,
-      provider: undefined,
-      output: undefined
+      default: undefined,
+      providers: {}
     })
   })
 
@@ -91,11 +88,7 @@ describe("config", () => {
       TARDIGRADE_ACTORS: "/var/lib/actors",
       TARDIGRADE_ACTOR_DATA: "/var/lib/actor-data",
       TARDIGRADE_MAX_CONCURRENT_LANES: "7",
-      TARDIGRADE_TOKEN: "secret",
-      MODEL_BASE_URL: "https://api.example.com",
-      MODEL_API_KEY: "key",
-      MODEL_ID: "a-model",
-      MODEL_PROVIDER: "openai"
+      TARDIGRADE_TOKEN: "secret"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("/var/lib/agents.sqlite")
@@ -103,8 +96,36 @@ describe("config", () => {
     expect(config.actorData).toBe("/var/lib/actor-data")
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
-    expect(config.model.baseUrl).toBe("https://api.example.com")
-    expect(config.model.provider).toBe("openai")
+    expect(config.model).toEqual({ default: undefined, providers: {} })
+  })
+
+  test("the model directory resolves from one explicit JSON value", () => {
+    const config = readConfig({
+      TARDIGRADE_MODELS: JSON.stringify({
+        default: { provider: "openai", model_id: "gpt" },
+        revision: "catalog-1",
+        providers: {
+          openai: {
+            baseUrl: "https://api.openai.com/v1",
+            apiKey: "secret",
+            driver: "openai-responses",
+            models: {
+              gpt: {
+                contextWindowTokens: 400_000,
+                pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
+                output: { guarantee: "native", withTools: true }
+              }
+            }
+          }
+        }
+      })
+    })
+    expect(config.model).toMatchObject({
+      default: { provider: "openai", model_id: "gpt" },
+      revision: "catalog-1",
+      providers: { openai: { driver: "openai-responses", models: { gpt: { contextWindowTokens: 400_000 } } } }
+    })
+    expect(() => readConfig({ TARDIGRADE_MODELS: "{" })).toThrow("TARDIGRADE_MODELS is invalid")
   })
 
   // Listening somewhere other than where the operator asked is worse than refusing to start.

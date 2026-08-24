@@ -1,9 +1,10 @@
 import { DurableObject } from "cloudflare:workers"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
+import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage, type ModelCoordinate } from "tardie"
 import type { Action } from "tardie/events"
-import { infer, modelAskOf, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
+import { infer } from "@clavia/tardigrade-model/model"
+import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -31,17 +32,7 @@ export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
   readonly REGISTRY: D1Database
   readonly LOADER: WorkerLoader
-  readonly MODEL_BASE_URL?: string
-  readonly MODEL_API_KEY?: string
-  readonly MODEL_ID?: string
-  readonly MODEL_SONNET_ID?: string
-  readonly MODEL_OPUS_ID?: string
-  readonly MODEL_HAIKU_ID?: string
-  readonly MODEL_PROVIDER?: string
-  readonly MODEL_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_SONNET_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
+  readonly TARDIGRADE_MODELS?: string
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MAX_CONCURRENT_LANES?: string
   readonly TARDIGRADE_ALARM_DELAY_MILLIS?: string
@@ -80,20 +71,94 @@ const actorRegistry = async (env: Env) => {
   return registry
 }
 
-const modelLayer = (env: Env) => {
-  if (env.MODEL_BASE_URL === undefined || env.MODEL_API_KEY === undefined || env.MODEL_ID === undefined) {
-    const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
+interface CloudflareModelMetadata {
+  readonly contextWindowTokens: number
+      readonly maxOutputTokens?: number
+      readonly pricing?: import("tardie/usage").ModelPricing
+  readonly output?: { readonly guarantee: "none" } | { readonly guarantee: "native"; readonly withTools: boolean }
+}
+
+interface CloudflareProvider {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly driver: ModelDriver
+  readonly models: Readonly<Record<string, CloudflareModelMetadata>>
+}
+
+interface CloudflareModels {
+  readonly default: ModelCoordinate
+  readonly providers: Readonly<Record<string, CloudflareProvider>>
+}
+
+const modelsFrom = (env: Env): CloudflareModels | undefined => {
+  if (env.TARDIGRADE_MODELS === undefined) return undefined
+  const parsed = JSON.parse(env.TARDIGRADE_MODELS) as {
+    readonly default?: unknown
+    readonly providers?: Readonly<Record<string, {
+      readonly baseUrl?: unknown
+      readonly apiKey?: unknown
+      readonly driver?: unknown
+      readonly models?: Readonly<Record<string, CloudflareModelMetadata>>
+    }>>
   }
-  const baseUrl = env.MODEL_BASE_URL
-  const apiKey = env.MODEL_API_KEY
+  const coordinate = parsed.default as { readonly provider?: unknown; readonly model_id?: unknown } | undefined
+  if (typeof coordinate?.provider !== "string" || typeof coordinate.model_id !== "string") {
+    throw new Error("TARDIGRADE_MODELS must declare default { provider, model_id }")
+  }
+  const providers: Record<string, CloudflareProvider> = {}
+  for (const [name, provider] of Object.entries(parsed.providers ?? {})) {
+    if (typeof provider.baseUrl !== "string" || typeof provider.apiKey !== "string" || typeof provider.driver !== "string") {
+      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} must declare baseUrl, apiKey, and driver`)
+    }
+    providers[name] = {
+      baseUrl: provider.baseUrl,
+      apiKey: provider.apiKey,
+      driver: modelDriverOf(provider.driver),
+      models: provider.models ?? {}
+    }
+  }
+  return { default: coordinate as ModelCoordinate, providers }
+}
+
+const selectedModelFrom = (models: CloudflareModels, coordinate: ModelCoordinate) => {
+  const provider = models.providers[coordinate.provider]
+  if (provider === undefined) throw new Error(`provider ${JSON.stringify(coordinate.provider)} is not configured; update TARDIGRADE_MODELS`)
+  const metadata = provider.models[coordinate.model_id]
+  if (metadata === undefined) throw new Error(`model metadata is missing for ${coordinate.provider}/${coordinate.model_id}`)
+  return { coordinate, provider, metadata }
+}
+
+const modelLayer = (env: Env) => {
+  const models = modelsFrom(env)
+  if (models === undefined) {
+    const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
+    return Layer.succeed(Infer)({
+      resolve: () => { throw new Error("no model is configured: set TARDIGRADE_MODELS") },
+      react: () => Effect.succeed(failed)
+    })
+  }
   return Layer.succeed(Infer, {
+    resolve: (coordinate) => {
+      const selected = selectedModelFrom(models, coordinate)
+      return {
+        model: coordinate,
+        contextWindowTokens: selected.metadata.contextWindowTokens,
+        ...(selected.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.metadata.maxOutputTokens })
+      }
+    },
     react: (request, key) => {
+      if (request.model === undefined) return Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
+      const selectedModel = selectedModelFrom(models, request.model)
       const selected = infer({
-        baseUrl,
-        apiKey,
-        model: modelIdOf(env, modelAskOf(request.trajectory)),
-        ...(env.MODEL_PROVIDER === undefined ? {} : { provider: env.MODEL_PROVIDER })
+        baseUrl: selectedModel.provider.baseUrl,
+        apiKey: selectedModel.provider.apiKey,
+        model: request.model.model_id,
+        driver: selectedModel.provider.driver,
+        provider: request.model.provider,
+        contextWindowTokens: selectedModel.metadata.contextWindowTokens,
+        ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
+        ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing }),
+        ...(selectedModel.metadata.output === undefined ? {} : { output: selectedModel.metadata.output })
       })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
     }
@@ -130,14 +195,19 @@ const optionalRatio = (raw: string | undefined, name: string): number | undefine
 
 const assemblyOf = (name: string, env: Env) => {
   if (!assemblies.has(name)) return undefined
+  const models = modelsFrom(env)
+  const selected = models?.default ?? { provider: "unconfigured", model_id: "unconfigured" }
   const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
   const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
-  return actor(inferAgent([
+  return actor(inferAgent(selected, [
     codeMode([agentsPackage(), workspacePackage(), fetchPackage()]),
     reply,
     budget,
     compaction({
-      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model),
+      ...(models === undefined ? {} : {
+        contextWindowTokens: (model: ModelCoordinate | undefined) =>
+          selectedModelFrom(models, model ?? models.default).metadata.contextWindowTokens
+      }),
       ...(fireRatio === undefined ? {} : { fireRatio }),
       ...(keepRatio === undefined ? {} : { keepRatio })
     }),

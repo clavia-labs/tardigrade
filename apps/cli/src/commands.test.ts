@@ -414,6 +414,6 @@ describe("dev asks only where someone can answer", () => {
   test("says what is missing when stdin is not a terminal", () => {
     expect(process.stdin.isTTY).not.toBe(true)
     expect(NO_MODEL_NOTICE).toContain("tdg setup")
-    expect(NO_MODEL_NOTICE).toContain("MODEL_BASE_URL")
+    expect(NO_MODEL_NOTICE).toContain("tdg setup")
   })
 })

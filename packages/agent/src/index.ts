@@ -30,8 +30,10 @@ export {
   DEFAULT_INFER_POLICY,
   type InferPolicy,
   type InferRequest,
+  type ModelResolution,
   type Render
 } from "./runtime/infer"
+export { ModelCoordinate, type ModelCoordinate as ModelCoordinateType } from "./model"
 
 // The turn's declared final response: the contract a caller states, the profile a binding can
 // send unchanged, and the implementation that obtains it. `output` is the whole declarative

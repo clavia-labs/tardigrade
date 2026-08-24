@@ -3,6 +3,9 @@ import {
   DEFAULT_MAX_CONCURRENT_LANES,
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
+import type { ModelCoordinate } from "tardie"
+import type { ModelPricing } from "tardie/usage"
+import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
@@ -22,18 +25,30 @@ export const DEFAULT_ACTORS = ".tardigrade/actors"
 
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
 
-// The model binding's coordinates. Absent values are absent rather than guessed: the model layer
-// decides what it can do without them, and the server does not invent an endpoint.
-export interface ModelConfig {
-  readonly baseUrl: string | undefined
-  readonly apiKey: string | undefined
-  readonly id: string | undefined
-  readonly provider: string | undefined
+export interface ConfiguredModel {
+  readonly contextWindowTokens: number | undefined
+  readonly maxOutputTokens: number | undefined
+  readonly pricing?: ModelPricing
   // What this endpoint and this model promise about a turn's declared output contract. A
   // provider name proves nothing here: structured output is a property of the endpoint AND the
   // model behind it, so an operator states it. Absent, a turn that declares a contract fails
   // before it spends (platform/model/src/output.ts, capabilityOf).
   readonly output: OutputCapabilityValue | undefined
+}
+
+// ModelProviderConfig is one provider route and the metadata for models selected through it.
+export interface ModelProviderConfig {
+  readonly baseUrl: string | undefined
+  readonly apiKey: string | undefined
+  readonly driver: ModelDriver | undefined
+  readonly models: Readonly<Record<string, ConfiguredModel>>
+}
+
+// ModelConfig holds provider routes and the coordinate used by the server's built-in actor.
+export interface ModelConfig {
+  readonly default: ModelCoordinate | undefined
+  readonly revision?: string
+  readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
 
 export const OUTPUT_GUARANTEES = ["native", "none"] as const
@@ -72,10 +87,107 @@ const text = (env: Env, name: string): string | undefined => {
   return trimmed.length === 0 ? undefined : trimmed
 }
 
-// MODEL_OUTPUT_GUARANTEE and MODEL_OUTPUT_WITH_TOOLS name a promise the process must be able to
-// keep, so a value nobody declared is an operator error rather than a reason to guess one. A
-// native guarantee has to say whether it survives beside a tool list, because a turn that offers
-// tools and declares a contract sends both on one call (platform/model/src/output.ts).
+const recordOf = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined
+
+const stringOf = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+
+const positiveIntegerOf = (value: unknown): number | undefined =>
+  typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
+
+const pricingOf = (value: unknown): ModelPricing | undefined => {
+  const source = recordOf(value)
+  if (source === undefined) return undefined
+  const rate = (name: string): number | undefined => {
+    const found = source[name]
+    return typeof found === "number" && Number.isFinite(found) && found >= 0 ? found : undefined
+  }
+  const promptUsdPerToken = rate("promptUsdPerToken")
+  const completionUsdPerToken = rate("completionUsdPerToken")
+  if (promptUsdPerToken === undefined || completionUsdPerToken === undefined) {
+    throw new Error("model pricing must state non-negative promptUsdPerToken and completionUsdPerToken")
+  }
+  const cachedPromptUsdPerToken = rate("cachedPromptUsdPerToken")
+  const cacheWritePromptUsdPerToken = rate("cacheWritePromptUsdPerToken")
+  return {
+    promptUsdPerToken,
+    completionUsdPerToken,
+    ...(cachedPromptUsdPerToken === undefined ? {} : { cachedPromptUsdPerToken }),
+    ...(cacheWritePromptUsdPerToken === undefined ? {} : { cacheWritePromptUsdPerToken })
+  }
+}
+
+const coordinateOf = (value: unknown): ModelCoordinate | undefined => {
+  const source = recordOf(value)
+  if (source === undefined) return undefined
+  const provider = stringOf(source["provider"])
+  const model_id = stringOf(source["model_id"])
+  return provider === undefined || model_id === undefined ? undefined : { provider, model_id }
+}
+
+const capabilityOf = (value: unknown): OutputCapabilityValue | undefined => {
+  if (value === undefined) return undefined
+  const source = recordOf(value)
+  if (source?.["guarantee"] === "none") return { guarantee: "none" }
+  if (source?.["guarantee"] === "native" && typeof source["withTools"] === "boolean") {
+    return { guarantee: "native", withTools: source["withTools"] }
+  }
+  throw new Error("model output must be { guarantee: \"none\" } or { guarantee: \"native\", withTools: boolean }")
+}
+
+// modelConfigOf validates the provider directory used by a directly hosted server.
+export const modelConfigOf = (value: unknown): ModelConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("the model directory must be a JSON object")
+  const providersSource = recordOf(source["providers"]) ?? {}
+  const providers: Record<string, ModelProviderConfig> = {}
+  for (const [name, rawProvider] of Object.entries(providersSource)) {
+    if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
+    const provider = recordOf(rawProvider)
+    if (provider === undefined) throw new Error(`provider ${JSON.stringify(name)} must be an object`)
+    const driver = stringOf(provider["driver"])
+    const modelsSource = recordOf(provider["models"]) ?? {}
+    const models: Record<string, ConfiguredModel> = {}
+    for (const [modelId, rawModel] of Object.entries(modelsSource)) {
+      if (modelId.trim().length === 0) throw new Error(`provider ${JSON.stringify(name)} has an empty model id`)
+      const model = recordOf(rawModel)
+      if (model === undefined) throw new Error(`model ${name}/${modelId} must be an object`)
+      const pricing = model["pricing"] === undefined ? undefined : pricingOf(model["pricing"])
+      models[modelId] = {
+        contextWindowTokens: positiveIntegerOf(model["contextWindowTokens"]),
+        maxOutputTokens: positiveIntegerOf(model["maxOutputTokens"]),
+        ...(pricing === undefined ? {} : { pricing }),
+        output: capabilityOf(model["output"])
+      }
+    }
+    providers[name] = {
+      baseUrl: stringOf(provider["baseUrl"]),
+      apiKey: stringOf(provider["apiKey"]),
+      driver: driver === undefined ? undefined : modelDriverOf(driver),
+      models
+    }
+  }
+  const selected = coordinateOf(source["default"])
+  const revision = stringOf(source["revision"])
+  return {
+    default: selected,
+    ...(revision === undefined ? {} : { revision }),
+    providers
+  }
+}
+
+const modelsFrom = (env: Env): ModelConfig => {
+  const raw = text(env, "TARDIGRADE_MODELS")
+  if (raw === undefined) return { default: undefined, providers: {} }
+  try {
+    return modelConfigOf(JSON.parse(raw) as unknown)
+  } catch (error) {
+    throw new Error(`TARDIGRADE_MODELS is invalid: ${error instanceof Error ? error.message : String(error)}`)
+  }
+}
+
+// outputCapabilityOf reads the complete structured-output promise stored by the CLI.
 export const outputCapabilityOf = (
   guarantee: string | undefined,
   withTools: string | undefined
@@ -125,21 +237,17 @@ const maxConcurrentLanes = (env: Env): number => {
 }
 
 // readConfig resolves the environment into the value the process runs on.
-export const readConfig = (env: Env): ServerConfigValue => ({
-  port: port(env),
-  db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
-  actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
-  actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
-  maxConcurrentLanes: maxConcurrentLanes(env),
-  token: text(env, "TARDIGRADE_TOKEN"),
-  model: {
-    baseUrl: text(env, "MODEL_BASE_URL"),
-    apiKey: text(env, "MODEL_API_KEY"),
-    id: text(env, "MODEL_ID"),
-    provider: text(env, "MODEL_PROVIDER"),
-    output: outputCapabilityOf(text(env, "MODEL_OUTPUT_GUARANTEE"), text(env, "MODEL_OUTPUT_WITH_TOOLS"))
+export const readConfig = (env: Env): ServerConfigValue => {
+  return {
+    port: port(env),
+    db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
+    actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
+    actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
+    maxConcurrentLanes: maxConcurrentLanes(env),
+    token: text(env, "TARDIGRADE_TOKEN"),
+    model: modelsFrom(env)
   }
-})
+}
 
 // layerConfig provides a resolved configuration; layerFromEnv reads one out of an environment.
 export const layerConfig = (value: ServerConfigValue): Layer.Layer<ServerConfig> =>

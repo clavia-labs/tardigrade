@@ -21,6 +21,7 @@ import { boundaryOf } from "tardie/boundary"
 import { projection, projectionsOf, RESERVED_ACTOR, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"
+import type { ModelCoordinate } from "tardie"
 
 // The actor this build serves: the reactors it runs, and the projections it declares over the logs
 // they write. Both halves belong together, because a projection is only meaningful to whoever knows
@@ -38,20 +39,27 @@ import { inboundOf } from "./projections"
 // one root directory, the working directory of the process that booted, and `fetch` makes HTTP
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
-export const assemblyOf = () =>
-  actor(infer([
+export interface AssemblyModelPolicy {
+  readonly model: ModelCoordinate
+  readonly contextWindowTokens?: number | ((model: ModelCoordinate | undefined) => number)
+}
+
+export const UNCONFIGURED_MODEL: ModelCoordinate = { provider: "unconfigured", model_id: "unconfigured" }
+
+export const assemblyOf = (models: AssemblyModelPolicy = { model: UNCONFIGURED_MODEL }) =>
+  actor(infer(models.model, [
     codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
-    compaction(),
+    compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
     outputValidateOnce
   ]))
 
 // builtInActor declares the built-in assembly and its callable interface together.
-export const builtInActor = () => defineActor({
+export const builtInActor = (models: AssemblyModelPolicy = { model: UNCONFIGURED_MODEL }) => defineActor({
   name: RESERVED_ACTOR,
   methods: agentMethods,
-  actor: assemblyOf()
+  actor: assemblyOf(models)
 })
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a

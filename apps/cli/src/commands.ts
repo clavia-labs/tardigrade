@@ -128,7 +128,7 @@ const settle = (
 // that fixes it and stops there: the process still boots, still answers every read, and every turn
 // it is asked to run fails with the server's own sentence.
 export const NO_MODEL_NOTICE =
-  "no model is configured, so reads work and turns fail. Run `tdg setup` to write one, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID."
+  "no model is configured, so reads work and turns fail. Run `tdg setup` to configure a provider and default model."
 
 // asking is only honest at a terminal. A boot inside CI, a container, or a script has no one to
 // answer, and a prompt there waits forever on input that never arrives, so those boots take the
@@ -140,8 +140,7 @@ export const setupCommand = Command.make("setup", { json }, (flags) =>
     const cli = yield* Cli
     const home = homeOf(cli.env)
     if (home === undefined) return yield* userErrorOf(HOME_MISSING)
-    const file = yield* readFileConfig(cli.env)
-    const answers = yield* Effect.mapError(setupPrompt(file.model === undefined ? {} : { current: file.model }), userErrorOf)
+    const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
     const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
   })).pipe(
@@ -310,7 +309,7 @@ export const devCommand = Command.make("dev", {
       ? Effect.gen(function*() {
         const home = homeOf(cli.env)
         if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
-        const answers = yield* Effect.mapError(setupPrompt({ current: config.model }), userErrorOf)
+        const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
         const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
         yield* Console.log(setupSummary(path, answers))
         const written = yield* readFileConfig(cli.env)

@@ -18,6 +18,7 @@ import {
 } from "@clavia/tardigrade-core/communication/endpoint"
 import { declarationForTurn, decodeOutput, outputFrom, type OutputContract } from "./output"
 import { budgetDenied, budgetGranted } from "./events"
+import type { ModelCoordinate } from "./model"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
 // delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
@@ -60,6 +61,8 @@ export interface SpawnOptions {
   // that declared it. A raw schema stays reachable and is preflighted instead (spawn.test.ts,
   // "the output a spawn asks for").
   readonly outputs?: Readonly<Record<string, OutputContract>>
+  // models are the alternate coordinates model-authored code may select. An omitted model inherits the parent coordinate.
+  readonly models?: ReadonlyArray<ModelCoordinate>
   readonly actorNameOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
@@ -107,6 +110,7 @@ export const agentsPackage = (
   const worldOf = options.worldOf ?? (() => undefined)
   const defaultBudget = budgetPolicyOf(options.budget).defaultToolBudget
   const outputs = options.outputs ?? {}
+  const models = options.models ?? []
   const declared_ = Object.keys(outputs)
   return definePackage({
     name: "agents",
@@ -118,14 +122,22 @@ export const agentsPackage = (
     },
     docs: {
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. An omitted \`model\` inherits the parent coordinate${models.length === 0 ? "; this actor declares no alternatives" : `; alternatives are ${models.map((model) => `${model.provider}/${model.model_id}`).join(", ")}`}. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
-            model: { type: "string", enum: ["haiku", "sonnet", "opus"], description: "which model runs the agent; default sonnet" },
+            ...(models.length === 0 ? {} : {
+              model: {
+                type: "object",
+                properties: { provider: { type: "string" }, model_id: { type: "string" } },
+                required: ["provider", "model_id"],
+                enum: models,
+                description: "an alternate { provider, model_id }; omitted inherits the parent"
+              }
+            }),
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
           },
@@ -196,7 +208,20 @@ export const agentsPackage = (
           const outputDeclaration = output === undefined ? undefined : { name: output.name, schema: output.schema }
           // The model name rides the brief's envelope: the child's log records the choice, so its
           // Infer resolves it from trajectory and replay agrees by construction.
-          const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" ? a.model : undefined
+          const model = (() => {
+            if (a?.model === undefined) return undefined
+            if (typeof a.model !== "object" || a.model === null) return undefined
+            const coordinate = a.model as { readonly provider?: unknown; readonly model_id?: unknown }
+            if (typeof coordinate.provider !== "string" || coordinate.provider.trim().length === 0) return undefined
+            if (typeof coordinate.model_id !== "string" || coordinate.model_id.trim().length === 0) return undefined
+            return { provider: coordinate.provider.trim(), model_id: coordinate.model_id.trim() }
+          })()
+          if (a?.model !== undefined && model === undefined) {
+            return { error: "agents.run takes model as { provider, model_id }" }
+          }
+          if (model !== undefined && !models.some((allowed) => allowed.provider === model.provider && allowed.model_id === model.model_id)) {
+            return { error: `agents.run cannot use ${model.provider}/${model.model_id}; this actor does not declare that model` }
+          }
           // asked is the tool-call budget carried on the brief. It accepts a whole positive count
           // because rounding could turn a requested child into an exhausted run (spawn.test.ts,
           // "a fractional budget"). An absent budget takes the per-agent default.
@@ -215,7 +240,7 @@ export const agentsPackage = (
           const budget = yield* Effect.promise(() => reserve(ctx.callId, want))
           if (budget <= 0) return { error: "the run's budget is exhausted; no budget to spawn this agent" }
           // The child works as the same member the parent does: the actor rides every brief in the
-          // family, so a run's whole tree resolves connections identically.
+          // family, so a run's whole tree resolves providers identically.
           const actor = actorNameOf()
           // The parent's own shadow reading, never the tool args: an agent cannot set or unset it, so
           // a whole run family is shadow by construction from the fire alone. `world` rides along

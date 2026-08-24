@@ -8,6 +8,9 @@ import {
   type Env,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
+import type { ModelCoordinate } from "tardie"
+import type { ModelPricing } from "tardie/usage"
+import { modelDriverOf } from "@clavia/tardigrade-model/directory"
 
 // Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
 // the command line, then the environment, then the file `tdg setup` wrote, then the exported
@@ -45,14 +48,20 @@ export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE
 // the one value nothing ever prints back (setup.ts).
 export interface FileConfig {
   readonly model?: {
-    readonly baseUrl?: string
-    readonly apiKey?: string
-    readonly id?: string
-    readonly provider?: string
-    // What the endpoint and the model promise about a declared output contract, and whether that
-    // promise survives beside a tool list (apps/server/src/config.ts, ModelConfig).
-    readonly output?: string
-    readonly outputWithTools?: string
+    readonly default?: ModelCoordinate
+    readonly revision?: string
+    readonly providers?: Readonly<Record<string, {
+      readonly baseUrl?: string
+      readonly apiKey?: string
+      readonly driver?: string
+      readonly models?: Readonly<Record<string, {
+        readonly contextWindowTokens?: number
+        readonly maxOutputTokens?: number
+        readonly pricing?: ModelPricing
+        readonly output?: string
+        readonly outputWithTools?: string
+      }>>
+    }>>
   }
   readonly url?: string
   readonly token?: string
@@ -61,6 +70,73 @@ export interface FileConfig {
 const stringField = (source: Record<string, unknown>, name: string): string | undefined => {
   const value = source[name]
   return typeof value === "string" ? value : undefined
+}
+
+const positiveIntegerField = (source: Record<string, unknown>, name: string): number | undefined => {
+  const value = source[name]
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined
+}
+
+const pricingField = (value: unknown): ModelPricing | undefined => {
+  if (typeof value !== "object" || value === null) return undefined
+  const source = value as Record<string, unknown>
+  const rate = (name: string): number | undefined => {
+    const found = source[name]
+    return typeof found === "number" && Number.isFinite(found) && found >= 0 ? found : undefined
+  }
+  const promptUsdPerToken = rate("promptUsdPerToken")
+  const completionUsdPerToken = rate("completionUsdPerToken")
+  if (promptUsdPerToken === undefined || completionUsdPerToken === undefined) return undefined
+  const cachedPromptUsdPerToken = rate("cachedPromptUsdPerToken")
+  const cacheWritePromptUsdPerToken = rate("cacheWritePromptUsdPerToken")
+  return {
+    promptUsdPerToken,
+    completionUsdPerToken,
+    ...(cachedPromptUsdPerToken === undefined ? {} : { cachedPromptUsdPerToken }),
+    ...(cacheWritePromptUsdPerToken === undefined ? {} : { cacheWritePromptUsdPerToken })
+  }
+}
+
+const modelCoordinateField = (value: unknown): ModelCoordinate | undefined => {
+  if (typeof value !== "object" || value === null) return undefined
+  const source = value as Record<string, unknown>
+  const provider = stringField(source, "provider")?.trim()
+  const model_id = stringField(source, "model_id")?.trim()
+  if (provider === undefined || provider.length === 0 || model_id === undefined || model_id.length === 0) return undefined
+  return { provider, model_id }
+}
+
+const fileModelsOf = (value: unknown): NonNullable<NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]["models"]> => {
+  if (typeof value !== "object" || value === null) return {}
+  const models: Record<string, NonNullable<NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]["models"]>[string]> = {}
+  for (const [id, raw] of Object.entries(value)) {
+    if (typeof raw !== "object" || raw === null) continue
+    const source = raw as Record<string, unknown>
+    models[id] = {
+      ...(positiveIntegerField(source, "contextWindowTokens") === undefined ? {} : { contextWindowTokens: positiveIntegerField(source, "contextWindowTokens")! }),
+      ...(positiveIntegerField(source, "maxOutputTokens") === undefined ? {} : { maxOutputTokens: positiveIntegerField(source, "maxOutputTokens")! }),
+      ...(pricingField(source["pricing"]) === undefined ? {} : { pricing: pricingField(source["pricing"])! }),
+      ...(stringField(source, "output") === undefined ? {} : { output: stringField(source, "output")! }),
+      ...(stringField(source, "outputWithTools") === undefined ? {} : { outputWithTools: stringField(source, "outputWithTools")! })
+    }
+  }
+  return models
+}
+
+const fileProvidersOf = (value: unknown): NonNullable<NonNullable<FileConfig["model"]>["providers"]> => {
+  if (typeof value !== "object" || value === null) return {}
+  const providers: Record<string, NonNullable<NonNullable<FileConfig["model"]>["providers"]>[string]> = {}
+  for (const [name, raw] of Object.entries(value)) {
+    if (typeof raw !== "object" || raw === null) continue
+    const source = raw as Record<string, unknown>
+    providers[name] = {
+      ...(stringField(source, "baseUrl") === undefined ? {} : { baseUrl: stringField(source, "baseUrl")! }),
+      ...(stringField(source, "apiKey") === undefined ? {} : { apiKey: stringField(source, "apiKey")! }),
+      ...(stringField(source, "driver") === undefined ? {} : { driver: stringField(source, "driver")! }),
+      models: fileModelsOf(source["models"])
+    }
+  }
+  return providers
 }
 
 // parseFileConfig reads what it recognizes and ignores the rest. A file with a key nobody declared
@@ -80,14 +156,9 @@ export const parseFileConfig = (raw: string): FileConfig => {
     : {}
   return {
     model: {
-      ...(stringField(model, "baseUrl") === undefined ? {} : { baseUrl: stringField(model, "baseUrl")! }),
-      ...(stringField(model, "apiKey") === undefined ? {} : { apiKey: stringField(model, "apiKey")! }),
-      ...(stringField(model, "id") === undefined ? {} : { id: stringField(model, "id")! }),
-      ...(stringField(model, "provider") === undefined ? {} : { provider: stringField(model, "provider")! }),
-      ...(stringField(model, "output") === undefined ? {} : { output: stringField(model, "output")! }),
-      ...(stringField(model, "outputWithTools") === undefined
-        ? {}
-        : { outputWithTools: stringField(model, "outputWithTools")! })
+      ...(modelCoordinateField(model["default"]) === undefined ? {} : { default: modelCoordinateField(model["default"])! }),
+      ...(stringField(model, "revision") === undefined ? {} : { revision: stringField(model, "revision")! }),
+      providers: fileProvidersOf(model["providers"])
     },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
     ...(stringField(source, "token") === undefined ? {} : { token: stringField(source, "token")! })
@@ -148,6 +219,23 @@ export interface ServerFlags {
 export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {}): ServerConfigValue => {
   const base = readConfig(env)
   const model = file.model ?? {}
+  const fileProviders = Object.fromEntries(Object.entries(model.providers ?? {}).map(([name, provider]) => [
+    name,
+    {
+      baseUrl: text(provider.baseUrl),
+      apiKey: text(provider.apiKey),
+      driver: text(provider.driver) === undefined ? undefined : modelDriverOf(text(provider.driver)!),
+      models: Object.fromEntries(Object.entries(provider.models ?? {}).map(([id, metadata]) => [
+        id,
+        {
+          contextWindowTokens: metadata.contextWindowTokens,
+          maxOutputTokens: metadata.maxOutputTokens,
+          ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
+          output: outputCapabilityOf(text(metadata.output), text(metadata.outputWithTools))
+        }
+      ]))
+    }
+  ]))
   return {
     ...base,
     port: flags.port ?? base.port,
@@ -157,14 +245,9 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
     token: undefined,
     model: {
-      baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),
-      apiKey: resolve(undefined, base.model.apiKey, model.apiKey),
-      id: resolve(undefined, base.model.id, model.id),
-      provider: resolve(undefined, base.model.provider, model.provider),
-      output: outputCapabilityOf(
-        resolve(undefined, env["MODEL_OUTPUT_GUARANTEE"], model.output),
-        resolve(undefined, env["MODEL_OUTPUT_WITH_TOOLS"], model.outputWithTools)
-      )
+      default: model.default,
+      ...(model.revision === undefined ? {} : { revision: model.revision }),
+      providers: fileProviders
     }
   }
 }

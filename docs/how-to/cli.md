@@ -46,9 +46,11 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
-| Model | | `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_ID`, `MODEL_PROVIDER`, `MODEL_OUTPUT_GUARANTEE`, `MODEL_OUTPUT_WITH_TOOLS` | what `tdg setup` saved |
+| Model directory | | | what `tdg setup` saved |
 
-`tdg setup` writes the file at mode 0600 and never prints the key back. With no model configured the server still boots and still serves every read; it says so at boot and turns fail naming what is missing.
+`tdg setup` writes the file at mode 0600 and never prints the key back. Run it again to add another provider or model. Each run preserves earlier entries and selects the new `{ provider, model_id }` coordinate as the default. With no model configured the server still boots and still serves every read; it says so at boot and turns fail naming what is missing.
+
+Setup offers OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. It reads model windows, output limits, and pricing from [models.dev](https://models.dev), then asks you to confirm the endpoint's structured-output guarantee. The selected metadata is stored beside its provider route, so replay can resolve the same coordinate without a network lookup.
 
 ## What the actor can reach
 

@@ -65,10 +65,10 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, every route but `/healthz`, `/openapi.json`, and `/docs` needs `Authorization: Bearer` |
-| `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
-| `MODEL_OUTPUT_GUARANTEE` `MODEL_OUTPUT_WITH_TOOLS` | What this endpoint and this model promise about a declared output contract: `native` with `true` or `false` for whether the schema rides beside a tool list, or `none`. A provider name proves nothing here, so an undeclared endpoint serves a contract only through a mounted fallback |
+| `TARDIGRADE_MODELS` | Unset. JSON model directory for a directly hosted server |
+| Model directory | `tdg setup` writes provider routes, credentials, model metadata, and the default `{ provider, model_id }` coordinate to `~/.tardigrade/config.json` for `tdg dev` |
 
-The server boots without a model and serves every read; turns fail naming what is missing.
+The server boots without a model and serves every read; turns fail naming what is missing. A pushed actor may select any exact coordinate present in the directory. The built-in actor uses the configured default.
 
 ## Clients
 

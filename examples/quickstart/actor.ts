@@ -6,6 +6,7 @@ import {
 
 // actorName is the stable name used by build, push, and run.
 const actorName = "researcher"
+const actorModel = { provider: "openai", model_id: "gpt-5.2" } as const
 
 // actorInstructions is the main place to describe the job and its expected answer.
 const actorInstructions = `
@@ -22,7 +23,7 @@ export default defineActor({
   // methods declares the typed calls this actor accepts.
   methods: agentMethods,
   // actor carries component and output requirements into the host type.
-  actor: actor(infer([
+  actor: actor(infer(actorModel, [
     system(actorInstructions),
     // codeMode gives the model one code tool over the components listed here.
     codeMode([

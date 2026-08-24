@@ -11,6 +11,7 @@ import {
 } from "./index"
 
 const accepts = <T>(_value: T): void => {}
+const TEST_MODEL = { provider: "test", model_id: "test-model" } as const
 
 const empty: AgentComponent = {
   name: "empty",
@@ -20,8 +21,8 @@ const empty: AgentComponent = {
   })
 }
 
-const nativeOnly = actor(infer([empty, nativeOutput]))
-const repaired = actor(infer([empty, outputRepair]))
+const nativeOnly = actor(infer(TEST_MODEL, [empty, nativeOutput]))
+const repaired = actor(infer(TEST_MODEL, [empty, outputRepair]))
 
 type Requirements<A> = A extends Actor<infer R> ? R : never
 type RequiresNative<A> = NativeOutputSupport extends Requirements<A> ? true : false

@@ -12,6 +12,7 @@ import type { ToolSpec } from "../request"
 import { fallbackOf, type OutputFallback } from "../output"
 import { agentKeys } from "../events"
 import { inferReactorFor, type InferPolicy } from "./infer"
+import type { ModelCoordinate } from "../model"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "../turn"
@@ -213,8 +214,9 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
 export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
+  model: ModelCoordinate,
   components: Cs,
-  policy: Partial<InferPolicy> = {}
+  policy: Partial<Omit<InferPolicy, "model">> = {}
 ): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
@@ -230,7 +232,7 @@ export const infer = <
   }
 
   renderView(viewOf([]))
-  const inference = inferReactorFor(policy, (log) => renderView(viewOf(log))) as Reactor<R>
+  const inference = inferReactorFor({ ...policy, model }, (log) => renderView(viewOf(log))) as Reactor<R>
   const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
 
   return {
@@ -238,10 +240,12 @@ export const infer = <
     keys: rootKeys(combined.keys),
     derive: (log) => {
       const children = combined.derive(log)
+      const inferred = inference(log)
+      const selectingModel = inferred.some((candidate) => candidate.key.startsWith("ms:"))
       return {
         view: children.view,
-        transitions: [
-          ...inference(log),
+        transitions: selectingModel ? inferred : [
+          ...inferred,
           ...dispatch(log),
           ...children.transitions
         ]

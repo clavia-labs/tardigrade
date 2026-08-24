@@ -1,7 +1,7 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
-import { modelCalled, outputRejected, textReturned, turnFailed } from "../events"
+import { modelCalled, modelSelected, outputRejected, textReturned, turnFailed } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "../events"
 import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/turns"
@@ -18,6 +18,7 @@ import {
   type OutputFallback
 } from "../output"
 import type { ContextPolicy } from "../components/compaction"
+import type { ModelCoordinate } from "../model"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -30,6 +31,7 @@ import type { ContextPolicy } from "../components/compaction"
 // output implementation the assembly mounts, not here (src/components/repair.ts, RepairPolicy).
 export interface InferPolicy {
   readonly giveUpAfter: number
+  readonly model?: ModelCoordinate
 }
 
 export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3 }
@@ -40,6 +42,7 @@ export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3 }
 // about tools; the actor is the render's one owner.
 export interface InferRequest {
   readonly trajectory: ReadonlyArray<Event>
+  readonly model?: ModelCoordinate
   readonly system: string
   readonly tools: ReadonlyArray<import("../request").ToolSpec>
   // What the render truncates and where, stated by the assembly so the binding renders against
@@ -48,6 +51,38 @@ export interface InferRequest {
   // What the turn does when native structured output is unavailable for this call, and the
   // prompt that fallback needs. Absent means the assembly selected native output.
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
+}
+
+export interface ModelResolution {
+  readonly model: ModelCoordinate
+  readonly contextWindowTokens?: number
+  readonly maxOutputTokens?: number
+  readonly catalogRevision?: string
+}
+
+// selectedModelOf applies the visible model-selection order for one turn. The request is durable
+// input, so its selection wins over the actor default recorded in the assembly.
+export const selectedModelOf = (
+  head: Event,
+  policy?: ModelCoordinate
+): ModelCoordinate | undefined => {
+  const selected = (head as { readonly model?: unknown }).model
+  const requested = (
+    typeof selected === "object" &&
+    selected !== null &&
+    typeof (selected as { readonly provider?: unknown }).provider === "string" &&
+    (selected as { readonly provider: string }).provider !== "" &&
+    typeof (selected as { readonly model_id?: unknown }).model_id === "string" &&
+    (selected as { readonly model_id: string }).model_id !== ""
+  )
+      ? selected as ModelCoordinate
+      : undefined
+  return requested ?? policy
+}
+
+const recordedModelOf = (events: ReadonlyArray<Event>): ModelCoordinate | undefined => {
+  const selected = events.find((event) => event.type === "ModelSelected") as { readonly model?: unknown } | undefined
+  return selected?.model as ModelCoordinate | undefined
 }
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
@@ -64,7 +99,10 @@ const epochStamp = (epoch: number): { readonly epoch?: number } =>
 // recorded pair and the dispatch dedup absorbs the new work.
 export class Infer extends Context.Service<
   Infer,
-  { readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action> }
+  {
+    readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action>
+    readonly resolve?: (reference: ModelCoordinate) => ModelResolution
+  }
 >()("agent/Infer") {}
 
 // NativeOutputSupport is compile-time evidence that an injected Infer binding declares native structured output beside tools. nativeOutput carries this requirement into the host type (components/native-output.ts).
@@ -227,6 +265,7 @@ const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
   for (let i = turn.length - 1; i >= 0; i--) {
     const event = turn[i]!
     if (event.type === "ModelCalled" && Number((event as { epoch?: unknown }).epoch ?? 0) === epoch) n += 1
+    else if (event.type === "ModelSelected") continue
     else break
   }
   return n
@@ -277,8 +316,48 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = turnView(log)
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
-  const head = slice[0] as { id?: unknown }
+  const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
+  const trajectory = trajectoryOf(log)
+  const recordedModel = recordedModelOf(slice)
+  const model = recordedModel ?? selectedModelOf(head, policy.model)
+  if (model !== undefined && recordedModel === undefined) {
+    return [
+      transition({
+        key: `ms:${turn}`,
+        input: { turn, model },
+        act: (input) =>
+          Effect.gen(function* () {
+            const at = yield* Clock.currentTimeMillis
+            const binding = yield* Infer
+            return yield* Effect.try({
+              try: () => binding.resolve?.(input.model) ?? { model: input.model },
+              catch: (error) => error instanceof Error ? error.message : String(error)
+            }).pipe(Effect.match({
+              onSuccess: (resolved) => [modelSelected({ turn: input.turn, ...resolved, at })],
+              onFailure: (message) => [
+                {
+                  type: "ModelSelectionFailed",
+                  turn: input.turn,
+                  requested: input.model,
+                  error: message,
+                  at
+                } as Event,
+                turnFailed({
+                  error: message,
+                  cause: "inference_error",
+                  attempts: 0,
+                  attemptKey: `${input.turn}/model`,
+                  policy: { model: input.model },
+                  turn: input.turn,
+                  at
+                })
+              ]
+            }))
+          })
+      })
+    ]
+  }
   const epoch = turnEpochOf(log, turn)
   const died = diedAttempts(slice, epoch)
   const marks = slice.filter((e) => e.type === "ModelCalled").length
@@ -390,7 +469,8 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
         epoch,
         attempt,
         ordinal: marks,
-        trajectory: trajectoryOf(log),
+        trajectory,
+        model,
         render: rendered,
         // The declared policy, stamped on the ask: the contract's identity and the fallback the
         // assembly mounted. The mode the attempt actually ran in is the binding's to report, and
@@ -416,6 +496,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
           yield* events.append([
             modelCalled({
               callId: input.attempt,
+              ...(input.model === undefined ? {} : { model: input.model }),
               ordinal: input.ordinal,
               ...(input.stamp === undefined ? {} : { output: input.stamp }),
               turn: input.turn,
@@ -424,7 +505,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
             })
           ])
           const action = yield* (yield* Infer)
-            .react({ trajectory: input.trajectory, ...input.render }, input.attempt)
+            .react({ trajectory: input.trajectory, ...(input.model === undefined ? {} : { model: input.model }), ...input.render }, input.attempt)
             .pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)

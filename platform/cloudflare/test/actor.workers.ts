@@ -64,7 +64,7 @@ describe("cloudflare actor", () => {
     expect(events.map((row) => row.event.type)).toEqual([
       "ThreadCreated",
       "MessageReceived",
-      "ModelCalled",
+      "ModelSelectionFailed",
       "TurnFailed",
       "ReplyDelivered"
     ])

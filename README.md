@@ -125,10 +125,12 @@ const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
+const releaseModel = { provider: "openai", model_id: "gpt-5.2" } as const
+
 const releaseAnalyst = defineActor({
   name: "release-analyst",
   methods: agentMethods,
-  actor: actor(infer([
+  actor: actor(infer(releaseModel, [
     instructions, // the agent's system prompt
     deploys,     // recent_deploys and its paired handler
     codeMode([
@@ -145,15 +147,12 @@ const releaseAnalyst = defineActor({
 })
 ```
 
-`infer` composes the components into an agent loop. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input? }` input and a string result.
+`infer` selects an exact `{ provider, model_id }` coordinate and composes the components into an agent loop. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input? }` input and a string result.
 
-`compaction(policy?)` bounds model context. Its default uses a 128,000-token window, fires at 80 percent, and keeps a 50 percent tail. A platform that serves several models should supply their windows:
+`compaction(policy?)` bounds model context. The host resolves the selected model's window from its model directory. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 
 ```ts
-const windows = { default: 1_000_000, sonnet: 200_000 } as const
-
 const boundedContext = compaction({
-  contextWindowTokens: (model) => windows[model === "sonnet" ? "sonnet" : "default"],
   fireRatio: 0.8,
   keepRatio: 0.5
 })
@@ -188,9 +187,12 @@ import { infer } from "tardie/model"
 import { createBunHost } from "tardie/bun/host"
 
 const model = infer({
-  baseUrl: process.env.MODEL_BASE_URL!,
-  apiKey: process.env.MODEL_API_KEY!,
-  model: process.env.MODEL_ID!
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY!,
+  provider: releaseModel.provider,
+  model: releaseModel.model_id,
+  driver: "openai-responses",
+  contextWindowTokens: 400_000
 })
 
 const platform = Layer.mergeAll(
@@ -221,7 +223,7 @@ console.log(completed)
 await host.close()
 ```
 
-The model binding uses the OpenAI-compatible protocol by default. Add `provider: "bedrock"` to the model options for Bedrock.
+The actor coordinate and model binding must match. The binding states its protocol and context window, so selection is checked before a request spends tokens.
 
 </details>
 

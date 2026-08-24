@@ -10,9 +10,7 @@ import {
   CONFIG_DIR_MODE,
   CONFIG_MODE,
   homeOf,
-  listedModels,
-  modelListUrl,
-  modelsAt,
+  modelsDevAt,
   PRESETS,
   setupJson,
   setupSummary,
@@ -27,9 +25,14 @@ import {
 const KEY = "sk-do-not-print-me"
 
 const answers: SetupAnswers = {
+  provider: "openai",
   baseUrl: "https://api.example.com/v1",
-  id: "a-model",
+  model_id: "a-model",
   apiKey: KEY,
+  driver: "openai-responses",
+  contextWindowTokens: 128_000,
+  maxOutputTokens: 16_384,
+  pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
   output: "native",
   outputWithTools: "true"
 }
@@ -59,49 +62,28 @@ describe("the presets", () => {
     expect(PRESETS.find((preset) => preset.title === "Cloudflare AI Gateway")?.baseUrl).toBeUndefined()
     expect(PRESETS.find((preset) => preset.title === "OpenRouter")?.modelExample).toContain("/")
     expect(PRESETS.find((preset) => preset.title === "OpenRouter")?.credential).toBe("OpenRouter API key")
-    expect(PRESETS.some((preset) => preset.provider === "bedrock")).toBe(true)
+    expect(PRESETS.some((preset) => preset.provider === "amazon-bedrock")).toBe(true)
+    expect(PRESETS.some((preset) => preset.title === "Microsoft Foundry")).toBe(true)
+    expect(PRESETS.some((preset) => preset.title === "Google AI")).toBe(true)
+    expect(PRESETS.some((preset) => preset.title === "Google Vertex AI")).toBe(true)
     expect(PRESETS.some((preset) => preset.baseUrl === undefined && preset.provider === undefined)).toBe(true)
   })
 })
 
 describe("model discovery", () => {
-  test("the common list shape becomes stable searchable choices", () => {
-    expect(listedModels({
-      data: [
-        { id: "z/model", name: "Zed" },
-        { id: "a/model" },
-        { id: "z/model", name: "Zed latest" },
-        { name: "missing id" },
-        "b/model"
-      ]
-    })).toEqual([
-      { id: "a/model" },
-      { id: "b/model" },
-      { id: "z/model", name: "Zed latest" }
-    ])
-  })
-
-  test("modelsAt sends the credential to the base URL's discovery route", async () => {
-    let url = ""
-    let authorization = ""
-    const fetcher = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-      url = String(input)
-      authorization = new Headers(init?.headers).get("authorization") ?? ""
-      return Response.json({ data: [{ id: "provider/model" }] })
-    }) as typeof fetch
-    expect(await modelsAt("https://models.example/v1/", KEY, { fetch: fetcher, timeoutMillis: 100 })).toEqual([
-      { id: "provider/model" }
-    ])
-    expect(url).toBe(modelListUrl("https://models.example/v1/"))
-    expect(authorization).toBe(`Bearer ${KEY}`)
-  })
-
-  test("a refused discovery request is available to the manual fallback", async () => {
-    const fetcher = (async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) =>
-      new Response(undefined, { status: 404 })) as typeof fetch
-    expect(modelsAt("https://models.example/v1", KEY, { fetch: fetcher, timeoutMillis: 100 })).rejects.toThrow(
-      "model list returned 404"
-    )
+  test("models.dev supplies provider metadata with its revision", async () => {
+    const fetcher = (async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => Response.json({
+      openrouter: {
+        id: "openrouter",
+        models: {
+          "anthropic/claude": { id: "anthropic/claude", limit: { context: 200_000, output: 32_000 } }
+        }
+      }
+    }, { headers: { etag: "catalog-7" } })) as typeof fetch
+    expect(await modelsDevAt("openrouter", { fetch: fetcher })).toMatchObject({
+      revision: "catalog-7",
+      models: [{ id: "anthropic/claude", metadata: { contextWindowTokens: { value: 200_000 } } }]
+    })
   })
 })
 
@@ -115,16 +97,27 @@ describe("writeSetup", () => {
     expect(directory.mode & 0o777).toBe(CONFIG_DIR_MODE)
   })
 
-  test("the answers land as the model block, provider included when one was chosen", async () => {
-    const path = await write({ ...answers, provider: "bedrock" })
+  test("the answers land as one provider and an exact default coordinate", async () => {
+    const path = await write()
     const held = parseFileConfig(await readFile(path, "utf8"))
     expect(held.model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
-      provider: "bedrock",
-      output: "native",
-      outputWithTools: "true"
+      default: { provider: "openai", model_id: "a-model" },
+      providers: {
+        openai: {
+          baseUrl: "https://api.example.com/v1",
+          apiKey: KEY,
+          driver: "openai-responses",
+          models: {
+            "a-model": {
+              contextWindowTokens: 128_000,
+              maxOutputTokens: 16_384,
+              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
+              output: "native",
+              outputWithTools: "true"
+            }
+          }
+        }
+      }
     })
   })
 
@@ -137,7 +130,23 @@ describe("writeSetup", () => {
     const held = parseFileConfig(await readFile(path, "utf8"))
     expect(held.url).toBe("https://agents.example.com")
     expect(held.token).toBe("held")
-    expect(held.model?.id).toBe("a-model")
+    expect(held.model?.default).toEqual({ provider: "openai", model_id: "a-model" })
+  })
+
+  test("a later setup keeps prior providers and changes the default", async () => {
+    await write()
+    const path = await write({
+      ...answers,
+      provider: "openrouter",
+      model_id: "another-model",
+      baseUrl: "https://secondary.example.com/v1",
+      apiKey: "secondary-key"
+    })
+    const held = parseFileConfig(await readFile(path, "utf8"))
+    expect(Object.keys(held.model?.providers ?? {}).sort()).toEqual(["openai", "openrouter"])
+    expect(held.model?.default).toEqual({ provider: "openrouter", model_id: "another-model" })
+    expect(held.model?.providers?.openai?.models?.["a-model"]?.contextWindowTokens).toBe(128_000)
+    expect(held.model?.providers?.openrouter?.models?.["another-model"]?.contextWindowTokens).toBe(128_000)
   })
 
   // A rerun over a file left readable by everyone must narrow it, and `mode` on a write applies
@@ -151,30 +160,43 @@ describe("writeSetup", () => {
   })
 
   test("the file the command wrote is the file the resolver reads", async () => {
-    await write({ ...answers, provider: "bedrock" })
+    await write()
     const file = await Effect.runPromise(Effect.provide(readFileConfig({ HOME: home }), BunFileSystem.layer))
     expect(file.model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
-      provider: "bedrock",
-      output: "native",
-      outputWithTools: "true"
+      default: { provider: "openai", model_id: "a-model" },
+      providers: {
+        openai: {
+          baseUrl: "https://api.example.com/v1",
+          apiKey: KEY,
+          driver: "openai-responses",
+          models: {
+            "a-model": {
+              contextWindowTokens: 128_000,
+              maxOutputTokens: 16_384,
+              pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 },
+              output: "native",
+              outputWithTools: "true"
+            }
+          }
+        }
+      }
     })
   })
 
   test("a setup with no native guarantee writes the whole alternative", async () => {
     const path = await write({
+      provider: answers.provider,
       baseUrl: answers.baseUrl,
-      id: answers.id,
+      model_id: answers.model_id,
       apiKey: answers.apiKey,
-      ...(answers.provider === undefined ? {} : { provider: answers.provider }),
+      driver: answers.driver,
+      contextWindowTokens: answers.contextWindowTokens,
+      ...(answers.maxOutputTokens === undefined ? {} : { maxOutputTokens: answers.maxOutputTokens }),
       output: "none"
     })
-    expect(parseFileConfig(await readFile(path, "utf8")).model).toEqual({
-      baseUrl: "https://api.example.com/v1",
-      apiKey: KEY,
-      id: "a-model",
+    expect(parseFileConfig(await readFile(path, "utf8")).model?.providers?.openai?.models?.["a-model"]).toEqual({
+      contextWindowTokens: 128_000,
+      maxOutputTokens: 16_384,
       output: "none"
     })
   })
@@ -184,16 +206,18 @@ describe("what setup prints", () => {
   // The key is the one value that is written and never shown. Neither rendering may carry it, and
   // neither may the path line, so there is nothing to scrub from a shared terminal.
   test("the key is never echoed, in either rendering", async () => {
-    const path = await write({ ...answers, provider: "bedrock" })
-    const summary = setupSummary(path, { ...answers, provider: "bedrock" })
+    const path = await write()
+    const summary = setupSummary(path, answers)
     expect(summary).not.toContain(KEY)
     expect(summary).toContain(path)
     expect(summary).toContain("a-model")
     expect(summary).not.toContain("key")
-    const json = setupJson(path, { ...answers, provider: "bedrock" })
+    const json = setupJson(path, answers)
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.apiKey).toBe("stored")
-    expect(json.provider).toBe("bedrock")
+    expect(json.provider).toBe("openai")
+    expect(json.driver).toBe("openai-responses")
+    expect(json.contextWindowTokens).toBe(128_000)
     expect(json.output).toBe("native")
     expect(json.outputWithTools).toBe(true)
     expect(summary).toContain("output native (with tools)")

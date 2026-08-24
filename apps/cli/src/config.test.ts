@@ -55,19 +55,16 @@ describe("resolveServer", () => {
     expect(config.token).toBeUndefined()
   })
 
-  test("the environment is the server's surface, model coordinates included", () => {
+  test("the environment is the server's process surface", () => {
     const config = resolveServer({}, {
       PORT: "8080",
       TARDIGRADE_DB: "runs.sqlite",
-      TARDIGRADE_MAX_CONCURRENT_LANES: "6",
-      MODEL_BASE_URL: "https://api.example.com",
-      MODEL_API_KEY: "key",
-      MODEL_ID: "a-model"
+      TARDIGRADE_MAX_CONCURRENT_LANES: "6"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("runs.sqlite")
     expect(config.maxConcurrentLanes).toBe(6)
-    expect(config.model.id).toBe("a-model")
+    expect(config.model).toEqual({ default: undefined, providers: {} })
   })
 
   test("a flag beats the environment", () => {
@@ -143,8 +140,8 @@ describe("the config file", () => {
   })
 
   test("a key nobody declared is ignored, and the rest still reads", () => {
-    expect(parseFileConfig(JSON.stringify({ model: { id: "a-model", weird: 3 }, later: true }))).toEqual({
-      model: { id: "a-model" }
+    expect(parseFileConfig(JSON.stringify({ model: { default: { provider: "openai", model_id: "a-model" }, weird: 3 }, later: true }))).toEqual({
+      model: { default: { provider: "openai", model_id: "a-model" }, providers: {} }
     })
   })
 
@@ -152,37 +149,52 @@ describe("the config file", () => {
   // survives beside a tool list, because a turn that offers tools and declares a contract sends
   // both on one call (platform/model/src/output.ts, outputModeOf).
   test("the output capability resolves in the same order every value does", async () => {
-    await put(JSON.stringify({ model: { output: "native", outputWithTools: "true" } }))
+    await put(JSON.stringify({ model: {
+      default: { provider: "openai", model_id: "m" },
+      providers: { openai: { models: { m: { output: "native", outputWithTools: "true" } } } }
+    } }))
     const file = await read({ HOME: home })
-    expect(resolveServer({}, {}, file).model.output).toEqual({ guarantee: "native", withTools: true })
-    expect(resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "none" }, file).model.output).toEqual({ guarantee: "none" })
-    expect(resolveServer({}, {}, {}).model.output).toBeUndefined()
+    expect(resolveServer({}, {}, file).model.providers.openai?.models.m?.output).toEqual({ guarantee: "native", withTools: true })
+    expect(resolveServer({}, {}, {}).model.providers).toEqual({})
   })
 
   test("a capability nobody stated whole refuses to resolve, rather than leaving one field guessed", async () => {
-    await put(JSON.stringify({ model: { output: "probably" } }))
+    await put(JSON.stringify({ model: { providers: { openai: { models: { m: { output: "probably" } } } } } }))
     const file = await read({ HOME: home })
     expect(() => resolveServer({}, {}, file)).toThrow("model output guarantee must be one of")
-    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "maybe" }, {})).toThrow("model output guarantee must be one of")
-    // A native guarantee with no tool-combination answer is half a statement.
-    expect(() => resolveServer({}, { MODEL_OUTPUT_GUARANTEE: "native" }, {})).toThrow("survives beside a tool list")
-    expect(() => resolveServer({}, { MODEL_OUTPUT_WITH_TOOLS: "true" }, {})).toThrow("with no guarantee")
   })
 
-  test("the file is the third source for the model, and the environment beats it", async () => {
-    await put(JSON.stringify({ model: { baseUrl: "https://file.example.com", apiKey: "file-key", id: "file-model" } }))
+  test("the file supplies provider routes and model metadata", async () => {
+    await put(JSON.stringify({ model: {
+      default: { provider: "openai", model_id: "file-model" },
+      providers: {
+        openai: {
+          baseUrl: "https://file.example.com",
+          apiKey: "file-key",
+          driver: "openai-responses",
+          models: { "file-model": { contextWindowTokens: 128000 } }
+        }
+      }
+    } }))
     const file = await read({ HOME: home })
     const fromFile = resolveServer({}, {}, file)
     expect(fromFile.model).toEqual({
-      baseUrl: "https://file.example.com",
-      apiKey: "file-key",
-      id: "file-model",
-      provider: undefined,
-      output: undefined
+      default: { provider: "openai", model_id: "file-model" },
+      providers: {
+        openai: {
+          baseUrl: "https://file.example.com",
+          apiKey: "file-key",
+          driver: "openai-responses",
+          models: {
+            "file-model": {
+              contextWindowTokens: 128000,
+              maxOutputTokens: undefined,
+              output: undefined
+            }
+          }
+        }
+      }
     })
-    const overridden = resolveServer({}, { MODEL_ID: "env-model" }, file)
-    expect(overridden.model.id).toBe("env-model")
-    expect(overridden.model.baseUrl).toBe("https://file.example.com")
   })
 
   test("the file is the third source for the remote, and a flag beats both", async () => {

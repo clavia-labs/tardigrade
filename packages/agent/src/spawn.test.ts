@@ -98,6 +98,25 @@ describe("agentsPackage", () => {
     })
   })
 
+  test("a child inherits the parent model unless the actor declares an alternate", async () => {
+    const selected = { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" } as const
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage({ models: [selected] })
+    await Effect.runPromise(
+      pkg.methods.run!({ text: "fast pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    await Effect.runPromise(
+      pkg.methods.run!({ text: "deep pass", background: true, model: selected }, { callId: "model-2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(sent[0]!.event).not.toHaveProperty("model")
+    expect(sent[1]!.event).toMatchObject({ model: selected })
+    const refused = await Effect.runPromise(
+      pkg.methods.run!({ text: "other", background: true, model: { provider: "openai", model_id: "gpt-5" } }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(refused).toEqual({ error: "agents.run cannot use openai/gpt-5; this actor does not declare that model" })
+    expect(sent).toHaveLength(2)
+  })
+
   test("a reply already on the lane answers without parking", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
