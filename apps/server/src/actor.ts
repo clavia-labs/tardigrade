@@ -3,10 +3,12 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
   actor,
+  agentMethods,
   agentsPackage,
   budget,
   codeMode,
   compaction,
+  defineActor,
   fetchPackage,
   filesPackage,
   infer,
@@ -16,7 +18,7 @@ import {
 } from "tardie"
 import { turnEpochOf } from "@clavia/tardigrade-code/turns"
 import { boundaryOf } from "tardie/boundary"
-import { projection, projectionsOf, Seq, TurnView } from "@clavia/tardigrade-client/contract"
+import { projection, projectionsOf, RESERVED_ACTOR, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"
 
@@ -44,6 +46,13 @@ export const assemblyOf = () =>
     compaction(),
     outputValidateOnce
   ]))
+
+// builtInActor declares the built-in assembly and its callable interface together.
+export const builtInActor = () => defineActor({
+  name: RESERVED_ACTOR,
+  methods: agentMethods,
+  actor: assemblyOf()
+})
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a
 // package added above lands in the host's obligation and a host that binds nothing for it fails to

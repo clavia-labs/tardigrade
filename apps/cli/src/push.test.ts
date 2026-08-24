@@ -16,7 +16,7 @@ const entry = async (): Promise<string> => {
   const path = join(root, "actor.ts")
   await writeFile(path, `
     import { defineActor } from "tardie"
-    export default defineActor({ name: "reviewer", actor: { reactors: [], keyOf: () => "root" } })
+    export default defineActor({ name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => "root" } })
   `, "utf8")
   return path
 }

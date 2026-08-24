@@ -39,7 +39,7 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command creates `researcher/actor.ts` from the bundled template. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Build and push the result into the local actor registry:
+The `init` command creates `researcher/actor.ts` from the bundled template. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Build and push the result into the local actor registry:
 
 ```bash
 tdg build actor.ts
@@ -112,26 +112,50 @@ The call follows one route:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import { actor, budget, codeMode, compaction, infer, outputValidateOnce, reply, system } from "tardie"
+import {
+  actor,
+  agentMethods,
+  agentsPackage,
+  budget,
+  codeMode,
+  compaction,
+  defineActor,
+  fetchPackage,
+  filesPackage,
+  infer,
+  outputValidateOnce,
+  reply,
+  system,
+  workspacePackage
+} from "tardie"
 
 const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
-const releaseAnalyst = actor(infer([
-  instructions, // the agent's system prompt
-  deploys,     // recent_deploys and its paired handler
-  codeMode(),  // durable JavaScript execution over an empty package scope
-  budget,      // a per-turn code budget
-  compaction(), // bounded model context
-  reply,       // results for parent agents
-  outputValidateOnce // validates one structured result without correction
-]))
+const releaseAnalyst = defineActor({
+  name: "release-analyst",
+  methods: agentMethods,
+  actor: actor(infer([
+    instructions, // the agent's system prompt
+    deploys,     // recent_deploys and its paired handler
+    codeMode([
+      filesPackage(),
+      fetchPackage(),
+      agentsPackage(),
+      workspacePackage()
+    ]),
+    budget,      // a per-turn code budget
+    compaction(), // bounded model context
+    reply,       // results for parent agents
+    outputValidateOnce // validates one structured result without correction
+  ]))
+})
 ```
 
-`infer` composes its children, preserves their transitions, and adds inference and tool routing over their final view. `actor` adapts the root component to reconciliation and carries its service requirements into the host type. System fragments join in component order, so the model sees the release instructions beside `recent_deploys` and `execute` in one request. Policy components derive work from the same log.
+`infer` composes the components into an agent loop. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input? }` input and a string result.
 
-`compaction(policy?)` takes a model-window resolver and hysteresis ratios. The default fires at 80 percent of a 128,000-token window and keeps a 50 percent tail. A platform that serves several models should state each window from the same model catalog that inference uses:
+`compaction(policy?)` bounds model context. Its default uses a 128,000-token window, fires at 80 percent, and keeps a 50 percent tail. A platform that serves several models should supply their windows:
 
 ```ts
 const windows = { default: 1_000_000, sonnet: 200_000 } as const
@@ -143,11 +167,11 @@ const boundedContext = compaction({
 })
 ```
 
-When the guard fires, the component appends the resolved policy with its checkpoint. The output shape is `{ type: "CompactionCompleted", keepFrom: string, summary: string, contextWindowTokens: number, fireTokens: number, keepTokens: number, at: number }`.
+When compaction runs, its checkpoint records the applied policy with the summary.
 
-`codeMode([...components])` applies the same structure to the code surface. Each package factory returns a leaf `CodeComponent`. Code mode composes their package views and transitions, then exposes the combined scope through one `execute` tool. Use `definePackage({...})` for a custom leaf. Use `composeComponents(name, CODE_VIEW_ALGEBRA, children)` when one code component groups other code components.
+`codeMode([...components])` combines code packages behind one `execute` tool. Define a package with `definePackage(...)`. Group packages with `composeComponents(...)`.
 
-This agent can inspect deployments, analyze results with JavaScript, compact a long investigation, and report to a parent agent. Change the list to create another harness.
+This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
 
 A run can follow this path:
 
@@ -165,6 +189,9 @@ Each action and result becomes an event that every component can interpret.
 The three code blocks form one program.
 
 ```ts
+import { Layer } from "effect"
+import { BunFileSystem, BunPath } from "@effect/platform-bun"
+import { FetchHttpClient } from "effect/unstable/http"
 import { infer } from "tardie/model"
 import { createBunHost } from "tardie/bun/host"
 
@@ -174,10 +201,17 @@ const model = infer({
   model: process.env.MODEL_ID!
 })
 
+const platform = Layer.mergeAll(
+  model,
+  BunFileSystem.layer,
+  BunPath.layer,
+  FetchHttpClient.layer
+)
+
 const host = await createBunHost({
   log: "agents.sqlite",
-  actorFor: () => releaseAnalyst,
-  layersFor: () => model
+  actorFor: () => releaseAnalyst.actor,
+  layersFor: () => platform
 })
 
 await host.commitRoot("bun:main", {

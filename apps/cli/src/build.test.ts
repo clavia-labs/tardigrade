@@ -26,6 +26,7 @@ describe("buildActor", () => {
       import { defineActor } from "tardie"
       export default defineActor({
         name: "researcher",
+        methods: {},
         actor: { reactors: [], keyOf: () => "root" }
       })
     `)
@@ -42,11 +43,22 @@ describe("buildActor", () => {
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("name must match")
   })
 
+  test("refuses an actor with no callable interface", async () => {
+    const path = await entry(`
+      export default {
+        name: "researcher",
+        actor: { reactors: [], keyOf: () => "root" }
+      }
+    `)
+    await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("must declare its methods")
+  })
+
   test("the summary hands the source to local push", async () => {
     const path = await entry(`
       import { defineActor } from "tardie"
       export default defineActor({
         name: "researcher",
+        methods: {},
         actor: { reactors: [], keyOf: () => "root" }
       })
     `)

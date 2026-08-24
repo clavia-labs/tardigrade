@@ -6,6 +6,20 @@ export {
   type ActorArtifactManifest,
   type ActorDefinition
 } from "./artifact"
+export {
+  ACTOR_METHOD_NAME_PATTERN,
+  actorMethod,
+  actorMethodsOf,
+  type ActorMethod,
+  type ActorMethodCall,
+  type ActorMethodDeclaration,
+  type ActorMethodDefinition,
+  type ActorMethodInput,
+  type ActorMethodOutput,
+  type ActorMethods,
+  type ActorMethodState
+} from "./method"
+export { AgentMessageInput, agentMessageMethod, agentMethods, type AgentMessageInput as AgentMessageInputType } from "./message-method"
 
 // The parts a caller lists. An agent is components over one log; the reactors underneath remain
 // reachable for a bespoke assembly.

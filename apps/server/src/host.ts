@@ -9,13 +9,14 @@ import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { Directory } from "@clavia/tardigrade-core/communication/directory"
-import type { Actor } from "@clavia/tardigrade-core/actor"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
 import type { Provider } from "@clavia/tardigrade-host/communication/provider"
 import {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
   Infer,
+  actorMethodsOf,
+  type ActorMethods,
   type ActorArtifactManifest,
   type ActorDefinition
 } from "tardie"
@@ -25,7 +26,7 @@ import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
 import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
 
-import { assemblyOf, type ServerR } from "./actor"
+import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ServerConfigValue } from "./config"
 import { DriverGauge } from "./http"
 
@@ -55,19 +56,19 @@ export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
 }> {}
 
 export interface ActorThreads {
+  readonly methods: ActorMethods
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
 
-// The operations the HTTP surface has: append an event, read a log, list what exists. Every one
-// speaks a thread id and none of them reads an event's fields, because what an event means is the
-// actor's knowledge and this service holds the log (actor.ts, agentProjections).
+// Threads exposes the selected actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/agent/src/method.ts, ActorMethodDeclaration).
 export class Threads extends Context.Service<
   Threads,
   {
     readonly append: ActorThreads["append"]
+    readonly methods: ActorThreads["methods"]
     readonly events: ActorThreads["events"]
     readonly list: ActorThreads["list"]
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
@@ -151,7 +152,7 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
   const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?digest=${encodeURIComponent(expected.digest)}`)
   const definition = (loaded as { readonly default?: unknown }).default
   if (typeof definition !== "object" || definition === null) {
-    throw new Error("actor artifact must default export defineActor({ name, actor })")
+    throw new Error("actor artifact must default export defineActor({ name, methods, actor })")
   }
   const candidate = definition as Partial<ActorDefinition<ServerR>>
   if (candidate.name !== expected.name || !ACTOR_NAME_PATTERN.test(expected.name)) {
@@ -165,17 +166,22 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
   ) {
     throw new Error("actor artifact does not contain an Actor")
   }
+  if (typeof candidate.methods !== "object" || candidate.methods === null || Array.isArray(candidate.methods)) {
+    throw new Error("actor artifact does not declare its methods")
+  }
+  actorMethodsOf(candidate.methods as ActorMethods)
   return candidate as ActorDefinition<ServerR>
 }
 
 const runtimeOf = async (
   summary: ActorSummary,
-  actor: Actor<ServerR>,
+  definition: ActorDefinition<ServerR>,
   log: string,
   lane: ReturnType<typeof layerLane>,
   providers: ReadonlyArray<Provider>,
   maxConcurrentLanes: number
 ): Promise<ActorRuntime> => {
+  const actor = definition.actor
   const host: BunHost = await createBunHost<ServerR>({
     log,
     principal: summary.name,
@@ -243,6 +249,7 @@ const runtimeOf = async (
       yield* Effect.promise(() => host.commit(placed))
     })
   const threads: ActorThreads = {
+    methods: definition.methods,
     append: (id, event) =>
       Effect.gen(function*() {
         yield* commitRoot(id, event)
@@ -300,7 +307,7 @@ const make = (options: ThreadsOptions) =>
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
-    const builtIn = assemblyOf()
+    const builtIn = builtInActor()
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
     const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {
@@ -308,10 +315,10 @@ const make = (options: ThreadsOptions) =>
       mutations = result.then(() => undefined, () => undefined)
       return result
     }
-    const open = async (summary: ActorSummary, actor: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
+    const open = async (summary: ActorSummary, definition: ActorDefinition<ServerR>, log: string): Promise<ActorRuntime> => {
       const runtime = await runtimeOf(
         summary,
-        actor,
+        definition,
         log,
         lane,
         options.providers ?? [],
@@ -321,23 +328,23 @@ const make = (options: ThreadsOptions) =>
       await runRegistry(registry.put(summary))
       return runtime
     }
-    const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly actor: Actor<ServerR> }> => {
+    const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: ActorDefinition<ServerR> }> => {
       const artifact = await manifestOf(directory)
       if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
       const definition = await definitionOf(join(directory, artifact.manifest.module), artifact.manifest)
       return {
         summary: { name: definition.name, builtIn: false, digest: artifact.manifest.digest },
-        actor: definition.actor
+        definition
       }
     }
-    const replace = async (summary: ActorSummary, actor: Actor<ServerR>): Promise<void> => {
+    const replace = async (summary: ActorSummary, definition: ActorDefinition<ServerR>): Promise<void> => {
       const current = runtimes.get(summary.name)
       if (current?.summary.digest === summary.digest) return
       if (current !== undefined) {
         await current.close()
         runtimes.delete(summary.name)
       }
-      await open(summary, actor, join(resolve(config.actorData), `${summary.name}.sqlite`))
+      await open(summary, definition, join(resolve(config.actorData), `${summary.name}.sqlite`))
     }
     const synchronize = async (): Promise<void> => {
       const entries = await readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
@@ -350,7 +357,7 @@ const make = (options: ThreadsOptions) =>
         const loaded = await load(join(root, entry.name))
         if (loaded.summary.name !== entry.name) throw new Error(`actor artifact name does not match directory ${JSON.stringify(entry.name)}`)
         found.add(loaded.summary.name)
-        await replace(loaded.summary, loaded.actor)
+        await replace(loaded.summary, loaded.definition)
       }
       for (const [name, runtime] of runtimes) {
         if (name === RESERVED_ACTOR || found.has(name)) continue
@@ -423,7 +430,7 @@ const make = (options: ThreadsOptions) =>
           }
           const summary: ActorSummary = { name: manifest.name, builtIn: false, digest: manifest.digest }
           try {
-            await open(summary, definition.actor, join(resolve(config.actorData), `${manifest.name}.sqlite`))
+            await open(summary, definition, join(resolve(config.actorData), `${manifest.name}.sqlite`))
             try {
               await rename(destination, previous)
             } catch (error) {
