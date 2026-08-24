@@ -47,6 +47,7 @@ const clientOf = (
     actors: () => answers.fail === undefined
       ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
       : Promise.reject(answers.fail),
+    models: refuse,
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
     methods: () => answers.fail === undefined ? Promise.resolve(answers.methods ?? []) : Promise.reject(answers.fail),
     events: (thread, options) => {

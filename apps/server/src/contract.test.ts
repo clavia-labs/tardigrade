@@ -8,6 +8,7 @@ import { layerConfig, readConfig } from "./config"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
 import { Threads } from "./host"
+import { layerModelCatalogUnavailable } from "./catalog"
 import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 
 // The declaration, from the outside. These assertions are about what the declaration produces: the
@@ -36,6 +37,7 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig({ ...readConfig({}), token: options.token }),
         layerGaugeResting,
+        layerModelCatalogUnavailable,
         layerThreadsEmpty
       ])
     ),
@@ -53,6 +55,7 @@ setDefaultTimeout(BOOT_MS)
 
 // Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream). `turns` appears because this build's actor declares it (actor.ts, agentProjections).
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ["get", "/v1/models"],
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
   ["get", "/v1/actors/{actor}/methods"],

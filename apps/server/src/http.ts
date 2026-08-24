@@ -2,7 +2,7 @@ import { Context, Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
-import { layerActorsGroup, layerMethodsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
+import { layerActorsGroup, layerMethodsGroup, layerModelsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
 import { ServerConfig } from "./config"
 import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
@@ -36,11 +36,9 @@ export const layerGaugeResting: Layer.Layer<DriverGauge> = Layer.succeed(DriverG
 import { problem } from "./problem"
 export { problem, type Problem, PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./problem"
 
-// Paths the bearer gate lets through. /healthz is a liveness probe: a supervisor that has to hold a
-// credential to learn the process is up cannot tell an outage from a misconfiguration. The document
-// and the page that renders it describe the door rather than open it, so they are open too
-// (contract.test.ts, "stays open when a token closes the API").
-export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", OPENAPI_PATH, DOCS_PATH]
+// Paths the bearer gate lets through. The health probe, public model catalog, contract, and contract
+// page expose process capabilities without exposing an actor's durable state.
+export const UNAUTHENTICATED_PATHS: ReadonlyArray<string> = ["/healthz", "/v1/models", OPENAPI_PATH, DOCS_PATH]
 
 const pathOf = (url: string): string => {
   const query = url.indexOf("?")
@@ -162,6 +160,7 @@ export const layerApp = (options: ApiOptions = {}) =>
     Layer.provide(
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
         layerActorsGroup,
+        layerModelsGroup,
         layerThreadsGroup(options),
         layerMethodsGroup,
         layerProjectionsGroup,

@@ -3,6 +3,7 @@ import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
+import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
 import { layerApp } from "@clavia/tardigrade-server/http"
 
@@ -114,6 +115,8 @@ export interface DevOptions {
   readonly assets?: string | undefined
   // The model seam, which a test binds to a scripted mind (apps/server/src/host.ts, ThreadsOptions).
   readonly threads?: ThreadsOptions | undefined
+  // catalog replaces the startup-refreshed public model catalog for an embedding or test.
+  readonly catalog?: Layer.Layer<ModelCatalogStore> | undefined
   // actorRefreshMillis is the visible debounce applied to local actor-root changes.
   readonly actorRefreshMillis?: number | undefined
   readonly disableLogger?: boolean | undefined
@@ -136,6 +139,7 @@ export const dev = (options: DevOptions) => {
     ...options.threads,
     actorRefresh: { debounceMillis: actorRefreshMillis }
   }), config)
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).
@@ -144,7 +148,7 @@ export const dev = (options: DevOptions) => {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
-    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads]
+    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads, catalog]
   )
   if (options.onListen === undefined) return running
   return Layer.tap(running, (context) => {

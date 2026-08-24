@@ -57,6 +57,18 @@ const problemAnswer = (status: number, document: unknown) => () =>
   new Response(JSON.stringify(document), { status, headers: { "content-type": PROBLEM_CONTENT_TYPE } })
 
 describe("the address a call goes to", () => {
+  test("discovers models at the versioned collection", async () => {
+    answer = () => Response.json({
+      source: "models.dev",
+      revision: "catalog-1",
+      refreshedAt: 1,
+      status: "fresh",
+      providers: []
+    })
+    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).models()
+    expect(lastUrl().pathname).toBe("/v1/models")
+  })
+
   test("discovers actors at the collection", async () => {
     await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).actors()
     expect(lastUrl().pathname).toBe("/v1/actors")

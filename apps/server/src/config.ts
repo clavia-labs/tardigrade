@@ -6,6 +6,7 @@ import {
 import type { ModelCoordinate } from "tardie"
 import type { ModelPricing } from "tardie/usage"
 import { modelDriverOf, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
@@ -24,6 +25,20 @@ export const DEFAULT_DB = ".tardigrade/agents.sqlite"
 export const DEFAULT_ACTORS = ".tardigrade/actors"
 
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
+
+// DEFAULT_MODEL_CATALOG_CACHE is the last validated public snapshot used when a refresh fails.
+export const DEFAULT_MODEL_CATALOG_CACHE = ".tardigrade/models.json"
+
+// DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS bounds the source request made when the server starts.
+export const DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
+
+export { DEFAULT_MODEL_CATALOG_URL }
+
+export interface ModelCatalogConfig {
+  readonly sourceUrl: string
+  readonly cachePath: string
+  readonly timeoutMillis: number
+}
 
 export interface ConfiguredModel {
   readonly contextWindowTokens: number | undefined
@@ -69,9 +84,10 @@ export interface ServerConfigValue {
   readonly actorData: string
   readonly maxConcurrentLanes: number
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
-  // makes a bearer token required on every route except /healthz (http.ts).
+  // makes a bearer token required on actor routes. Process metadata stays public (http.ts).
   readonly token: string | undefined
   readonly model: ModelConfig
+  readonly catalog: ModelCatalogConfig
 }
 
 export class ServerConfig extends Context.Service<ServerConfig, ServerConfigValue>()(
@@ -236,6 +252,16 @@ const maxConcurrentLanes = (env: Env): number => {
   return maxConcurrentLanesOf(value)
 }
 
+const modelCatalogTimeout = (env: Env): number => {
+  const raw = text(env, "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS")
+  if (raw === undefined) return DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS
+  const value = Number(raw)
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS must be a positive integer, got ${JSON.stringify(raw)}`)
+  }
+  return value
+}
+
 // readConfig resolves the environment into the value the process runs on.
 export const readConfig = (env: Env): ServerConfigValue => {
   return {
@@ -245,7 +271,12 @@ export const readConfig = (env: Env): ServerConfigValue => {
     actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
     maxConcurrentLanes: maxConcurrentLanes(env),
     token: text(env, "TARDIGRADE_TOKEN"),
-    model: modelsFrom(env)
+    model: modelsFrom(env),
+    catalog: {
+      sourceUrl: text(env, "TARDIGRADE_MODEL_CATALOG_URL") ?? DEFAULT_MODEL_CATALOG_URL,
+      cachePath: text(env, "TARDIGRADE_MODEL_CATALOG_CACHE") ?? DEFAULT_MODEL_CATALOG_CACHE,
+      timeoutMillis: modelCatalogTimeout(env)
+    }
   }
 }
 

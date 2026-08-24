@@ -16,6 +16,7 @@ import {
   type Health,
   type MethodAccepted,
   type MethodSummary,
+  type ModelCatalog,
   type Projections,
   type TurnView
 } from "./contract"
@@ -116,6 +117,8 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
   readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
+  // models reads the validated public provider and model snapshot.
+  readonly models: () => Promise<ModelCatalog>
   readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
   readonly tree: (thread: string) => Promise<ThreadNode>
   readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
@@ -261,6 +264,7 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
     baseUrl,
     actor,
     actors: () => run(api.actors.actors({})),
+    models: () => run(api.models.models({})),
     list: () => run(api.threads.list({ params: { actor } })),
     tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
     events: (thread, events = {}) =>

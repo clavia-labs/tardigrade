@@ -31,6 +31,7 @@ export type {
   MethodAccepted,
   MethodSummary,
   MethodState,
+  ModelCatalog,
   Problem,
   ThreadNode,
   ThreadStatus,

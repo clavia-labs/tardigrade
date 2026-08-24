@@ -4,6 +4,7 @@ import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
+import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
 import { layerThreads } from "@clavia/tardigrade-server/host"
 import { serve } from "@clavia/tardigrade-server/http"
 
@@ -70,6 +71,7 @@ const threads = Layer.provide(layerThreads({ infer: layerScripted }), config)
 const app = Layer.provideMerge(serve({ disableLogger: true }), [
   BunHttpServer.layer({ port: FIXTURE_PORT }),
   config,
+  layerModelCatalogUnavailable,
   threads
 ])
 

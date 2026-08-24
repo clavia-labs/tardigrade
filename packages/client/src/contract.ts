@@ -102,6 +102,10 @@ export const UnknownMethod = problemKind("unknown-method", "Unknown Method", 404
 // UnknownMethodCall reports a call id the selected method cannot derive from the thread log.
 export const UnknownMethodCall = problemKind("unknown-method-call", "Unknown Method Call", 404)
 
+// ModelCatalogUnavailable reports that neither the source nor the last valid cached snapshot could
+// supply the public model directory.
+export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", "Model Catalog Unavailable", 503)
+
 // A resume refused before it was sent. The platform has no resume route: a resume is an appended
 // TurnResumed like any other event, and the guard that a turn's active epoch must be failed is the
 // SDK's convenience rather than the server's rule (client.ts, resume).
@@ -241,6 +245,58 @@ export const ActorSummary = Schema.Struct({
 
 export type ActorSummary = typeof ActorSummary.Type
 
+const ModelCatalogRate = Schema.Finite.pipe(
+  Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "non-negative" }))
+)
+
+const ModelTokenCount = Schema.Int.pipe(
+  Schema.check(Schema.makeFilter((value: number) => value > 0, { title: "positive" }))
+)
+
+export const ModelCatalogPricing = Schema.Struct({
+  promptUsdPerToken: ModelCatalogRate,
+  completionUsdPerToken: ModelCatalogRate,
+  cachedPromptUsdPerToken: Schema.optionalKey(ModelCatalogRate),
+  cacheWritePromptUsdPerToken: Schema.optionalKey(ModelCatalogRate)
+}).annotate({ identifier: "ModelCatalogPricing" })
+
+export const ModelCatalogMetadata = Schema.Struct({
+  contextWindowTokens: Schema.optionalKey(ModelTokenCount),
+  maxOutputTokens: Schema.optionalKey(ModelTokenCount),
+  pricing: Schema.optionalKey(ModelCatalogPricing),
+  toolCall: Schema.optionalKey(Schema.Boolean),
+  structuredOutput: Schema.optionalKey(Schema.Boolean),
+  inputModalities: Schema.optionalKey(Schema.Array(Schema.String)),
+  outputModalities: Schema.optionalKey(Schema.Array(Schema.String))
+}).annotate({ identifier: "ModelCatalogMetadata" })
+
+export const ModelCatalogModel = Schema.Struct({
+  id: Schema.NonEmptyString,
+  name: Schema.optionalKey(Schema.String),
+  metadata: ModelCatalogMetadata
+}).annotate({ identifier: "ModelCatalogModel" })
+
+export const ModelCatalogProvider = Schema.Struct({
+  id: Schema.NonEmptyString,
+  name: Schema.NonEmptyString,
+  api: Schema.optionalKey(Schema.String),
+  npm: Schema.optionalKey(Schema.String),
+  env: Schema.Array(Schema.String),
+  models: Schema.Array(ModelCatalogModel)
+}).annotate({ identifier: "ModelCatalogProvider" })
+
+// ModelCatalog is the public provider and model snapshot. Its source revision identifies the
+// upstream data, while status says whether this process refreshed it or served its last valid copy.
+export const ModelCatalog = Schema.Struct({
+  source: Schema.Literal("models.dev"),
+  revision: Schema.NonEmptyString,
+  refreshedAt: Schema.Finite,
+  status: Schema.Literals(["fresh", "cached"]),
+  providers: Schema.Array(ModelCatalogProvider)
+}).annotate({ identifier: "ModelCatalog" })
+
+export type ModelCatalog = typeof ModelCatalog.Type
+
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
     schema: Schema.Literal(2),
@@ -349,6 +405,15 @@ export const actorsGroup = HttpApiGroup.make("actors").add(
   })
 )
 
+// modelsGroup exposes the deploy's validated public model snapshot independently of private
+// provider routes and credentials.
+export const modelsGroup = HttpApiGroup.make("models").add(
+  HttpApiEndpoint.get("models", "/v1/models", {
+    success: ModelCatalog,
+    error: [ModelCatalogUnavailable.schema]
+  })
+)
+
 // A projection is a pure read of one thread's events, declared by the actor whose reactors wrote
 // them. The platform holds the log and mounts what the actor declares; what the events mean is the
 // actor's own knowledge, so the declaration lives beside its reactors (apps/server/src/actor.ts).
@@ -425,15 +490,15 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
   { error: InvalidRequest.schema }
 ) {}
 
-// apiOf combines the actor registry, raw logs, actor methods, declared projections, and health probe.
+// apiOf combines the model and actor registries, raw logs, actor methods, declared projections, and health probe.
 export const apiOf = <const P extends Projections>(projections: P) =>
-  HttpApi.make("tardigrade").add(actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
+  HttpApi.make("tardigrade").add(modelsGroup, actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
     .middleware(RequestProblems)
     .annotateMerge(
       OpenApi.annotations({
         title: "Tardigrade",
         description:
-          "Actors expose durable methods over thread logs. Raw events and declared projections remain available for inspection. Every failure is an RFC 9457 problem document."
+          "The public model catalog describes known coordinates and metadata. Actors expose durable methods over thread logs. Raw events and declared projections remain available for inspection. Every failure is an RFC 9457 problem document."
       })
     )
 

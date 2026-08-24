@@ -11,8 +11,9 @@ import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 
 import { openStreams } from "./api"
+import { layerModelCatalogValue } from "./catalog"
 import { layerConfig, readConfig } from "./config"
-import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow } from "@clavia/tardigrade-client/contract"
+import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { layerThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import type { TurnViewShape as TurnView } from "./actor"
@@ -68,9 +69,23 @@ const config = layerConfig(readConfig({
   TARDIGRADE_ACTORS: `/tmp/tardigrade-api-test-${process.pid}`
 }))
 
+const catalog: ModelCatalog = {
+  source: "models.dev",
+  revision: "catalog-1",
+  refreshedAt: 1_700_000_000_000,
+  status: "fresh",
+  providers: [{
+    id: "openai",
+    name: "OpenAI",
+    env: ["OPENAI_API_KEY"],
+    models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+  }]
+}
+
 const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
   BunHttpServer.layer({ port: 0 }),
   config,
+  layerModelCatalogValue(catalog),
   Layer.provide(layerThreads({ infer: layerScripted }), config)
 ])
 
@@ -157,6 +172,15 @@ const callMessage = async (base: string, thread: string, call: string, text: str
     return body["status"] === "pending" ? undefined : body
   })
 }
+
+describe("models", () => {
+  test("the public catalog exposes model metadata without private routes", async () => {
+    const response = await serving(async (base) => await (await get(base, "/v1/models")).json())
+    expect(response).toEqual(catalog)
+    expect(JSON.stringify(response)).not.toContain("apiKey")
+    expect(JSON.stringify(response)).not.toContain("baseUrl")
+  })
+})
 
 describe("actor methods", () => {
   test("the actor exposes its method schemas", async () => {
@@ -289,6 +313,7 @@ describe("actors", () => {
     const isolatedApp = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
       BunHttpServer.layer({ port: 0 }),
       isolatedConfig,
+      layerModelCatalogValue(catalog),
       Layer.provide(layerThreads({ infer: layerScripted }), isolatedConfig)
     ])
     const module = `export default { name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`

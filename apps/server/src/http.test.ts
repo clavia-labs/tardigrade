@@ -14,6 +14,7 @@ import {
   type ServerConfigValue
 } from "./config"
 import { Threads } from "./host"
+import { layerModelCatalogUnavailable } from "./catalog"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
@@ -59,6 +60,7 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig(options.config ?? configOf()),
         options.gauge ?? layerGaugeResting,
+        layerModelCatalogUnavailable,
         layerThreadsEmpty
       ])
     ),
@@ -79,6 +81,11 @@ describe("config", () => {
       default: undefined,
       providers: {}
     })
+    expect(config.catalog).toEqual({
+      sourceUrl: "https://models.dev/api.json",
+      cachePath: ".tardigrade/models.json",
+      timeoutMillis: 10_000
+    })
   })
 
   test("the environment overrides every default", () => {
@@ -97,6 +104,25 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
     expect(config.model).toEqual({ default: undefined, providers: {} })
+    expect(config.catalog).toEqual({
+      sourceUrl: "https://models.dev/api.json",
+      cachePath: ".tardigrade/models.json",
+      timeoutMillis: 10_000
+    })
+  })
+
+  test("the catalog source, cache, and timeout are configurable", () => {
+    const config = readConfig({
+      TARDIGRADE_MODEL_CATALOG_URL: "https://catalog.example/models.json",
+      TARDIGRADE_MODEL_CATALOG_CACHE: "/var/cache/tardigrade/models.json",
+      TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "2500"
+    })
+    expect(config.catalog).toEqual({
+      sourceUrl: "https://catalog.example/models.json",
+      cachePath: "/var/cache/tardigrade/models.json",
+      timeoutMillis: 2500
+    })
+    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
   })
 
   test("the model directory resolves from one explicit JSON value", () => {
@@ -194,6 +220,8 @@ describe("auth", () => {
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
     expect(health.status).toBe(200)
+    const models = await serving({ config }, (client) => client.get("/v1/models"))
+    expect(models.status).toBe(503)
   })
 })
 
