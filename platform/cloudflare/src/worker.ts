@@ -27,6 +27,7 @@ import {
   layerCloudflareSandbox,
   type SandboxBridgeCall,
   type CloudflareSandboxLimits,
+  type CloudflareSandboxTransport,
   type SandboxBridgeLease
 } from "./sandbox"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
@@ -47,6 +48,7 @@ export interface Env {
   readonly TARDIGRADE_SANDBOX_LOG_CAP_BYTES?: string
   readonly TARDIGRADE_SANDBOX_CPU_MILLIS?: string
   readonly TARDIGRADE_SANDBOX_SUBREQUESTS?: string
+  readonly TARDIGRADE_SANDBOX_TRANSPORT?: string
 }
 
 const LANE_PREFIX = "ag."
@@ -207,6 +209,12 @@ const optionalRatio = (raw: string | undefined, name: string): number | undefine
   return value
 }
 
+const sandboxTransportOf = (raw: string | undefined): CloudflareSandboxTransport => {
+  const selected = raw ?? "capability"
+  if (selected === "capability" || selected === "replay") return selected
+  throw new Error(`TARDIGRADE_SANDBOX_TRANSPORT must be "capability" or "replay", got ${JSON.stringify(raw)}`)
+}
+
 function defaultAssemblyOf(
   env: Env,
   models: CloudflareModels | undefined,
@@ -346,6 +354,7 @@ export class ActorHost extends DurableObject<Env> {
         }
       },
       {
+        transport: sandboxTransportOf(this.env.TARDIGRADE_SANDBOX_TRANSPORT),
         ...(this.env.TARDIGRADE_SANDBOX_LOG_CAP_BYTES === undefined
           ? {}
           : { logCapBytes: nonNegativeInteger(this.env.TARDIGRADE_SANDBOX_LOG_CAP_BYTES, 0, "TARDIGRADE_SANDBOX_LOG_CAP_BYTES") }),

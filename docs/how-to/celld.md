@@ -18,9 +18,10 @@ celld deploy --config celld.jsonc --bucket s3://actors
 
 Celld reads its bucket from `--bucket` or `CELLD_BUCKET`. Use `--endpoint` for an S3-compatible service and `--region` when the region cannot be inferred. Celld also supports `gs://` buckets through Google Application Default Credentials and `az://` containers through Azure credentials.
 
-Every node needs the Worker variables that hold API credentials. Prefix an individual Worker variable with `CELLD_VAR_`, or point `CELLD_VARS_FILE` at a file containing the original variable names:
+Every node needs the Worker Loader binding for Code Mode and the Worker variables that hold API credentials. Prefix an individual Worker variable with `CELLD_VAR_`, or point `CELLD_VARS_FILE` at a file containing the original variable names:
 
 ```bash
+CELLD_WORKER_LOADER=LOADER \
 CELLD_VAR_TARDIGRADE_TOKEN="$TARDIGRADE_TOKEN" \
 CELLD_VAR_OPENAI_API_KEY="$OPENAI_API_KEY" \
 celld \
@@ -32,4 +33,4 @@ celld \
 
 Keep the internal listener on a trusted private network. A deployment is loaded when a node starts, so restart nodes through the fleet rollout procedure after publishing a new version.
 
-Code Mode package calls are not supported on Celld yet. Tardigrade passes package capabilities into a loaded Worker, while Celld's current Worker Loader accepts JSON environment values and does not accept capability stubs. HTTP methods, inference, event storage, reconciliation, and alarms do not depend on that bridge. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for its current platform surface.
+The generated Celld manifest selects the `replay` sandbox transport. A loaded Worker returns package-call boundaries as JSON, and the actor host reruns the deterministic body with each recorded result. Cloudflare keeps its direct capability transport. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for its current platform surface.

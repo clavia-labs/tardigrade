@@ -14,18 +14,23 @@ export interface CloudflareSandboxLimits {
   readonly subRequests?: number
 }
 
+export const CLOUDFLARE_SANDBOX_TRANSPORTS = ["capability", "replay"] as const
+export type CloudflareSandboxTransport = typeof CLOUDFLARE_SANDBOX_TRANSPORTS[number]
+
 export interface CloudflareSandboxPolicy extends SandboxPolicy {
   readonly compatibilityDate: string
   readonly compatibilityFlags: ReadonlyArray<string>
   readonly limits?: CloudflareSandboxLimits
   readonly globalOutbound: Fetcher | null
+  readonly transport: CloudflareSandboxTransport
 }
 
 export const DEFAULT_CLOUDFLARE_SANDBOX_POLICY: CloudflareSandboxPolicy = {
   ...DEFAULT_SANDBOX_POLICY,
   compatibilityDate: "2026-08-08",
   compatibilityFlags: [],
-  globalOutbound: null
+  globalOutbound: null,
+  transport: "capability"
 }
 
 export interface SandboxBridgeBinding {
@@ -52,7 +57,7 @@ export type SandboxBridgeFactory = (
   call: (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
 ) => SandboxBridgeLease
 
-const HARNESS_SOURCE = `
+const HARNESS_PREAMBLE = `
 import body from "body.js";
 
 const consoleShim = (lines, cap) => {
@@ -111,7 +116,9 @@ const ambientShims = (ambient) => {
 const response = (value) => new Response(JSON.stringify(value), {
   headers: { "content-type": "application/json" }
 });
+`
 
+const CAPABILITY_HARNESS_SOURCE = `${HARNESS_PREAMBLE}
 export default {
   async fetch(_request, env) {
     let ordinal = 0;
@@ -166,6 +173,75 @@ export default {
 };
 `
 
+// REPLAY_HARNESS_SOURCE returns JSON call boundaries and refuses positional drift (packages/core/tla/runtime/Replay.tla, RightAnswer).
+const REPLAY_HARNESS_SOURCE = `${HARNESS_PREAMBLE}
+const sameCall = (left, right) =>
+  left.ordinal === right.ordinal &&
+  left.packageName === right.packageName &&
+  left.method === right.method &&
+  JSON.stringify(left.args) === JSON.stringify(right.args);
+
+export default {
+  async fetch(_request, env) {
+    let ordinal = 0;
+    let scheduled = false;
+    let pending = [];
+    let finishBoundary;
+    const boundary = new Promise((resolve) => { finishBoundary = resolve; });
+    const never = () => new Promise(() => undefined);
+    const call = (packageName, method, args) => {
+      const requested = { ordinal: ordinal++, packageName, method, args };
+      const recorded = env.INPUT.replay[requested.ordinal];
+      if (recorded !== undefined) {
+        if (!sameCall(recorded.call, requested)) {
+          finishBoundary({ error: \`nondeterministic body: replayed call \${requested.ordinal} changed\` });
+          return never();
+        }
+        if (recorded.outcome._tag === "Returned") return Promise.resolve(recorded.outcome.result);
+        return never();
+      }
+      pending.push(requested);
+      if (!scheduled) {
+        scheduled = true;
+        queueMicrotask(() => finishBoundary({ calls: pending }));
+      }
+      return never();
+    };
+    const lines = [];
+    const logs = () => lines.length === 0 ? {} : { logs: lines };
+    const console = consoleShim(lines, env.INPUT.logCapBytes);
+    const ambient = env.INPUT.ambient === undefined ? {} : ambientShims(env.INPUT.ambient);
+    const args = env.INPUT.names.map((name) => {
+      if (name === "console") return console;
+      if (name === "Date" && ambient.Date !== undefined) return ambient.Date;
+      if (name === "Math" && ambient.Math !== undefined) return ambient.Math;
+      const methods = env.INPUT.packages[name];
+      if (methods !== undefined) {
+        return Object.fromEntries(methods.map((method) => [
+          method,
+          (args) => call(name, method, args)
+        ]));
+      }
+      return env.INPUT.values[name];
+    });
+    const completed = (async () => {
+      let outcome;
+      try {
+        outcome = { result: await body(...args) };
+      } catch (error) {
+        outcome = { error: String(error) };
+      }
+      if (pending.length > 0) return { calls: pending };
+      if (ordinal !== env.INPUT.replay.length) {
+        return { error: "nondeterministic body: replay consumed " + ordinal + " of " + env.INPUT.replay.length + " calls" };
+      }
+      return { ...outcome, ...logs() };
+    })();
+    return response(await Promise.race([completed, boundary]));
+  }
+};
+`
+
 const packageMethods = (binding: Bindings[string]): ReadonlyArray<string> | undefined => {
   if (binding === null || typeof binding !== "object" || Array.isArray(binding)) return undefined
   const entries = Object.entries(binding)
@@ -192,6 +268,15 @@ const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: 
   return { names, packages, values, logCapBytes: policy.logCapBytes, ...(ambient === undefined ? {} : { ambient }) }
 }
 
+interface SandboxReplayEntry {
+  readonly call: SandboxBridgeCall
+  readonly outcome: SandboxCallOutcome
+}
+
+interface SandboxReplayBoundary extends SandboxResult {
+  readonly calls?: ReadonlyArray<SandboxBridgeCall>
+}
+
 export const cloudflareSandboxServiceFor = (
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
@@ -204,7 +289,8 @@ export const cloudflareSandboxServiceFor = (
     ...(policy.limits === undefined ? {} : { limits: policy.limits }),
     globalOutbound: policy.globalOutbound === undefined
       ? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.globalOutbound
-      : policy.globalOutbound
+      : policy.globalOutbound,
+    transport: policy.transport ?? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.transport
   }
   return {
     run: (code, bindings, ambient) => Effect.promise(async (signal) => {
@@ -221,6 +307,34 @@ export const cloudflareSandboxServiceFor = (
           }
           return implementation(args, ordinal)
         }
+        const input = sandboxInput(bindings, ambient, resolved)
+        const request = () => new Request("https://sandbox.invalid/run", { method: "POST", signal })
+        if (resolved.transport === "replay") {
+          const replay: Array<SandboxReplayEntry> = []
+          for (;;) {
+            const worker = loader.load({
+              compatibilityDate: resolved.compatibilityDate,
+              compatibilityFlags: [...resolved.compatibilityFlags],
+              mainModule: "index.js",
+              modules: {
+                "index.js": REPLAY_HARNESS_SOURCE,
+                "body.js": bodySource(names, code)
+              },
+              env: { INPUT: { ...input, replay } },
+              globalOutbound: resolved.globalOutbound,
+              ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
+            })
+            const response = await worker.getEntrypoint().fetch(request())
+            if (!response.ok) return { error: `sandbox returned HTTP ${response.status}` }
+            const boundary = await response.json() as SandboxReplayBoundary
+            if (boundary.calls === undefined) return boundary
+            if (boundary.calls.length === 0) return { error: "sandbox replay returned an empty call boundary" }
+            const outcomes = await Promise.all(boundary.calls.map((entry) =>
+              call(entry.ordinal, entry.packageName, entry.method, entry.args)
+            ))
+            replay.push(...boundary.calls.map((entry, index) => ({ call: entry, outcome: outcomes[index]! })))
+          }
+        }
         const bridge = bridgeFor(call)
         try {
           const worker = loader.load({
@@ -228,20 +342,17 @@ export const cloudflareSandboxServiceFor = (
           compatibilityFlags: [...resolved.compatibilityFlags],
           mainModule: "index.js",
           modules: {
-            "index.js": HARNESS_SOURCE,
+            "index.js": CAPABILITY_HARNESS_SOURCE,
             "body.js": bodySource(names, code)
           },
           env: {
             BRIDGE: bridge.binding,
-            INPUT: { ...sandboxInput(bindings, ambient, resolved), execution: bridge.execution }
+            INPUT: { ...input, execution: bridge.execution }
           },
           globalOutbound: resolved.globalOutbound,
           ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
         })
-          const response = await worker.getEntrypoint().fetch(new Request("https://sandbox.invalid/run", {
-            method: "POST",
-            signal
-          }))
+          const response = await worker.getEntrypoint().fetch(request())
           if (!response.ok) return { error: `sandbox returned HTTP ${response.status}` }
           return await response.json() as SandboxResult
         } finally {

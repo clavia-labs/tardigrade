@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { parse } from "jsonc-parser"
 
-import { CELLD_OMITTED_KEYS, celldConfigOf, celldConfigWithVarOf } from "./celld"
+import {
+  CELLD_OMITTED_KEYS,
+  CELLD_SANDBOX_TRANSPORT,
+  CELLD_SANDBOX_TRANSPORT_VAR,
+  celldConfigOf,
+  celldConfigWithVarOf
+} from "./celld"
 
 const wrangler = `{
   "name": "reviewer",
@@ -27,6 +33,7 @@ describe("Celld configuration", () => {
     expect((config["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe(
       '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"}}}'
     )
+    expect((config["vars"] as Record<string, string>)[CELLD_SANDBOX_TRANSPORT_VAR]).toBe(CELLD_SANDBOX_TRANSPORT)
   })
 
   test("updates shared config without replacing Celld settings", () => {

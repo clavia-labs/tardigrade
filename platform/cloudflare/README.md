@@ -2,7 +2,7 @@
 
 This binding mounts one actor definition into a named SQLite Durable Object. The object stores its event logs, workspace, and last valid model catalog snapshot. Every thread is a lane in the actor's event table. Each accepted event commits its log append and watchdog before reconciliation starts. One alarm recovers ready lanes after an interrupted drive. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
-Celld implements the Worker, SQLite Durable Object, and alarm surfaces this binding uses. Its Worker Loader cannot yet pass the package capability bridge used by Code Mode. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and this constraint.
+Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
 ## Verify and deploy
 
@@ -106,5 +106,6 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
 | `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
 | `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model reference as visible JSON configuration in `wrangler.jsonc` |
+| `TARDIGRADE_SANDBOX_TRANSPORT` | `capability` | Selects direct capability calls or deterministic JSON `replay` for loaded Workers |
 
-`wrangler.jsonc` also makes the Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.
+`wrangler.jsonc` also makes the Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerCloudflareSandbox` accepts overrides for each value.

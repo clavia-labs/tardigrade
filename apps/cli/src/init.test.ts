@@ -58,6 +58,7 @@ describe("initActor", () => {
       "vars"
     ])
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
+    expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
     expect(built.manifest.name).toBe("reviewer")
   })
 
