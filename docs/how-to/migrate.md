@@ -2,7 +2,7 @@
 
 This guide moves an existing agent application to Tardigrade. It uses Vercel AI SDK names because they are common, and the same inventory applies to another agent harness. The migration covers actor logic, stored conversations, the HTTP boundary, client updates, and deployment configuration.
 
-Read the [Tardigrade skill](../../skills/tardigrade/SKILL.md), the [quickstart](../quickstart.md), the [server guide](server.md), and the [structured output guide](../output.md) before editing the application.
+Read the [Tardigrade skill](../../skills/tardigrade/SKILL.md), the [quickstart](../quickstart.md), and the [server guide](server.md) before editing the application.
 
 ## Inventory and baseline
 

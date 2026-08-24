@@ -36,7 +36,7 @@ export {
 // The turn's declared final response: the contract a caller states, the profile a binding can
 // send unchanged, and the implementation that obtains it. `output` is the whole declarative
 // surface; everything else here is for an assembly that states its own implementation
-// (docs/output.md).
+// (output.test.ts; output.types.test.ts).
 export {
   output,
   outputFrom,

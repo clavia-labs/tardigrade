@@ -5,7 +5,7 @@ import type { OutputRequest } from "tardie/request"
 // The binding's half of the output contract: what an endpoint promises about a declared schema,
 // what that promise costs a request, and how the schema reaches each wire. A turn that declares a
 // contract the configured endpoint cannot honour fails here, before a socket opens
-// (docs/output.md, "When the provider cannot").
+// (model.test.ts, "the output mode one attempt runs in").
 
 // OutputCapability is what one configured endpoint promises about a declared contract. It is a
 // union so a value cannot say two things at once: an endpoint that promises nothing has no
@@ -39,7 +39,8 @@ const UNPROVEN = (where: string, contract: string, implementation: string): stri
 // better guarantee than any local reading; mounting a fallback never turns that off. Native is
 // unavailable when the endpoint promises nothing, when it promises nothing native, or when it
 // cannot carry a schema beside the tools this request offers, and then the declared fallback runs.
-// With neither, the turn fails before it spends (docs/output.md, "When the provider cannot").
+// With neither, the turn fails before it spends (model.test.ts, "no native capability runs the
+// declared fallback, and fails without one").
 export const outputModeOf = (
   request: { readonly output?: OutputRequest; readonly tools: ReadonlyArray<unknown> },
   config: { readonly provider?: string; readonly model: string; readonly output?: OutputCapability }
