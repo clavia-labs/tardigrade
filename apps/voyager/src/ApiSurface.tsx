@@ -342,10 +342,10 @@ export const ApiSurface = ({
     <div className="api-view">
       <aside className="api-nav" style={{ width: navWidth }}>
         <div className="pane-chrome" style={{ height: headerHeight }}>
-          <div className="actor-head">
-            <div className="actor-identity">
+          <div className="rail-head">
+            <div className="rail-identity">
               <ProductMark />
-              <div className="mono actor-label">api</div>
+              <div className="mono rail-section-title">api</div>
             </div>
             <button
               type="button"
@@ -392,17 +392,17 @@ export const ApiSurface = ({
             </section>
           ))}
         </nav>
-        <div className="actor-footer">
+        <div className="rail-footer">
           <button
             type="button"
-            className="actor-api actor-api-active"
+            className="rail-utility rail-utility-active"
             aria-current="page"
             onClick={() => jumpTo(undefined)}
           >
             <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
             <span>API</span>
           </button>
-          <ThemeToggle className="actor-api" label={<span>Theme</span>} />
+          <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
         </div>
       </aside>
       <main className="api-reading">

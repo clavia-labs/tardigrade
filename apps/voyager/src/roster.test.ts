@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
 import type { ThreadSummary } from "@clavia/tardigrade-client"
-import { actorMarkOf, agoOf, countsOf, digestLabelOf, latestRootOf, matches, rosterOf } from "./roster"
+import { agoOf, countsOf, latestRootOf, matches, rosterOf } from "./roster"
 
 // The rail's decisions: which threads are rows, how big each root's family is, what a row's counts
 // say, and how an age reads. All pure, so none of them needs a server or a DOM.
@@ -69,23 +69,6 @@ describe("matches", () => {
     expect(matches("PR-shepherd", " shep ")).toBe(true)
     expect(matches("pr-shepherd", "deploy")).toBe(false)
     expect(matches("pr-shepherd", "")).toBe(true)
-  })
-})
-
-describe("digestLabelOf", () => {
-  test("an actor digest reads as short hexadecimal identity", () => {
-    expect(digestLabelOf("sha256:beb340c42043b306", 7)).toBe("beb340c")
-    expect(digestLabelOf("custom-digest", 6)).toBe("custom")
-  })
-})
-
-describe("actorMarkOf", () => {
-  test("a single name keeps its leading characters", () => {
-    expect(actorMarkOf("researcher", 2)).toBe("RE")
-  })
-
-  test("a compound name uses its parts", () => {
-    expect(actorMarkOf("pr-shepherd", 2)).toBe("PS")
   })
 })
 

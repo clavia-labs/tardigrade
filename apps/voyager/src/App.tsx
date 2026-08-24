@@ -2,15 +2,14 @@ import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
 import { ApiSurface } from "./ApiSurface"
-import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type ActorSummary, type ThreadSummary } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type ThreadSummary } from "@clavia/tardigrade-client"
 
-import { client, clientFor } from "./client"
+import { clientFor } from "./client"
 import { navigate, useRoute } from "./nav"
 import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
 import { EMPTY_ROSTER, latestRootOf, rosterOf, type Roster } from "./roster"
-import { ActorRail } from "./ActorRail"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
 // selected thread's log (mock.html). The reader chooses on the left and reads on the right, and
@@ -65,45 +64,11 @@ const useRoster = (actor: string | undefined, intervalMs: number) => {
   return { reading, summaries, problem, ready }
 }
 
-const useActors = (intervalMs: number) => {
-  const [actors, setActors] = useState<ReadonlyArray<ActorSummary>>([])
-  const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
-  const [ready, setReady] = useState(false)
-  useEffect(() => {
-    let live = true
-    const read = async () => {
-      try {
-        const found = await client.actors()
-        if (!live) return
-        setActors(found)
-        setProblem(undefined)
-        setReady(true)
-      } catch (error) {
-        if (!live) return
-        setProblem(error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER }))
-        setReady(true)
-      }
-    }
-    void read()
-    const timer = setInterval(read, intervalMs)
-    return () => {
-      live = false
-      clearInterval(timer)
-    }
-  }, [intervalMs])
-  return { actors, problem, ready }
-}
-
 export const App = (): ReactElement => {
   const route = useRoute()
-  const discovered = useActors(ROSTER_POLL_MS)
-  const actor = route.actor ?? discovered.actors[0]?.name
+  const actor = route.actor ?? RESERVED_ACTOR
   const { problem, reading, summaries, ready } = useRoster(actor, ROSTER_POLL_MS)
   const status = summaries.find((summary) => summary.id === route.thread)?.status
-  useEffect(() => {
-    if (route.actor !== undefined || actor === undefined) return
-    navigate({ actor }, { replace: true })
-  }, [actor, route.actor])
   useEffect(() => {
     if (!ready || reading.actor !== actor || route.view !== undefined || route.thread !== undefined) return
     const latest = latestRootOf(reading.roster)
@@ -113,15 +78,14 @@ export const App = (): ReactElement => {
   if (route.view === "api") return <ApiSurface />
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
-      <ActorRail actors={discovered.actors} problem={discovered.problem} selected={actor} />
       <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
-        {actor !== undefined && route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
+        {route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
           <Quickstart />
         ) : route.thread === undefined ? (
-          <div className="mono pane-empty">{discovered.ready ? "select a run" : "loading actors"}</div>
+          <div className="mono pane-empty">{ready ? "select a thread" : "loading threads"}</div>
         ) : (
-          <Thread actor={actor ?? RESERVED_ACTOR} id={route.thread} status={status} />
+          <Thread actor={actor} id={route.thread} status={status} />
         )}
       </main>
     </div>
