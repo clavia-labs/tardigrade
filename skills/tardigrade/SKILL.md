@@ -20,7 +20,7 @@ In a non-interactive terminal, state the provider connection as JSON. The JSON n
 tdg init researcher \
   --provider openrouter \
   --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
-  --default-model anthropic/claude-sonnet-4-6
+  --default-model anthropic/claude-sonnet-4.6
 cd researcher
 ```
 

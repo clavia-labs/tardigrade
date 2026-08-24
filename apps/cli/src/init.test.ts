@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
 
 let root = ""
 const model = { provider: "openrouter", defaultModel: "anthropic/claude-sonnet-4-6" }
@@ -21,18 +21,20 @@ const temporaryRoot = async (): Promise<string> => {
 describe("initActor", () => {
   test("creates a buildable named quickstart", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, model, now: new Date("2026-08-24T00:00:00Z") })
+    const initialized = await initActor("reviewer", { cwd, model, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })
     const source = await readFile(initialized.entry, "utf8")
     const worker = await readFile(initialized.worker, "utf8")
     const manifestSource = await readFile(initialized.manifest, "utf8")
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>
     const celldManifest = JSON.parse(await readFile(initialized.celldManifest, "utf8")) as Record<string, unknown>
+    const packageManifest = JSON.parse(await readFile(initialized.packageManifest, "utf8")) as Record<string, unknown>
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
     expect(initialized.entry).toBe(join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY))
     expect(initialized.worker).toBe(join(cwd, "reviewer", DEFAULT_WORKER_ENTRY))
     expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
+    expect(initialized.packageManifest).toBe(join(cwd, "reviewer", DEFAULT_PACKAGE_MANIFEST))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
     expect(worker).toContain('import definition from "./actor"')
@@ -59,6 +61,7 @@ describe("initActor", () => {
     ])
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
+    expect(packageManifest).toEqual({ private: true, type: "module", dependencies: { tardie: "0.7.1-test" } })
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -81,6 +84,26 @@ describe("initActor", () => {
 
     expect(initialized.entry).toBe(join(cwd, "actors", "custom", DEFAULT_ACTOR_ENTRY))
   })
+
+  test("adds its exact version to an existing project manifest", async () => {
+    const cwd = await temporaryRoot()
+    const directory = join(cwd, "reviewer")
+    await mkdir(directory)
+    await writeFile(join(directory, "package.json"), `${JSON.stringify({
+      private: true,
+      scripts: { check: "tsc --noEmit" },
+      dependencies: { effect: "4.0.0-rc.110" }
+    })}\n`, "utf8")
+
+    const initialized = await initActor("reviewer", { cwd, model, packageVersion: "0.7.1-rc.158" })
+    const manifest = JSON.parse(await readFile(initialized.packageManifest, "utf8")) as Record<string, unknown>
+
+    expect(manifest).toEqual({
+      private: true,
+      scripts: { check: "tsc --noEmit" },
+      dependencies: { effect: "4.0.0-rc.110", tardie: "0.7.1-rc.158" }
+    })
+  })
 })
 
 describe("initSummary", () => {
@@ -93,6 +116,7 @@ describe("initSummary", () => {
     expect(summary).toContain("created reviewer/worker.ts")
     expect(summary).toContain("created reviewer/wrangler.jsonc")
     expect(summary).toContain("created reviewer/celld.jsonc")
+    expect(summary).toContain("created reviewer/package.json")
     expect(summary).toContain("cd reviewer")
     expect(summary).not.toContain("tdg push")
     expect(summary).not.toContain("tdg build actor.ts")

@@ -80,7 +80,7 @@ The server boots without a provider connection and serves every read; turns fail
   "vars": {
     "TARDIGRADE_CONFIG": {
       "models": {
-        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+        "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.6" },
         "providers": {
           "openrouter": {
             "baseUrl": "https://openrouter.ai/api/v1",

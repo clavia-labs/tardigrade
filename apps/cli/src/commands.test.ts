@@ -38,6 +38,7 @@ interface Recorded {
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly asked: Array<{ thread: string; options: unknown }>
   readonly catalog: Array<{ kind: "models" | "providers"; options: unknown }>
+  readonly installed: Array<string>
   methodReads: number
 }
 
@@ -144,12 +145,16 @@ const drive = async (
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
-  const recorded: Recorded = { invoked: [], asked: [], catalog: [], methodReads: 0 }
+  const recorded: Recorded = { invoked: [], asked: [], catalog: [], installed: [], methodReads: 0 }
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
     cwd: options.cwd ?? process.cwd(),
     openClient: () => clientOf(recorded, options.answers ?? {}),
+    installProject: (directory) => {
+      recorded.installed.push(directory)
+      return Promise.resolve()
+    },
     mintId: () => minted.shift() ?? "exhausted"
   }
   const capture: Console.Console = Object.assign(Object.create(console), {
@@ -278,6 +283,7 @@ describe("parsing", () => {
       expect(actor).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
+      expect(ran.recorded.installed).toEqual([directory])
       await expect(readFile(join(directory, ".dev.vars"), "utf8")).rejects.toThrow()
       expect(ran.lines.join("\n")).toContain('"credential": "environment"')
     } finally {

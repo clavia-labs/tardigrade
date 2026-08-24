@@ -4,10 +4,12 @@ import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, type ActorTemplateModel } from "./template"
+import { versionIn } from "./version"
 import { callCommandFor, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_WORKER_ENTRY = "worker.ts"
+export const DEFAULT_PACKAGE_MANIFEST = "package.json"
 
 export interface InitActorOptions {
   readonly model: ActorTemplateModel
@@ -15,6 +17,7 @@ export interface InitActorOptions {
   readonly directory?: string
   readonly force?: boolean
   readonly now?: Date
+  readonly packageVersion?: string
 }
 
 export interface InitializedActor {
@@ -24,6 +27,7 @@ export interface InitializedActor {
   readonly worker: string
   readonly manifest: string
   readonly celldManifest: string
+  readonly packageManifest: string
 }
 
 export const defaultInitDirectory = (name: string): string => name
@@ -60,6 +64,12 @@ export { ActorHost }
 export default cloudflareWorker(definition)
 `
 
+const packageTemplate = (version: string): string => `${JSON.stringify({
+  private: true,
+  type: "module",
+  dependencies: { tardie: version }
+}, undefined, 2)}\n`
+
 const existsError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST"
 
@@ -70,8 +80,11 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const worker = resolve(directory, DEFAULT_WORKER_ENTRY)
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
   const celldManifest = resolve(directory, CELLD_PROJECT_CONFIG_PATH)
+  const packageManifest = resolve(directory, DEFAULT_PACKAGE_MANIFEST)
   const source = await actorTemplate({ name, model: options.model })
   const manifestSource = manifestTemplate(name, options.now ?? new Date())
+  const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
+  if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")
 
   await mkdir(dirname(entry), { recursive: true })
   try {
@@ -102,7 +115,22 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     if (!existsError(error)) throw error
   }
 
-  return { name, directory, entry, worker, manifest, celldManifest }
+  try {
+    await writeFile(packageManifest, packageTemplate(packageVersion), { encoding: "utf8", flag: "wx" })
+  } catch (error) {
+    if (!existsError(error)) throw error
+    const current = JSON.parse(await readFile(packageManifest, "utf8")) as Record<string, unknown>
+    const dependencies = current["dependencies"]
+    if (dependencies !== undefined && (typeof dependencies !== "object" || dependencies === null || Array.isArray(dependencies))) {
+      throw new Error(`${packageManifest} dependencies must contain a JSON object`)
+    }
+    await writeFile(packageManifest, `${JSON.stringify({
+      ...current,
+      dependencies: { ...(dependencies as Record<string, unknown> | undefined), tardie: packageVersion }
+    }, undefined, 2)}\n`)
+  }
+
+  return { name, directory, entry, worker, manifest, celldManifest, packageManifest }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -117,6 +145,7 @@ export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()
     `created ${shownPath(cwd, actor.worker)}`,
     `created ${shownPath(cwd, actor.manifest)}`,
     `created ${shownPath(cwd, actor.celldManifest)}`,
+    `created ${shownPath(cwd, actor.packageManifest)}`,
     "",
     "next",
     `  cd ${shellWord(directory)}`,

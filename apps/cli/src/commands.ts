@@ -295,7 +295,7 @@ export const setupDefaultCommand = Command.make("default", {
   Command.withDescription("Choose the default model from configured provider connections."),
   Command.withExamples([
     { command: "tdg setup default", description: "Choose the default provider and model" },
-    { command: "tdg setup default --provider openrouter --model anthropic/claude-sonnet-4-6", description: "Select a default from explicit values" }
+    { command: "tdg setup default --provider openrouter --model anthropic/claude-sonnet-4.6", description: "Select a default from explicit values" }
   ])
 )
 
@@ -358,6 +358,10 @@ export const initCommand = Command.make("init", {
       catch: userErrorOf
     })
     const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+    yield* Effect.tryPromise({
+      try: () => cli.installProject(initialized.directory),
+      catch: userErrorOf
+    })
     yield* Console.log(flags.json
       ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
       : `${setupSummary(files, answers)}\n\n${initSummary(initialized, cli.cwd)}`)
@@ -366,7 +370,7 @@ export const initCommand = Command.make("init", {
     Command.withExamples([
       { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
       {
-        command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4-6",
+        command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
         description: "Create a ready actor from provider JSON"
       }
     ])

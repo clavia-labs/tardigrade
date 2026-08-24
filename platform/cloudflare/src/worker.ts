@@ -12,6 +12,7 @@ import {
 } from "@clavia/tardigrade-server/catalog"
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
+import { treeOf, type ThreadNode, type ThreadSummary } from "@clavia/tardigrade-server/projections"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -54,6 +55,9 @@ export interface Env {
 const LANE_PREFIX = "ag."
 const laneOf = (thread: string): string => `${LANE_PREFIX}${thread}`
 const threadOf = (lane: string): string | undefined => lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
+
+const flattenThreads = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
+  nodes.flatMap(({ children, ...summary }) => [summary, ...flattenThreads(children)])
 
 const DEFAULT_ACTOR_NAME = "default"
 
@@ -463,14 +467,14 @@ export class ActorHost extends DurableObject<Env> {
     return (await this.host()).read(laneOf(thread))
   }
 
-  async threads(): Promise<ReadonlyArray<{ readonly id: string; readonly events: number }>> {
+  async threads(): Promise<ReadonlyArray<ThreadSummary>> {
     const host = await this.host()
-    const summaries: Array<{ readonly id: string; readonly events: number }> = []
+    const logs = new Map<string, ReadonlyArray<Event>>()
     for (const lane of await host.lanes()) {
       const id = threadOf(lane)
-      if (id !== undefined) summaries.push({ id, events: (await host.read(lane)).length })
+      if (id !== undefined) logs.set(id, await host.read(lane))
     }
-    return summaries
+    return flattenThreads(treeOf(logs))
   }
 
   async status(): Promise<{ readonly status: "resting" | "driving"; readonly dirty: number }> {
@@ -530,7 +534,7 @@ const guard = (request: HttpServerRequest.HttpServerRequest, env: Env) => {
 }
 
 const catalogQueryOf = (request: HttpServerRequest.HttpServerRequest) => {
-  const query = new URL(request.url).searchParams
+  const query = new URL(request.url, "http://worker").searchParams
   const value = (name: string): string | undefined => query.get(name) ?? undefined
   const limit = value("limit")
   return {
@@ -587,7 +591,7 @@ const routes = [
         if (catalog.snapshot === undefined) {
           throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
         }
-        const query = new URL(request.url).searchParams
+        const query = new URL(request.url, "http://worker").searchParams
         return modelsPageOf(catalog.snapshot, {
           ...catalogQueryOf(request),
           provider: query.get("provider") ?? undefined
@@ -599,9 +603,12 @@ const routes = [
       onSuccess: (page) => json(page)
     }))
   })),
-  HttpRouter.route("GET", "/v1/methods", protectedRoute((_request, _env) =>
+  HttpRouter.route("GET", "/v1/actors/:actor/methods", protectedRoute((_request, _env) =>
     Effect.gen(function* () {
-      const methods = methodsOf(deployedActor)
+      const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
+      const methods = methodsOf(actor)
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
       if (methods === undefined) return json({ error: "actor assembly is not deployed" }, 503)
       return json(Object.entries(methods).map(([name, method]) => ({
         name,
@@ -610,33 +617,37 @@ const routes = [
       })))
     })
   )),
-  HttpRouter.route("PUT", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:actor/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
-      const method = methodsOf(deployedActor)?.[methodName]
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
+      const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const input = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
       const at = yield* Clock.currentTimeMillis
       const decoded = methodEventOf(method, { id: call, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       yield* Effect.promise(() => stub.append(thread, decoded.event))
-      return json({ thread, method: methodName, call }, 202)
+      return json({ actor, thread, method: methodName, call }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:actor/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
-      const method = methodsOf(deployedActor)?.[methodName]
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
+      const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
@@ -645,32 +656,39 @@ const routes = [
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:actor/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
+      const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
+      const stub = yield* Effect.promise(() => actorStub(env, actor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       return json(yield* Effect.promise(() => stub.threads()))
     })
   )),
-  HttpRouter.route("POST", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("POST", "/v1/actors/:actor/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
+      const stub = yield* Effect.promise(() => actorStub(env, actor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
         return json({ error: "event type is required" }, 400)
       }
       yield* Effect.promise(() => stub.append(thread, event))
-      return json({ thread }, 202)
+      return json({ actor, thread }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:actor/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
+      const actor = decodeURIComponent(params.actor ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
+      if (!deployed(actor)) return json({ error: "unknown actor" }, 404)
+      const stub = yield* Effect.promise(() => actorStub(env, actor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
@@ -681,9 +699,11 @@ const routes = [
         catch: (cause) => cause instanceof Error ? cause.message : String(cause)
       }).pipe(Effect.match({
         onFailure: (error) => json({ error }, 500),
-        onSuccess: (events) => json(events.map((event, index) => ({ seq: index + 1, event }))
-          .filter((row) => row.seq > after && (types === undefined || types.includes(row.event.type)))
-          .slice(0, limit))
+        onSuccess: (events) => events.length === 0
+          ? json({ error: "unknown thread" }, 404)
+          : json(events.map((event, index) => ({ seq: index + 1, event }))
+            .filter((row) => row.seq > after && (types === undefined || types.includes(row.event.type)))
+            .slice(0, limit))
       }))
     })
   )),
