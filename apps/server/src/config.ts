@@ -237,6 +237,13 @@ const modelCatalogTimeout = (env: Env): number => {
   return value
 }
 
+// modelCatalogConfigOf resolves the source, repository path, and source timeout for every local catalog consumer.
+export const modelCatalogConfigOf = (env: Env): ModelCatalogConfig => ({
+  sourceUrl: text(env, "TARDIGRADE_MODEL_CATALOG_URL") ?? DEFAULT_MODEL_CATALOG_URL,
+  cachePath: text(env, "TARDIGRADE_MODEL_CATALOG_CACHE") ?? DEFAULT_MODEL_CATALOG_CACHE,
+  timeoutMillis: modelCatalogTimeout(env)
+})
+
 // readConfig resolves project configuration and the environment into the value the process runs on.
 export const readConfig = (
   env: Env,
@@ -252,11 +259,7 @@ export const readConfig = (
     token: text(env, "TARDIGRADE_TOKEN"),
     model,
     modelCredentials: modelCredentialsFrom(model, env),
-    catalog: {
-      sourceUrl: text(env, "TARDIGRADE_MODEL_CATALOG_URL") ?? DEFAULT_MODEL_CATALOG_URL,
-      cachePath: text(env, "TARDIGRADE_MODEL_CATALOG_CACHE") ?? DEFAULT_MODEL_CATALOG_CACHE,
-      timeoutMillis: modelCatalogTimeout(env)
-    }
+    catalog: modelCatalogConfigOf(env)
   }
 }
 

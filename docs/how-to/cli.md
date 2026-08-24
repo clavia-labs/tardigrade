@@ -50,6 +50,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
 | Project configuration | | `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc` |
+| Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what `tdg init` or `tdg setup` saved in `.env` |
 
 `tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection to `tardigrade.jsonc`, and stores the credential in `.env` at mode 0600. It never prints the credential back. Run `tdg setup` inside the actor directory later to add another provider connection or change the project default. Each setup run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
@@ -86,7 +87,7 @@ Partial declarative initialization fails and lists the missing flags. A missing 
 OPENROUTER_API_KEY='your-key'
 ```
 
-Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The list omits models whose catalog entry explicitly rules out text output or tool calls. Models with missing capability data remain visible, and manual entry remains available. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
+Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The first interactive run saves the validated public catalog in `.tardigrade/models.json`; later runs load that snapshot without another request. A cached list says `cached catalog`. The list omits models whose catalog entry explicitly rules out text output or tool calls. Models with missing capability data remain visible, and manual entry remains available. `tdg dev` refreshes the same cache when its server starts and keeps the resolved snapshot in memory. The server resolves model windows, output limits, and pricing from that snapshot.
 
 ## What the actor can reach
 

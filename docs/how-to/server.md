@@ -93,7 +93,7 @@ The server boots without a provider connection and serves every read; turns fail
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
 
-The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. With no valid source or cache, `GET /v1/models` answers 503. Its response includes the source revision and refresh time. Provider connections and credentials never appear in the catalog.
+The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and `GET /v1/models` do not read the cache file on each request. With no valid source or cache, `GET /v1/models` answers 503. Its response includes the source revision and refresh time. Provider connections and credentials never appear in the catalog.
 
 ## Clients
 

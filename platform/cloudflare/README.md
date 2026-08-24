@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding stores the actor registry in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the registry, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding stores the actor registry and public model catalog in D1 and runs each registered actor graph in its named SQLite Durable Object. `@effect/sql-d1` binds the shared database, `@effect/sql-sqlite-do` binds each actor object's storage, and `effect/unstable/http` serves the Worker routes. Every thread is a lane in its actor's event table. One alarm per actor drives ready lanes with the configured concurrency limit, and an alarm scheduled during an active pass remains armed after that pass. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 ## Verify and deploy
 
@@ -33,7 +33,7 @@ cd platform/cloudflare
 bunx wrangler secret put OPENAI_API_KEY
 ```
 
-Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible configuration names the default coordinate, provider routes, credential variable names, and metadata used before a model request spends tokens:
+Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible configuration names the default coordinate, provider routes, and credential variable names:
 
 ```jsonc
 {
@@ -45,10 +45,7 @@ Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible con
           "openai": {
             "baseUrl": "https://api.openai.com/v1",
             "driver": "openai-responses",
-            "env": ["OPENAI_API_KEY"],
-            "models": {
-              "gpt-5.2": { "contextWindowTokens": 400000, "maxOutputTokens": 128000 }
-            }
+            "env": ["OPENAI_API_KEY"]
           }
         }
       }
@@ -57,17 +54,17 @@ Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible con
 }
 ```
 
-A host without model configuration records a failed turn that names the missing configuration.
+A host without model configuration records a failed turn that names the missing configuration. The Worker validates the public catalog from models.dev, stores the last valid snapshot in D1, and loads it into isolate memory. Provider connections and secrets stay outside the catalog.
 
 ## HTTP shapes
 
-`GET /healthz` is public.
+`GET /healthz` and `GET /v1/models` are public. The model route returns the validated public snapshot from isolate memory.
 
 ```json
 { "status": "resting", "dirty": 0 }
 ```
 
-Every other endpoint requires `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
+Every actor endpoint requires `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
 
 `GET /v1/actors` has no input body and returns the actors registered in D1. The Worker inserts its exported `DEFAULT_ACTOR_REGISTRATION` when `default` is absent.
 
@@ -111,9 +108,12 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `0` | Delays a newly armed actor alarm |
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
 | `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
+| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |
+| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the D1 snapshot |
+| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds a catalog refresh request |
 | `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
 | `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
-| `TARDIGRADE_CONFIG` | `{}` | Supplies provider routes and model metadata as visible JSON configuration in `wrangler.jsonc` |
+| `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model coordinate as visible JSON configuration in `wrangler.jsonc` |
 
-`wrangler.jsonc` also makes the D1 registry binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.
+`wrangler.jsonc` also makes the D1 binding for the registry and model catalog, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.

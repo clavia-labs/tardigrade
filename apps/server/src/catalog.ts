@@ -1,18 +1,17 @@
 import { Context, Effect, Layer, Schema } from "effect"
-import { createHash, randomUUID } from "node:crypto"
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
-import { dirname } from "node:path"
 import {
   ModelCatalog as ModelCatalogSchema,
   type ModelCatalog
 } from "@clavia/tardigrade-client/contract"
 import { modelsDevCatalogOf, type ModelMetadata } from "@clavia/tardigrade-model/metadata"
 
-import { ServerConfig, type ModelCatalogConfig } from "./config"
+import { ServerConfig } from "./config"
+import { ModelCatalogRepository } from "./catalog-store"
 
 export interface ModelCatalogState {
   readonly snapshot?: ModelCatalog
   readonly refreshError?: string
+  readonly cacheError?: string
 }
 
 // ModelCatalogStore holds the snapshot resolved once when this server starts.
@@ -21,7 +20,16 @@ export class ModelCatalogStore extends Context.Service<
   ModelCatalogState
 >()("tardigrade/server/ModelCatalogStore") {}
 
-export interface ModelCatalogLoadOptions extends ModelCatalogConfig {
+export const MODEL_CATALOG_LOAD_POLICIES = ["cache-first", "refresh"] as const
+export type ModelCatalogLoadPolicy = typeof MODEL_CATALOG_LOAD_POLICIES[number]
+
+// DEFAULT_SERVER_MODEL_CATALOG_LOAD_POLICY refreshes once when a server process starts.
+export const DEFAULT_SERVER_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
+
+export interface ModelCatalogLoadOptions {
+  readonly sourceUrl: string
+  readonly timeoutMillis: number
+  readonly policy: ModelCatalogLoadPolicy
   readonly fetch?: typeof globalThis.fetch
   readonly now?: () => number
 }
@@ -98,36 +106,9 @@ export const modelCatalogOf = (
   })
 }
 
-const cachedAt = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog | undefined> => {
-  try {
-    const parsed = JSON.parse(await readFile(options.cachePath, "utf8")) as unknown
-    const stored = recordOf(parsed)
-    if (stored?.["schema"] !== 1 || stored["sourceKey"] !== sourceKeyOf(options.sourceUrl)) return undefined
-    const snapshot = Schema.decodeUnknownSync(ModelCatalogSchema)(stored["snapshot"])
-    if (snapshot.revision.trim().length === 0 || snapshot.providers.every((provider) => provider.models.length === 0)) {
-      return undefined
-    }
-    return { ...snapshot, status: "cached" }
-  } catch {
-    return undefined
-  }
-}
-
-const sourceKeyOf = (sourceUrl: string): string =>
-  `sha256:${createHash("sha256").update(sourceUrl).digest("hex")}`
-
-const writeAtomically = async (path: string, sourceUrl: string, snapshot: ModelCatalog): Promise<void> => {
-  const temporary = `${path}.${process.pid}.${randomUUID()}.tmp`
-  await mkdir(dirname(path), { recursive: true })
-  try {
-    await writeFile(temporary, `${JSON.stringify({ schema: 1, sourceKey: sourceKeyOf(sourceUrl), snapshot })}\n`, {
-      encoding: "utf8",
-      mode: 0o644
-    })
-    await rename(temporary, path)
-  } finally {
-    await rm(temporary, { force: true })
-  }
+const sha256Of = async (text: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text))
+  return `sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`
 }
 
 const refreshed = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog> => {
@@ -138,37 +119,74 @@ const refreshed = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog
   if (!response.ok) throw new Error(`model catalog returned ${response.status}`)
   const text = await response.text()
   const revision = response.headers.get("etag") ?? response.headers.get("last-modified") ??
-    `sha256:${createHash("sha256").update(text).digest("hex")}`
-  const snapshot = modelCatalogOf(JSON.parse(text) as unknown, revision, (options.now ?? Date.now)())
-  await writeAtomically(options.cachePath, options.sourceUrl, snapshot)
-  return snapshot
+    await sha256Of(text)
+  return modelCatalogOf(JSON.parse(text) as unknown, revision, (options.now ?? Date.now)())
 }
 
-// loadModelCatalog refreshes the source and falls back to the last validated snapshot at the same source URL.
-export const loadModelCatalog = async (options: ModelCatalogLoadOptions): Promise<ModelCatalogState> => {
-  try {
-    return { snapshot: await refreshed(options) }
-  } catch (error) {
-    const cached = await cachedAt(options)
-    return {
-      ...(cached === undefined ? {} : { snapshot: cached }),
-      refreshError: messageOf(error)
+const cacheRead = (sourceUrl: string) => Effect.flatMap(ModelCatalogRepository, (repository) =>
+  repository.read(sourceUrl).pipe(Effect.match({
+    onFailure: (error) => ({ cacheError: error.message }),
+    onSuccess: (snapshot) => snapshot === undefined ? {} : { snapshot }
+  })))
+
+// loadModelCatalog resolves one in-memory snapshot according to the stated source policy.
+export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effect<ModelCatalogState, never, ModelCatalogRepository> =>
+  Effect.gen(function*() {
+    let cached: ModelCatalogState | undefined
+    if (options.policy === "cache-first") {
+      cached = yield* cacheRead(options.sourceUrl)
+      if (cached.snapshot !== undefined) return cached
     }
-  }
-}
+
+    const refreshedState = yield* Effect.tryPromise({
+      try: () => refreshed(options),
+      catch: messageOf
+    }).pipe(Effect.match({
+      onFailure: (refreshError) => ({ _tag: "Failure" as const, refreshError }),
+      onSuccess: (snapshot) => ({ _tag: "Success" as const, snapshot })
+    }))
+
+    if (refreshedState._tag === "Success") {
+      const repository = yield* ModelCatalogRepository
+      const cacheError = yield* repository.write(options.sourceUrl, refreshedState.snapshot).pipe(Effect.match({
+        onFailure: (error) => error.message,
+        onSuccess: () => undefined
+      }))
+      return {
+        snapshot: refreshedState.snapshot,
+        ...(cached?.cacheError === undefined && cacheError === undefined
+          ? {}
+          : { cacheError: [cached?.cacheError, cacheError].filter((message) => message !== undefined).join("; ") })
+      }
+    }
+
+    cached ??= yield* cacheRead(options.sourceUrl)
+    return {
+      ...(cached.snapshot === undefined ? {} : { snapshot: cached.snapshot }),
+      refreshError: refreshedState.refreshError,
+      ...(cached.cacheError === undefined ? {} : { cacheError: cached.cacheError })
+    }
+  })
 
 // layerModelCatalog refreshes the configured source once for the lifetime of the server process.
 export const layerModelCatalog = (
-  options: Pick<ModelCatalogLoadOptions, "fetch" | "now"> = {}
-): Layer.Layer<ModelCatalogStore, never, ServerConfig> =>
+  options: Partial<Pick<ModelCatalogLoadOptions, "fetch" | "now" | "policy">> = {}
+): Layer.Layer<ModelCatalogStore, never, ServerConfig | ModelCatalogRepository> =>
   Layer.effect(
     ModelCatalogStore,
     Effect.flatMap(ServerConfig, (config) =>
       Effect.tap(
-        Effect.promise(() => loadModelCatalog({ ...config.catalog, ...options })),
-        (state) => state.refreshError === undefined
-          ? Effect.void
-          : Effect.logWarning(`model catalog refresh failed: ${state.refreshError}`)
+        loadModelCatalog({
+          sourceUrl: config.catalog.sourceUrl,
+          timeoutMillis: config.catalog.timeoutMillis,
+          policy: options.policy ?? DEFAULT_SERVER_MODEL_CATALOG_LOAD_POLICY,
+          ...(options.fetch === undefined ? {} : { fetch: options.fetch }),
+          ...(options.now === undefined ? {} : { now: options.now })
+        }),
+        (state) => Effect.all([
+          state.refreshError === undefined ? Effect.void : Effect.logWarning(`model catalog refresh failed: ${state.refreshError}`),
+          state.cacheError === undefined ? Effect.void : Effect.logWarning(`model catalog cache failed: ${state.cacheError}`)
+        ], { discard: true })
       ))
   )
 

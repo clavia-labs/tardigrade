@@ -1,9 +1,10 @@
 import { Console, Context, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
-import { BunHttpServer } from "@effect/platform-bun"
+import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
+import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import { layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
 import { layerApp } from "@clavia/tardigrade-server/http"
 
@@ -135,7 +136,10 @@ export const dev = (options: DevOptions) => {
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
-  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), config)
+  const catalogRepository = layerFileModelCatalogRepository(options.config.catalog.cachePath).pipe(
+    Layer.provide(BunFileSystem.layer)
+  )
+  const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
   const threads = Layer.provide(layerThreads({
     ...options.threads,
     actorRefresh: { debounceMillis: actorRefreshMillis }

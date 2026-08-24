@@ -1,9 +1,13 @@
-import { Console, Data, Effect, Redacted } from "effect"
+import { Console, Data, Effect, Layer, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
 import { applyEdits, modify } from "jsonc-parser"
+import { BunFileSystem } from "@effect/platform-bun"
+import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { MODEL_DRIVERS, type ModelDriver } from "@clavia/tardigrade-model/directory"
+import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
+import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import type { Env, ModelConfig } from "@clavia/tardigrade-server/config"
 import {
   DEFAULT_MODEL_CATALOG_URL,
@@ -158,6 +162,7 @@ export interface ListedModel {
 }
 
 export interface ModelCatalogOptions {
+  readonly cachePath?: string
   readonly fetch?: typeof globalThis.fetch
   readonly selectionPolicy?: ModelSelectionPolicy
   readonly timeoutMillis?: number
@@ -212,11 +217,21 @@ export interface SetupPromptOptions {
 
 type ModelPick = { readonly tag: "model"; readonly model: ListedModel } | { readonly tag: "manual" }
 
+const listedCatalogModels = (
+  models: ModelCatalog["providers"][number]["models"],
+  policy: ModelSelectionPolicy
+): ReadonlyArray<ListedModel> =>
+  models.filter((model) => agentModelIsSelectable(model.metadata, policy)).map((model) => ({
+    id: model.id,
+    ...(model.name === undefined ? {} : { name: model.name })
+  }))
+
 export const modelsDevAt = async (
   provider: string,
   options: ModelCatalogOptions = {}
 ): Promise<{
   readonly revision: string
+  readonly status: "fresh" | "cached"
   readonly env: ReadonlyArray<string>
   readonly models: ReadonlyArray<ListedModel>
 }> => {
@@ -224,6 +239,23 @@ export const modelsDevAt = async (
   const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
   const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
   const selectionPolicy = options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY
+  if (options.cachePath !== undefined) {
+    const repository = layerFileModelCatalogRepository(options.cachePath).pipe(Layer.provide(BunFileSystem.layer))
+    const state = await Effect.runPromise(loadModelCatalog({
+      sourceUrl: url,
+      timeoutMillis,
+      policy: "cache-first",
+      ...(options.fetch === undefined ? {} : { fetch: options.fetch })
+    }).pipe(Effect.provide(repository)))
+    if (state.snapshot === undefined) throw new Error(state.refreshError ?? state.cacheError ?? "model catalog is unavailable")
+    const found = state.snapshot.providers.find((entry) => entry.id === provider)
+    return {
+      revision: state.snapshot.revision,
+      status: state.snapshot.status,
+      env: found?.env ?? [],
+      models: found === undefined ? [] : listedCatalogModels(found.models, selectionPolicy)
+    }
+  }
   const response = await fetcher(url, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(timeoutMillis)
@@ -233,6 +265,7 @@ export const modelsDevAt = async (
   const found = modelsDevCatalogOf(await response.json(), revision).find((entry) => entry.id === provider)
   return {
     revision,
+    status: "fresh",
     env: found?.env ?? [],
     models: found?.models.filter((model) => agentModelIsSelectable({
       outputModalities: model.metadata.outputModalities?.value,
@@ -282,6 +315,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
   const loaded = catalogResult?.models
   const current = options.current?.model_id?.trim()
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
+  const cache = catalogResult?.status === "cached" ? " · cached catalog" : ""
   const selection = selectionLabel(options.catalog?.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
   const manual = () => Prompt.text({
     message: `${preset.modelExample === undefined ? "Default model ID" : `Default model ID, for example ${preset.modelExample}`}${catalog}`,
@@ -298,7 +332,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
       models.unshift({ id: current, name: "Currently configured" })
     }
     const picked = yield* Prompt.autoComplete<ModelPick>({
-      message: `Choose the default model${selection}${catalog}`,
+      message: `Choose the default model${selection}${cache}${catalog}`,
       filterLabel: "model",
       filterPlaceholder: "type to filter",
       choices: [

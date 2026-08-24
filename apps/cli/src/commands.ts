@@ -1,13 +1,15 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
+import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
 
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
+import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
-import { initActor, initSummary } from "./init"
+import { defaultInitDirectory, initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
 import { readSetupEnv, setupAnswersFrom, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
 import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
@@ -160,6 +162,17 @@ export const NO_MODEL_NOTICE =
 // notice instead (commands.test.ts, "dev asks only where someone can answer").
 const canAsk = (): boolean => process.stdin.isTTY === true
 
+const setupPromptIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
+  const catalog = modelCatalogConfigOf(env)
+  return setupPrompt({
+    catalog: {
+      cachePath: resolve(root, catalog.cachePath),
+      timeoutMillis: catalog.timeoutMillis,
+      url: catalog.sourceUrl
+    }
+  })
+}
+
 export const NON_INTERACTIVE_SETUP =
   "tdg setup needs all declarative flags when stdin is not interactive; see `tdg setup --help`"
 export const NON_INTERACTIVE_INIT =
@@ -186,7 +199,7 @@ export const setupCommand = Command.make("setup", {
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
-      ? yield* Effect.mapError(setupPrompt(), userErrorOf)
+      ? yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_SETUP))
     const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
     yield* Console.log(flags.json ? jsonOf(setupJson(files, answers)) : setupSummary(files, answers))
@@ -223,6 +236,7 @@ export const initCommand = Command.make("init", {
   Effect.gen(function*() {
     const cli = yield* Cli
     const directory = stated(flags.dir)
+    const initializedRoot = resolve(cli.cwd, directory ?? defaultInitDirectory(flags.name))
     const declared = yield* Effect.try({
       try: () => setupAnswersFrom({
         provider: stated(flags.provider),
@@ -234,7 +248,7 @@ export const initCommand = Command.make("init", {
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
-      ? yield* Effect.mapError(setupPrompt(), userErrorOf)
+      ? yield* Effect.mapError(setupPromptIn(initializedRoot, cli.env), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_INIT))
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(flags.name, {
@@ -385,7 +399,7 @@ export const devCommand = Command.make("dev", {
       ? Effect.succeed(config)
       : canAsk()
       ? Effect.gen(function*() {
-        const answers = yield* Effect.mapError(setupPrompt(), userErrorOf)
+        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
         const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
         yield* Console.log(setupSummary(files, answers))
         const written = yield* readSetupEnv(cli.cwd)

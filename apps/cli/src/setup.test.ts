@@ -97,6 +97,17 @@ describe("model discovery", () => {
 
     expect(found.models.map((model) => model.id)).toEqual(["image", "unknown"])
   })
+
+  test("a project cache prevents a second catalog fetch", async () => {
+    const cachePath = join(root, ".tardigrade", "models.json")
+    const fresh = await modelsDevAt("openrouter", { cachePath, fetch: fetcher })
+    const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
+    const cached = await modelsDevAt("openrouter", { cachePath, fetch: refused })
+
+    expect(fresh.status).toBe("fresh")
+    expect(cached.status).toBe("cached")
+    expect(cached.models).toEqual(fresh.models)
+  })
 })
 
 describe("declarative setup", () => {
