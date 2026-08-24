@@ -113,20 +113,9 @@ Mount the component beside the built-in parts that this task needs:
 
 ```ts
 import {
-  actor,
-  agentMethods,
-  agentsPackage,
-  budget,
-  codeMode,
-  compaction,
-  defineActor,
-  fetchPackage,
-  filesPackage,
-  infer,
-  outputValidateOnce,
-  reply,
-  system,
-  workspacePackage
+  actor, agentMethods, agentsPackage, budget, codeMode,
+  compaction, defineActor, fetchPackage, filesPackage, infer,
+  outputValidateOnce, reply, system, workspacePackage
 } from "tardie"
 
 const instructions = system(
