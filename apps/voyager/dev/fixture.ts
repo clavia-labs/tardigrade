@@ -4,8 +4,8 @@ import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { layerConfig, readConfig } from "@clavia/tardigrade-server/config"
-import { layerThreads } from "@clavia/tardigrade-server/host"
 import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
+import { layerThreads } from "@clavia/tardigrade-server/host"
 import { serve } from "@clavia/tardigrade-server/http"
 
 // The development server: the real apps/server process, on a volatile database, with the model seam
@@ -66,7 +66,7 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 // loop wants: the forest on screen is the forest this session made.
 const config = layerConfig(readConfig({ TARDIGRADE_DB: ":memory:", PORT: String(FIXTURE_PORT) }))
 
-const threads = Layer.provide(layerThreads({ infer: layerScripted }), config)
+const threads = Layer.provide(layerThreads({ infer: layerScripted }), [config, layerModelCatalogUnavailable])
 
 const app = Layer.provideMerge(serve({ disableLogger: true }), [
   BunHttpServer.layer({ port: FIXTURE_PORT }),

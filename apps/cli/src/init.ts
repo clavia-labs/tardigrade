@@ -1,12 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises"
 import { dirname, relative, resolve } from "node:path"
 
-import { actorTemplate } from "./template"
+import { actorTemplate, type ActorTemplateModel } from "./template"
 import { callCommandFor, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 
 export interface InitActorOptions {
+  readonly model: ActorTemplateModel
   readonly cwd?: string
   readonly directory?: string
   readonly force?: boolean
@@ -23,11 +24,11 @@ export const defaultInitDirectory = (name: string): string => name
 const existsError = (error: unknown): boolean =>
   typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST"
 
-export const initActor = async (name: string, options: InitActorOptions = {}): Promise<InitializedActor> => {
+export const initActor = async (name: string, options: InitActorOptions): Promise<InitializedActor> => {
   const cwd = options.cwd ?? process.cwd()
   const directory = resolve(cwd, options.directory ?? defaultInitDirectory(name))
   const entry = resolve(directory, DEFAULT_ACTOR_ENTRY)
-  const source = await actorTemplate({ name })
+  const source = await actorTemplate({ name, model: options.model })
 
   await mkdir(dirname(entry), { recursive: true })
   try {

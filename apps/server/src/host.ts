@@ -17,6 +17,7 @@ import {
   Infer,
   actorMethodsOf,
   type ActorMethods,
+  type ModelRef,
   type ActorArtifactManifest,
   type ActorDefinition
 } from "tardie"
@@ -24,10 +25,16 @@ import type { Action } from "tardie/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
-import { RESERVED_ACTOR, type ActorArtifact, type ActorSummary } from "@clavia/tardigrade-client/contract"
+import {
+  RESERVED_ACTOR,
+  type ActorArtifact,
+  type ActorSummary,
+  type ModelCatalog
+} from "@clavia/tardigrade-client/contract"
 
 import { builtInActor, type ServerR } from "./actor"
-import { ServerConfig, type ServerConfigValue } from "./config"
+import { ServerConfig, type ModelConfig, type ModelCredentials, type ServerConfigValue } from "./config"
+import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { DriverGauge } from "./http"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
@@ -81,30 +88,164 @@ export class Threads extends Context.Service<
   }
 >()("tardigrade/server/Threads") {}
 
-// The model binding the configured coordinates name. Absent coordinates are not an endpoint this
+// The model binding the configured references name. An absent reference is not an endpoint this
 // server invents: every attempt fails with what is missing, so the process still boots, still
 // answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
-export const MISSING_MODEL = "no model is configured: run `tdg setup`, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID"
+export const MISSING_MODEL = "no model provider is configured: run `tdg setup`"
+
+interface SelectedModel {
+  readonly model_id: string
+  readonly provider: string
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly protocol: ModelConfig["providers"][string]["protocol"]
+  readonly region?: string
+  readonly contextWindowTokens: number
+  readonly maxOutputTokens?: number
+  readonly pricing?: import("tardie/usage").ModelPricing
+  readonly catalogRevision: string
+}
+
+interface ProviderConnection {
+  readonly baseUrl: string
+  readonly apiKey: string
+  readonly protocol: ModelConfig["providers"][string]["protocol"]
+  readonly region?: string
+}
+
+const connectionFrom = (
+  config: ModelConfig,
+  credentials: ModelCredentials,
+  selected: ModelRef
+): ProviderConnection => {
+  const provider = config.providers[selected.provider]
+  if (provider === undefined) {
+    const available = Object.keys(config.providers).sort()
+    throw new Error(
+      `provider ${JSON.stringify(selected.provider)} is not configured for model ${JSON.stringify(selected.model_id)}; ` +
+      `run \`tdg setup\`${available.length === 0 ? "" : `; configured providers: ${available.join(", ")}`}`
+    )
+  }
+  const apiKey = provider.env.flatMap((name) => credentials[name] === undefined ? [] : [credentials[name]!])[0]
+  if (apiKey === undefined) {
+    throw new Error(
+      `provider ${JSON.stringify(selected.provider)} needs a credential; set ${provider.env.join(" or ")} as a secret environment variable`
+    )
+  }
+  return {
+    baseUrl: provider.baseUrl,
+    apiKey,
+    protocol: provider.protocol,
+    ...(provider.region === undefined ? {} : { region: provider.region })
+  }
+}
+
+const catalogModelFrom = (
+  snapshot: ModelCatalog,
+  selected: ModelRef
+): ModelCatalog["providers"][number]["models"][number] => {
+  const provider = snapshot.providers.find((candidate) => candidate.id === selected.provider)
+  if (provider === undefined) {
+    throw new Error(
+      `provider ${JSON.stringify(selected.provider)} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
+    )
+  }
+  const model = provider.models.find((candidate) => candidate.id === selected.model_id)
+  if (model === undefined) {
+    throw new Error(
+      `model ${selected.provider}/${selected.model_id} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
+    )
+  }
+  return model
+}
+
+// selectedModelFrom combines one private provider connection with public metadata from the
+// process catalog snapshot.
+export const selectedModelFrom = (
+  config: ModelConfig,
+  credentials: ModelCredentials,
+  catalog: ModelCatalogState,
+  reference?: ModelRef
+): SelectedModel => {
+  const selected = reference ?? config.default
+  if (selected === undefined) throw new Error("the built-in actor has no model reference; run `tdg setup`")
+  const provider = connectionFrom(config, credentials, selected)
+  if (catalog.snapshot === undefined) {
+    throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
+  }
+  const catalogModel = catalogModelFrom(catalog.snapshot, selected)
+  const metadata = catalogModel.metadata
+  if (metadata.contextWindowTokens === undefined) {
+    throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
+  }
+  return {
+    ...selected,
+    baseUrl: provider.baseUrl,
+    apiKey: provider.apiKey,
+    protocol: provider.protocol,
+    ...(provider.region === undefined ? {} : { region: provider.region }),
+    contextWindowTokens: metadata.contextWindowTokens,
+    ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
+    ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
+    catalogRevision: catalog.snapshot.revision
+  }
+}
 
 // modelIsConfigured says whether a turn can reach a model at all. The command line reads it to say
 // so once on boot rather than letting every turn be the first news (apps/cli/src/commands.ts).
 export const modelIsConfigured = (config: ServerConfigValue): boolean =>
-  config.model.baseUrl !== undefined && config.model.apiKey !== undefined && config.model.id !== undefined
+  (() => {
+    try {
+      if (config.model.default === undefined) return false
+      connectionFrom(config.model, config.modelCredentials, config.model.default)
+      return true
+    } catch {
+      return false
+    }
+  })()
 
-const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
-  const { apiKey, baseUrl, id, provider, output } = config.model
-  if (!modelIsConfigured(config) || baseUrl === undefined || apiKey === undefined || id === undefined) {
+const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): Layer.Layer<Infer> => {
+  if (Object.keys(config.model.providers).length === 0) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
+    return Layer.succeed(Infer)({
+      resolve: () => { throw new Error(MISSING_MODEL) },
+      react: () => Effect.succeed(failed)
+    })
   }
-  return infer({
-    baseUrl,
-    apiKey,
-    model: id,
-    ...(provider === undefined ? {} : { provider }),
-    // The capability is the operator's whole statement, passed through as declared. Nothing here
-    // fills a field it did not state (platform/model/src/output.ts, capabilityOf).
-    ...(output === undefined ? {} : { output })
+  return Layer.succeed(Infer, {
+    resolve: (reference) => {
+      const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
+      return {
+        model: reference,
+        contextWindowTokens: selected.contextWindowTokens,
+        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
+        catalogRevision: selected.catalogRevision
+      }
+    },
+    react: (request, key) => Effect.suspend(() => {
+      let selected: SelectedModel
+      try {
+        selected = selectedModelFrom(config.model, config.modelCredentials, catalog, request.model)
+      } catch (error) {
+        return Effect.succeed<Action>({
+          kind: "fail",
+          error: error instanceof Error ? error.message : String(error),
+          failure: { cause: "inference_error", attempts: 0 }
+        })
+      }
+      const binding = infer({
+        baseUrl: selected.baseUrl,
+        apiKey: selected.apiKey,
+        model: selected.model_id,
+        protocol: selected.protocol,
+        provider: selected.provider,
+        ...(selected.region === undefined ? {} : { region: selected.region }),
+        contextWindowTokens: selected.contextWindowTokens,
+        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
+        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
+      })
+      return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(binding))
+    })
   })
 }
 
@@ -112,9 +253,9 @@ const layerInferFrom = (config: ServerConfigValue): Layer.Layer<Infer> => {
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
-const layerLane = (config: ServerConfigValue, options: ThreadsOptions) =>
+const layerLane = (config: ServerConfigValue, catalog: ModelCatalogState, options: ThreadsOptions) =>
   Layer.mergeAll(
-    options.infer ?? layerInferFrom(config),
+    options.infer ?? layerInferFrom(config, catalog),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -303,11 +444,18 @@ const manifestOf = async (directory: string): Promise<{ readonly manifest: Actor
 const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
-    const lane = layerLane(config, options)
+    const catalog = yield* ModelCatalogStore
+    const lane = layerLane(config, catalog, options)
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
-    const builtIn = builtInActor()
+    const builtIn = modelIsConfigured(config)
+      ? builtInActor({
+          provider: config.model.default!.provider,
+          default_model: config.model.default!.model_id,
+          contextWindowTokens: (model) => selectedModelFrom(config.model, config.modelCredentials, catalog, model).contextWindowTokens
+        })
+      : builtInActor()
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
     const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {
@@ -476,5 +624,5 @@ const make = (options: ThreadsOptions) =>
 
 // layerThreads is the host, the assembly, and the driver: the Threads the routes consume and the
 // DriverGauge /healthz reads, built once and closed with the scope.
-export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig> =>
+export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(make(options))

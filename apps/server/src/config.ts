@@ -3,15 +3,15 @@ import {
   DEFAULT_MAX_CONCURRENT_LANES,
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
+import { modelRefOf, type ModelRef } from "tardie"
+import { modelProtocolOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
-// The server's configuration is the environment and nothing else (apps-server-spec.md,
-// "Conventions"). One operator, one store, one process, so there is no config file to reconcile
-// with the environment and no precedence order to remember. Every default is an exported constant
-// and every value is a field on ServerConfig, so a consumer can read what the process resolved and
-// a test can supply its own without touching process.env (http.test.ts).
+// The server combines ordinary project configuration with environment credentials and host
+// settings. Every default is exported, and every resolved value is visible on ServerConfig
+// (http.test.ts).
 
 // Where the HTTP server listens when PORT is absent.
 export const DEFAULT_PORT = 4242
@@ -23,10 +23,13 @@ export const DEFAULT_ACTORS = ".tardigrade/actors"
 
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
 
+// DEFAULT_PROJECT_CONFIG_PATH is the project configuration read by the direct server.
+export const DEFAULT_PROJECT_CONFIG_PATH = "tardigrade.jsonc"
+
 // DEFAULT_MODEL_CATALOG_CACHE is the last validated public snapshot used when a refresh fails.
 export const DEFAULT_MODEL_CATALOG_CACHE = ".tardigrade/models.json"
 
-// DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS bounds the catalog request made when the server starts.
+// DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS bounds the source request made when the server starts.
 export const DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
 
 export { DEFAULT_MODEL_CATALOG_URL }
@@ -37,30 +40,29 @@ export interface ModelCatalogConfig {
   readonly timeoutMillis: number
 }
 
-// The model binding's coordinates. Absent values are absent rather than guessed: the model layer
-// decides what it can do without them, and the server does not invent an endpoint.
-export interface ModelConfig {
-  readonly baseUrl: string | undefined
-  readonly apiKey: string | undefined
-  readonly id: string | undefined
-  readonly provider: string | undefined
-  // What this endpoint and this model promise about a turn's declared output contract. A
-  // provider name proves nothing here: structured output is a property of the endpoint AND the
-  // model behind it, so an operator states it. Absent, a turn that declares a contract fails
-  // before it spends (platform/model/src/output.ts, capabilityOf).
-  readonly output: OutputCapabilityValue | undefined
+// ModelProviderConfig is one private provider connection. Public model metadata belongs to the
+// catalog snapshot, so changing models does not change connection configuration.
+export interface ModelProviderConfig {
+  readonly baseUrl: string
+  readonly protocol: ModelProtocol
+  readonly env: ReadonlyArray<string>
+  readonly region?: string
 }
 
-export const OUTPUT_GUARANTEES = ["native", "none"] as const
+// ModelConfig holds private provider connections and the reference used by the built-in actor.
+export interface ModelConfig {
+  readonly default: ModelRef | undefined
+  readonly providers: Readonly<Record<string, ModelProviderConfig>>
+}
 
-export type OutputGuarantee = (typeof OUTPUT_GUARANTEES)[number]
+// ProjectConfig holds ordinary configuration loaded from tardigrade.jsonc.
+export interface ProjectConfig {
+  readonly models: ModelConfig
+}
 
-// OutputCapabilityValue is the whole capability, so nothing about it is a default this process
-// chose. `withTools` says whether the schema may ride the same call as a tool list, which an
-// operator must state alongside a native guarantee rather than inherit.
-export type OutputCapabilityValue =
-  | { readonly guarantee: "none" }
-  | { readonly guarantee: "native"; readonly withTools: boolean }
+// ModelCredentials holds environment values separately from the provider configuration that
+// names them.
+export type ModelCredentials = Readonly<Record<string, string>>
 
 export interface ServerConfigValue {
   readonly port: number
@@ -69,9 +71,10 @@ export interface ServerConfigValue {
   readonly actorData: string
   readonly maxConcurrentLanes: number
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
-  // makes a bearer token required on actor routes (http.ts).
+  // makes a bearer token required on actor routes. Process metadata stays public (http.ts).
   readonly token: string | undefined
   readonly model: ModelConfig
+  readonly modelCredentials: ModelCredentials
   readonly catalog: ModelCatalogConfig
 }
 
@@ -88,29 +91,134 @@ const text = (env: Env, name: string): string | undefined => {
   return trimmed.length === 0 ? undefined : trimmed
 }
 
-// MODEL_OUTPUT_GUARANTEE and MODEL_OUTPUT_WITH_TOOLS name a promise the process must be able to
-// keep, so a value nobody declared is an operator error rather than a reason to guess one. A
-// native guarantee has to say whether it survives beside a tool list, because a turn that offers
-// tools and declares a contract sends both on one call (platform/model/src/output.ts).
-export const outputCapabilityOf = (
-  guarantee: string | undefined,
-  withTools: string | undefined
-): OutputCapabilityValue | undefined => {
-  if (guarantee === undefined) {
-    if (withTools !== undefined) {
-      throw new Error("the model output capability states a tool combination with no guarantee; set the guarantee too")
+// projectConfigPathOf resolves the visible project configuration path.
+export const projectConfigPathOf = (env: Env): string =>
+  text(env, "TARDIGRADE_CONFIG_PATH") ?? DEFAULT_PROJECT_CONFIG_PATH
+
+const recordOf = (value: unknown): Record<string, unknown> | undefined =>
+  typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined
+
+const stringOf = (value: unknown): string | undefined =>
+  typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined
+
+const stringsOf = (value: unknown): ReadonlyArray<string> =>
+  Array.isArray(value)
+    ? value.flatMap((entry) => {
+        const found = stringOf(entry)
+        return found === undefined ? [] : [found]
+      })
+    : []
+
+const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
+
+const LEGACY_MODEL_ENV = [
+  "MODEL_BASE_URL",
+  "MODEL_API_KEY",
+  "MODEL_ID",
+  "MODEL_PROVIDER",
+  "MODEL_OUTPUT_GUARANTEE",
+  "MODEL_OUTPUT_WITH_TOOLS"
+] as const
+
+const legacyModelError = (env: Env): Error | undefined => {
+  const present = LEGACY_MODEL_ENV.filter((name) => text(env, name) !== undefined)
+  if (present.length === 0) return undefined
+  const provider = text(env, "MODEL_PROVIDER") ?? "<provider>"
+  const model_id = text(env, "MODEL_ID") ?? "<model-id>"
+  const replacement = {
+    models: {
+      default: { provider, model_id },
+      providers: {
+        [provider]: {
+          baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
+          protocol: "<protocol>",
+          env: ["<api-key-env>"]
+        }
+      }
     }
-    return undefined
   }
-  if (!(OUTPUT_GUARANTEES as ReadonlyArray<string>).includes(guarantee)) {
-    throw new Error(`the model output guarantee must be one of ${OUTPUT_GUARANTEES.join(", ")}, got ${JSON.stringify(guarantee)}`)
-  }
-  if (guarantee === "none") return { guarantee: "none" }
-  if (withTools === "true") return { guarantee: "native", withTools: true }
-  if (withTools === "false") return { guarantee: "native", withTools: false }
-  throw new Error(
-    `a native model output guarantee must state whether it survives beside a tool list: set the tool combination to true or false, got ${JSON.stringify(withTools)}`
+  return new Error(
+    `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
+    `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in tardigrade.jsonc. ` +
+    "Replace <protocol>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
   )
+}
+
+// modelConfigOf validates provider connections used by a directly hosted server.
+export const modelConfigOf = (value: unknown): ModelConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
+  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "providers")
+  if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
+  const providersSource = recordOf(source["providers"]) ?? {}
+  const providers: Record<string, ModelProviderConfig> = {}
+  for (const [name, rawProvider] of Object.entries(providersSource)) {
+    if (name.trim().length === 0) throw new Error("a model provider name cannot be empty")
+    const provider = recordOf(rawProvider)
+    if (provider === undefined) throw new Error(`provider ${JSON.stringify(name)} must be an object`)
+    if (provider["apiKey"] !== undefined) {
+      throw new Error(`provider ${JSON.stringify(name)} cannot contain apiKey; declare its secret environment variable in env`)
+    }
+    const allowed = new Set(["baseUrl", "protocol", "env", "region"])
+    const unknown = Object.keys(provider).filter((field) => !allowed.has(field))
+    if (unknown.length > 0) throw new Error(`provider ${JSON.stringify(name)} contains unknown fields: ${unknown.join(", ")}`)
+    const baseUrl = stringOf(provider["baseUrl"])
+    const protocol = stringOf(provider["protocol"])
+    const env = stringsOf(provider["env"])
+    const region = stringOf(provider["region"])
+    if (baseUrl === undefined) throw new Error(`provider ${JSON.stringify(name)} must declare baseUrl`)
+    if (protocol === undefined) throw new Error(`provider ${JSON.stringify(name)} must declare protocol`)
+    if (env.length === 0) throw new Error(`provider ${JSON.stringify(name)} must declare env`)
+    const invalidEnv = env.find((entry) => !ENV_NAME.test(entry))
+    if (invalidEnv !== undefined) throw new Error(`provider ${JSON.stringify(name)} env contains invalid name ${JSON.stringify(invalidEnv)}`)
+    const selectedProtocol = modelProtocolOf(protocol)
+    if (selectedProtocol === "bedrock-converse" && region === undefined) {
+      throw new Error(`provider ${JSON.stringify(name)} must declare region for protocol ${JSON.stringify(selectedProtocol)}`)
+    }
+    if (selectedProtocol !== "bedrock-converse" && region !== undefined) {
+      throw new Error(`provider ${JSON.stringify(name)} cannot declare region with protocol ${JSON.stringify(selectedProtocol)}`)
+    }
+    providers[name] = {
+      baseUrl,
+      protocol: selectedProtocol,
+      env,
+      ...(region === undefined ? {} : { region })
+    }
+  }
+  const selectedValue = source["default"]
+  const selected = modelRefOf(selectedValue)
+  if (selectedValue !== undefined && selected === undefined) throw new Error("models.default must be { provider, model_id }")
+  if (selected !== undefined && providers[selected.provider] === undefined) {
+    throw new Error(`models.default names unconfigured provider ${JSON.stringify(selected.provider)}`)
+  }
+  return {
+    default: selected,
+    providers
+  }
+}
+
+// projectConfigOf validates the ordinary project configuration.
+export const projectConfigOf = (value: unknown): ProjectConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("project configuration must be a JSON object")
+  return { models: modelConfigOf(source["models"] ?? {}) }
+}
+
+const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
+  const credentials: Record<string, string> = {}
+  for (const provider of Object.values(model.providers)) {
+    for (const name of provider.env) {
+      const value = text(env, name)
+      if (value !== undefined) credentials[name] = value
+    }
+  }
+  return credentials
+}
+
+const modelFrom = (env: Env, project: ProjectConfig): ModelConfig => {
+  const legacy = legacyModelError(env)
+  if (legacy !== undefined) throw legacy
+  return project.models
 }
 
 // A PORT that is not a number is an operator error, not a reason to fall back: silently listening
@@ -150,30 +258,31 @@ const modelCatalogTimeout = (env: Env): number => {
   return value
 }
 
-// modelCatalogConfigOf resolves the source, cache path, and source timeout for a local catalog consumer.
+// modelCatalogConfigOf resolves the source, repository path, and source timeout for every local catalog consumer.
 export const modelCatalogConfigOf = (env: Env): ModelCatalogConfig => ({
   sourceUrl: text(env, "TARDIGRADE_MODEL_CATALOG_URL") ?? DEFAULT_MODEL_CATALOG_URL,
   cachePath: text(env, "TARDIGRADE_MODEL_CATALOG_CACHE") ?? DEFAULT_MODEL_CATALOG_CACHE,
   timeoutMillis: modelCatalogTimeout(env)
 })
 
-// readConfig resolves the environment into the value the process runs on.
-export const readConfig = (env: Env): ServerConfigValue => ({
-  port: port(env),
-  db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
-  actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
-  actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
-  maxConcurrentLanes: maxConcurrentLanes(env),
-  token: text(env, "TARDIGRADE_TOKEN"),
-  model: {
-    baseUrl: text(env, "MODEL_BASE_URL"),
-    apiKey: text(env, "MODEL_API_KEY"),
-    id: text(env, "MODEL_ID"),
-    provider: text(env, "MODEL_PROVIDER"),
-    output: outputCapabilityOf(text(env, "MODEL_OUTPUT_GUARANTEE"), text(env, "MODEL_OUTPUT_WITH_TOOLS"))
-  },
-  catalog: modelCatalogConfigOf(env)
-})
+// readConfig resolves project configuration and the environment into the value the process runs on.
+export const readConfig = (
+  env: Env,
+  project: ProjectConfig = { models: { default: undefined, providers: {} } }
+): ServerConfigValue => {
+  const model = modelFrom(env, project)
+  return {
+    port: port(env),
+    db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
+    actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
+    actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
+    maxConcurrentLanes: maxConcurrentLanes(env),
+    token: text(env, "TARDIGRADE_TOKEN"),
+    model,
+    modelCredentials: modelCredentialsFrom(model, env),
+    catalog: modelCatalogConfigOf(env)
+  }
+}
 
 // layerConfig provides a resolved configuration; layerFromEnv reads one out of an environment.
 export const layerConfig = (value: ServerConfigValue): Layer.Layer<ServerConfig> =>

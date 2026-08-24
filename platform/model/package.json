@@ -34,6 +34,7 @@
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",
     "@tanstack/ai": "0.46.0",
+    "@tanstack/ai-anthropic": "0.16.6",
     "@tanstack/ai-bedrock": "0.2.3",
     "@tanstack/ai-openai": "0.20.0",
     "effect": "4.0.0-rc.110",

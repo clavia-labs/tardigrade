@@ -42,12 +42,24 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command creates `researcher/actor.ts` from the bundled template. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
+The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `tardigrade.jsonc`, and `.env`. The generated actor selects the provider and model you chose. The template exports a named actor with `agentMethods`, the typed interface for sending a message and reading its state from the log. Read the [Quickstart guide](docs/quickstart.md) to understand the framework, then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
 
 ```bash
 tdg push actor.ts --target local
 tdg dev
 ```
+
+In a non-interactive terminal, pass the provider connection as JSON. The JSON names the credential environment variable and does not contain its value:
+
+```bash
+tdg init researcher \
+  --provider openai \
+  --provider-config '{"env":["OPENAI_API_KEY"]}' \
+  --default-model gpt-5.2
+cd researcher
+```
+
+Set `OPENAI_API_KEY` in the environment that runs the server. The [CLI guide](docs/how-to/cli.md) covers multiple providers, custom endpoints, and catalog discovery.
 
 Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:
 
@@ -147,15 +159,12 @@ const releaseAnalyst = defineActor({
 })
 ```
 
-`infer` composes the components into an agent loop and selects its provider and default model. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result.
+`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result. `model` is a model ID for that turn; it cannot change the actor's provider connection.
 
-`compaction(policy?)` bounds model context. Its default uses a 128,000-token window, fires at 80 percent, and keeps a 50 percent tail. A platform that serves several models should supply their windows:
+`compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 
 ```ts
-const windows = { default: 1_000_000, sonnet: 200_000 } as const
-
 const boundedContext = compaction({
-  contextWindowTokens: (model) => windows[model === "sonnet" ? "sonnet" : "default"],
   fireRatio: 0.8,
   keepRatio: 0.5
 })
@@ -190,9 +199,12 @@ import { infer } from "tardie/model"
 import { createBunHost } from "tardie/bun/host"
 
 const model = infer({
-  baseUrl: process.env.MODEL_BASE_URL!,
-  apiKey: process.env.MODEL_API_KEY!,
-  model: process.env.MODEL_ID!
+  baseUrl: "https://api.openai.com/v1",
+  apiKey: process.env.OPENAI_API_KEY!,
+  provider: releaseModel.provider,
+  model: releaseModel.default_model,
+  protocol: "openai-responses",
+  contextWindowTokens: 400_000
 })
 
 const platform = Layer.mergeAll(
@@ -223,7 +235,7 @@ console.log(completed)
 await host.close()
 ```
 
-The model binding uses the OpenAI-compatible protocol by default. Add `provider: "bedrock"` to the model options for Bedrock.
+The actor provider and default model must match the binding. The binding states its protocol and context window, so selection is checked before a request spends tokens.
 
 </details>
 

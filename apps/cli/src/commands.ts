@@ -1,16 +1,48 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
+import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
 
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
+import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY } from "./build"
-import { readFileConfig, resolveRemote, resolveServer } from "./config"
+import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_ACTOR_REFRESH_MILLIS, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
-import { initActor, initSummary } from "./init"
+import { defaultInitDirectory, initActor, initSummary } from "./init"
 import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
-import { homeOf, HOME_MISSING, setupJson, setupPrompt, setupSummary, writeSetup } from "./setup"
-import { actorsTable, threadsTable, DEFAULT_DETAIL_WIDTH, eventsTable, jsonOf, methodLines, methodsLines } from "./render"
+import {
+  defaultModelFrom,
+  defaultSetupJson,
+  defaultSetupSummary,
+  providerAnswersFrom,
+  providerSetupJson,
+  providerSetupSummary,
+  readSetupEnv,
+  setupAnswersFrom,
+  setupDefaultPrompt,
+  setupFlowPrompt,
+  setupJson,
+  setupPlanSummary,
+  setupPrompt,
+  setupProviderPrompt,
+  setupSummary,
+  writeDefaultSetup,
+  writeProviderSetup,
+  writeSetup,
+  writeSetupPlan
+} from "./setup"
+import {
+  actorsTable,
+  DEFAULT_DETAIL_WIDTH,
+  eventsTable,
+  jsonOf,
+  methodLines,
+  methodsLines,
+  modelsTable,
+  providersTable,
+  threadsTable
+} from "./render"
 import { Cli } from "./services"
 import { traceUrlFor } from "./workflow"
 
@@ -66,6 +98,26 @@ const json = Flag.boolean("json").pipe(
   Flag.withDefault(false)
 )
 
+const setupProvider = Flag.string("provider").pipe(
+  Flag.withDescription("The provider name used by actor model references."),
+  Flag.optional
+)
+
+const setupProviderConfig = Flag.string("provider-config").pipe(
+  Flag.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
+  Flag.optional
+)
+
+const setupDefaultModel = Flag.string("default-model").pipe(
+  Flag.withDescription("The provider model ID used as the host default."),
+  Flag.optional
+)
+
+const setupModel = Flag.string("model").pipe(
+  Flag.withDescription("The provider model ID used as the host default."),
+  Flag.optional
+)
+
 const actor = Flag.string("actor").pipe(
   Flag.withDescription(`The actor to address. Defaults to ${RESERVED_ACTOR}.`),
   Flag.withDefault(RESERVED_ACTOR)
@@ -79,6 +131,22 @@ const callId = Flag.string("id").pipe(
 )
 
 const remote = { url, token, actor, json }
+const catalogRemote = { url, token, json }
+
+const catalogSearch = Flag.string("search").pipe(
+  Flag.withDescription("Keep entries whose ID or name contains this text."),
+  Flag.optional
+)
+
+const catalogCursor = Flag.string("cursor").pipe(
+  Flag.withDescription("Continue from a cursor returned by the same catalog query."),
+  Flag.optional
+)
+
+const catalogLimit = Flag.integer("limit").pipe(
+  Flag.withDescription("The page size. Defaults to the server's catalog page size."),
+  Flag.optional
+)
 
 // clientOf resolves where to call and opens the client, which is the one place the two sources meet
 // (config.ts, resolveRemote).
@@ -128,30 +196,124 @@ const settle = (
 // that fixes it and stops there: the process still boots, still answers every read, and every turn
 // it is asked to run fails with the server's own sentence.
 export const NO_MODEL_NOTICE =
-  "no model is configured, so reads work and turns fail. Run `tdg setup` to write one, or set MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID."
+  "no provider connection is configured, so reads work and turns fail. Run `tdg setup` to configure a provider and default model."
 
 // asking is only honest at a terminal. A boot inside CI, a container, or a script has no one to
 // answer, and a prompt there waits forever on input that never arrives, so those boots take the
 // notice instead (commands.test.ts, "dev asks only where someone can answer").
 const canAsk = (): boolean => process.stdin.isTTY === true
 
-export const setupCommand = Command.make("setup", { json }, (flags) =>
+const setupPromptOptionsIn = (root: string, env: Readonly<Record<string, string | undefined>>) => {
+  const catalog = modelCatalogConfigOf(env)
+  return {
+    catalog: {
+      cachePath: resolve(root, catalog.cachePath),
+      timeoutMillis: catalog.timeoutMillis,
+      url: catalog.sourceUrl
+    }
+  }
+}
+
+const setupPromptIn = (root: string, env: Readonly<Record<string, string | undefined>>) =>
+  setupPrompt(setupPromptOptionsIn(root, env))
+
+export const NON_INTERACTIVE_SETUP =
+  "tdg setup needs an interactive terminal; use `tdg setup provider` and `tdg setup default` in scripts"
+export const NON_INTERACTIVE_PROVIDER_SETUP =
+  "tdg setup provider needs <provider> and <config> when stdin is not interactive; see `tdg setup provider --help`"
+export const NON_INTERACTIVE_DEFAULT_SETUP =
+  "tdg setup default needs --provider and --model when stdin is not interactive; see `tdg setup default --help`"
+export const NON_INTERACTIVE_INIT =
+  "tdg init needs --provider, --provider-config, and --default-model when stdin is not interactive; see `tdg init --help`"
+
+export const setupProviderCommand = Command.make("provider", {
+  provider: Argument.string("provider").pipe(
+    Argument.withDescription("The provider name used by actor model references."),
+    Argument.optional
+  ),
+  config: Argument.string("config").pipe(
+    Argument.withDescription("The provider connection as JSON. Secret values stay in environment variables."),
+    Argument.optional
+  ),
+  json
+}, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const home = homeOf(cli.env)
-    if (home === undefined) return yield* userErrorOf(HOME_MISSING)
-    const file = yield* readFileConfig(cli.env)
-    const answers = yield* Effect.mapError(setupPrompt(file.model === undefined ? {} : { current: file.model }), userErrorOf)
-    const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
-    yield* Console.log(flags.json ? jsonOf(setupJson(path, answers)) : setupSummary(path, answers))
+    const declared = yield* Effect.try({
+      try: () => providerAnswersFrom({
+        provider: stated(flags.provider),
+        config: stated(flags.config)
+      }),
+      catch: userErrorOf
+    })
+    const answers = declared ?? (canAsk()
+      ? yield* Effect.mapError(setupProviderPrompt(setupPromptOptionsIn(cli.cwd, cli.env)), userErrorOf)
+      : yield* userErrorOf(NON_INTERACTIVE_PROVIDER_SETUP))
+    const files = yield* Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
+    yield* Console.log(flags.json
+      ? jsonOf(providerSetupJson(files, [answers]))
+      : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Ask for a provider, a model id, and an API key, and write them to ~/.tardigrade/config.json at 0600. The key is stored and never printed back."
+      "Add or update one provider connection in tardigrade.jsonc."
     ),
     Command.withExamples([
-      { command: "tdg setup", description: "Answer four prompts and write the file" }
+      { command: "tdg setup provider", description: "Prompt for a provider connection" },
+      {
+        command: "tdg setup provider openrouter '{\"env\":[\"OPENROUTER_API_KEY\"]}'",
+        description: "Add a provider from JSON"
+      }
     ])
   )
+
+export const setupDefaultCommand = Command.make("default", {
+  provider: setupProvider,
+  model: setupModel,
+  json
+}, (flags) => Effect.gen(function*() {
+  const cli = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const declared = yield* Effect.try({
+    try: () => defaultModelFrom({ provider: stated(flags.provider), model: stated(flags.model) }),
+    catch: userErrorOf
+  })
+  const selected = declared ?? (canAsk()
+    ? yield* Effect.mapError(setupDefaultPrompt(Object.keys(project.models.providers), {
+      ...setupPromptOptionsIn(cli.cwd, cli.env),
+      ...(project.models.default === undefined ? {} : { current: project.models.default })
+    }), userErrorOf)
+    : yield* userErrorOf(NON_INTERACTIVE_DEFAULT_SETUP))
+  if (project.models.providers[selected.provider] === undefined) {
+    return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
+  }
+  const files = yield* Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
+  yield* Console.log(flags.json ? jsonOf(defaultSetupJson(files, selected)) : defaultSetupSummary(files, selected))
+})).pipe(
+  Command.withDescription("Choose the default model from configured provider connections."),
+  Command.withExamples([
+    { command: "tdg setup default", description: "Choose the default provider and model" },
+    { command: "tdg setup default --provider openrouter --model anthropic/claude-sonnet-4-6", description: "Select a default from explicit values" }
+  ])
+)
+
+export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*() {
+  if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
+  const cli = yield* Cli
+  const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+  const plan = yield* Effect.mapError(setupFlowPrompt({
+    ...setupPromptOptionsIn(cli.cwd, cli.env),
+    existing: project.models
+  }), userErrorOf)
+  if (plan === undefined) {
+    yield* Console.log("setup cancelled")
+    return
+  }
+  const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
+  yield* Console.log(setupPlanSummary(files, plan))
+})).pipe(
+  Command.withDescription("Add provider connections, choose the project default, then write tardigrade.jsonc and .env at 0600."),
+  Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
+)
 
 export const initCommand = Command.make("init", {
   name: Argument.string("name").pipe(Argument.withDescription("The actor name")),
@@ -163,23 +325,47 @@ export const initCommand = Command.make("init", {
     Flag.withDescription("Replace actor.ts when it already exists."),
     Flag.withDefault(false)
   ),
+  provider: setupProvider,
+  providerConfig: setupProviderConfig,
+  defaultModel: setupDefaultModel,
   json
 }, (flags) =>
   Effect.gen(function*() {
+    const cli = yield* Cli
     const directory = stated(flags.dir)
+    const initializedRoot = resolve(cli.cwd, directory ?? defaultInitDirectory(flags.name))
+    const declared = yield* Effect.try({
+      try: () => setupAnswersFrom({
+        provider: stated(flags.provider),
+        providerConfig: stated(flags.providerConfig),
+        defaultModel: stated(flags.defaultModel)
+      }, "tdg init"),
+      catch: userErrorOf
+    })
+    const answers = declared ?? (canAsk()
+      ? yield* Effect.mapError(setupPromptIn(initializedRoot, cli.env), userErrorOf)
+      : yield* userErrorOf(NON_INTERACTIVE_INIT))
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(flags.name, {
+        cwd: cli.cwd,
         ...(directory === undefined ? {} : { directory }),
+        model: { provider: answers.provider, defaultModel: answers.model_id },
         force: flags.force
       }),
       catch: userErrorOf
     })
-    yield* Console.log(flags.json ? jsonOf(initialized) : initSummary(initialized))
+    const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+    yield* Console.log(flags.json
+      ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
+      : `${setupSummary(files, answers)}\n\n${initSummary(initialized, cli.cwd)}`)
   })).pipe(
-    Command.withDescription("Create an editable actor from the bundled quickstart."),
+    Command.withDescription("Create an editable actor and configure its first provider connection."),
     Command.withExamples([
-      { command: "tdg init researcher", description: "Create researcher/actor.ts and print the local workflow" },
-      { command: "tdg init reviewer --dir actors/reviewer", description: "Create the actor in a stated directory" }
+      { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
+      {
+        command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4-6",
+        description: "Create a ready actor from provider JSON"
+      }
     ])
   )
 
@@ -289,7 +475,7 @@ export const devCommand = Command.make("dev", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
-    const file = yield* readFileConfig(cli.env)
+    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
     const config = yield* Effect.try({
       try: () => resolveServer({
         port: Option.getOrUndefined(flags.port),
@@ -297,7 +483,7 @@ export const devCommand = Command.make("dev", {
         actors: stated(flags.actors),
         actorData: stated(flags.actorData),
         maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-      }, cli.env, file),
+      }, cli.env, project),
       catch: userErrorOf
     })
     // A first boot with no model asks for one, because two commands to see anything is one too
@@ -308,12 +494,11 @@ export const devCommand = Command.make("dev", {
       ? Effect.succeed(config)
       : canAsk()
       ? Effect.gen(function*() {
-        const home = homeOf(cli.env)
-        if (home === undefined) return yield* Effect.as(Console.log(NO_MODEL_NOTICE), config)
-        const answers = yield* Effect.mapError(setupPrompt({ current: config.model }), userErrorOf)
-        const path = yield* Effect.mapError(writeSetup(home, answers), userErrorOf)
-        yield* Console.log(setupSummary(path, answers))
-        const written = yield* readFileConfig(cli.env)
+        const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
+        const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, cli.env), userErrorOf)
+        yield* Console.log(setupSummary(files, answers))
+        const written = yield* readSetupEnv(cli.cwd)
+        const writtenProject = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
         return yield* Effect.try({
           try: () => resolveServer({
             port: Option.getOrUndefined(flags.port),
@@ -321,7 +506,7 @@ export const devCommand = Command.make("dev", {
             actors: stated(flags.actors),
             actorData: stated(flags.actorData),
             maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
-          }, cli.env, written),
+          }, { ...cli.env, ...written }, writtenProject),
           catch: userErrorOf
         })
       })
@@ -445,6 +630,55 @@ export const actorsCommand = Command.make("actors", { url, token, json }, (flags
     ])
   )
 
+export const providersCommand = Command.make("providers", {
+  search: catalogSearch,
+  cursor: catalogCursor,
+  limit: catalogLimit,
+  ...catalogRemote
+}, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const page = yield* call(() => client.providers({
+      cursor: stated(flags.cursor),
+      limit: Option.getOrUndefined(flags.limit),
+      search: stated(flags.search)
+    }))
+    yield* Console.log(flags.json ? jsonOf(page) : providersTable(page))
+  })).pipe(
+    Command.withDescription("List provider protocols, endpoints, credential names, and required configuration."),
+    Command.withExamples([
+      { command: "tdg providers", description: "List the first provider page" },
+      { command: "tdg providers --search google --json", description: "Search providers and print the page as JSON" }
+    ])
+  )
+
+export const modelsCommand = Command.make("models", {
+  provider: Flag.string("provider").pipe(
+    Flag.withDescription("Keep models from this provider."),
+    Flag.optional
+  ),
+  search: catalogSearch,
+  cursor: catalogCursor,
+  limit: catalogLimit,
+  ...catalogRemote
+}, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const page = yield* call(() => client.models({
+      cursor: stated(flags.cursor),
+      limit: Option.getOrUndefined(flags.limit),
+      provider: stated(flags.provider),
+      search: stated(flags.search)
+    }))
+    yield* Console.log(flags.json ? jsonOf(page) : modelsTable(page))
+  })).pipe(
+    Command.withDescription("Search and page the public model catalog."),
+    Command.withExamples([
+      { command: "tdg models --provider openrouter --search claude", description: "Search OpenRouter models" },
+      { command: "tdg models --cursor <cursor> --json", description: "Read the next page as JSON" }
+    ])
+  )
+
 export const eventsCommand = Command.make("events", {
   thread: Argument.string("thread").pipe(Argument.withDescription("The thread whose log to read")),
   after: Flag.integer("after").pipe(
@@ -486,5 +720,18 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription(
     "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
   ),
-  Command.withSubcommands([setupCommand, initCommand, buildCommand, pushCommand, devCommand, actorsCommand, methodsCommand, callCommand, lsCommand, eventsCommand])
+  Command.withSubcommands([
+    initCommand,
+    setupCommand,
+    buildCommand,
+    pushCommand,
+    devCommand,
+    providersCommand,
+    modelsCommand,
+    actorsCommand,
+    methodsCommand,
+    callCommand,
+    lsCommand,
+    eventsCommand
+  ])
 )

@@ -16,8 +16,8 @@ Base path `/v1`. The built-in actor is named `default`.
 
 | | |
 | --- | --- |
-| `GET /v1/providers` | Search and page provider connection requirements. `search`, `cursor`, `limit` |
-| `GET /v1/models` | Search and page model metadata. `provider`, `search`, `cursor`, `limit` |
+| `GET /v1/providers` | Search and page provider setup requirements. `search`, `cursor`, `limit` |
+| `GET /v1/models` | Search and page public model metadata. `provider`, `search`, `cursor`, `limit` |
 | `GET /v1/actors` | List actors |
 | `PUT /v1/actors` | Push an actor artifact |
 | `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
@@ -47,8 +47,6 @@ Appending is the lower-level ingress for channels and interventions. The host at
 
 Reads are projections of the log, so `?at=<seq>` answers as of that point in history.
 
-The server fetches the models.dev catalog once during startup and keeps the validated snapshot in memory. A successful refresh has `status: "fresh"`. A failed refresh may serve the last file or D1 snapshot with `status: "cached"`. Each page includes the source `revision`, refresh time, total count, page limit, and an opaque `next_cursor` when another page exists. The default page limit is 50 and callers may set `limit`.
-
 ## Errors
 
 Every failure is `application/problem+json`.
@@ -68,14 +66,37 @@ Every failure is `application/problem+json`.
 | `PORT` | `4242` |
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
-| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. Health, catalog, OpenAPI, and docs routes stay public |
-| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` |
-| `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
-| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` |
-| `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
-| `MODEL_OUTPUT_GUARANTEE` `MODEL_OUTPUT_WITH_TOOLS` | What this endpoint and this model promise about a declared output contract: `native` with `true` or `false` for whether the schema rides beside a tool list, or `none`. A provider name proves nothing here, so an undeclared endpoint serves a contract only through a mounted fallback |
+| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
+| `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc`. Ordinary project configuration for a directly hosted server |
+| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
+| `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
+| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
+| Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a model and serves every read; turns fail naming what is missing.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. Interactive `tdg setup` writes ordinary configuration to `tardigrade.jsonc` and credentials to the project `.env`. The declarative `tdg setup provider <provider> <config>` command writes the connection and leaves secret values in the deployment environment. The `provider` and `default` subcommands change those concerns independently.
+
+```jsonc
+{
+  "models": {
+    "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+    "providers": {
+      "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "protocol": "openai-chat-completions",
+        "env": ["OPENROUTER_API_KEY"]
+      }
+    }
+  }
+}
+```
+
+```dotenv
+OPENROUTER_API_KEY='your-deployment-secret'
+```
+
+The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
+
+Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 
 ## Clients
 

@@ -1,12 +1,17 @@
 import { DurableObject } from "cloudflare:workers"
 import { Context, Effect, Layer, ManagedRuntime } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage } from "tardie"
+import { actor, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage, type ModelRef } from "tardie"
 import type { Action } from "tardie/events"
-import { infer, modelAskOf, modelContextWindowTokensOf, modelIdOf } from "@clavia/tardigrade-model/model"
+import { infer } from "@clavia/tardigrade-model/model"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
-import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-server/catalog"
-import { CatalogCursorError, modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
+import {
+  loadModelCatalog,
+  type ModelCatalogLoadPolicy,
+  type ModelCatalogState
+} from "@clavia/tardigrade-server/catalog"
+import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
+import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { traceparentOf } from "@clavia/tardigrade-core/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -35,17 +40,7 @@ export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
   readonly REGISTRY: D1Database
   readonly LOADER: WorkerLoader
-  readonly MODEL_BASE_URL?: string
-  readonly MODEL_API_KEY?: string
-  readonly MODEL_ID?: string
-  readonly MODEL_SONNET_ID?: string
-  readonly MODEL_OPUS_ID?: string
-  readonly MODEL_HAIKU_ID?: string
-  readonly MODEL_PROVIDER?: string
-  readonly MODEL_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_SONNET_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_OPUS_CONTEXT_WINDOW_TOKENS?: string
-  readonly MODEL_HAIKU_CONTEXT_WINDOW_TOKENS?: string
+  readonly TARDIGRADE_CONFIG?: unknown
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MODEL_CATALOG_URL?: string
   readonly TARDIGRADE_MODEL_CATALOG_LOAD_POLICY?: string
@@ -75,10 +70,10 @@ const assemblies = new Set([DEFAULT_ACTOR_REGISTRATION.assembly])
 const registryRuntimes = new WeakMap<D1Database, ManagedRuntime.ManagedRuntime<CloudflareActorRegistry, never>>()
 const modelCatalogStates = new WeakMap<D1Database, Promise<ModelCatalogState>>()
 
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh in one Worker isolate.
+// DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds the catalog refresh made once per Worker isolate.
 export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
 
-// DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the persisted snapshot once per Worker isolate.
+// DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the D1 snapshot once per Worker isolate.
 export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
 
 const actorRegistry = async (env: Env) => {
@@ -94,20 +89,102 @@ const actorRegistry = async (env: Env) => {
   return registry
 }
 
-const modelLayer = (env: Env) => {
-  if (env.MODEL_BASE_URL === undefined || env.MODEL_API_KEY === undefined || env.MODEL_ID === undefined) {
-    const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({ react: () => Effect.succeed(failed) })
+interface CloudflareProvider extends ModelProviderConfig {
+  readonly apiKey: string
+}
+
+interface CloudflareModels {
+  readonly default: ModelRef
+  readonly providers: Readonly<Record<string, CloudflareProvider>>
+}
+
+const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<string>): string => {
+  if (names.length === 0) throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(provider)} must declare env`)
+  const values = workerEnv as unknown as Readonly<Record<string, unknown>>
+  for (const name of names) {
+    const value = values[name]
+    if (typeof value === "string" && value.trim().length > 0) return value.trim()
   }
-  const baseUrl = env.MODEL_BASE_URL
-  const apiKey = env.MODEL_API_KEY
+  throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret`)
+}
+
+const modelsFrom = (env: Env): CloudflareModels | undefined => {
+  if (env.TARDIGRADE_CONFIG === undefined) return undefined
+  if (typeof env.TARDIGRADE_CONFIG !== "object" || env.TARDIGRADE_CONFIG === null) {
+    throw new Error("TARDIGRADE_CONFIG must be a JSON object")
+  }
+  const rawModels = (env.TARDIGRADE_CONFIG as Readonly<Record<string, unknown>>)["models"]
+  if (rawModels === undefined) return undefined
+  const parsed = modelConfigOf(rawModels)
+  if (parsed.default === undefined) {
+    throw new Error("TARDIGRADE_CONFIG.models must declare default { provider, model_id }")
+  }
+  const providers: Record<string, CloudflareProvider> = {}
+  for (const [name, provider] of Object.entries(parsed.providers)) {
+    providers[name] = {
+      ...provider,
+      apiKey: credentialFrom(env, name, provider.env)
+    }
+  }
+  return { default: parsed.default, providers }
+}
+
+const selectedModelFrom = (
+  models: CloudflareModels,
+  catalog: ModelCatalogState,
+  reference: ModelRef
+) => {
+  const provider = models.providers[reference.provider]
+  if (provider === undefined) throw new Error(`provider ${JSON.stringify(reference.provider)} is not configured; update TARDIGRADE_CONFIG.models`)
+  if (catalog.snapshot === undefined) {
+    throw new Error(`model catalog metadata is unavailable for ${reference.provider}/${reference.model_id}; check the Worker logs`)
+  }
+  const catalogProvider = catalog.snapshot.providers.find((candidate) => candidate.id === reference.provider)
+  if (catalogProvider === undefined) {
+    throw new Error(`provider ${JSON.stringify(reference.provider)} is absent from model catalog revision ${JSON.stringify(catalog.snapshot.revision)}`)
+  }
+  const model = catalogProvider.models.find((candidate) => candidate.id === reference.model_id)
+  if (model === undefined) {
+    throw new Error(`model ${reference.provider}/${reference.model_id} is absent from model catalog revision ${JSON.stringify(catalog.snapshot.revision)}`)
+  }
+  const contextWindowTokens = model.metadata.contextWindowTokens
+  if (contextWindowTokens === undefined) {
+    throw new Error(`model catalog has no context window for ${reference.provider}/${reference.model_id}`)
+  }
+  return { reference, provider, metadata: model.metadata, contextWindowTokens, catalogRevision: catalog.snapshot.revision }
+}
+
+const modelLayer = (models: CloudflareModels | undefined, catalog: ModelCatalogState) => {
+  if (models === undefined) {
+    const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
+    return Layer.succeed(Infer)({
+      resolve: () => { throw new Error("no model is configured: set TARDIGRADE_CONFIG.models") },
+      react: () => Effect.succeed(failed)
+    })
+  }
   return Layer.succeed(Infer, {
+    resolve: (reference) => {
+      const selected = selectedModelFrom(models, catalog, reference)
+      return {
+        model: reference,
+        contextWindowTokens: selected.contextWindowTokens,
+        ...(selected.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.metadata.maxOutputTokens }),
+        catalogRevision: selected.catalogRevision
+      }
+    },
     react: (request, key) => {
+      if (request.model === undefined) return Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
+      const selectedModel = selectedModelFrom(models, catalog, request.model)
       const selected = infer({
-        baseUrl,
-        apiKey,
-        model: modelIdOf(env, modelAskOf(request.trajectory)),
-        ...(env.MODEL_PROVIDER === undefined ? {} : { provider: env.MODEL_PROVIDER })
+        baseUrl: selectedModel.provider.baseUrl,
+        apiKey: selectedModel.provider.apiKey,
+        model: request.model.model_id,
+        protocol: selectedModel.provider.protocol,
+        provider: request.model.provider,
+        ...(selectedModel.provider.region === undefined ? {} : { region: selectedModel.provider.region }),
+        contextWindowTokens: selectedModel.contextWindowTokens,
+        ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
+        ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
       })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
     }
@@ -170,8 +247,14 @@ const optionalRatio = (raw: string | undefined, name: string): number | undefine
   return value
 }
 
-const assemblyOf = (name: string, env: Env) => {
+const assemblyOf = (
+  name: string,
+  env: Env,
+  models: CloudflareModels | undefined,
+  catalog: ModelCatalogState
+) => {
   if (!assemblies.has(name)) return undefined
+  const selected = models?.default ?? { provider: "unconfigured", model_id: "unconfigured" }
   const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
   const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
   return actor(inferAgent([
@@ -179,14 +262,17 @@ const assemblyOf = (name: string, env: Env) => {
     reply,
     budget,
     compaction({
-      contextWindowTokens: (model) => modelContextWindowTokensOf(env, model?.model_id),
+      ...(models === undefined ? {} : {
+        contextWindowTokens: (model: ModelRef | undefined) =>
+          selectedModelFrom(models, catalog, model ?? models.default).contextWindowTokens
+      }),
       ...(fireRatio === undefined ? {} : { fireRatio }),
       ...(keepRatio === undefined ? {} : { keepRatio })
     }),
     outputValidateOnce
   ], {
-    provider: env.MODEL_PROVIDER ?? "unconfigured",
-    default_model: env.MODEL_ID ?? "unconfigured"
+    provider: selected.provider,
+    default_model: selected.model_id
   }))
 }
 
@@ -236,11 +322,14 @@ export class ActorHost extends DurableObject<Env> {
     return Promise.all(calls.map((entry) => call(entry.ordinal, entry.packageName, entry.method, entry.args)))
   }
 
-  private host(): Promise<CloudflareHost> {
-    if (this.runtime !== undefined) return this.runtime
+  private async openHost(): Promise<CloudflareHost> {
+    const models = modelsFrom(this.env)
+    const catalog: ModelCatalogState = models === undefined
+      ? { refreshError: "no model is configured" }
+      : await modelCatalog(this.env)
     const principal = this.name()
     const assemblyKey = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'assembly'").one().value
-    const selectedAssembly = assemblyOf(assemblyKey, this.env)
+    const selectedAssembly = assemblyOf(assemblyKey, this.env, models, catalog)
     if (selectedAssembly === undefined) throw new Error(`actor assembly ${JSON.stringify(assemblyKey)} is not deployed`)
     const sandboxCpuMs = optionalNonNegativeInteger(this.env.TARDIGRADE_SANDBOX_CPU_MILLIS, "TARDIGRADE_SANDBOX_CPU_MILLIS")
     const sandboxSubRequests = optionalNonNegativeInteger(
@@ -297,11 +386,11 @@ export class ActorHost extends DurableObject<Env> {
       isActorEnvelope,
       (envelope) => envelope.link.target
     )
-    this.runtime = createCloudflareHost({
+    return createCloudflareHost({
       storage: this.ctx.storage,
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
-      layersFor: () => Layer.mergeAll(modelLayer(this.env), FetchHttpClient.layer, sandboxLayer),
+      layersFor: () => Layer.mergeAll(modelLayer(models, catalog), FetchHttpClient.layer, sandboxLayer),
       routes: [remoteRoute],
       driver: driverPolicyOf({
         maxConcurrentLanes: positiveInteger(
@@ -312,6 +401,10 @@ export class ActorHost extends DurableObject<Env> {
       }),
       keyOf: selectedAssembly.keyOf
     })
+  }
+
+  private host(): Promise<CloudflareHost> {
+    this.runtime ??= this.openHost()
     return this.runtime
   }
 
@@ -398,11 +491,6 @@ const catalogQueryOf = (request: HttpServerRequest.HttpServerRequest) => {
   }
 }
 
-const catalogFailure = (cause: unknown) => ({
-  error: cause instanceof Error ? cause.message : String(cause),
-  status: cause instanceof CatalogCursorError ? 400 : 503
-})
-
 const protectedRoute = <E, R>(
   f: (
     request: HttpServerRequest.HttpServerRequest,
@@ -427,12 +515,14 @@ const routes = [
     return yield* Effect.tryPromise({
       try: async () => {
         const catalog = await modelCatalog(env)
-        if (catalog.snapshot === undefined) throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        if (catalog.snapshot === undefined) {
+          throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        }
         return providersPageOf(catalog.snapshot, catalogQueryOf(request))
       },
-      catch: catalogFailure
+      catch: (cause) => cause instanceof Error ? cause.message : String(cause)
     }).pipe(Effect.match({
-      onFailure: (failure) => json({ error: failure.error }, failure.status),
+      onFailure: (error) => json({ error }, error.includes("catalog cursor") || error.includes("catalog limit") ? 400 : 503),
       onSuccess: (page) => json(page)
     }))
   })),
@@ -442,16 +532,18 @@ const routes = [
     return yield* Effect.tryPromise({
       try: async () => {
         const catalog = await modelCatalog(env)
-        if (catalog.snapshot === undefined) throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        if (catalog.snapshot === undefined) {
+          throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
+        }
         const query = new URL(request.url).searchParams
         return modelsPageOf(catalog.snapshot, {
           ...catalogQueryOf(request),
           provider: query.get("provider") ?? undefined
         })
       },
-      catch: catalogFailure
+      catch: (cause) => cause instanceof Error ? cause.message : String(cause)
     }).pipe(Effect.match({
-      onFailure: (failure) => json({ error: failure.error }, failure.status),
+      onFailure: (error) => json({ error }, error.includes("catalog cursor") || error.includes("catalog limit") ? 400 : 503),
       onSuccess: (page) => json(page)
     }))
   })),

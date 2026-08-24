@@ -1,18 +1,21 @@
-import { Effect } from "effect"
+import { Data, Effect, Result } from "effect"
 import { FileSystem } from "effect/FileSystem"
+import type { PlatformError } from "effect/PlatformError"
+import { isAbsolute, join } from "node:path"
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
   maxConcurrentLanesOf,
-  outputCapabilityOf,
+  projectConfigOf,
+  projectConfigPathOf,
   readConfig,
   type Env,
+  type ProjectConfig,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
 
-// Where a value comes from, decided once. Three sources in one order, everywhere: a flag stated on
-// the command line, then the environment, then the file `tdg setup` wrote, then the exported
-// default. The order is the whole of the rule, so a value a person can see on the command line
-// always beats a value they cannot (config.test.ts).
+// Where a remote client value comes from, decided once. Three sources apply in one order: a flag,
+// the environment, the user-level file, then the exported default (config.test.ts).
 
 export type { Env }
 
@@ -33,27 +36,69 @@ export const resolve = (
 ): string | undefined => text(flag) ?? text(variable) ?? text(file)
 
 // CONFIG_RELATIVE is where the file lives under the home directory, and configPathIn joins it. The
-// path is a constant rather than a string each command spells, so `tdg setup` writes what every
-// other command reads (setup.ts).
+// path is a constant rather than a string each command spells, so every command reads the same file.
 export const CONFIG_RELATIVE = ".tardigrade/config.json"
 
 export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE}`
 
-// FileConfig is the file's whole shape. `model` is what `tdg setup` asks for; `url` and `token` are
-// there because the resolution order is one order for every value, and a person who points every
-// command at the same remote writes them once instead of exporting them per shell. The API key is
-// the one value nothing ever prints back (setup.ts).
-export interface FileConfig {
-  readonly model?: {
-    readonly baseUrl?: string
-    readonly apiKey?: string
-    readonly id?: string
-    readonly provider?: string
-    // What the endpoint and the model promise about a declared output contract, and whether that
-    // promise survives beside a tool list (apps/server/src/config.ts, ModelConfig).
-    readonly output?: string
-    readonly outputWithTools?: string
+// projectConfigPathIn resolves the project JSONC path against the command's working directory.
+export const projectConfigPathIn = (root: string, env: Env = {}): string => {
+  const path = projectConfigPathOf(env)
+  return isAbsolute(path) ? path : join(root, path)
+}
+
+// ProjectFileError reports invalid or unreadable project configuration.
+export class ProjectFileError extends Data.TaggedError("ProjectFileError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+// parseProjectConfig validates JSONC syntax and the project configuration shape.
+export const parseProjectConfig = (raw: string, path = "tardigrade.jsonc"): ProjectConfig => {
+  const errors: Array<ParseError> = []
+  const value = parse(raw, errors, { allowTrailingComma: true }) as unknown
+  if (errors.length > 0) {
+    const first = errors[0]!
+    throw new ProjectFileError({
+      message: `${path} is invalid JSONC at offset ${first.offset}: ${printParseErrorCode(first.error)}`
+    })
   }
+  try {
+    return projectConfigOf(value)
+  } catch (cause) {
+    throw new ProjectFileError({
+      message: `${path} is invalid: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause
+    })
+  }
+}
+
+// readProjectConfig reads the visible project configuration. An absent default file is empty.
+export const readProjectConfig = (
+  root: string,
+  env: Env = {}
+): Effect.Effect<ProjectConfig, PlatformError | ProjectFileError, FileSystem> =>
+  Effect.gen(function*() {
+    const path = projectConfigPathIn(root, env)
+    const read = yield* Effect.result((yield* FileSystem).readFileString(path))
+    if (Result.isFailure(read)) {
+      const stated = env["TARDIGRADE_CONFIG_PATH"]?.trim()
+      if (read.failure.reason._tag === "NotFound" && (stated === undefined || stated.length === 0)) {
+        return projectConfigOf({})
+      }
+      return yield* read.failure
+    }
+    return yield* Effect.try({
+      try: () => parseProjectConfig(read.success, path),
+      catch: (cause) => cause instanceof ProjectFileError
+        ? cause
+        : new ProjectFileError({ message: String(cause), cause })
+    })
+  })
+
+// FileConfig is the user-level file's whole shape. It holds remote client settings that apply
+// across projects. Model connections belong to each project's JSONC file (setup.ts).
+export interface FileConfig {
   readonly url?: string
   readonly token?: string
 }
@@ -75,20 +120,7 @@ export const parseFileConfig = (raw: string): FileConfig => {
   }
   if (typeof parsed !== "object" || parsed === null) return {}
   const source = parsed as Record<string, unknown>
-  const model = typeof source["model"] === "object" && source["model"] !== null
-    ? (source["model"] as Record<string, unknown>)
-    : {}
   return {
-    model: {
-      ...(stringField(model, "baseUrl") === undefined ? {} : { baseUrl: stringField(model, "baseUrl")! }),
-      ...(stringField(model, "apiKey") === undefined ? {} : { apiKey: stringField(model, "apiKey")! }),
-      ...(stringField(model, "id") === undefined ? {} : { id: stringField(model, "id")! }),
-      ...(stringField(model, "provider") === undefined ? {} : { provider: stringField(model, "provider")! }),
-      ...(stringField(model, "output") === undefined ? {} : { output: stringField(model, "output")! }),
-      ...(stringField(model, "outputWithTools") === undefined
-        ? {}
-        : { outputWithTools: stringField(model, "outputWithTools")! })
-    },
     ...(stringField(source, "url") === undefined ? {} : { url: stringField(source, "url")! }),
     ...(stringField(source, "token") === undefined ? {} : { token: stringField(source, "token")! })
   }
@@ -136,8 +168,7 @@ export interface ServerFlags {
 
 // resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
 // variable the server honours is a variable this command honours and the two can never disagree,
-// and then lets the file fill what the environment left absent and a flag win over both. A PORT
-// that is not a port still refuses to resolve, because the reader is the server's
+// and then lets a flag win over it. A PORT that is not a port still refuses to resolve, because the reader is the server's
 // (apps/server/src/config.ts, readConfig).
 //
 // The token is dropped, `TARDIGRADE_TOKEN` in the environment included. `tdg dev` is the local
@@ -145,9 +176,12 @@ export interface ServerFlags {
 // than a secret. A server meant to be reachable by anyone else is the server run directly with a
 // token set (docs/how-to/server.md; config.test.ts, "the token is dropped, so the local server is
 // ungated").
-export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {}): ServerConfigValue => {
-  const base = readConfig(env)
-  const model = file.model ?? {}
+export const resolveServer = (
+  flags: ServerFlags,
+  env: Env,
+  project: ProjectConfig = projectConfigOf({})
+): ServerConfigValue => {
+  const base = readConfig(env, project)
   return {
     ...base,
     port: flags.port ?? base.port,
@@ -155,16 +189,6 @@ export const resolveServer = (flags: ServerFlags, env: Env, file: FileConfig = {
     actors: text(flags.actors) ?? base.actors,
     actorData: text(flags.actorData) ?? base.actorData,
     maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
-    token: undefined,
-    model: {
-      baseUrl: resolve(undefined, base.model.baseUrl, model.baseUrl),
-      apiKey: resolve(undefined, base.model.apiKey, model.apiKey),
-      id: resolve(undefined, base.model.id, model.id),
-      provider: resolve(undefined, base.model.provider, model.provider),
-      output: outputCapabilityOf(
-        resolve(undefined, env["MODEL_OUTPUT_GUARANTEE"], model.output),
-        resolve(undefined, env["MODEL_OUTPUT_WITH_TOOLS"], model.outputWithTools)
-      )
-    }
+    token: undefined
   }
 }
