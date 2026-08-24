@@ -57,7 +57,8 @@ export interface SpawnOptions {
   // The output contracts a spawning body may ask a child for, by name. Model-authored code has
   // no TypeScript checking (packages/code/src/execute.ts runs it through AsyncFunction), so a
   // name resolved here is the only path where the schema was proved at compile time by the host
-  // that declared it. A raw schema stays reachable and is preflighted instead (docs/output.md).
+  // that declared it. A raw schema stays reachable and is preflighted instead (spawn.test.ts,
+  // "the output a spawn asks for").
   readonly outputs?: Readonly<Record<string, OutputContract>>
   readonly actorNameOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>

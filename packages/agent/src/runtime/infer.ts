@@ -88,8 +88,8 @@ const stampOf = (action: Action): { readonly endpoint?: unknown } =>
 
 // completionOf judges one `complete` action against the turn's declared contract. An undeclared
 // turn ends in prose. A declared one is validated here whatever the provider promised, so a
-// strict binding is checked rather than trusted (docs/output.md, "Structural and semantic
-// correctness"). What a mismatch means belongs to the implementation: a terminal under native or
+// strict binding is checked rather than trusted (../turn.test.ts, "a turn that declares an output
+// contract"). What a mismatch means belongs to the implementation: a terminal under native or
 // local, and a recorded rejection under the two that carry on (src/output.ts, mismatchCauseOf).
 const completionOf = (action: Action & { readonly kind: "complete" }, usage: unknown, ctx: Consequence): Event => {
   const mode = action.mode

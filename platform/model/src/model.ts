@@ -201,8 +201,8 @@ export const actionOf = (result: ProcessorResult): Action => {
   }
   if (text !== "") return { kind: "complete", output: text }
   // A provider that declined leaves neither: content_filter is the finish reason that says so,
-  // and a refusal a retry of the same request would only earn again (docs/output.md, "Failure
-  // classes").
+  // and a refusal a retry of the same request would only earn again (model.test.ts, "a provider
+  // that declined leaves neither text nor a call, and says so").
   if (result.finishReason === "content_filter") {
     throw new RefusedError("the provider refused to answer this request")
   }
