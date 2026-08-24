@@ -1,10 +1,16 @@
-import { Effect } from "effect"
+import { Data, Effect, Result } from "effect"
 import { FileSystem } from "effect/FileSystem"
+import type { PlatformError } from "effect/PlatformError"
+import { isAbsolute, join } from "node:path"
+import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
   maxConcurrentLanesOf,
+  projectConfigOf,
+  projectConfigPathOf,
   readConfig,
   type Env,
+  type ProjectConfig,
   type ServerConfigValue
 } from "@clavia/tardigrade-server/config"
 
@@ -35,8 +41,63 @@ export const CONFIG_RELATIVE = ".tardigrade/config.json"
 
 export const configPathIn = (home: string): string => `${home}/${CONFIG_RELATIVE}`
 
+// projectConfigPathIn resolves the project JSONC path against the command's working directory.
+export const projectConfigPathIn = (root: string, env: Env = {}): string => {
+  const path = projectConfigPathOf(env)
+  return isAbsolute(path) ? path : join(root, path)
+}
+
+// ProjectFileError reports invalid or unreadable project configuration.
+export class ProjectFileError extends Data.TaggedError("ProjectFileError")<{
+  readonly message: string
+  readonly cause?: unknown
+}> {}
+
+// parseProjectConfig validates JSONC syntax and the project configuration shape.
+export const parseProjectConfig = (raw: string, path = "tardigrade.jsonc"): ProjectConfig => {
+  const errors: Array<ParseError> = []
+  const value = parse(raw, errors, { allowTrailingComma: true }) as unknown
+  if (errors.length > 0) {
+    const first = errors[0]!
+    throw new ProjectFileError({
+      message: `${path} is invalid JSONC at offset ${first.offset}: ${printParseErrorCode(first.error)}`
+    })
+  }
+  try {
+    return projectConfigOf(value)
+  } catch (cause) {
+    throw new ProjectFileError({
+      message: `${path} is invalid: ${cause instanceof Error ? cause.message : String(cause)}`,
+      cause
+    })
+  }
+}
+
+// readProjectConfig reads the visible project configuration. An absent default file is empty.
+export const readProjectConfig = (
+  root: string,
+  env: Env = {}
+): Effect.Effect<ProjectConfig, PlatformError | ProjectFileError, FileSystem> =>
+  Effect.gen(function*() {
+    const path = projectConfigPathIn(root, env)
+    const read = yield* Effect.result((yield* FileSystem).readFileString(path))
+    if (Result.isFailure(read)) {
+      const stated = env["TARDIGRADE_CONFIG_PATH"]?.trim()
+      if (read.failure.reason._tag === "NotFound" && (stated === undefined || stated.length === 0)) {
+        return projectConfigOf({})
+      }
+      return yield* read.failure
+    }
+    return yield* Effect.try({
+      try: () => parseProjectConfig(read.success, path),
+      catch: (cause) => cause instanceof ProjectFileError
+        ? cause
+        : new ProjectFileError({ message: String(cause), cause })
+    })
+  })
+
 // FileConfig is the user-level file's whole shape. It holds remote client settings that apply
-// across projects. Model connections belong to each project's environment (setup.ts).
+// across projects. Model connections belong to each project's JSONC file (setup.ts).
 export interface FileConfig {
   readonly url?: string
   readonly token?: string
@@ -115,8 +176,12 @@ export interface ServerFlags {
 // than a secret. A server meant to be reachable by anyone else is the server run directly with a
 // token set (docs/how-to/server.md; config.test.ts, "the token is dropped, so the local server is
 // ungated").
-export const resolveServer = (flags: ServerFlags, env: Env): ServerConfigValue => {
-  const base = readConfig(env)
+export const resolveServer = (
+  flags: ServerFlags,
+  env: Env,
+  project: ProjectConfig = projectConfigOf({})
+): ServerConfigValue => {
+  const base = readConfig(env, project)
   return {
     ...base,
     port: flags.port ?? base.port,

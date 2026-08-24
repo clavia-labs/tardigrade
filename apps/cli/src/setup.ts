@@ -1,23 +1,25 @@
 import { Console, Data, Effect, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
-import { FileSystem } from "effect/FileSystem"
+import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
+import { applyEdits, modify } from "jsonc-parser"
 import { MODEL_DRIVERS, type ModelDriver } from "@clavia/tardigrade-model/directory"
-import { modelConfigOf, type Env, type ModelConfig } from "@clavia/tardigrade-server/config"
+import type { Env, ModelConfig } from "@clavia/tardigrade-server/config"
 import {
   DEFAULT_MODEL_CATALOG_URL,
   modelsDevCatalogOf
 } from "@clavia/tardigrade-model/metadata"
 
-// `tdg setup` asks for a provider connection and default model, then writes the project's
-// environment so the first command a person runs makes every later command work.
-//
-// The credential is written and never shown. It is not in the printed summary, not in `--json`, and not in
-// any failure this module raises: a person who ran the command in a shared terminal, a screen
-// share, or CI has no line to scrub afterwards (setup.test.ts, "the key is never echoed").
+import { parseProjectConfig, projectConfigPathIn } from "./config"
 
-// CONFIG_MODE leaves the environment file readable and writable by its owner alone.
-export const CONFIG_MODE = 0o600
+// `tdg setup` asks for a provider connection and default model, then writes project configuration
+// and its credential so the first command a person runs makes every later command work.
+//
+// The credential is written and never shown. It is absent from the printed summary, `--json`, and
+// failures, so a shared terminal has no value to scrub (setup.test.ts, "the key is never echoed").
+
+// SECRETS_MODE leaves the environment file readable and writable by its owner alone.
+export const SECRETS_MODE = 0o600
 export const ENV_FILE = ".env"
 
 export const envPathIn = (root: string): string => `${root.replace(/\/$/, "")}/${ENV_FILE}`
@@ -326,55 +328,71 @@ const withAssignments = (raw: string, values: Readonly<Record<string, string>>):
   return `${next.join("\n")}\n`
 }
 
-const modelFromEnvironment = (env: Env): ModelConfig => {
-  const raw = env["TARDIGRADE_MODELS"]?.trim()
-  if (raw === undefined || raw.length === 0) return { default: undefined, providers: {} }
-  try {
-    return modelConfigOf(JSON.parse(raw) as unknown)
-  } catch (cause) {
-    throw new Error(`existing TARDIGRADE_MODELS is invalid: ${cause instanceof Error ? cause.message : String(cause)}`)
-  }
+const readOrEmpty = (fs: FileSystemService, path: string): Effect.Effect<string, PlatformError> =>
+  fs.readFileString(path).pipe(
+    Effect.catch((error) => error.reason._tag === "NotFound" ? Effect.succeed("") : error)
+  )
+
+export interface SetupFiles {
+  readonly configPath: string
+  readonly secretsPath: string
 }
 
-// writeSetup merges one connection into the project environment and leaves the file at 0600.
+const updatedProject = (
+  raw: string,
+  selected: NonNullable<ModelConfig["default"]>,
+  provider: string,
+  connection: ModelConfig["providers"][string]
+): string => {
+  const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
+  let next = raw.trim().length === 0 ? "{}\n" : raw
+  next = applyEdits(next, modify(next, ["models", "default"], selected, { formattingOptions }))
+  next = applyEdits(next, modify(next, ["models", "providers", provider], connection, { formattingOptions }))
+  return next.endsWith("\n") ? next : `${next}\n`
+}
+
+// writeSetup merges one connection into project JSONC and writes only its credential to .env.
 export const writeSetup = (
   root: string,
-  answers: SetupAnswers
-): Effect.Effect<string, PlatformError | SetupConfigError, FileSystem> =>
+  answers: SetupAnswers,
+  env: Env = {}
+): Effect.Effect<SetupFiles, PlatformError | SetupConfigError, FileSystem> =>
   Effect.gen(function*() {
     const fs = yield* FileSystem
     if (!ENV_NAME.test(answers.env[0] ?? "")) {
       return yield* new SetupConfigError({ message: `credential environment variable must match ${ENV_NAME}` })
     }
-    const path = envPathIn(root)
-    const raw = yield* fs.readFileString(path).pipe(Effect.orElseSucceed(() => ""))
-    const held = yield* Effect.try({
-      try: () => modelFromEnvironment(setupEnvironmentOf(raw)),
+    const configPath = projectConfigPathIn(root, env)
+    const foundConfig = yield* readOrEmpty(fs, configPath)
+    const configRaw = foundConfig.trim().length === 0 ? "{}\n" : foundConfig
+    yield* Effect.try({
+      try: () => parseProjectConfig(configRaw, configPath),
       catch: (cause) => new SetupConfigError({
         message: cause instanceof Error ? cause.message : String(cause),
         cause
       })
     })
-    const model: ModelConfig = {
-      default: { provider: answers.provider, model_id: answers.model_id },
-      providers: {
-        ...held.providers,
-        [answers.provider]: {
-          baseUrl: answers.baseUrl,
-          driver: answers.driver,
-          env: answers.env
-        }
-      }
+    const selected = { provider: answers.provider, model_id: answers.model_id }
+    const connection = {
+      baseUrl: answers.baseUrl,
+      driver: answers.driver,
+      env: answers.env
     }
-    const next = withAssignments(raw, {
-      TARDIGRADE_MODELS: JSON.stringify(model),
-      [answers.env[0]!]: answers.credential
-    })
-    yield* fs.writeFileString(path, next, { mode: CONFIG_MODE })
+    const secretsPath = envPathIn(root)
+    const secretsRaw = yield* readOrEmpty(fs, secretsPath)
+    yield* fs.writeFileString(
+      configPath,
+      updatedProject(configRaw, selected, answers.provider, connection)
+    )
+    yield* fs.writeFileString(
+      secretsPath,
+      withAssignments(secretsRaw, { [answers.env[0]!]: answers.credential }),
+      { mode: SECRETS_MODE }
+    )
     // The mode is set again after the write, because `mode` applies when a file is created and this
     // may have replaced one that already existed at a wider mode (setup.test.ts).
-    yield* fs.chmod(path, CONFIG_MODE)
-    return path
+    yield* fs.chmod(secretsPath, SECRETS_MODE)
+    return { configPath, secretsPath }
   })
 
 export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem> =>
@@ -384,11 +402,11 @@ export const readSetupEnv = (root: string): Effect.Effect<Env, never, FileSystem
     return setupEnvironmentOf(raw)
   })
 
-// setupSummary is what the command prints. The credential is stated as stored rather than shown, and the
-// same is true of the `--json` rendering, so neither output can be the place a key leaks.
-export const setupSummary = (path: string, answers: SetupAnswers): string =>
+// setupSummary prints where the credential was stored without showing its value.
+export const setupSummary = (files: SetupFiles, answers: SetupAnswers): string =>
   [
-    `wrote ${path}`,
+    `wrote ${files.configPath}`,
+    `stored credential in ${files.secretsPath}`,
     `provider ${answers.provider}`,
     `at    ${answers.baseUrl}`,
     `wire  ${answers.driver}`,
@@ -396,8 +414,9 @@ export const setupSummary = (path: string, answers: SetupAnswers): string =>
     `default ${answers.model_id}`
   ].join("\n")
 
-export const setupJson = (path: string, answers: SetupAnswers): {
-  readonly path: string
+export const setupJson = (files: SetupFiles, answers: SetupAnswers): {
+  readonly configPath: string
+  readonly secretsPath: string
   readonly baseUrl: string
   readonly provider: string
   readonly model_id: string
@@ -405,7 +424,7 @@ export const setupJson = (path: string, answers: SetupAnswers): {
   readonly credential: "stored"
   readonly env: ReadonlyArray<string>
 } => ({
-  path,
+  ...files,
   provider: answers.provider,
   baseUrl: answers.baseUrl,
   model_id: answers.model_id,

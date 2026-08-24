@@ -5,12 +5,13 @@ import { join } from "node:path"
 import { Effect } from "effect"
 import { BunFileSystem } from "@effect/platform-bun"
 
+import { parseProjectConfig, projectConfigPathIn } from "./config"
 import {
-  CONFIG_MODE,
   envPathIn,
   modelsDevAt,
   PRESETS,
   readSetupEnv,
+  SECRETS_MODE,
   setupJson,
   setupSummary,
   writeSetup,
@@ -85,17 +86,19 @@ describe("model discovery", () => {
 })
 
 describe("writeSetup", () => {
-  test("the project environment is written at 0600", async () => {
-    const path = await write()
-    expect(path).toBe(envPathIn(root))
-    const file = await stat(path)
-    expect(file.mode & 0o777).toBe(CONFIG_MODE)
+  test("the project config and private environment are written separately", async () => {
+    const files = await write()
+    expect(files).toEqual({
+      configPath: projectConfigPathIn(root),
+      secretsPath: envPathIn(root)
+    })
+    expect((await stat(files.secretsPath)).mode & 0o777).toBe(SECRETS_MODE)
   })
 
-  test("configuration and the credential use separate entries", async () => {
+  test("configuration is JSONC and the credential is the only environment entry", async () => {
     await write()
-    const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
-    expect(JSON.parse(held.TARDIGRADE_MODELS!)).toEqual({
+    const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
+    expect(project.models).toEqual({
       default: { provider: "openai", model_id: "a-model" },
       providers: {
         openai: {
@@ -105,19 +108,29 @@ describe("writeSetup", () => {
         }
       }
     })
+    const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
     expect(held.OPENAI_API_KEY).toBe(KEY)
-    expect(held.TARDIGRADE_MODELS).not.toContain(KEY)
+    expect(Object.keys(held)).toEqual(["OPENAI_API_KEY"])
+    expect(await readFile(projectConfigPathIn(root), "utf8")).not.toContain(KEY)
   })
 
-  test("unrelated environment lines are kept", async () => {
+  test("unrelated environment lines and JSONC comments are kept", async () => {
     await writeFile(envPathIn(root), "# application\nAPP_NAME=release\n")
+    await writeFile(projectConfigPathIn(root), "{\n  // Keep this setting.\n  \"later\": true\n}\n")
     await write()
-    const raw = await readFile(envPathIn(root), "utf8")
-    expect(raw).toContain("# application\nAPP_NAME=release\n")
+    expect(await readFile(envPathIn(root), "utf8")).toContain("# application\nAPP_NAME=release\n")
+    const config = await readFile(projectConfigPathIn(root), "utf8")
+    expect(config).toContain("// Keep this setting.")
+    expect(config).toContain('"later": true')
   })
 
   test("a later setup keeps prior providers and changes the default", async () => {
     await write()
+    const first = await readFile(projectConfigPathIn(root), "utf8")
+    await writeFile(
+      projectConfigPathIn(root),
+      first.replace('"openai": {', '"openai": {\n          // Keep this provider note.')
+    )
     await write({
       ...answers,
       provider: "openrouter",
@@ -127,11 +140,12 @@ describe("writeSetup", () => {
       env: ["OPENROUTER_API_KEY"]
     })
     const held = await Effect.runPromise(Effect.provide(readSetupEnv(root), BunFileSystem.layer))
-    const model = JSON.parse(held.TARDIGRADE_MODELS!) as { default: unknown; providers: Record<string, { baseUrl: string }> }
+    const model = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8")).models
     expect(Object.keys(model.providers).sort()).toEqual(["openai", "openrouter"])
     expect(model.default).toEqual({ provider: "openrouter", model_id: "another-model" })
     expect(model.providers.openai?.baseUrl).toBe("https://api.example.com/v1")
     expect(model.providers.openrouter?.baseUrl).toBe("https://secondary.example.com/v1")
+    expect(await readFile(projectConfigPathIn(root), "utf8")).toContain("// Keep this provider note.")
     expect(held.OPENAI_API_KEY).toBe(KEY)
     expect(held.OPENROUTER_API_KEY).toBe("secondary-key")
   })
@@ -141,14 +155,14 @@ describe("writeSetup", () => {
   test("a rerun narrows a file that was left wide open", async () => {
     await writeFile(envPathIn(root), "APP_NAME=release\n")
     await chmod(envPathIn(root), 0o644)
-    const path = await write()
-    expect((await stat(path)).mode & 0o777).toBe(CONFIG_MODE)
+    const files = await write()
+    expect((await stat(files.secretsPath)).mode & 0o777).toBe(SECRETS_MODE)
   })
 
-  test("an invalid existing model entry is kept and reported", async () => {
-    await writeFile(envPathIn(root), 'TARDIGRADE_MODELS="bad"\nAPP_NAME=release\n')
-    await expect(write()).rejects.toThrow("existing TARDIGRADE_MODELS is invalid")
-    expect(await readFile(envPathIn(root), "utf8")).toContain("APP_NAME=release")
+  test("invalid JSONC is kept and reported", async () => {
+    await writeFile(projectConfigPathIn(root), "{ broken")
+    await expect(write()).rejects.toThrow("invalid JSONC")
+    expect(await readFile(projectConfigPathIn(root), "utf8")).toBe("{ broken")
   })
 })
 
@@ -156,13 +170,14 @@ describe("what setup prints", () => {
   // The key is the one value that is written and never shown. Neither rendering may carry it, and
   // neither may the path line, so there is nothing to scrub from a shared terminal.
   test("the key is never echoed, in either rendering", async () => {
-    const path = await write()
-    const summary = setupSummary(path, answers)
+    const files = await write()
+    const summary = setupSummary(files, answers)
     expect(summary).not.toContain(KEY)
-    expect(summary).toContain(path)
+    expect(summary).toContain(files.configPath)
+    expect(summary).toContain(files.secretsPath)
     expect(summary).toContain("a-model")
     expect(summary).not.toContain("key")
-    const json = setupJson(path, answers)
+    const json = setupJson(files, answers)
     expect(JSON.stringify(json)).not.toContain(KEY)
     expect(json.credential).toBe("stored")
     expect(json.provider).toBe("openai")

@@ -66,16 +66,30 @@ Every failure is `application/problem+json`.
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
-| `TARDIGRADE_MODELS` | Unset. JSON provider routes, protocols, credential variable names, and default model |
+| `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc`. Ordinary project configuration for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
 | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. `tdg setup` writes the same split to the project `.env` for local development.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. `tdg setup` writes ordinary configuration to `tardigrade.jsonc` and credentials to the project `.env`.
+
+```jsonc
+{
+  "models": {
+    "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+    "providers": {
+      "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "driver": "openai-chat-completions",
+        "env": ["OPENROUTER_API_KEY"]
+      }
+    }
+  }
+}
+```
 
 ```dotenv
-TARDIGRADE_MODELS='{"default":{"provider":"openrouter","model_id":"anthropic/claude-sonnet-4-6"},"providers":{"openrouter":{"baseUrl":"https://openrouter.ai/api/v1","driver":"openai-chat-completions","env":["OPENROUTER_API_KEY"]}}}'
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
 

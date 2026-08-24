@@ -9,11 +9,9 @@ import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
 export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 
-// The server's configuration is the environment and nothing else (apps-server-spec.md,
-// "Conventions"). One operator, one store, one process, so there is no config file to reconcile
-// with the environment and no precedence order to remember. Every default is an exported constant
-// and every value is a field on ServerConfig, so a consumer can read what the process resolved and
-// a test can supply its own without touching process.env (http.test.ts).
+// The server combines ordinary project configuration with environment credentials and host
+// settings. Every default is exported, and every resolved value is visible on ServerConfig
+// (http.test.ts).
 
 // Where the HTTP server listens when PORT is absent.
 export const DEFAULT_PORT = 4242
@@ -24,6 +22,9 @@ export const DEFAULT_DB = ".tardigrade/agents.sqlite"
 export const DEFAULT_ACTORS = ".tardigrade/actors"
 
 export const DEFAULT_ACTOR_DATA = ".tardigrade/data"
+
+// DEFAULT_PROJECT_CONFIG_PATH is the project configuration read by the direct server.
+export const DEFAULT_PROJECT_CONFIG_PATH = "tardigrade.jsonc"
 
 // DEFAULT_MODEL_CATALOG_CACHE is the last validated public snapshot used when a refresh fails.
 export const DEFAULT_MODEL_CATALOG_CACHE = ".tardigrade/models.json"
@@ -51,6 +52,11 @@ export interface ModelProviderConfig {
 export interface ModelConfig {
   readonly default: ModelCoordinate | undefined
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
+}
+
+// ProjectConfig holds ordinary configuration loaded from tardigrade.jsonc.
+export interface ProjectConfig {
+  readonly models: ModelConfig
 }
 
 // ModelCredentials holds environment values separately from the provider configuration that
@@ -83,6 +89,10 @@ const text = (env: Env, name: string): string | undefined => {
   const trimmed = value.trim()
   return trimmed.length === 0 ? undefined : trimmed
 }
+
+// projectConfigPathOf resolves the visible project configuration path.
+export const projectConfigPathOf = (env: Env): string =>
+  text(env, "TARDIGRADE_CONFIG_PATH") ?? DEFAULT_PROJECT_CONFIG_PATH
 
 const recordOf = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === "object" && value !== null ? value as Record<string, unknown> : undefined
@@ -121,18 +131,20 @@ const legacyModelError = (env: Env): Error | undefined => {
   const provider = text(env, "MODEL_PROVIDER") ?? "<provider>"
   const model_id = text(env, "MODEL_ID") ?? "<model-id>"
   const replacement = {
-    default: { provider, model_id },
-    providers: {
-      [provider]: {
-        baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
-        driver: "<protocol-driver>",
-        env: ["<api-key-env>"]
+    models: {
+      default: { provider, model_id },
+      providers: {
+        [provider]: {
+          baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
+          driver: "<protocol-driver>",
+          env: ["<api-key-env>"]
+        }
       }
     }
   }
   return new Error(
     `${present.join(", ")} ${present.length === 1 ? "is" : "are"} no longer accepted. ` +
-    `Run \`tdg setup\`, or set TARDIGRADE_MODELS to ${JSON.stringify(replacement)}. ` +
+    `Run \`tdg setup\`, or put ${JSON.stringify(replacement)} in tardigrade.jsonc. ` +
     "Replace <protocol-driver>, set <api-key-env> as a secret environment variable, and remove the legacy variables. The legacy API key was not printed."
   )
 }
@@ -164,6 +176,13 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   }
 }
 
+// projectConfigOf validates the ordinary project configuration.
+export const projectConfigOf = (value: unknown): ProjectConfig => {
+  const source = recordOf(value)
+  if (source === undefined) throw new Error("project configuration must be a JSON object")
+  return { models: modelConfigOf(source["models"] ?? {}) }
+}
+
 const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
   const credentials: Record<string, string> = {}
   for (const provider of Object.values(model.providers)) {
@@ -175,16 +194,10 @@ const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials =>
   return credentials
 }
 
-const modelsFrom = (env: Env): ModelConfig => {
+const modelFrom = (env: Env, project: ProjectConfig): ModelConfig => {
   const legacy = legacyModelError(env)
   if (legacy !== undefined) throw legacy
-  const raw = text(env, "TARDIGRADE_MODELS")
-  if (raw === undefined) return { default: undefined, providers: {} }
-  try {
-    return modelConfigOf(JSON.parse(raw) as unknown)
-  } catch (error) {
-    throw new Error(`TARDIGRADE_MODELS is invalid: ${error instanceof Error ? error.message : String(error)}`)
-  }
+  return project.models
 }
 
 // A PORT that is not a number is an operator error, not a reason to fall back: silently listening
@@ -224,9 +237,12 @@ const modelCatalogTimeout = (env: Env): number => {
   return value
 }
 
-// readConfig resolves the environment into the value the process runs on.
-export const readConfig = (env: Env): ServerConfigValue => {
-  const model = modelsFrom(env)
+// readConfig resolves project configuration and the environment into the value the process runs on.
+export const readConfig = (
+  env: Env,
+  project: ProjectConfig = { models: { default: undefined, providers: {} } }
+): ServerConfigValue => {
+  const model = modelFrom(env, project)
   return {
     port: port(env),
     db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,

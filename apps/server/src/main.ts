@@ -2,22 +2,27 @@ import { Layer } from "effect"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 
-import { layerFromEnv, readConfig } from "./config"
+import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "./config"
 import { layerModelCatalog } from "./catalog"
 import { layerThreads } from "./host"
 import { serve } from "./http"
 
-// The entry point: environment to configuration to a listening Bun process. It holds no logic of
-// its own, so anything worth testing lives in config.ts or http.ts and is exercised without a
-// process (http.test.ts).
+// The entry point resolves project JSONC and the environment before starting a Bun process.
 
 // The process refuses to listen on a runtime the framework cannot keep its promises on, rather than
 // failing later inside a turn (packages/core/src/runtime.ts).
 assertSupportedBun()
 
-const config = readConfig(process.env)
+const projectPath = projectConfigPathOf(process.env)
+const projectFile = Bun.file(projectPath)
+const projectExists = await projectFile.exists()
+if (!projectExists && process.env.TARDIGRADE_CONFIG_PATH?.trim().length) {
+  throw new Error(`TARDIGRADE_CONFIG_PATH names ${JSON.stringify(projectPath)}, but that file does not exist`)
+}
+const project = projectExists ? projectConfigOf(Bun.JSONC.parse(await projectFile.text())) : projectConfigOf({})
+const config = readConfig(process.env, project)
 
-const configLayer = layerFromEnv(process.env)
+const configLayer = layerConfig(config)
 
 // The host is built from the same configuration the routes read, and closed with the scope the
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).

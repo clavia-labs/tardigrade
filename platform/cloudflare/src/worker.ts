@@ -32,7 +32,7 @@ export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorHost>
   readonly REGISTRY: D1Database
   readonly LOADER: WorkerLoader
-  readonly TARDIGRADE_MODELS?: string
+  readonly TARDIGRADE_CONFIG?: unknown
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MAX_CONCURRENT_LANES?: string
   readonly TARDIGRADE_ALARM_DELAY_MILLIS?: string
@@ -97,7 +97,7 @@ const stringsOf = (value: unknown): ReadonlyArray<string> =>
     : []
 
 const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<string>): string => {
-  if (names.length === 0) throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(provider)} must declare env`)
+  if (names.length === 0) throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(provider)} must declare env`)
   const values = workerEnv as unknown as Readonly<Record<string, unknown>>
   for (const name of names) {
     const value = values[name]
@@ -107,28 +107,32 @@ const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<s
 }
 
 const modelsFrom = (env: Env): CloudflareModels | undefined => {
-  if (env.TARDIGRADE_MODELS === undefined) return undefined
-  const parsed = JSON.parse(env.TARDIGRADE_MODELS) as {
-    readonly default?: unknown
-    readonly providers?: Readonly<Record<string, {
+  if (env.TARDIGRADE_CONFIG === undefined) return undefined
+  const config = env.TARDIGRADE_CONFIG as {
+    readonly models?: {
+      readonly default?: unknown
+      readonly providers?: Readonly<Record<string, {
       readonly baseUrl?: unknown
       readonly driver?: unknown
       readonly env?: unknown
       readonly apiKey?: unknown
       readonly models?: Readonly<Record<string, CloudflareModelMetadata>>
-    }>>
+      }>>
+    }
   }
+  const parsed = config.models
+  if (parsed === undefined) return undefined
   const coordinate = parsed.default as { readonly provider?: unknown; readonly model_id?: unknown } | undefined
   if (typeof coordinate?.provider !== "string" || typeof coordinate.model_id !== "string") {
-    throw new Error("TARDIGRADE_MODELS must declare default { provider, model_id }")
+    throw new Error("TARDIGRADE_CONFIG.models must declare default { provider, model_id }")
   }
   const providers: Record<string, CloudflareProvider> = {}
   for (const [name, provider] of Object.entries(parsed.providers ?? {})) {
     if (provider.apiKey !== undefined) {
-      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} cannot contain apiKey; declare its Worker secret in env`)
+      throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} cannot contain apiKey; declare its Worker secret in env`)
     }
     if (typeof provider.baseUrl !== "string" || typeof provider.driver !== "string") {
-      throw new Error(`TARDIGRADE_MODELS provider ${JSON.stringify(name)} must declare baseUrl and driver`)
+      throw new Error(`TARDIGRADE_CONFIG.models provider ${JSON.stringify(name)} must declare baseUrl and driver`)
     }
     const credentialEnv = stringsOf(provider.env)
     providers[name] = {
@@ -144,7 +148,7 @@ const modelsFrom = (env: Env): CloudflareModels | undefined => {
 
 const selectedModelFrom = (models: CloudflareModels, coordinate: ModelCoordinate) => {
   const provider = models.providers[coordinate.provider]
-  if (provider === undefined) throw new Error(`provider ${JSON.stringify(coordinate.provider)} is not configured; update TARDIGRADE_MODELS`)
+  if (provider === undefined) throw new Error(`provider ${JSON.stringify(coordinate.provider)} is not configured; update TARDIGRADE_CONFIG.models`)
   const metadata = provider.models[coordinate.model_id]
   if (metadata === undefined) throw new Error(`model metadata is missing for ${coordinate.provider}/${coordinate.model_id}`)
   return { coordinate, provider, metadata }
@@ -155,7 +159,7 @@ const modelLayer = (env: Env) => {
   if (models === undefined) {
     const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({
-      resolve: () => { throw new Error("no model is configured: set TARDIGRADE_MODELS") },
+      resolve: () => { throw new Error("no model is configured: set TARDIGRADE_CONFIG.models") },
       react: () => Effect.succeed(failed)
     })
   }

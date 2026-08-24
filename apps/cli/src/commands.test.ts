@@ -158,6 +158,7 @@ describe("parsing", () => {
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
     const help = (await drive(["setup", "--help"])).lines.join("\n")
+    expect(help).toContain("tardigrade.jsonc")
     expect(help).toContain(".env")
     expect(help).toContain("0600")
   })

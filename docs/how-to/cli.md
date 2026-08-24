@@ -37,7 +37,7 @@ Commands that print data take `--json` where their help lists it. Remote command
 
 ## Configuration
 
-A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. The user-level file holds the remote URL and token. Project model connections come from the environment.
+A flag beats an environment variable, which beats `~/.tardigrade/config.json`, which beats the default. This order applies to remote URL and token settings. Project model configuration lives in `tardigrade.jsonc`. Provider credentials live in `.env`.
 
 | | Flag | Environment | Default |
 | --- | --- | --- | --- |
@@ -46,12 +46,27 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
-| Provider connections | | `TARDIGRADE_MODELS` and provider key variables | what `tdg setup` saved |
+| Project configuration | | `TARDIGRADE_CONFIG_PATH` | `tardigrade.jsonc` |
+| Provider credentials | | Variables named by each provider's `env` list | what `tdg setup` saved in `.env` |
 
-`tdg setup` updates the project `.env` at mode 0600 and never prints the key back. `TARDIGRADE_MODELS` holds provider routes, protocols, credential variable names, and the default coordinate. Each provider key has its own environment entry. Run setup again to add another provider connection or change the default model. Each run preserves unrelated environment entries and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg setup` updates `tardigrade.jsonc` and stores the credential in the project `.env` at mode 0600. It never prints the credential back. Run setup again to add another provider connection or change the default model. Each run preserves unrelated JSONC settings, comments, environment entries, and earlier provider connections. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+
+```jsonc
+{
+  "models": {
+    "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4-6" },
+    "providers": {
+      "openrouter": {
+        "baseUrl": "https://openrouter.ai/api/v1",
+        "driver": "openai-chat-completions",
+        "env": ["OPENROUTER_API_KEY"]
+      }
+    }
+  }
+}
+```
 
 ```dotenv
-TARDIGRADE_MODELS='{"default":{"provider":"openrouter","model_id":"anthropic/claude-sonnet-4-6"},"providers":{"openrouter":{"baseUrl":"https://openrouter.ai/api/v1","driver":"openai-chat-completions","env":["OPENROUTER_API_KEY"]}}}'
 OPENROUTER_API_KEY='your-key'
 ```
 

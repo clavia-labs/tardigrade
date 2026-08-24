@@ -10,6 +10,7 @@ import {
   DEFAULT_MAX_CONCURRENT_LANES,
   DEFAULT_PORT,
   layerConfig,
+  projectConfigOf,
   readConfig,
   type ServerConfigValue
 } from "./config"
@@ -127,9 +128,9 @@ describe("config", () => {
     expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
   })
 
-  test("provider connections resolve from one explicit JSON value", () => {
-    const config = readConfig({
-      TARDIGRADE_MODELS: JSON.stringify({
+  test("provider configuration and credentials resolve from separate sources", () => {
+    const project = projectConfigOf({
+      models: {
         default: { provider: "openai", model_id: "gpt" },
         providers: {
           openai: {
@@ -138,19 +139,16 @@ describe("config", () => {
             env: ["OPENAI_API_KEY"]
           }
         }
-      }),
-      OPENAI_API_KEY: "secret"
+      }
     })
+    const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
     expect(config.model).toMatchObject({
       default: { provider: "openai", model_id: "gpt" },
       providers: { openai: { driver: "openai-responses" } }
     })
     expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
-    expect(() => readConfig({ TARDIGRADE_MODELS: "{" })).toThrow("TARDIGRADE_MODELS is invalid")
-    expect(() => readConfig({
-      TARDIGRADE_MODELS: JSON.stringify({
-        providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } }
-      })
+    expect(() => projectConfigOf({
+      models: { providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } }
     })).toThrow("cannot contain apiKey")
   })
 
@@ -167,7 +165,7 @@ describe("config", () => {
     } catch (error) {
       message = error instanceof Error ? error.message : String(error)
     }
-    expect(message).toContain("TARDIGRADE_MODELS")
+    expect(message).toContain("tardigrade.jsonc")
     expect(message).toContain('"default":{"provider":"openai","model_id":"gpt-5.2"}')
     expect(message).toContain('"driver":"<protocol-driver>"')
     expect(message).toContain('"env":["<api-key-env>"]')

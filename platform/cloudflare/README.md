@@ -33,18 +33,24 @@ cd platform/cloudflare
 bunx wrangler secret put OPENAI_API_KEY
 ```
 
-Set `TARDIGRADE_MODELS` as an ordinary Worker variable. Its JSON names the default coordinate, provider routes, credential variable names, and metadata used before a model request spends tokens:
+Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible configuration names the default coordinate, provider routes, credential variable names, and metadata used before a model request spends tokens:
 
-```json
+```jsonc
 {
-  "default": { "provider": "openai", "model_id": "gpt-5.2" },
-  "providers": {
-    "openai": {
-      "baseUrl": "https://api.openai.com/v1",
-      "driver": "openai-responses",
-      "env": ["OPENAI_API_KEY"],
+  "vars": {
+    "TARDIGRADE_CONFIG": {
       "models": {
-        "gpt-5.2": { "contextWindowTokens": 400000, "maxOutputTokens": 128000 }
+        "default": { "provider": "openai", "model_id": "gpt-5.2" },
+        "providers": {
+          "openai": {
+            "baseUrl": "https://api.openai.com/v1",
+            "driver": "openai-responses",
+            "env": ["OPENAI_API_KEY"],
+            "models": {
+              "gpt-5.2": { "contextWindowTokens": 400000, "maxOutputTokens": 128000 }
+            }
+          }
+        }
       }
     }
   }
@@ -108,6 +114,6 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
 | `TARDIGRADE_SANDBOX_SUBREQUESTS` | Cloudflare default | Sets the Dynamic Worker subrequest limit |
-| `TARDIGRADE_MODELS` | unset | Supplies provider routes and model metadata as ordinary JSON configuration |
+| `TARDIGRADE_CONFIG` | `{}` | Supplies provider routes and model metadata as visible JSON configuration in `wrangler.jsonc` |
 
 `wrangler.jsonc` also makes the D1 registry binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, and outbound policy. `layerCloudflareSandbox` accepts overrides for each value.
