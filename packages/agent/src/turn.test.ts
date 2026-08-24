@@ -37,10 +37,12 @@ import {
   toolList
 } from "./index"
 
+const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+
 // The default assembly over a stated scope. The infer root contains model inference, call routing,
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actor(infer([codeMode(packages), reply, budget, compaction(), nativeOutput]))
+  actor(infer([codeMode(packages), reply, budget, compaction(), nativeOutput], TEST_MODEL))
 const rlmAgent = agentWith([])
 const rootReactor = rlmAgent.reactors[0]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -145,6 +147,7 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
+      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "CodeDispatched",
@@ -158,8 +161,8 @@ describe("the agent with execute as the only tool", () => {
       "TurnCompleted",
       "ReplyDelivered"
     ])
-    expect(events[4]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
-    expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
+    expect(events[5]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
+    expect(events[9]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
     expect(rootReactor(events)).toHaveLength(0)
@@ -369,6 +372,7 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
+      "ModelResolved",
       "ModelCalled",
       "TurnCompleted",
       "ReplyDelivered"
@@ -449,7 +453,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  actor(infer([codeMode(), reply, budget, compaction(), outputRepairFor(policy)]))
+  actor(infer([codeMode(), reply, budget, compaction(), outputRepairFor(policy)], TEST_MODEL))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -861,7 +865,7 @@ describe("the repair implementation", () => {
   })
 
   test("two components declaring an output strategy collide at construction", () => {
-    expect(() => actor(infer([codeMode(), outputRepair, outputValidateOnce]))).toThrow(
+    expect(() => actor(infer([codeMode(), outputRepair, outputValidateOnce], TEST_MODEL))).toThrow(
       "output strategy declared by components output.repair and output.validate-once"
     )
   })
@@ -885,7 +889,7 @@ describe("the repair implementation", () => {
         transitions: []
       })
     }
-    expect(() => actor(infer([malformed]))).toThrow("output fallback declared by component output.malformed")
+    expect(() => actor(infer([malformed], TEST_MODEL))).toThrow("output fallback declared by component output.malformed")
   })
 })
 
@@ -905,7 +909,7 @@ describe("the mind on a native surface", () => {
       ]),
       reply,
       nativeOutput
-    ]))
+    ], TEST_MODEL))
     expect(mind.reactors).toHaveLength(1)
     const layers = Layer.mergeAll(
       memoryLog(),
@@ -931,6 +935,7 @@ describe("the mind on a native surface", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
+      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "ToolReturned",
@@ -944,7 +949,7 @@ describe("the mind on a native surface", () => {
 })
 
 describe("the validate-once implementation", () => {
-  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction(), outputValidateOnce]))
+  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction(), outputValidateOnce], TEST_MODEL))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0
@@ -1083,7 +1088,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 2 })]))
+    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 2 })], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })
@@ -1129,7 +1134,7 @@ describe("a domain-specific implementation", () => {
     }
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actor(infer([codeMode(), silent])), {
+        yield* receive(actor(infer([codeMode(), silent], TEST_MODEL)), {
           id: "m1",
           text: "decompose this topic",
           output: SCOUT
@@ -1151,7 +1156,7 @@ describe("a domain-specific implementation", () => {
       jsSandbox,
       noRouter
     )
-    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 1 })]))
+    const agent = actor(infer([codeMode(), reply, houseStyle({ asks: 1 })], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "decompose this topic", output: SCOUT })

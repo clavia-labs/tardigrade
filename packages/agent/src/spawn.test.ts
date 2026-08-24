@@ -98,6 +98,27 @@ describe("agentsPackage", () => {
     })
   })
 
+  test("the package fixes a child model outside the tool input", async () => {
+    const selected = { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" } as const
+    const sent: Array<Sent> = []
+    const inherited = agentsPackage()
+    const fixed = agentsPackage({ model: selected })
+    await Effect.runPromise(
+      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    await Effect.runPromise(
+      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(sent[0]!.event).not.toHaveProperty("model")
+    expect(sent[1]!.event).toMatchObject({ model: selected })
+    const refused = await Effect.runPromise(
+      fixed.methods.run!({ text: "other", background: true, model: selected }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(refused).toEqual({ error: "agents.run does not take model; configure agentsPackage({ model })" })
+    expect(sent).toHaveLength(2)
+    expect(codeSystemFor([fixed])).not.toContain("model:")
+  })
+
   test("a reply already on the lane answers without parking", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()

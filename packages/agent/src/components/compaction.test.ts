@@ -72,8 +72,8 @@ describe("the compaction measure and guard", () => {
 
   test("the selected model resolves both hysteresis lines from one window", () => {
     const policy = contextPolicyOf(
-      { contextWindowTokens: (model) => model === "large" ? 1_000_000 : 100_000 },
-      "large"
+      { contextWindowTokens: (model) => model?.model_id === "large" ? 1_000_000 : 100_000 },
+      { provider: "test", model_id: "large" }
     )
     expect(policy.fireTokens).toBe(800_000)
     expect(policy.keepTokens).toBe(500_000)

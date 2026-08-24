@@ -25,7 +25,9 @@ import { toolList } from "../components/tool-list"
 import { nativeOutput } from "../components/native-output"
 import { system } from "../components/system"
 import { receive } from "../turn"
-import { Infer, NativeOutputSupport, type InferRequest } from "./infer"
+import { Infer, NativeOutputSupport, selectedModelOf, type InferRequest } from "./infer"
+
+const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 
 // The component assembly end to end: the render the model sees is the composed view, and a call
 // routes through the same derived tool binding.
@@ -75,8 +77,67 @@ const viewComponent = (
 })
 
 describe("infer component", () => {
+  test("the actor owns model selection", () => {
+    const fallback = { provider: "cloudflare", model_id: "openai/gpt-5.6-luna" } as const
+    const message = {
+      type: "MessageReceived",
+      id: "m1",
+      text: "go",
+      model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" },
+      at: 1
+    } as Event
+    expect(selectedModelOf(message, fallback)).toEqual({
+      provider: "vercel",
+      model_id: "anthropic/claude-sonnet-4-6"
+    })
+    expect(selectedModelOf({ ...message, model: "openai/gpt-5.2" } as Event, fallback)).toEqual({
+      provider: "cloudflare",
+      model_id: "openai/gpt-5.2"
+    })
+    expect(selectedModelOf({ ...message, model: undefined } as Event, fallback)).toEqual(fallback)
+  })
+
+  test("the selected model reaches the model binding", async () => {
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = actor(infer(
+      [
+      reply,
+      compaction({
+        contextWindowTokens: (model) =>
+          model?.provider === "vercel" ? 200_000 : 100_000
+      }),
+      nativeOutput
+    ], { provider: "vercel", default_model: "anthropic/claude-sonnet-4-6" }))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, {
+          id: "m1",
+          text: "go",
+          model: "openai/gpt-5.2"
+        })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(seen[0]?.model).toEqual({ provider: "vercel", model_id: "openai/gpt-5.2" })
+    expect(seen[0]?.context?.contextWindowTokens).toBe(200_000)
+    expect(events.find((event) => event.type === "ModelResolved")).toMatchObject({
+      turn: "m1",
+      model: { provider: "vercel", model_id: "openai/gpt-5.2" }
+    })
+    expect(events.find((event) => event.type === "ModelCalled")).toMatchObject({
+      model: { provider: "vercel", model_id: "openai/gpt-5.2" }
+    })
+  })
+
   test("an assembly must declare one output strategy", () => {
-    expect(() => actor(infer([echoTable]))).toThrow("must declare one output strategy")
+    expect(() => actor(infer([echoTable], TEST_MODEL))).toThrow("must declare one output strategy")
   })
 
   test("a marked output fallback must be present for every log", () => {
@@ -104,7 +165,7 @@ describe("infer component", () => {
         )
       }
     })
-    const agent = actor(infer([echoTable, reply, budget, compaction(), nativeOutput]))
+    const agent = actor(infer([echoTable, reply, budget, compaction(), nativeOutput], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -131,7 +192,7 @@ describe("infer component", () => {
         )
       }
     })
-    const agent = actor(infer([echoTable, reply, nativeOutput]))
+    const agent = actor(infer([echoTable, reply, nativeOutput], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -155,7 +216,7 @@ describe("infer component", () => {
         )
       }
     })
-    const agent = actor(infer([codeMode([fetchPackage()]), reply, nativeOutput]))
+    const agent = actor(infer([codeMode([fetchPackage()]), reply, nativeOutput], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -171,7 +232,7 @@ describe("infer component", () => {
   })
 
   test("two components declaring one tool name collide at construction", () => {
-    expect(() => actor(infer([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput]))).toThrow(
+    expect(() => actor(infer([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput], TEST_MODEL))).toThrow(
       'tool "echo" declared more than once'
     )
   })
@@ -188,7 +249,7 @@ describe("infer component", () => {
         output: []
       })
     )
-    const agent = actor(infer([echoTable, later, nativeOutput]))
+    const agent = actor(infer([echoTable, later, nativeOutput], TEST_MODEL))
 
     expect(agent.reactors).toHaveLength(1)
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
@@ -215,7 +276,7 @@ describe("infer component", () => {
     })
     const events = await run(
       Effect.gen(function* () {
-        yield* receive(actor(infer([ephemeral, nativeOutput])), { id: "m1", text: "go" })
+        yield* receive(actor(infer([ephemeral, nativeOutput], TEST_MODEL)), { id: "m1", text: "go" })
         return yield* readLog
       }),
       Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)

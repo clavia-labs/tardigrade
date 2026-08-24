@@ -5,6 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
 import { projectedOutput } from "../output"
 import { Infer } from "../runtime/infer"
+import { modelRefOf, type ModelRef } from "../model"
 import type { AgentComponent } from "../runtime/agent"
 
 // The compaction reactor: a pure observer of the context size, with the hysteresis design. A
@@ -52,7 +53,7 @@ export interface ContextPolicy {
   readonly summaryLineCap: number
 }
 
-export type ContextWindowTokens = number | ((model: string | undefined) => number)
+export type ContextWindowTokens = number | ((model: ModelRef | undefined) => number)
 
 export interface CompactionPolicy {
   readonly messageRenderCap: number
@@ -82,16 +83,21 @@ const ratio = (value: number, name: string): number => {
   return value
 }
 
-// modelOf returns the latest model choice recorded for the open thread. The same MessageReceived
-// field selects inference, so a replay resolves the same model window.
-const modelOf = (log: ReadonlyArray<Event>): string | undefined => {
-  let model: string | undefined
+// modelResolutionOf returns the latest model facts recorded by infer for the open thread.
+const modelResolutionOf = (log: ReadonlyArray<Event>): {
+  readonly model: ModelRef | undefined
+  readonly contextWindowTokens: number | undefined
+} => {
+  let model: ModelRef | undefined
+  let contextWindowTokens: number | undefined
   for (const event of log) {
-    if (event.type !== "MessageReceived") continue
-    const selected = (event as { readonly model?: unknown }).model
-    if (typeof selected === "string" && selected !== "") model = selected
+    if (event.type !== "ModelResolved") continue
+    const selected = modelRefOf((event as { readonly model?: unknown }).model)
+    if (selected !== undefined) model = selected
+    const window = (event as { readonly contextWindowTokens?: unknown }).contextWindowTokens
+    if (typeof window === "number") contextWindowTokens = window
   }
-  return model
+  return { model, contextWindowTokens }
 }
 
 // contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
@@ -99,7 +105,7 @@ const modelOf = (log: ReadonlyArray<Event>): string | undefined => {
 // together.
 export const contextPolicyOf = (
   policy: Partial<CompactionPolicy> = {},
-  model?: string
+  model?: ModelRef
 ): ContextPolicy => {
   const windowSource = policy.contextWindowTokens ?? DEFAULT_COMPACTION_POLICY.contextWindowTokens
   const contextWindowTokens = positive(
@@ -128,6 +134,19 @@ export const contextPolicyOf = (
       "summaryLineCap"
     )
   }
+}
+
+const contextPolicyFrom = (
+  log: ReadonlyArray<Event>,
+  policy: Partial<CompactionPolicy>
+): ContextPolicy => {
+  const selection = modelResolutionOf(log)
+  return contextPolicyOf(
+    selection.contextWindowTokens === undefined
+      ? policy
+      : { ...policy, contextWindowTokens: selection.contextWindowTokens },
+    selection.model
+  )
 }
 
 // resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
@@ -328,7 +347,8 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
 export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer> => (log) => {
-  const resolved = contextPolicyOf(policy, modelOf(log))
+  const model = modelResolutionOf(log).model
+  const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
   // its rejected reply into a summary (src/output.ts, projectedOutput).
@@ -372,6 +392,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
           const action = yield* (yield* Infer).react(
             {
               trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
+              ...(model === undefined ? {} : { model }),
               system: "",
               tools: []
             },
@@ -401,7 +422,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
       view: {
         system: [],
         tools: [],
-        context: [{ component: "compaction", policy: contextPolicyOf(policy, modelOf(log)) }],
+        context: [{ component: "compaction", policy: contextPolicyFrom(log, policy) }],
         output: []
       },
       transitions: reactor(log)

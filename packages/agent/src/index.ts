@@ -30,8 +30,10 @@ export {
   DEFAULT_INFER_POLICY,
   type InferPolicy,
   type InferRequest,
+  type ModelResolution,
   type Render
 } from "./runtime/infer"
+export { ModelRef, modelRefOf, type ModelRef as ModelRefType } from "./model"
 
 // The turn's declared final response: the contract a caller states, the profile a binding can
 // send unchanged, and the implementation that obtains it. `output` is the whole declarative
@@ -169,6 +171,7 @@ export {
   type FallbackOutputFragment,
   type OutputFallbackComponent,
   type OutputFragment,
+  type InferOptions,
   type Rendered
 } from "./runtime/agent"
 export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./components/code"

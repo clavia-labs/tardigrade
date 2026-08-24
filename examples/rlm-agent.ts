@@ -1,8 +1,7 @@
 // A Recursive Language Model agent, assembled from the library's parts and run on the durable
 // Bun host: bun run examples/rlm-agent.ts. The agent acts by writing JavaScript; its code can
 // spawn child agents (agents.run) and read spilled values back (workspace.read). Set
-// MODEL_BASE_URL, MODEL_API_KEY, and MODEL_ID to an OpenAI-compatible endpoint before running;
-// add provider: "bedrock" to the infer options for Bedrock.
+// MODEL_BASE_URL, MODEL_API_KEY, MODEL_PROVIDER, and MODEL_ID before running.
 
 // The workspace names resolve in this repository. Against the published package the last two
 // are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
@@ -20,7 +19,10 @@ const rlm = actor(inferAgent([
   budget, // the per-turn code budget, inherited by spawned children
   compaction(), // bounded model context over long investigations
   outputValidateOnce // handles structured results without adding a retry
-]))
+], {
+  provider: process.env.MODEL_PROVIDER!,
+  default_model: process.env.MODEL_ID!
+}))
 
 const model = infer({
   baseUrl: process.env.MODEL_BASE_URL!,

@@ -14,7 +14,8 @@ import {
   infer,
   outputValidateOnce,
   reply,
-  workspacePackage
+  workspacePackage,
+  type ModelRefType
 } from "tardie"
 import { turnEpochOf } from "@clavia/tardigrade-code/turns"
 import { boundaryOf } from "tardie/boundary"
@@ -38,20 +39,34 @@ import { inboundOf } from "./projections"
 // one root directory, the working directory of the process that booted, and `fetch` makes HTTP
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
-export const assemblyOf = () =>
+export interface AssemblyModelPolicy {
+  readonly provider: string
+  readonly default_model: string
+  readonly contextWindowTokens?: number | ((model: ModelRefType | undefined) => number)
+}
+
+export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
+  provider: "unconfigured",
+  default_model: "unconfigured"
+}
+
+export const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
   actor(infer([
     codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
     reply,
     budget,
-    compaction(),
+    compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
     outputValidateOnce
-  ]))
+  ], {
+    provider: models.provider,
+    default_model: models.default_model
+  }))
 
 // builtInActor declares the built-in assembly and its callable interface together.
-export const builtInActor = () => defineActor({
+export const builtInActor = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) => defineActor({
   name: RESERVED_ACTOR,
   methods: agentMethods,
-  actor: assemblyOf()
+  actor: assemblyOf(models)
 })
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a

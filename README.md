@@ -125,6 +125,8 @@ const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
+const releaseModel = { provider: "openai", default_model: "gpt-5.2" } as const
+
 const releaseAnalyst = defineActor({
   name: "release-analyst",
   methods: agentMethods,
@@ -141,11 +143,11 @@ const releaseAnalyst = defineActor({
     compaction(), // bounded model context
     reply,       // results for parent agents
     outputValidateOnce // validates one structured result without correction
-  ]))
+  ], releaseModel))
 })
 ```
 
-`infer` composes the components into an agent loop. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input? }` input and a string result.
+`infer` composes the components into an agent loop and selects its provider and default model. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result.
 
 `compaction(policy?)` bounds model context. Its default uses a 128,000-token window, fires at 80 percent, and keeps a 50 percent tail. A platform that serves several models should supply their windows:
 

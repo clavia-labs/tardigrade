@@ -4,7 +4,7 @@ import { agentMessageMethod, agentMethods } from "./message-method"
 
 const head = agentMessageMethod.event({
   id: "m1",
-  input: { text: "review it", input: { pull: 227 } },
+  input: { text: "review it", input: { pull: 227 }, model: "openai/gpt-5.2" },
   at: 1
 })
 
@@ -15,6 +15,7 @@ describe("agentMessageMethod", () => {
       id: "m1",
       text: "review it",
       input: { pull: 227 },
+      model: "openai/gpt-5.2",
       at: 1
     })
     expect(agentMethods).toEqual({ message: agentMessageMethod })

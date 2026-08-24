@@ -5,7 +5,8 @@ import { actorMethod, actorMethodsOf } from "./method"
 
 export const AgentMessageInput = Schema.Struct({
   text: Schema.String,
-  input: Schema.optionalKey(Schema.Unknown)
+  input: Schema.optionalKey(Schema.Unknown),
+  model: Schema.optionalKey(Schema.NonEmptyString)
 }).annotate({ identifier: "AgentMessageInput" })
 
 export type AgentMessageInput = typeof AgentMessageInput.Type
@@ -18,6 +19,7 @@ export const agentMessageMethod = actorMethod({
     id,
     text: input.text,
     ...(input.input === undefined ? {} : { input: input.input }),
+    ...(input.model === undefined ? {} : { model: input.model }),
     at
   }),
   state: (events, id) => {
