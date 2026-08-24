@@ -59,6 +59,17 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg call` 
   <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
 </picture>
 
+## Deploy
+
+Deploy the generated Worker with either platform CLI:
+
+```bash
+bunx wrangler deploy
+celld deploy --config celld.jsonc
+```
+
+See the [Cloudflare](platform/cloudflare/README.md) and [Celld](docs/how-to/celld.md) guides for platform configuration and secrets.
+
 ## Build your own harness
 
 ```bash
