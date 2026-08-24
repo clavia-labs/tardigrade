@@ -159,8 +159,45 @@ export interface ListedModel {
 
 export interface ModelCatalogOptions {
   readonly fetch?: typeof globalThis.fetch
+  readonly selectionPolicy?: ModelSelectionPolicy
   readonly timeoutMillis?: number
   readonly url?: string
+}
+
+export interface ModelSelectionPolicy {
+  readonly outputModality?: string
+  readonly requireToolCalls: boolean
+}
+
+export interface ModelSelectionCapabilities {
+  readonly outputModalities?: ReadonlyArray<string> | undefined
+  readonly toolCall?: boolean | undefined
+}
+
+// DEFAULT_AGENT_MODEL_SELECTION_POLICY keeps models whose catalog metadata does not disprove text output or tool use.
+export const DEFAULT_AGENT_MODEL_SELECTION_POLICY: ModelSelectionPolicy = {
+  outputModality: "text",
+  requireToolCalls: true
+}
+
+// agentModelIsSelectable applies declared catalog capabilities and keeps models with missing capability data.
+export const agentModelIsSelectable = (
+  capabilities: ModelSelectionCapabilities,
+  policy: ModelSelectionPolicy = DEFAULT_AGENT_MODEL_SELECTION_POLICY
+): boolean => {
+  const outputs = capabilities.outputModalities
+  if (policy.outputModality !== undefined && outputs !== undefined && !outputs.includes(policy.outputModality)) {
+    return false
+  }
+  return policy.requireToolCalls !== true || capabilities.toolCall !== false
+}
+
+const selectionLabel = (policy: ModelSelectionPolicy): string => {
+  const capabilities = [
+    ...(policy.outputModality === undefined ? [] : [`${policy.outputModality} output`]),
+    ...(policy.requireToolCalls ? ["tool calls"] : [])
+  ]
+  return capabilities.length === 0 ? "" : ` · ${capabilities.join(" and ")}`
 }
 
 export interface SetupPromptOptions {
@@ -186,6 +223,7 @@ export const modelsDevAt = async (
   const fetcher = options.fetch ?? globalThis.fetch
   const timeoutMillis = options.timeoutMillis ?? DEFAULT_MODEL_LIST_TIMEOUT_MILLIS
   const url = options.url ?? DEFAULT_MODEL_CATALOG_URL
+  const selectionPolicy = options.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY
   const response = await fetcher(url, {
     headers: { accept: "application/json" },
     signal: AbortSignal.timeout(timeoutMillis)
@@ -196,7 +234,10 @@ export const modelsDevAt = async (
   return {
     revision,
     env: found?.env ?? [],
-    models: found?.models.map((model) => ({
+    models: found?.models.filter((model) => agentModelIsSelectable({
+      outputModalities: model.metadata.outputModalities?.value,
+      toolCall: model.metadata.toolCall?.value
+    }, selectionPolicy)).map((model) => ({
       id: model.id,
       ...(model.name === undefined ? {} : { name: model.name })
     })) ?? []
@@ -241,6 +282,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
   const loaded = catalogResult?.models
   const current = options.current?.model_id?.trim()
   const catalog = preset.modelsUrl === undefined ? "" : ` · Browse ${preset.modelsUrl}`
+  const selection = selectionLabel(options.catalog?.selectionPolicy ?? DEFAULT_AGENT_MODEL_SELECTION_POLICY)
   const manual = () => Prompt.text({
     message: `${preset.modelExample === undefined ? "Default model ID" : `Default model ID, for example ${preset.modelExample}`}${catalog}`,
     ...(current === undefined || current.length === 0 ? {} : { default: current }),
@@ -256,7 +298,7 @@ export const setupPrompt = (options: SetupPromptOptions = {}) => Effect.gen(func
       models.unshift({ id: current, name: "Currently configured" })
     }
     const picked = yield* Prompt.autoComplete<ModelPick>({
-      message: `Choose the default model${catalog}`,
+      message: `Choose the default model${selection}${catalog}`,
       filterLabel: "model",
       filterPlaceholder: "type to filter",
       choices: [

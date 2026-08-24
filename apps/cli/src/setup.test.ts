@@ -68,21 +68,34 @@ describe("the presets", () => {
 })
 
 describe("model discovery", () => {
-  test("models.dev supplies provider metadata with its revision", async () => {
-    const fetcher = (async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => Response.json({
-      openrouter: {
-        id: "openrouter",
-        env: ["OPENROUTER_API_KEY"],
-        models: {
-          "anthropic/claude": { id: "anthropic/claude", limit: { context: 200_000, output: 32_000 } }
-        }
+  const fetcher = (async (_input: Parameters<typeof fetch>[0], _init?: Parameters<typeof fetch>[1]) => Response.json({
+    openrouter: {
+      id: "openrouter",
+      env: ["OPENROUTER_API_KEY"],
+      models: {
+        agent: { id: "agent", tool_call: true, modalities: { output: ["text"] } },
+        image: { id: "image", tool_call: true, modalities: { output: ["image"] } },
+        "no-tools": { id: "no-tools", tool_call: false, modalities: { output: ["text"] } },
+        unknown: { id: "unknown", limit: { context: 200_000, output: 32_000 } }
       }
-    }, { headers: { etag: "catalog-7" } })) as typeof fetch
+    }
+  }, { headers: { etag: "catalog-7" } })) as typeof fetch
+
+  test("models.dev supplies compatible provider models with its revision", async () => {
     expect(await modelsDevAt("openrouter", { fetch: fetcher })).toMatchObject({
       revision: "catalog-7",
       env: ["OPENROUTER_API_KEY"],
-      models: [{ id: "anthropic/claude" }]
+      models: [{ id: "agent" }, { id: "unknown" }]
     })
+  })
+
+  test("a caller can replace the visible selection policy", async () => {
+    const found = await modelsDevAt("openrouter", {
+      fetch: fetcher,
+      selectionPolicy: { outputModality: "image", requireToolCalls: false }
+    })
+
+    expect(found.models.map((model) => model.id)).toEqual(["image", "unknown"])
   })
 })
 

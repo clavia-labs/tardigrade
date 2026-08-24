@@ -86,7 +86,7 @@ Partial declarative initialization fails and lists the missing flags. A missing 
 OPENROUTER_API_KEY='your-key'
 ```
 
-Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
+Initialization and setup offer OpenAI, Anthropic, OpenRouter, Vercel AI Gateway, Cloudflare AI Gateway, Microsoft Foundry, Google AI, Google Vertex AI, Amazon Bedrock, and a custom endpoint. They use [models.dev](https://models.dev) for the searchable default-model list and standard credential variable names. The list omits models whose catalog entry explicitly rules out text output or tool calls. Models with missing capability data remain visible, and manual entry remains available. The server resolves model windows, output limits, and pricing from its validated catalog snapshot.
 
 ## What the actor can reach
 
