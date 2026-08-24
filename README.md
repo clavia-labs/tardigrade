@@ -42,10 +42,9 @@ tdg init researcher
 cd researcher
 ```
 
-The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `wrangler.jsonc`, and `.dev.vars`. Public provider settings live in the Wrangler manifest and local credentials live in `.dev.vars`. The generated actor selects the provider and model you chose. Read the [Quickstart guide](docs/quickstart.md), then edit `actor.ts` to describe the agent. Push builds the actor and writes it to the local actor registry:
+The `init` command asks for a provider connection and default model, then creates `researcher/actor.ts`, `worker.ts`, `wrangler.jsonc`, and `.dev.vars`. Public provider settings live in the Wrangler manifest and local credentials live in `.dev.vars`. The generated actor selects the provider and model you chose. Read the [Quickstart guide](docs/quickstart.md), then edit `actor.ts` to describe the agent and start it locally:
 
 ```bash
-tdg push actor.ts --target local
 tdg dev
 ```
 
@@ -61,7 +60,7 @@ cd researcher
 
 Set `OPENAI_API_KEY` in the environment that runs the server. The [CLI guide](docs/how-to/cli.md) covers multiple providers, custom endpoints, and catalog discovery.
 
-Keep `tdg dev` running. Discover the actor's methods, then call `message` from another shell in the same directory:
+Keep `tdg dev` running. It builds and mounts `actor.ts` directly. Discover the actor's methods, then call `message` from another shell in the same directory:
 
 ```bash
 tdg methods --actor researcher

@@ -4,7 +4,7 @@ import {
   outputValidateOnce, reply, system, workspacePackage
 } from "tardie"
 
-// actorName is the stable name used by build, push, and run.
+// actorName is the stable name used by build, development, and deployment.
 const actorName = "researcher"
 const actorModel = { provider: "openai", default_model: "gpt-5.2" } as const
 

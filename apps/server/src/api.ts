@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, Schema, Stream } from "effect"
+import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -82,17 +82,17 @@ const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unkn
 const failureMessage = (failure: unknown): string =>
   failure instanceof Error ? failure.message : String(failure)
 
-// actorOf is the guard every declared route runs first. The actor level is a path parameter so the
-// declaration states the shape a deploy will vary (contract.ts, RESERVED_ACTOR), and this build
-// serves exactly the reserved name: any other is code nobody deployed here, which is its own 404
-// rather than an empty listing (api.test.ts, "an actor nobody deployed is its own 404").
+const selectedActor = (threads: Context.Service.Shape<typeof Threads>, actor: string): Effect.Effect<ActorThreads | void> =>
+  actor === (threads.actorName ?? RESERVED_ACTOR)
+    ? Effect.succeed(threads)
+    : (threads.actor?.(actor) ?? Effect.void)
+
+// actorOf is the guard every declared route runs first.
 const actorOf = (actor: string): Effect.Effect<ActorThreads, ReturnType<typeof UnknownActor.of>, Threads> =>
-  Effect.flatMap(Threads, (threads) => {
-    const selected = actor === RESERVED_ACTOR ? Effect.succeed(threads) : (threads.actor?.(actor) ?? Effect.void)
-    return Effect.flatMap(selected, (found) => found === undefined
+  Effect.flatMap(Threads, (threads) =>
+    Effect.flatMap(selectedActor(threads, actor), (found) => found === undefined
       ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
-      : Effect.succeed(found))
-  })
+      : Effect.succeed(found)))
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
@@ -199,9 +199,7 @@ export const layerStream = (options: ApiOptions = {}) => {
       // (contract.ts, the SSE note; api.test.ts, "the tail refuses an actor nobody deployed").
       const id = paramOf(params, "id")
       const registry = yield* Threads
-      const threads = actor === RESERVED_ACTOR
-        ? registry
-        : (yield* (registry.actor?.(actor) ?? Effect.void))
+      const threads = yield* selectedActor(registry, actor)
       if (threads === undefined) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
       const log = yield* threads.events(id)
       if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
@@ -380,7 +378,7 @@ export const layerUnknownProjection = HttpRouter.add(
     const params = yield* HttpRouter.params
     const actor = paramOf(params, "actor")
     const registry = yield* Threads
-    if (actor !== RESERVED_ACTOR && (yield* (registry.actor?.(actor) ?? Effect.void)) === undefined) {
+    if ((yield* selectedActor(registry, actor)) === undefined) {
       return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
     }
     const name = paramOf(params, "name")

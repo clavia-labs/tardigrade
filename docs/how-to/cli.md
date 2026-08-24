@@ -15,7 +15,6 @@ Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 ```bash
 tdg init researcher
 cd researcher
-tdg push actor.ts --target local
 tdg dev
 tdg methods --actor researcher
 tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
@@ -30,8 +29,8 @@ tdg call message '{"text":"read this repo and tell me what it does"}' --actor re
 | `tdg setup provider` | Add or update one provider connection |
 | `tdg setup default` | Choose the default model from configured providers |
 | `tdg build <entry>` | Build and validate an actor artifact |
-| `tdg push <entry> --target <local\|hosted>` | Build and push an actor |
-| `tdg dev` | Serve the API and the UI on one port |
+| `tdg push <entry> --target <local\|hosted>` | Build and push an actor to a self-hosted registry |
+| `tdg dev` | Build `actor.ts`, then serve its API and UI on one port |
 | `tdg providers` | List provider protocols and setup requirements |
 | `tdg models` | Search and page the public model catalog |
 | `tdg actors` | List actors available on the server |
@@ -146,9 +145,9 @@ tdg actors
 tdg providers --json
 tdg models --provider openrouter --search claude --json
 tdg build ./actors/reviewer.ts
-tdg push ./actors/reviewer.ts --target local
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"
 tdg events root --types TurnFailed
 tdg dev --port 8080 --db runs.sqlite
 tdg dev --max-concurrent-lanes 5
+bunx wrangler deploy
 ```

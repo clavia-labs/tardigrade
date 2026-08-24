@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
-import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
 
 let root = ""
 const model = { provider: "openrouter", defaultModel: "anthropic/claude-sonnet-4-6" }
@@ -20,17 +20,29 @@ const temporaryRoot = async (): Promise<string> => {
 describe("initActor", () => {
   test("creates a buildable named quickstart", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, model })
+    const initialized = await initActor("reviewer", { cwd, model, now: new Date("2026-08-24T00:00:00Z") })
     const source = await readFile(initialized.entry, "utf8")
-    const manifest = await readFile(initialized.manifest, "utf8")
+    const worker = await readFile(initialized.worker, "utf8")
+    const manifest = JSON.parse(await readFile(initialized.manifest, "utf8")) as Record<string, unknown>
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
     expect(initialized.entry).toBe(join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY))
+    expect(initialized.worker).toBe(join(cwd, "reviewer", DEFAULT_WORKER_ENTRY))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
-    expect(manifest).toContain('"name": "reviewer"')
-    expect(manifest).toContain('"vars": {}')
+    expect(worker).toContain('import definition from "./actor"')
+    expect(worker).toContain('from "tardie/cloudflare"')
+    expect(worker).toContain("cloudflareWorker(definition)")
+    expect(manifest).toMatchObject({
+      name: "reviewer",
+      main: "worker.ts",
+      compatibility_date: "2026-08-24",
+      durable_objects: { bindings: [{ name: "ACTORS", class_name: "ActorHost" }] },
+      worker_loaders: [{ binding: "LOADER" }],
+      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }]
+    })
+    expect(manifest).not.toHaveProperty("d1_databases")
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -62,12 +74,14 @@ describe("initSummary", () => {
     const summary = initSummary(initialized, cwd)
 
     expect(summary).toContain("created reviewer/actor.ts")
+    expect(summary).toContain("created reviewer/worker.ts")
     expect(summary).toContain("created reviewer/wrangler.jsonc")
     expect(summary).toContain("cd reviewer")
-    expect(summary).toContain("tdg push actor.ts --target local")
+    expect(summary).not.toContain("tdg push")
     expect(summary).not.toContain("tdg build actor.ts")
     expect(summary).toContain("tdg call message")
     expect(summary).toContain("tdg dev")
+    expect(summary).toContain("bunx wrangler deploy")
     expect(summary).toContain('--actor reviewer')
   })
 })

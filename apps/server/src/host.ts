@@ -78,6 +78,7 @@ export class Threads extends Context.Service<
     readonly methods: ActorThreads["methods"]
     readonly events: ActorThreads["events"]
     readonly list: ActorThreads["list"]
+    readonly actorName?: string
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
     // client never waits on it (a delivery answers 202 and the client polls the turn); a test and
     // a shutdown do (host.test.ts).
@@ -422,6 +423,51 @@ const runtimeOf = async (
     }
   }
 }
+
+export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "providers">
+
+// layerActorThreads mounts one deployed definition as the runtime.
+export const layerActorThreads = (
+  definition: ActorDefinition<ServerR>,
+  options: ActorThreadsOptions = {}
+): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
+  Layer.effectContext(Effect.gen(function*() {
+    const config = yield* ServerConfig
+    const catalog = yield* ModelCatalogStore
+    const summary: ActorSummary = { name: definition.name, builtIn: false }
+    const runtime = yield* Effect.acquireRelease(
+      Effect.promise(() => runtimeOf(
+        summary,
+        definition,
+        config.db,
+        layerLane(config, catalog, options),
+        options.providers ?? [],
+        config.maxConcurrentLanes
+      )),
+      (opened) => Effect.promise(() => opened.close())
+    )
+    const service: Context.Service.Shape<typeof Threads> = {
+      ...runtime.threads,
+      actorName: definition.name,
+      actors: Effect.succeed([summary]),
+      actor: (name) => Effect.succeed(name === definition.name ? runtime.threads : undefined)
+    }
+    const directory: Directory<{ readonly actor: string }, {
+      readonly commit: ActorRuntime["commit"]
+      readonly schedule: ActorRuntime["schedule"]
+    }> = {
+      resolve: (id) => Effect.succeed(id.actor === definition.name
+        ? { commit: runtime.commit, schedule: runtime.schedule }
+        : undefined)
+    }
+    return Context.make(Threads, service).pipe(
+      Context.add(Ingress, ingressFrom(directory)),
+      Context.add(DriverGauge, {
+        resting: Effect.promise(() => runtime.resting()),
+        dirty: Effect.sync(() => runtime.dirty())
+      })
+    )
+  }))
 
 const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
   const raw = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as Partial<ActorArtifactManifest>
