@@ -44,6 +44,8 @@ const clientOf = (
   return {
     baseUrl: "http://localhost:0",
     actor: RESERVED_ACTOR,
+    providers: refuse,
+    models: refuse,
     actors: () => answers.fail === undefined
       ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
       : Promise.reject(answers.fail),

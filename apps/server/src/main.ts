@@ -1,8 +1,10 @@
 import { Layer } from "effect"
-import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { BunFileSystem, BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
 
 import { layerFromEnv, readConfig } from "./config"
+import { layerModelCatalog } from "./catalog"
+import { layerFileModelCatalogRepository } from "./catalog-repository"
 import { layerThreads } from "./host"
 import { serve } from "./http"
 
@@ -18,10 +20,13 @@ const config = readConfig(process.env)
 
 const configLayer = layerFromEnv(process.env)
 
+const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(Layer.provide(BunFileSystem.layer))
+const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
+
 // The host is built from the same configuration the routes read, and closed with the scope the
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
 const threads = Layer.provide(layerThreads(), configLayer)
 
-const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, threads])
+const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
 
 BunRuntime.runMain(Layer.launch(main))

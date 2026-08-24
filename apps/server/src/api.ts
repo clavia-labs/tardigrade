@@ -8,6 +8,7 @@ import {
   apiOf,
   InvalidRequest,
   invalidRequest,
+  ModelCatalogUnavailable,
   RESERVED_ACTOR,
   unacceptableField,
   UnknownActor,
@@ -20,6 +21,8 @@ import {
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
 import { agentProjections } from "./actor"
+import { ModelCatalogStore } from "./catalog"
+import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { Threads, type ActorThreads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -400,3 +403,24 @@ export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handl
         }
         return yield* Effect.mapError(threads.push(payload), (error) => InvalidRequest.of(error.message))
       })))
+
+const catalogSnapshot = Effect.flatMap(ModelCatalogStore, (catalog) =>
+  catalog.snapshot === undefined
+    ? Effect.fail(ModelCatalogUnavailable.of(
+      "No validated model catalog is available. Check the server startup logs and catalog configuration."
+    ))
+    : Effect.succeed(catalog.snapshot))
+
+// layerModelsGroup pages the process snapshot and never reads the private provider directory.
+export const layerModelsGroup = HttpApiBuilder.group(ServerApi, "models", (handlers) =>
+  handlers
+    .handle("providers", ({ query }) => Effect.flatMap(catalogSnapshot, (catalog) =>
+      Effect.try({
+        try: () => providersPageOf(catalog, query),
+        catch: (error) => InvalidRequest.of(failureMessage(error))
+      })))
+    .handle("models", ({ query }) => Effect.flatMap(catalogSnapshot, (catalog) =>
+      Effect.try({
+        try: () => modelsPageOf(catalog, query),
+        catch: (error) => InvalidRequest.of(failureMessage(error))
+      }))))

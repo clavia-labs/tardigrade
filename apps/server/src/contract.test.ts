@@ -8,6 +8,7 @@ import { layerConfig, readConfig } from "./config"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
 import { Threads } from "./host"
+import { layerModelCatalogUnavailable } from "./catalog"
 import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 
 // The declaration, from the outside. These assertions are about what the declaration produces: the
@@ -36,6 +37,7 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig({ ...readConfig({}), token: options.token }),
         layerGaugeResting,
+        layerModelCatalogUnavailable,
         layerThreadsEmpty
       ])
     ),
@@ -53,6 +55,8 @@ setDefaultTimeout(BOOT_MS)
 
 // Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream). `turns` appears because this build's actor declares it (actor.ts, agentProjections).
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ["get", "/v1/providers"],
+  ["get", "/v1/models"],
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
   ["get", "/v1/actors/{actor}/methods"],
@@ -107,17 +111,17 @@ describe("the OpenAPI document", () => {
     expect(answers.page.body).toContain("Scalar")
   })
 
-  // The document describes the door rather than opening it, so a token does not close it
-  // (http.ts, UNAUTHENTICATED_PATHS).
-  test("stays open when a token closes the API", async () => {
+  // Public process capabilities stay readable when a token closes actor state (http.ts, UNAUTHENTICATED_PATHS).
+  test("keeps public routes open when a token closes actor state", async () => {
     const statuses = await serving({ token: "secret" }, (client) =>
       Effect.gen(function*() {
         const document = yield* client.get(OPENAPI_PATH)
         const page = yield* client.get(DOCS_PATH)
+        const catalog = yield* client.get("/v1/models")
         const gated = yield* client.get("/v1/actors/default/threads")
-        return [document.status, page.status, gated.status]
+        return [document.status, page.status, catalog.status, gated.status]
       }))
-    expect(statuses).toEqual([200, 200, 401])
+    expect(statuses).toEqual([200, 200, 503, 401])
   })
 })
 

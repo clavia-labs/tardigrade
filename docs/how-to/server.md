@@ -16,6 +16,8 @@ Base path `/v1`. The built-in actor is named `default`.
 
 | | |
 | --- | --- |
+| `GET /v1/providers` | Search and page provider connection requirements. `search`, `cursor`, `limit` |
+| `GET /v1/models` | Search and page model metadata. `provider`, `search`, `cursor`, `limit` |
 | `GET /v1/actors` | List actors |
 | `PUT /v1/actors` | Push an actor artifact |
 | `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
@@ -45,6 +47,8 @@ Appending is the lower-level ingress for channels and interventions. The host at
 
 Reads are projections of the log, so `?at=<seq>` answers as of that point in history.
 
+The server fetches the models.dev catalog once during startup and keeps the validated snapshot in memory. A successful refresh has `status: "fresh"`. A failed refresh may serve the last file or D1 snapshot with `status: "cached"`. Each page includes the source `revision`, refresh time, total count, page limit, and an opaque `next_cursor` when another page exists. The default page limit is 50 and callers may set `limit`.
+
 ## Errors
 
 Every failure is `application/problem+json`.
@@ -64,7 +68,10 @@ Every failure is `application/problem+json`.
 | `PORT` | `4242` |
 | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
-| `TARDIGRADE_TOKEN` | Unset. When set, every route but `/healthz`, `/openapi.json`, and `/docs` needs `Authorization: Bearer` |
+| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. Health, catalog, OpenAPI, and docs routes stay public |
+| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` |
+| `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
+| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` |
 | `MODEL_BASE_URL` `MODEL_API_KEY` `MODEL_ID` `MODEL_PROVIDER` | The model you supply. `tdg setup` writes these to a file instead |
 | `MODEL_OUTPUT_GUARANTEE` `MODEL_OUTPUT_WITH_TOOLS` | What this endpoint and this model promise about a declared output contract: `native` with `true` or `false` for whether the schema rides beside a tool list, or `none`. A provider name proves nothing here, so an undeclared endpoint serves a contract only through a mounted fallback |
 

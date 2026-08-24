@@ -8,12 +8,16 @@ import {
   DEFAULT_ACTOR_DATA,
   DEFAULT_DB,
   DEFAULT_MAX_CONCURRENT_LANES,
+  DEFAULT_MODEL_CATALOG_CACHE,
+  DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS,
+  DEFAULT_MODEL_CATALOG_URL,
   DEFAULT_PORT,
   layerConfig,
   readConfig,
   type ServerConfigValue
 } from "./config"
 import { Threads } from "./host"
+import { layerModelCatalogUnavailable } from "./catalog"
 import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
@@ -59,6 +63,7 @@ const serving = <A, E>(
         BunHttpServer.layerTest,
         layerConfig(options.config ?? configOf()),
         options.gauge ?? layerGaugeResting,
+        layerModelCatalogUnavailable,
         layerThreadsEmpty
       ])
     ),
@@ -82,6 +87,11 @@ describe("config", () => {
       provider: undefined,
       output: undefined
     })
+    expect(config.catalog).toEqual({
+      sourceUrl: DEFAULT_MODEL_CATALOG_URL,
+      cachePath: DEFAULT_MODEL_CATALOG_CACHE,
+      timeoutMillis: DEFAULT_MODEL_CATALOG_TIMEOUT_MILLIS
+    })
   })
 
   test("the environment overrides every default", () => {
@@ -95,7 +105,10 @@ describe("config", () => {
       MODEL_BASE_URL: "https://api.example.com",
       MODEL_API_KEY: "key",
       MODEL_ID: "a-model",
-      MODEL_PROVIDER: "openai"
+      MODEL_PROVIDER: "openai",
+      TARDIGRADE_MODEL_CATALOG_URL: "https://catalog.example.com/models.json",
+      TARDIGRADE_MODEL_CATALOG_CACHE: "/var/cache/tardigrade-models.json",
+      TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "2500"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("/var/lib/agents.sqlite")
@@ -105,6 +118,11 @@ describe("config", () => {
     expect(config.token).toBe("secret")
     expect(config.model.baseUrl).toBe("https://api.example.com")
     expect(config.model.provider).toBe("openai")
+    expect(config.catalog).toEqual({
+      sourceUrl: "https://catalog.example.com/models.json",
+      cachePath: "/var/cache/tardigrade-models.json",
+      timeoutMillis: 2500
+    })
   })
 
   // Listening somewhere other than where the operator asked is worse than refusing to start.
@@ -116,6 +134,11 @@ describe("config", () => {
   test("a concurrency cap that cannot schedule a lane refuses to resolve", () => {
     expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "0" })).toThrow("positive integer")
     expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "many" })).toThrow("positive integer")
+  })
+
+  test("a catalog timeout that cannot bound a request refuses to resolve", () => {
+    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "0" })).toThrow("positive integer")
+    expect(() => readConfig({ TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "later" })).toThrow("positive integer")
   })
 })
 

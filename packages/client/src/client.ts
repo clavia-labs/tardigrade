@@ -16,6 +16,8 @@ import {
   type Health,
   type MethodAccepted,
   type MethodSummary,
+  type ModelCatalogPage,
+  type ProviderCatalogPage,
   type Projections,
   type TurnView
 } from "./contract"
@@ -93,6 +95,16 @@ export interface EventsOptions {
   readonly types?: ReadonlyArray<string> | undefined
 }
 
+export interface CatalogPageOptions {
+  readonly cursor?: string | undefined
+  readonly limit?: number | undefined
+  readonly search?: string | undefined
+}
+
+export interface ModelPageOptions extends CatalogPageOptions {
+  readonly provider?: string | undefined
+}
+
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
 export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "actor" | "eventSource">
 
@@ -116,6 +128,10 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
   readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
+  // providers reads setup requirements from the validated public catalog.
+  readonly providers: (options?: CatalogPageOptions) => Promise<ProviderCatalogPage>
+  // models searches the validated public catalog.
+  readonly models: (options?: ModelPageOptions) => Promise<ModelCatalogPage>
   readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
   readonly tree: (thread: string) => Promise<ThreadNode>
   readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
@@ -207,6 +223,15 @@ const eventsQuery = (options: EventsOptions) => {
   return query
 }
 
+const catalogQuery = (options: ModelPageOptions) => {
+  const query: { cursor?: string; limit?: number; provider?: string; search?: string } = {}
+  if (options.cursor !== undefined) query.cursor = options.cursor
+  if (options.limit !== undefined) query.limit = options.limit
+  if (options.provider !== undefined) query.provider = options.provider
+  if (options.search !== undefined) query.search = options.search
+  return query
+}
+
 // makeClient builds the client once. The derivation reads the declaration and compiles an encoder
 // and a decoder per endpoint, so it happens at construction rather than per call.
 export const makeClient = <const P extends Projections = {}, const M extends ActorMethods = ActorMethods>(
@@ -261,6 +286,8 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
     baseUrl,
     actor,
     actors: () => run(api.actors.actors({})),
+    providers: (options = {}) => run(api.models.providers({ query: catalogQuery(options) })),
+    models: (options = {}) => run(api.models.models({ query: catalogQuery(options) })),
     list: () => run(api.threads.list({ params: { actor } })),
     tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
     events: (thread, events = {}) =>

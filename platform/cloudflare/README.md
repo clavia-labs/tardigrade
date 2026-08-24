@@ -30,13 +30,15 @@ Set `MODEL_BASE_URL`, `MODEL_API_KEY`, and `MODEL_ID` to run model turns. `MODEL
 
 ## HTTP shapes
 
-`GET /healthz` is public.
+`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public.
 
 ```json
 { "status": "resting", "dirty": 0 }
 ```
 
-Every other endpoint requires `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
+Actor endpoints require `Authorization: Bearer <TARDIGRADE_TOKEN>`. A host without `TARDIGRADE_TOKEN` returns status `503` with `{ "error": "authentication is not configured" }`. An incorrect token returns status `401` with `{ "error": "unauthorized" }`.
+
+The first catalog request in a Worker isolate refreshes models.dev and persists the validated snapshot in D1. Later requests reuse the in-memory snapshot. A failed refresh may serve the last D1 snapshot with `status: "cached"`. Both catalog endpoints accept `search`, `cursor`, and `limit`; `/v1/models` also accepts `provider`.
 
 `GET /v1/actors` has no input body and returns the actors registered in D1. The Worker inserts its exported `DEFAULT_ACTOR_REGISTRATION` when `default` is absent.
 
@@ -75,7 +77,10 @@ The response has status `202` and identifies the accepted destination.
 
 | Name | Default | Effect |
 | --- | --- | --- |
-| `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
+| `TARDIGRADE_TOKEN` | unset | Protects actor endpoints; an unset value closes the event API |
+| `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public catalog source |
+| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` once per isolate or `cache-first` when a stored snapshot should win |
+| `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds the catalog refresh |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` | Limits lanes settled concurrently inside one actor object |
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `0` | Delays a newly armed actor alarm |
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
