@@ -52,15 +52,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          current_version=$(jq -r '.["."]' .release-please-manifest.json)
-          release_tag="v${current_version}"
+          release_tag=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' 2>/dev/null || true)
           release_list=$(gh api "repos/${GITHUB_REPOSITORY}/pulls?state=closed&base=main&sort=updated&direction=desc&per_page=${RELEASE_PR_PAGE_SIZE}" | jq -r --arg author "$RELEASE_PR_AUTHOR" --arg prefix "$RELEASE_PR_BRANCH_PREFIX" --arg repo "$GITHUB_REPOSITORY" '.[] | select(.merged_at != null and .user.login == $author and .head.repo.full_name == $repo and (.head.ref | startswith($prefix))) | .merge_commit_sha')
           pending_shas=()
           while read -r release_sha; do
             if [ -z "$release_sha" ]; then
               continue
             fi
-            if git merge-base --is-ancestor "$release_sha" HEAD && ! git merge-base --is-ancestor "$release_sha" "$release_tag"; then
+            if git merge-base --is-ancestor "$release_sha" HEAD && { [ -z "$release_tag" ] || ! git merge-base --is-ancestor "$release_sha" "$release_tag"; }; then
               pending_shas+=("$release_sha")
             fi
           done <<< "$release_list"
