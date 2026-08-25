@@ -170,4 +170,76 @@ describe("cloudflare sandbox bridge", () => {
     expect(result).toEqual({ error: "parked call replayed" })
     expect(round).toBe(2)
   })
+
+  test("disposes every replay worker before loading the next round", async () => {
+    let round = 0
+    let live = 0
+    let disposed = 0
+    const loader = {
+      load: () => {
+        if (live !== 0) throw new Error("worker capacity exhausted")
+        live++
+        let released = false
+        return {
+          getEntrypoint: () => ({
+            fetch: async () => round++ === 0
+              ? Response.json({ calls: [
+                  { ordinal: 0, packageName: "tools", method: "read", args: { id: 1 } }
+                ] })
+              : Response.json({ result: "done" })
+          }),
+          dispose: async () => {
+            if (released) throw new Error("worker disposed twice")
+            released = true
+            live--
+            disposed++
+          }
+        }
+      }
+    } as unknown as WorkerLoader
+    const sandbox = cloudflareSandboxServiceFor(loader, () => {
+      throw new Error("replay transport must not open a capability")
+    }, { transport: "replay" })
+    const result = await Effect.runPromise(sandbox.run("return 0", {
+      tools: { read: async () => sandboxReturned("value") }
+    }))
+
+    expect(result).toEqual({ result: "done" })
+    expect(round).toBe(2)
+    expect(disposed).toBe(2)
+    expect(live).toBe(0)
+  })
+
+  test("disposes a failed capability worker", async () => {
+    let live = 0
+    let disposed = 0
+    let closed = false
+    const symbolDispose = (Symbol as { readonly dispose?: symbol }).dispose
+    if (symbolDispose === undefined) throw new Error("Symbol.dispose is unavailable")
+    const loader = {
+      load: () => {
+        live++
+        return {
+          getEntrypoint: () => ({ fetch: async () => new Response("unavailable", { status: 503 }) }),
+          [symbolDispose]: () => {
+            live--
+            disposed++
+          }
+        }
+      }
+    } as unknown as WorkerLoader
+    const sandbox = cloudflareSandboxServiceFor(loader, () => ({
+      binding: { sandboxCallBatch: async () => [] },
+      execution: "test-execution",
+      close: () => {
+        closed = true
+      }
+    }))
+    const result = await Effect.runPromise(sandbox.run("return 0", {}))
+
+    expect(result).toEqual({ error: "sandbox returned HTTP 503" })
+    expect(disposed).toBe(1)
+    expect(live).toBe(0)
+    expect(closed).toBe(true)
+  })
 })
