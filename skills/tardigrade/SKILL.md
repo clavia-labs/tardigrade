@@ -59,7 +59,7 @@ tdg methods --json
 tdg call message '{"text":"Read this repository and tell me what it does"}'
 ```
 
-Use `--json` for programmatic output. Use `--url` and `--token` for another server. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
+Use `--json` for programmatic output. Use `--url` and `--token` for another server. The URL addresses the actor mounted at that origin. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
 
 ## Migrate an existing harness
 

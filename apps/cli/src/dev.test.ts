@@ -185,10 +185,10 @@ describe("tdg dev", () => {
       const asset = await fetch(`${baseUrl}/assets/app-abc123.js`)
       // A path the router does not own, asked for by something that renders HTML, is the UI's own
       // route: a deep link into the explorer is not a 404.
-      const deep = await fetch(`${baseUrl}/v1/actors/default/threads/root`, { headers: { accept: "text/html" } })
+      const deep = await fetch(`${baseUrl}/v1/threads/root`, { headers: { accept: "text/html" } })
       // The same path asked for as JSON is still the API's answer, so a script sees the problem
       // document rather than a page.
-      const ghost = await fetch(`${baseUrl}/v1/actors/default/threads/ghost/events`, { headers: { accept: "application/json" } })
+      const ghost = await fetch(`${baseUrl}/v1/threads/ghost/events`, { headers: { accept: "application/json" } })
       return {
         health: { status: health.status, body: await health.json() },
         index: { status: index.status, body: await index.text(), type: index.headers.get("content-type") },
@@ -211,20 +211,17 @@ describe("tdg dev", () => {
 
   test("a project actor mounts directly", async () => {
     const response = await booted(async (baseUrl) => {
-      const methods = await fetch(`${baseUrl}/v1/actors/default/methods`)
-      const named = await fetch(`${baseUrl}/v1/actors/reviewer/methods`)
-      const identity = await fetch(`${baseUrl}/v1/actors/default`)
+      const methods = await fetch(`${baseUrl}/v1/methods`)
+      const metadata = await fetch(`${baseUrl}/v1/metadata`)
       return {
         current: { status: methods.status, body: await methods.json() },
-        named: { status: named.status, body: await named.json() },
-        identity: { status: identity.status, body: await identity.json() }
+        metadata: { status: metadata.status, body: await metadata.json() }
       }
     }, {}, { actor: directActor })
 
     expect(response).toEqual({
       current: { status: 200, body: [] },
-      named: { status: 200, body: [] },
-      identity: { status: 200, body: { name: "reviewer", sqlite: ":memory:" } }
+      metadata: { status: 200, body: { name: "reviewer", storage: { kind: "sqlite", location: ":memory:" } } }
     })
   })
 
@@ -243,15 +240,9 @@ describe("tdg dev", () => {
       await waitFor(first)
       const digest = installActor(actors, "reviewer", "second")
       const listed = await waitFor(digest)
-      const accepted = await fetch(`${baseUrl}/v1/actors/reviewer/threads/review/events`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ type: "MessageReceived", id: "m1", text: "inspect" })
-      })
-      return { digest, listed, accepted: { status: accepted.status, body: await accepted.json() } }
+      return { digest, listed }
     })
     expect(seen.listed).toContainEqual({ name: "reviewer", builtIn: false, digest: seen.digest })
-    expect(seen.accepted).toEqual({ status: 202, body: { actor: "reviewer", thread: "review" } })
   })
 
   // `tdg dev` is the local command: it binds loopback and carries no gate, so `TARDIGRADE_TOKEN` in
@@ -260,7 +251,7 @@ describe("tdg dev", () => {
   // the token set (docs/how-to/server.md).
   test("the API answers without a token, on loopback", async () => {
     const seen = await booted(async (baseUrl, hostname) => {
-      const listed = await fetch(`${baseUrl}/v1/actors/default/threads`)
+      const listed = await fetch(`${baseUrl}/v1/threads`)
       const index = await fetch(`${baseUrl}/`, { headers: { accept: "text/html" } })
       return {
         hostname,

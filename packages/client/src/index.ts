@@ -3,14 +3,17 @@
 
 export {
   DEFAULT_BASE_URL,
-  makeClient,
+  makeControlClient,
+  makeActorClient,
   SERVER_ERROR_DETAIL,
   SERVER_ERROR_TITLE,
   UNEXPECTED_RESPONSE_TITLE,
   UNREACHABLE_TITLE,
   UNREADABLE_EXCHANGE_TITLE,
-  type Client,
-  type ClientOptions,
+  type ActorClient,
+  type ActorClientOptions,
+  type ControlClient,
+  type ControlClientOptions,
   type CatalogPageOptions,
   type EventsOptions,
   type FollowOptions,
@@ -19,14 +22,15 @@ export {
 } from "./client"
 export { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 // The vocabulary's top level, and where the versioned routes live. A consumer that builds a URL by
-// hand, or names the actor it addresses, reads them from here rather than spelling either again
+// hand reads them from here rather than spelling them again
 // (contract.ts).
-export { RESERVED_ACTOR, V1_PREFIX } from "./contract"
+export { V1_PREFIX } from "./contract"
 export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenEventSource, type StreamOptions } from "./stream"
 
 export type {
   Accepted,
-  ActorIdentity,
+  ActorArtifact,
+  ActorMetadata,
   ActorSummary,
   Append,
   EventRow,

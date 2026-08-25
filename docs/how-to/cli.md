@@ -37,7 +37,7 @@ tdg call message '{"text":"read this repo and tell me what it does"}'
 | `tdg ls` | List threads |
 | `tdg events <thread>` | Print a thread's log |
 
-Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. Actor-scoped commands address the mounted actor by default; `--actor` selects a named actor on a server that hosts more than one. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
+Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. The URL addresses one mounted actor. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
 
 ## Configuration
 

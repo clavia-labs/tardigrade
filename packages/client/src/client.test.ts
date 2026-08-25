@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { agentMethods, type ActorMethodState } from "tardie"
 
-import { makeClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
+import { makeActorClient, makeControlClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
 import { ProblemError } from "./problem"
 
@@ -66,7 +66,7 @@ describe("the address a call goes to", () => {
       limit: 50,
       items: []
     })
-    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).models({
+    await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).models({
       provider: "openrouter",
       search: "claude",
       cursor: "next",
@@ -91,39 +91,54 @@ describe("the address a call goes to", () => {
       limit: 50,
       items: []
     })
-    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).providers({ search: "google" })
+    await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).providers({ search: "google" })
     expect(lastUrl().pathname).toBe("/v1/providers")
     expect(lastUrl().searchParams.get("search")).toBe("google")
   })
 
   test("discovers actors at the collection", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).actors()
+    await makeControlClient({ baseUrl: "http://localhost:4111", fetch: stub }).actors()
     expect(lastUrl().pathname).toBe("/v1/actors")
   })
 
-  test("reads the selected actor identity", async () => {
-    answer = () => Response.json({ name: "reviewer", sqlite: "/work/.tardigrade/actor.sqlite" })
-    const identity = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).identity()
-    expect(identity).toEqual({ name: "reviewer", sqlite: "/work/.tardigrade/actor.sqlite" })
-    expect(lastUrl().pathname).toBe("/v1/actors/default")
+  test("pushes an actor through the control plane", async () => {
+    answer = () => Response.json({ name: "reviewer", builtIn: false, digest: "sha256:reviewer" })
+    await makeControlClient({ baseUrl: "http://localhost:4111", fetch: stub }).pushActor({
+      manifest: {
+        schema: 2,
+        name: "reviewer",
+        module: "actor.js",
+        digest: "sha256:reviewer"
+      },
+      module: "export default {}"
+    })
+    expect(lastUrl().pathname).toBe("/v1/actors")
+    expect(calls.at(-1)?.method).toBe("PUT")
+  })
+
+  test("reads the mounted actor metadata", async () => {
+    answer = () => Response.json({ name: "reviewer", storage: { kind: "sqlite", location: "/work/.tardigrade/actor.sqlite" } })
+    const metadata = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).metadata()
+    expect(metadata).toEqual({ name: "reviewer", storage: { kind: "sqlite", location: "/work/.tardigrade/actor.sqlite" } })
+    expect(lastUrl().pathname).toBe("/v1/metadata")
   })
 
   // The transport reads its default fetch once per process, so a stated one is the only way a
   // caller routes requests elsewhere: a global assigned later is never consulted (client.ts,
-  // ClientOptions.fetch).
+  // ActorClientOptions.fetch).
   test("sends every request through the stated fetch", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
+    await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).list()
     expect(calls).toHaveLength(1)
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads")
+    expect(lastUrl().pathname).toBe("/v1/threads")
   })
 
   test("a thread id is encoded into the path", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/ag%2Fone%20two/events")
+    await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ag/one two")
+    expect(lastUrl().pathname).toBe("/v1/threads/ag%2Fone%20two/events")
   })
 
   test("a stated option is a query param and an absent one is absent", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("root", { after: 40, types: ["MessageReceived", "TurnEnded"] })
+    await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("root", { after: 40, types: ["MessageReceived", "TurnEnded"] })
     const url = lastUrl()
     expect(url.searchParams.get("after")).toBe("40")
     expect(url.searchParams.get("types")).toBe("MessageReceived,TurnEnded")
@@ -131,21 +146,21 @@ describe("the address a call goes to", () => {
   })
 
   test("a base with a trailing slash does not double it", async () => {
-    await makeClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
-    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/default/threads")
+    await makeActorClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list()
+    expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/threads")
   })
 })
 
 describe("the token", () => {
   test("rides an authorization header on every request", async () => {
-    const client = makeClient({ baseUrl: "http://localhost:4111", token: "shh" , fetch: stub })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", token: "shh" , fetch: stub })
     await client.list()
     await client.events("root")
     expect(calls.map((call) => call.headers["authorization"])).toEqual(["Bearer shh", "Bearer shh"])
   })
 
   test("no token means no header", async () => {
-    await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list()
+    await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list()
     expect(calls[0]!.headers["authorization"]).toBeUndefined()
   })
 })
@@ -157,23 +172,22 @@ describe("a declared actor method", () => {
       inputSchema: { type: "object" },
       outputSchema: { type: "string" }
     }]), { status: 200, headers: { "content-type": "application/json" } })
-    const methods = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).methods()
+    const methods = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).methods()
     expect(methods[0]?.name).toBe("message")
-    expect(lastUrl().pathname).toBe("/v1/actors/default/methods")
+    expect(lastUrl().pathname).toBe("/v1/methods")
   })
 
   test("invokes the selected method with its typed input", async () => {
     answer = () => new Response(JSON.stringify({
-      actor: "default",
       thread: "root",
       method: "message",
       call: "m1"
     }), { status: 202, headers: { "content-type": "application/json" } })
-    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
     const accepted = await client.invoke("root", "message", { id: "m1", input: { text: "hello" } })
     expect(accepted.call).toBe("m1")
     expect(calls[0]?.method).toBe("PUT")
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
+    expect(lastUrl().pathname).toBe("/v1/threads/root/methods/message/calls/m1")
     expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
   })
 
@@ -182,10 +196,10 @@ describe("a declared actor method", () => {
       status: 200,
       headers: { "content-type": "application/json" }
     })
-    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
     const state: ActorMethodState<string> = await client.methodState("root", "message", "m1")
     expect(state).toEqual({ status: "completed", output: "done" })
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/methods/message/calls/m1")
+    expect(lastUrl().pathname).toBe("/v1/threads/root/methods/message/calls/m1")
   })
 })
 
@@ -198,7 +212,7 @@ describe("a failed call", () => {
       detail: 'No thread named "ghost" has ever existed.'
     }
     answer = problemAnswer(404, document)
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ghost").catch((error: unknown) => error)
+    const failure = await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).events("ghost").catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(ProblemError)
     const problem = failure as ProblemError
     expect(problem.type).toBe(document.type)
@@ -216,7 +230,7 @@ describe("a failed call", () => {
       status: 401,
       detail: "This server requires a bearer token."
     })
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
+    const failure = await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe("Unauthorized")
     expect(failure.status).toBe(401)
     expect(failure.detail).toBe("This server requires a bearer token.")
@@ -224,14 +238,14 @@ describe("a failed call", () => {
 
   test("a body that is not a problem document falls back to the status", async () => {
     answer = () => new Response("<html>", { status: 418, headers: { "content-type": "text/html" } })
-    const failure = await makeClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
+    const failure = await makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe(UNEXPECTED_RESPONSE_TITLE)
     expect(failure.status).toBe(418)
   })
 
   test("an undocumented server failure gives an actionable message", async () => {
     answer = () => new Response(null, { status: 500 })
-    const failure = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).list().catch((error: unknown) => error) as ProblemError
+    const failure = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).list().catch((error: unknown) => error) as ProblemError
     expect(failure.title).toBe(SERVER_ERROR_TITLE)
     expect(failure.status).toBe(500)
     expect(failure.detail).toBe(SERVER_ERROR_DETAIL)
@@ -251,14 +265,14 @@ describe("a declared projection", () => {
   })
 
   test("serves at the name it was declared under, and carries its own query", async () => {
-    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     await client.projection("root", "turns", { at: 3 })
-    expect(lastUrl().pathname).toBe("/v1/actors/default/threads/root/projections/turns")
+    expect(lastUrl().pathname).toBe("/v1/threads/root/projections/turns")
     expect(lastUrl().searchParams.get("at")).toBe("3")
   })
 
   test("an absent query is an absent param rather than a stated default", async () => {
-    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     await client.projection("root", "turns")
     expect(lastUrl().searchParams.has("at")).toBe(false)
   })
@@ -272,7 +286,7 @@ describe("a declared projection", () => {
         status: 200,
         headers: { "content-type": "application/json" }
       })
-    const client = makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
     const views: ReadonlyArray<{ readonly turn: string; readonly status: string }> = await client.projection(
       "root",
       "turns"
@@ -290,7 +304,7 @@ describe("resuming a turn", () => {
     let read = false
     return () => {
       if (read) {
-        return new Response(JSON.stringify({ actor: "default", thread: "root" }), {
+        return new Response(JSON.stringify({ thread: "root" }), {
           status: 202,
           headers: { "content-type": "application/json" }
         })
@@ -319,19 +333,19 @@ describe("resuming a turn", () => {
     })
   })
 
-  const client = () => makeClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
+  const client = () => makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
 
   test("a failed turn appends the TurnResumed its reactors interpret", async () => {
     answer = accepting({ turn: "m1", status: "failed", epoch: 0, error: "boom" })
     const accepted = await client().resume("root", "m1")
-    expect(accepted).toEqual({ actor: "default", thread: "root" })
+    expect(accepted).toEqual({ thread: "root" })
     // Two calls: the projection it read, then the append it made.
     expect(calls).toHaveLength(2)
     const read = new URL(calls[0]!.url)
-    expect(read.pathname).toBe("/v1/actors/default/threads/root/projections/turns")
+    expect(read.pathname).toBe("/v1/threads/root/projections/turns")
     expect(read.searchParams.get("turn")).toBe("m1")
     const appended = new URL(calls[1]!.url)
-    expect(appended.pathname).toBe("/v1/actors/default/threads/root/events")
+    expect(appended.pathname).toBe("/v1/threads/root/events")
     expect(JSON.parse(calls[1]!.body ?? "")).toEqual({
       type: "TurnResumed",
       turn: "m1",
@@ -369,7 +383,7 @@ describe("resuming a turn", () => {
   // `resume` is on every client, and the declaration it needs is not, so a client that reads the
   // log alone says why rather than failing on an undefined call.
   test("a client built with no turns projection says so", async () => {
-    const failure = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub })
+    const failure = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
       .resume("root", "m1")
       .then(() => undefined, (error: unknown) => error)
     expect(failure).toBeInstanceOf(ProblemError)

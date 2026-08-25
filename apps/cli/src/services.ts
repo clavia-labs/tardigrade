@@ -1,5 +1,5 @@
 import { Context, Layer } from "effect"
-import { makeClient, type Client, type ClientOptions } from "@clavia/tardigrade-client"
+import { makeActorClient, type ActorClient, type ActorClientOptions } from "@clavia/tardigrade-client"
 
 import type { Env } from "./config"
 
@@ -9,7 +9,7 @@ import type { Env } from "./config"
 export interface CliServices {
   readonly env: Env
   readonly cwd: string
-  readonly openClient: (options: ClientOptions) => Client
+  readonly openClient: (options: ActorClientOptions) => ActorClient
   readonly installProject: (directory: string) => Promise<void>
   // mintId supplies the durable thread and call ids used when a caller states neither.
   readonly mintId: () => string
@@ -35,7 +35,7 @@ const installProject = async (directory: string): Promise<void> => {
 export const layerCli: Layer.Layer<Cli> = Layer.succeed(Cli)({
   env: process.env,
   cwd: process.cwd(),
-  openClient: (options) => makeClient(options),
+  openClient: (options) => makeActorClient(options),
   installProject,
   mintId: () => crypto.randomUUID()
 })

@@ -1,7 +1,8 @@
 import { useState, type ReactElement } from "react"
 
-import type { ActorIdentity, ProblemError } from "@clavia/tardigrade-client"
-import { BracketsCurly, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
+import type { ActorMetadata, ProblemError } from "@clavia/tardigrade-client"
+import { ArrowUpRight, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
+import { docsUrl } from "./client"
 import { navigate } from "./nav"
 import { ICON_SIZE, RAIL_COLLAPSED_WIDTH, RAIL_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
@@ -49,11 +50,11 @@ const Row = ({
   )
 }
 
-const sqliteLabel = (location: string): string =>
+const storageLabel = (location: string): string =>
   location === ":memory:" ? location : location.split(/[\\/]/).slice(-2).join("/")
 
 export const Rail = ({
-  actorIdentity,
+  actorMetadata,
   collapsedWidth = RAIL_COLLAPSED_WIDTH,
   headerHeight = RAIL_HEADER_HEIGHT,
   now,
@@ -62,7 +63,7 @@ export const Rail = ({
   selected,
   width = RAIL_WIDTH
 }: {
-  readonly actorIdentity: ActorIdentity | undefined
+  readonly actorMetadata: ActorMetadata | undefined
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly now: number
@@ -97,9 +98,13 @@ export const Rail = ({
       </div>
       {collapsed ? null : <><div className="rail-actions">
         <div className="rail-actor">
-          <div className="mono rail-actor-name">{actorIdentity?.name ?? "\u00a0"}</div>
-          <div className="mono rail-actor-sqlite" title={actorIdentity?.sqlite}>
-            {actorIdentity === undefined ? "\u00a0" : sqliteLabel(actorIdentity.sqlite)}
+          <div className="mono rail-actor-name">{actorMetadata?.name ?? "\u00a0"}</div>
+          <div className="mono rail-actor-sqlite" title={actorMetadata?.storage.location ?? actorMetadata?.storage.kind}>
+            {actorMetadata === undefined
+              ? "\u00a0"
+              : actorMetadata.storage.location === undefined
+              ? actorMetadata.storage.kind
+              : storageLabel(actorMetadata.storage.location)}
           </div>
         </div>
         <input
@@ -112,7 +117,7 @@ export const Rail = ({
         <button
           type="button"
           className="rail-new-thread"
-          onClick={() => navigate({ thread: undefined, view: "new", operation: undefined, from: undefined, to: undefined })}
+          onClick={() => navigate({ thread: undefined, view: "new", from: undefined, to: undefined })}
         >
           <Plus size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span>New thread</span>
@@ -130,14 +135,15 @@ export const Rail = ({
         ))}
       </div>
       <div className="rail-footer">
-        <button
-          type="button"
+        <a
           className="rail-utility"
-          onClick={() => navigate({ thread: undefined, view: "api", operation: undefined, from: undefined, to: undefined })}
+          href={docsUrl()}
+          target="_blank"
+          rel="noreferrer"
         >
-          <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <ArrowUpRight size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span>API</span>
-        </button>
+        </a>
         <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
       </div>
       </>}

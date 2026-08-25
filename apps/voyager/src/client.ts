@@ -1,4 +1,5 @@
-import { DEFAULT_BASE_URL, makeClient, type Client } from "@clavia/tardigrade-client"
+import { DEFAULT_BASE_URL, makeActorClient, type ActorClient } from "@clavia/tardigrade-client"
+import { DOCS_PATH } from "@clavia/tardigrade-client/contract"
 
 // Where the app reads the server. The calls and the wire types are the client package's, derived
 // from the server's own declaration (packages/client/src/contract.ts), so the app holds no second
@@ -43,6 +44,9 @@ export const apiUrl = (): string => {
   return trimSlash(stated !== null && stated.length > 0 ? stated : configured)
 }
 
+// docsUrl points at the Scalar page served beside the mounted actor API.
+export const docsUrl = (): string => `${apiUrl()}${DOCS_PATH}`
+
 export const token = (): string | undefined => {
   if (typeof localStorage === "undefined") return undefined
   const stored = localStorage.getItem(TOKEN_KEY)
@@ -51,4 +55,4 @@ export const token = (): string | undefined => {
 
 // One client for the tab. The address and the token are read at load, which is when a reader could
 // have stated either: a different `api` param or a pasted token is a different page load.
-export const client: Client = makeClient({ baseUrl: apiUrl(), token: token() })
+export const client: ActorClient = makeActorClient({ baseUrl: apiUrl(), token: token() })

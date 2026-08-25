@@ -31,7 +31,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | Message arrays and conversation storage | One append-only event log per thread |
 | Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
 | Lifecycle callbacks and telemetry | Recorded events, Voyager, usage projections, and host telemetry |
-| AI SDK UI stream protocol | `makeClient().append()` plus the durable event stream from `follow()` |
+| AI SDK UI stream protocol | `makeActorClient().append()` plus the durable event stream from `follow()` |
 
 Install Tardigrade with the repository's package manager. Bun 1.4 or later runs the CLI and the durable SQLite host.
 
@@ -77,11 +77,10 @@ bunx tardie dev
 Replace direct model invocation in the application backend with the generated client:
 
 ```ts
-import { makeClient } from "tardie/client"
+import { makeActorClient } from "tardie/client"
 
-const client = makeClient({
-  baseUrl: process.env.TARDIGRADE_URL!,
-  actor: "agent"
+const client = makeActorClient({
+  baseUrl: process.env.TARDIGRADE_URL!
 })
 
 await client.append(threadId, {

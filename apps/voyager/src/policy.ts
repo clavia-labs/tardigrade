@@ -2,8 +2,7 @@
 // policy value the app applies (AGENTS.md, "Design"). A screen imports the default and takes an
 // override at the call site rather than reading a literal.
 
-// The list rail width in pixels. Thread and API panes share the Flamecast v6 thread rail
-// measure (flamecast-v6/apps/web/src/system.css, .chat-split).
+// RAIL_WIDTH is the thread rail width in pixels (flamecast-v6/apps/web/src/system.css, .chat-split).
 export const RAIL_WIDTH = 236
 
 // RAIL_COLLAPSED_WIDTH keeps the sidebar toggle reachable while its content is hidden; Rail accepts another width when embedded (Rail.tsx, Rail).
@@ -15,10 +14,6 @@ export const RAIL_HEADER_HEIGHT = 48
 // The shared identity-row height in pixels. Each pane's title begins on the same horizontal datum,
 // and each pane accepts another height when embedded in a tighter shell.
 export const PANE_HEADER_HEIGHT = 64
-
-// How many nested object levels the API explorer renders before naming the remaining schema. The
-// explorer accepts another depth when a larger surface needs to show more of a recursive model.
-export const API_SCHEMA_DEPTH = 3
 
 // The size every icon renders at, in pixels (voyager-design-system.md, the icon policy). One number
 // for the whole set, because a second size would be a second style.
@@ -32,7 +27,7 @@ export const EVENT_STAMP_WIDTH = 164
 // is narrow, and Thread accepts another width when its surrounding shell has a different measure.
 export const EVENT_INSPECTOR_WIDTH = 480
 
-// How often the rail re-reads GET /v1/actors/:actor/threads for the roster: the roots and their counts. The server
+// How often the rail re-reads GET /v1/threads for the roster: the roots and their counts. The server
 // publishes no change feed for the listing, so the rail polls, and this is both the delay between a
 // run changing and the rail saying so and the resolution of the age column.
 export const ROSTER_POLL_MS = 2000

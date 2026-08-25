@@ -40,7 +40,7 @@ tdg call message "$input" --thread "$thread" --json
 tdg events "$thread" --json
 ```
 
-Set `$input` to the method input JSON for the evaluation brief. Each candidate runs from its own actor directory, so local commands use the mounted actor without `--actor`.
+Set `$input` to the method input JSON for the evaluation brief. Each candidate runs from its own actor directory and uses the actor mounted there.
 
 Score the final output and relevant trace behavior. Inspect tool errors, retries, model calls, budget events, and latency when they affect the rubric or constraints. Keep secrets and sensitive tool output out of reports and external model calls.
 

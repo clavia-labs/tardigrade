@@ -12,33 +12,33 @@ Bun 1.4 or later. `GET /healthz` answers once it is up.
 
 ## Endpoints
 
-Base path `/v1`. Actor-scoped routes accept `default` for the actor mounted by `tdg dev`.
+Base path `/v1`. Runtime routes address the actor mounted at the server origin. Control routes manage the actors available to a host.
 
 | | |
 | --- | --- |
 | `GET /v1/providers` | Search and page provider setup requirements. `search`, `cursor`, `limit` |
 | `GET /v1/models` | Search and page public model metadata. `provider`, `search`, `cursor`, `limit` |
-| `GET /v1/actors` | List actors |
-| `PUT /v1/actors` | Push an actor artifact |
-| `GET /v1/actors/{actor}` | Read the mounted actor name and SQLite location |
-| `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
-| `GET /v1/actors/{actor}/threads` | List threads |
-| `PUT /v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
-| `GET /v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
-| `POST /v1/actors/{actor}/threads/{id}/events` | Append an event, creating the thread if new |
-| `GET /v1/actors/{actor}/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
-| `GET /v1/actors/{actor}/threads/{id}/events/stream` | Follow the log. Server-sent events, resumes from `Last-Event-ID` |
-| `GET /v1/actors/{actor}/threads/{id}/projections/{projection}` | Read a projection the actor declares. `default` declares `turns` |
-| `GET /v1/actors/{actor}/threads/{id}/tree` | The spawn family |
+| `GET /v1/metadata` | Read the mounted actor name and storage metadata |
+| `GET /v1/methods` | List methods with standalone input and output schemas |
+| `GET /v1/threads` | List threads |
+| `PUT /v1/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
+| `GET /v1/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
+| `POST /v1/threads/{id}/events` | Append an event, creating the thread if new |
+| `GET /v1/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
+| `GET /v1/threads/{id}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
+| `GET /v1/threads/{id}/projections/{projection}` | Read a projection the mounted actor declares |
+| `GET /v1/threads/{id}/tree` | Read the spawn family |
+| `GET /v1/actors` | List actors available to the host |
+| `PUT /v1/actors` | Push an actor artifact to the host |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |
 
 ```bash
-curl -X PUT localhost:4242/v1/actors/default/threads/inv-81/methods/message/calls/m1 \
+curl -X PUT localhost:4242/v1/threads/inv-81/methods/message/calls/m1 \
   -H 'content-type: application/json' \
   -d '{"text":"audit the deploy"}'
-# {"actor":"default","thread":"inv-81","method":"message","call":"m1"}
+# {"thread":"inv-81","method":"message","call":"m1"}
 
-curl localhost:4242/v1/actors/default/threads/inv-81/methods/message/calls/m1
+curl localhost:4242/v1/threads/inv-81/methods/message/calls/m1
 # {"status":"completed","output":"…"}
 ```
 
@@ -58,7 +58,7 @@ Declared request failures are `application/problem+json`.
   "detail": "No thread named \"ghost\" has ever existed." }
 ```
 
-`unknown-actor` names code this server does not run. `unknown-projection` lists what the actor does declare. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client then asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting `tdg dev`.
+`unknown-projection` lists what the actor declares. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client asks the operator to inspect the actor host logs. For `tdg dev`, it also asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting the server.
 
 ## Configuration
 
@@ -67,7 +67,7 @@ Declared request failures are `application/problem+json`.
 | `PORT` | `4242` |
 | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
-| `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
+| `TARDIGRADE_TOKEN` | Unset. When set, runtime and control routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |
 | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json`. Last validated public snapshot |
@@ -111,8 +111,8 @@ Catalog responses use cursor pagination. They include `revision`, `status`, `ref
 
 ```ts
 import { agentMethods } from "tardie"
-import { makeClient } from "tardie/client"
+import { makeActorClient } from "tardie/client"
 
-const client = makeClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
+const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
 await client.invoke("inv-81", "message", { id: "m1", input: { text: "audit the deploy" } })
 ```
