@@ -39,7 +39,17 @@ const copyText = async (text: string): Promise<boolean> => {
 
 // The copy control. The glyph swaps through React state rather than through a style, because an
 // inline `display` outranks the class rules that would otherwise do the swap.
-const CopyButton = ({ text, confirmMs }: { readonly text: string; readonly confirmMs: number }): ReactElement => {
+export const CopyButton = ({
+  className,
+  confirmMs,
+  label,
+  text
+}: {
+  readonly className?: string | undefined
+  readonly confirmMs: number
+  readonly label: string
+  readonly text: string
+}): ReactElement => {
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -51,9 +61,9 @@ const CopyButton = ({ text, confirmMs }: { readonly text: string; readonly confi
   return (
     <button
       type="button"
-      className={`icon-btn${copied ? " icon-btn-done" : ""}`}
-      aria-label="Copy the window's events"
-      title="Copy the window's events"
+      className={`icon-btn${className === undefined ? "" : ` ${className}`}${copied ? " icon-btn-done" : ""}`}
+      aria-label={copied ? `${label} copied` : label}
+      title={copied ? "Copied" : label}
       onClick={() => {
         void copyText(text).then((ok) => {
           if (ok) setCopied(true)
@@ -146,7 +156,7 @@ export const WindowBrush = ({
           <span className="mono window-readout">
             {readout.range} <span className="window-count">· {readout.count}</span>
           </span>
-          <CopyButton text={copyTextOf(shown)} confirmMs={COPY_CONFIRM_MS} />
+        <CopyButton text={copyTextOf(shown)} confirmMs={COPY_CONFIRM_MS} label="Copy the window's events" />
         </span>
       </div>
       <div ref={track} className="window-track" style={{ height: WINDOW_TRACK_HEIGHT }}>

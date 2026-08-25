@@ -5,19 +5,17 @@ export const DEFAULT_ONBOARDING_BRIEF = "Read this repository and tell me what i
 export const shellWord = (value: string): string =>
   /^[A-Za-z0-9_./-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`
 
-// callCommandFor renders the local quickstart command with its actor and method input stated.
-export const callCommandFor = (
-  actor: string,
+// callCommand renders the local quickstart command with its method input stated (workflow.test.ts).
+export const callCommand = (
   brief: string = DEFAULT_ONBOARDING_BRIEF
-): string => `tdg call message ${shellWord(JSON.stringify({ text: brief }))} --actor ${shellWord(actor)}`
+): string => `tdg call message ${shellWord(JSON.stringify({ text: brief }))}`
 
-// traceUrlFor selects the actor and thread in the Voyager served at the API origin (apps/voyager/src/nav.ts, Route).
-export const traceUrlFor = (baseUrl: string, actor: string, thread: string): string => {
+// traceUrlFor selects the thread in the Voyager served at the API origin (apps/voyager/src/nav.ts, Route).
+export const traceUrlFor = (baseUrl: string, thread: string): string => {
   const url = new URL(baseUrl)
   url.pathname = "/"
   url.search = ""
   url.hash = ""
-  url.searchParams.set("actor", actor)
   url.searchParams.set("thread", thread)
   return url.toString()
 }

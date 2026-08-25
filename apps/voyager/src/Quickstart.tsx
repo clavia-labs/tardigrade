@@ -2,14 +2,17 @@ import { Check, Copy } from "@phosphor-icons/react"
 import { useEffect, useState, type ReactElement } from "react"
 
 import { COPY_CONFIRM_MS, ICON_SIZE } from "./policy"
+import { client } from "./client"
 
-// QUICKSTART_PROMPT gives a coding agent the repository and workflow entrypoint.
-export const QUICKSTART_PROMPT =
-  "Use https://github.com/clavia-labs/tardigrade and follow skills/tardigrade/SKILL.md to create, author, build, push, and run a local actor. Share its Voyager trace URL."
+// START_COMMAND invokes the current actor with the onboarding brief (Quickstart.test.ts).
+export const START_COMMAND = "tdg call message '{\"text\":\"Read this repository and tell me what it does\"}'"
 
-// MIGRATION_PROMPT gives a coding agent the migration guide, verification target, and report contract.
-export const MIGRATION_PROMPT =
-  "Read https://github.com/clavia-labs/tardigrade/blob/next/docs/how-to/migrate.md. Implement and verify an end-to-end migration of this project's existing agent harness to Tardigrade. Preserve its behavior while moving the loop, tools, state, API, client, history, and deployment configuration. Run the existing tests and the same representative task before and after. Share the Voyager trace URL, summarize the changes, and report before/after harness lines, dependencies, model tokens, cost, and latency, including percentage changes when both values exist. Mark unavailable metrics."
+const shellWord = (value: string): string =>
+  /^[A-Za-z0-9_./:-]+$/u.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`
+
+// startCommand states the current server address in the copied invocation (Quickstart.test.ts).
+export const startCommand = (baseUrl: string): string =>
+  `${START_COMMAND} --url ${shellWord(baseUrl)}`
 
 const copyText = async (text: string): Promise<boolean> => {
   try {
@@ -28,7 +31,7 @@ const copyText = async (text: string): Promise<boolean> => {
   }
 }
 
-const PromptCard = ({ label, prompt }: { readonly label: string; readonly prompt: string }): ReactElement => {
+const CommandCard = ({ command }: { readonly command: string }): ReactElement => {
   const [copied, setCopied] = useState(false)
 
   useEffect(() => {
@@ -38,24 +41,22 @@ const PromptCard = ({ label, prompt }: { readonly label: string; readonly prompt
   }, [copied])
 
   return (
-    <section className="quickstart-card">
-      <div className="quickstart-card-head">
-        <span className="mono quickstart-label">{label}</span>
-        <button
-          type="button"
-          className={`quickstart-copy${copied ? " quickstart-copy-done" : ""}`}
-          aria-label={`Copy ${label.toLowerCase()} prompt`}
-          onClick={() => {
-            void copyText(prompt).then((ok) => {
-              if (ok) setCopied(true)
-            })
-          }}
-        >
-          {copied ? <Check size={ICON_SIZE} weight="light" aria-hidden="true" /> : <Copy size={ICON_SIZE} weight="light" aria-hidden="true" />}
-          <span>{copied ? "copied" : "copy"}</span>
-        </button>
-      </div>
-      <pre className="quickstart-code"><code>{prompt}</code></pre>
+    <section className="quickstart-command">
+      <span className="mono quickstart-prompt" aria-hidden="true">$</span>
+      <code className="quickstart-code">{command}</code>
+      <button
+        type="button"
+        className={`quickstart-copy${copied ? " quickstart-copy-done" : ""}`}
+        aria-label={copied ? "Command copied" : "Copy command"}
+        title={copied ? "Copied" : "Copy command"}
+        onClick={() => {
+          void copyText(command).then((ok) => {
+            if (ok) setCopied(true)
+          })
+        }}
+      >
+        {copied ? <Check size={ICON_SIZE} weight="light" aria-hidden="true" /> : <Copy size={ICON_SIZE} weight="light" aria-hidden="true" />}
+      </button>
     </section>
   )
 }
@@ -64,13 +65,10 @@ export const Quickstart = (): ReactElement => (
   <div className="quickstart-empty">
     <div className="quickstart">
       <div className="quickstart-intro">
-        <h1>Create or migrate an actor</h1>
-        <p>Copy the prompt that fits your project into your coding agent.</p>
+        <h1>Start a thread</h1>
+        <p>Run this command from another terminal.</p>
       </div>
-      <div className="quickstart-grid">
-        <PromptCard label="New actor" prompt={QUICKSTART_PROMPT} />
-        <PromptCard label="Existing agent" prompt={MIGRATION_PROMPT} />
-      </div>
+      <CommandCard command={startCommand(client.baseUrl)} />
     </div>
   </div>
 )

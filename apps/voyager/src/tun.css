@@ -3,34 +3,39 @@
    :root, dark is the same token set redefined; the resolution order is stated once, below. */
 
 :root {
-  --bg: #fafaf9;
-  --surface: #ffffff;
-  --sunken: #f2f2f0;
-  --hair: #e7e7e4;
-  --ink: #1a1c1b;
-  --ink-2: #565a57;
-  --faint: #9a9e9a;
+  --bg: #f3f0e4;
+  --surface: #faf8ef;
+  --sunken: #e9eadc;
+  --hair: #d1d6c2;
+  --ink: #243128;
+  --ink-2: #556158;
+  --faint: #879087;
 
-  --neutral: #59605b;
-  --neutral-wash: #eceeeb;
+  --neutral: #59675d;
+  --neutral-wash: #e4e7da;
 
-  --moss: #4f7a5c;
-  --moss-ink: #3d6249;
-  --moss-wash: #eef3ef;
+  --moss: #4f6f52;
+  --moss-ink: #36573d;
+  --moss-wash: #e2eadf;
+  --moss-hover: #d7e3d5;
+  --row-hover: #eef0e7;
+  --action-wash: #f1f2e9;
+  --selected-wash: #e8ede4;
 
-  --run: #a07617;
-  --run-wash: #f7f0dd;
-  --ok: #567a5c;
-  --ok-wash: #edf2ee;
-  --wait: #5b6ea8;
-  --wait-wash: #eceff7;
-  --fail: #b3452e;
-  --fail-wash: #f9ece8;
+  --run: #b7652a;
+  --run-wash: #f4e4d4;
+  --ok: #4f6f52;
+  --ok-wash: #e2eadf;
+  --wait: #73744b;
+  --wait-wash: #eeead8;
+  --fail: #a94f35;
+  --fail-wash: #f5dfd6;
 
-  --shadow: 0 1px 2px rgb(26 28 27 / 6%), 0 8px 24px rgb(26 28 27 / 8%);
+  --shadow: 0 1px 2px rgb(36 49 40 / 6%), 0 8px 24px rgb(36 49 40 / 8%);
 
   --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --brand: "IBM Plex Serif", Georgia, serif;
 
   --text-meta: 12px;
   --text-dense: 13px;
@@ -81,6 +86,10 @@
     --moss: #7fae8c;
     --moss-ink: #93c2a0;
     --moss-wash: #22302a;
+    --moss-hover: #2a3b32;
+    --row-hover: #202522;
+    --action-wash: #1e2220;
+    --selected-wash: #212a24;
 
     --run: #d0a83e;
     --run-wash: #2e2a1c;
@@ -112,6 +121,10 @@
   --moss: #7fae8c;
   --moss-ink: #93c2a0;
   --moss-wash: #22302a;
+  --moss-hover: #2a3b32;
+  --row-hover: #202522;
+  --action-wash: #1e2220;
+  --selected-wash: #212a24;
 
   --run: #d0a83e;
   --run-wash: #2e2a1c;
@@ -285,15 +298,13 @@ textarea {
   max-width: var(--measure);
 }
 
-/* The rail: the run's roots on --surface, behind the one hairline that divides the screen. Its
-   width is a number the layout measures against and lives with the other policy (src/policy.ts). */
+/* rail holds the run's roots on --surface at the width stated by policy (src/policy.ts). */
 .rail {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
   min-height: 0;
   background: var(--surface);
-  border-right: 1px solid var(--hair);
   transition: width var(--base) var(--ease);
 }
 
@@ -301,22 +312,57 @@ textarea {
 .rail-head {
   display: flex;
   height: 100%;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   padding: var(--space-3) var(--space-4);
 }
 
+.rail-collapse {
+  display: grid;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.rail-collapse:hover {
+  background: var(--sunken);
+  color: var(--ink);
+}
+
+.rail-collapse:active {
+  transform: scale(0.96);
+}
+
+.rail[data-collapsed="true"] .rail-head {
+  align-items: center;
+  justify-content: center;
+  padding-right: 0;
+  padding-left: 0;
+}
+
+.rail[data-collapsed="true"] > .pane-chrome::after {
+  display: none;
+}
+
 .rail-identity {
   display: flex;
-  height: 100%;
-  flex-direction: column;
-  justify-content: space-between;
+  min-width: 0;
+  align-items: center;
 }
 
 .rail-wordmark {
   display: flex;
-  align-items: baseline;
-  gap: 5px;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--brand);
   font-weight: 600;
   font-size: 14px;
   letter-spacing: -0.01em;
@@ -324,17 +370,11 @@ textarea {
 }
 
 .rail-product-context {
+  margin-left: -1px;
   color: var(--faint);
   font-size: 10px;
   font-weight: 400;
   letter-spacing: 0;
-}
-
-.rail-section-title {
-  color: var(--faint);
-  font-size: 10.5px;
-  letter-spacing: 0.07em;
-  text-transform: uppercase;
 }
 
 .pane-chrome {
@@ -343,14 +383,39 @@ textarea {
   border-bottom: 1px solid var(--hair);
 }
 
+.rail > .pane-chrome {
+  position: relative;
+  border-bottom: 0;
+}
+
+.rail > .pane-chrome::after {
+  position: absolute;
+  right: var(--space-2);
+  bottom: 0;
+  left: var(--space-2);
+  height: 1px;
+  background: var(--hair);
+  content: "";
+}
+
 .rail-footer {
+  position: relative;
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
   gap: 2px;
   margin-top: auto;
   padding: var(--space-2);
-  border-top: 1px solid var(--hair);
+}
+
+.rail-footer::before {
+  position: absolute;
+  top: 0;
+  right: var(--space-2);
+  left: var(--space-2);
+  height: 1px;
+  background: var(--hair);
+  content: "";
 }
 
 .rail-utility {
@@ -995,10 +1060,65 @@ textarea {
 .rail-search {
   width: 100%;
   height: 30px;
+  border: 0;
+  background: var(--sunken);
 }
 
-/* A rail row is two lines: the id and its age, then the state chip and the counts. Selected is the
-   moss wash; hover is the sunken wash. */
+.rail-actions {
+  display: grid;
+  gap: var(--space-2);
+  padding: 10px var(--space-3);
+}
+
+.rail-actor {
+  min-width: 0;
+}
+
+.rail-actor-name,
+.rail-actor-sqlite {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail-actor-name {
+  color: var(--ink-2);
+  font-size: var(--text-meta);
+}
+
+.rail-actor-sqlite {
+  margin-top: 2px;
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.rail-new-thread {
+  display: flex;
+  width: 100%;
+  min-height: var(--row-h);
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--action-wash);
+  color: var(--moss-ink);
+  cursor: pointer;
+  font-size: var(--text-meta);
+  transition: background var(--fast) var(--ease), color var(--fast) var(--ease), transform var(--fast) var(--ease);
+}
+
+.rail-new-thread:hover {
+  background: var(--row-hover);
+  color: var(--moss-ink);
+}
+
+.rail-new-thread:active {
+  transform: scale(0.98);
+}
+
+/* rail-row shows the id and age above its state and counts (Rail.tsx, Row). */
 .run-list {
   flex: 1;
   min-height: 0;
@@ -1017,13 +1137,13 @@ textarea {
 }
 
 .rail-row:hover {
-  background: var(--sunken);
+  background: var(--row-hover);
 }
 
-/* Selection is the wash alone: the moss says chosen, and a second mark would say it twice. */
+/* rail-row-selected uses the selected wash as its selection mark (Rail.tsx, Row). */
 .rail-row-selected,
 .rail-row-selected:hover {
-  background: var(--moss-wash);
+  background: var(--selected-wash);
 }
 
 .rail-id {
@@ -1046,6 +1166,15 @@ textarea {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-4) calc(var(--space-5) + 34px) 10px var(--space-5);
+}
+
+.thread-id-label {
+  color: var(--faint);
+  font-size: 10px;
+}
+
+.thread-copy:active {
+  transform: none;
 }
 
 /* The borderless icon button every icon in the app sits on: 15px of Phosphor at the light weight,
@@ -1076,7 +1205,8 @@ textarea {
 
 /* The copy control while it confirms. The glyph itself is swapped in React rather than by a rule,
    because a display an element carries inline outranks any class that would hide it. */
-.icon-btn-done {
+.icon-btn-done,
+.icon-btn-done:hover {
   color: var(--ok);
 }
 
@@ -1343,7 +1473,7 @@ textarea {
   font-family: var(--sans);
   font-size: var(--text-meta);
   box-shadow: var(--shadow);
-  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+  transition: color var(--fast) var(--ease);
 }
 
 .field-toggle:hover {
@@ -1388,7 +1518,7 @@ textarea {
 }
 
 .quickstart-intro {
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
   text-align: center;
 }
 
@@ -1405,78 +1535,74 @@ textarea {
   font-size: var(--text-read);
 }
 
-.quickstart-grid {
+.quickstart-command {
   display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
   gap: var(--space-3);
-}
-
-.quickstart-card {
-  overflow: hidden;
-  border: 1px solid var(--hair);
+  min-height: 64px;
+  padding: 0 var(--space-4);
   border-radius: var(--radius);
   background: var(--surface);
   box-shadow: var(--shadow);
 }
 
-.quickstart-card-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-height: 38px;
-  padding: 0 var(--space-3) 0 var(--space-4);
-  border-bottom: 1px solid var(--hair);
-}
-
-.quickstart-label {
+.quickstart-prompt {
   color: var(--ink-2);
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
+  font-size: var(--text-read);
 }
 
 .quickstart-copy {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  min-height: 26px;
-  padding: 0 var(--space-2);
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
   border: 0;
   border-radius: var(--radius);
   background: transparent;
   color: var(--faint);
   cursor: pointer;
   font-size: var(--text-meta);
-  transition: color var(--fast) var(--ease), transform var(--fast) var(--ease);
+  transition: color var(--fast) var(--ease);
 }
 
 .quickstart-copy:hover {
   color: var(--ink-2);
 }
 
-.quickstart-copy:active {
-  transform: scale(0.97);
-}
-
-.quickstart-copy-done {
+.quickstart-copy-done,
+.quickstart-copy-done:hover {
   color: var(--ok);
 }
 
 .quickstart-code {
-  margin: 0;
-  padding: var(--space-4);
+  min-width: 0;
   overflow-x: auto;
-  background: var(--sunken);
+  scrollbar-width: none;
   color: var(--ink);
   font-family: var(--mono);
   font-size: 12.5px;
   line-height: 1.6;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+}
+
+.quickstart-code::-webkit-scrollbar {
+  display: none;
 }
 
 @media (max-width: 640px) {
   .quickstart-empty {
     align-items: start;
     padding: var(--space-5) var(--space-4);
+  }
+
+  .quickstart-copy {
+    width: 44px;
+    height: 44px;
+  }
+
+  .rail-new-thread {
+    min-height: 44px;
   }
 }

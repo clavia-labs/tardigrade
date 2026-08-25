@@ -66,11 +66,11 @@ List every existing model option and confirm that the selected binding represent
 
 ## Move the application boundary
 
-Build and install the actor in the local registry, then start the API and Voyager:
+Enter the actor directory, build it, then start its API and Voyager:
 
 ```bash
-bunx tardie build agents/agent/actor.ts
-bunx tardie push agents/agent/actor.ts --target local
+cd agents/agent
+bunx tardie build actor.ts
 bunx tardie dev
 ```
 

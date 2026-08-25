@@ -17,7 +17,7 @@ export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
 export const DEFAULT_PORT = 4242
 
 // Where the log lives when TARDIGRADE_DB is absent: a hidden directory under the working directory.
-export const DEFAULT_DB = ".tardigrade/agents.sqlite"
+export const DEFAULT_DB = ".tardigrade/actor.sqlite"
 
 export const DEFAULT_ACTORS = ".tardigrade/actors"
 

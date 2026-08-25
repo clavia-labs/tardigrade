@@ -12,7 +12,7 @@ Bun 1.4 or later. `GET /healthz` answers once it is up.
 
 ## Endpoints
 
-Base path `/v1`. The built-in actor is named `default`.
+Base path `/v1`. Actor-scoped routes accept `default` for the actor mounted by `tdg dev`.
 
 | | |
 | --- | --- |
@@ -20,6 +20,7 @@ Base path `/v1`. The built-in actor is named `default`.
 | `GET /v1/models` | Search and page public model metadata. `provider`, `search`, `cursor`, `limit` |
 | `GET /v1/actors` | List actors |
 | `PUT /v1/actors` | Push an actor artifact |
+| `GET /v1/actors/{actor}` | Read the mounted actor name and SQLite location |
 | `GET /v1/actors/{actor}/methods` | List methods with standalone input and output schemas |
 | `GET /v1/actors/{actor}/threads` | List threads |
 | `PUT /v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
@@ -49,7 +50,7 @@ Reads are projections of the log, so `?at=<seq>` answers as of that point in his
 
 ## Errors
 
-Every failure is `application/problem+json`.
+Declared request failures are `application/problem+json`.
 
 ```json
 { "type": "https://tardigrade.dev/problems/unknown-thread",
@@ -57,14 +58,14 @@ Every failure is `application/problem+json`.
   "detail": "No thread named \"ghost\" has ever existed." }
 ```
 
-`unknown-actor` names code this server does not run. `unknown-projection` lists what the actor does declare. `invalid-request` names the field it refused.
+`unknown-actor` names code this server does not run. `unknown-projection` lists what the actor does declare. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client then asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting `tdg dev`.
 
 ## Configuration
 
 | | |
 | --- | --- |
 | `PORT` | `4242` |
-| `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
+| `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, actor routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |

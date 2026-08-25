@@ -4,7 +4,7 @@ import { join } from "node:path"
 
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
 const model = { provider: "openrouter", defaultModel: "anthropic/claude-sonnet-4-6" }
@@ -65,17 +65,15 @@ describe("initActor", () => {
     expect(built.manifest.name).toBe("reviewer")
   })
 
-  test("refuses to overwrite unless force is stated", async () => {
+  test("requires ownership of a new target", async () => {
     const cwd = await temporaryRoot()
-    const entry = join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY)
-    await initActor("reviewer", { cwd, model })
-    await writeFile(entry, "keep me", "utf8")
+    const directory = join(cwd, "reviewer")
+    const held = join(directory, "wrangler.jsonc")
+    await mkdir(directory)
+    await writeFile(held, "keep me", "utf8")
 
-    await expect(initActor("reviewer", { cwd, model })).rejects.toThrow("pass --force")
-    expect(await readFile(entry, "utf8")).toBe("keep me")
-
-    await initActor("reviewer", { cwd, model, force: true })
-    expect(await readFile(entry, "utf8")).toContain('const actorName = "reviewer"')
+    await expect(initActor("reviewer", { cwd, model })).rejects.toThrow("target already exists")
+    expect(await readFile(held, "utf8")).toBe("keep me")
   })
 
   test("writes into a stated directory", async () => {
@@ -85,45 +83,53 @@ describe("initActor", () => {
     expect(initialized.entry).toBe(join(cwd, "actors", "custom", DEFAULT_ACTOR_ENTRY))
   })
 
-  test("adds its exact version to an existing project manifest", async () => {
-    const cwd = await temporaryRoot()
-    const directory = join(cwd, "reviewer")
-    await mkdir(directory)
-    await writeFile(join(directory, "package.json"), `${JSON.stringify({
-      private: true,
-      scripts: { check: "tsc --noEmit" },
-      dependencies: { effect: "4.0.0-rc.110" }
-    })}\n`, "utf8")
-
-    const initialized = await initActor("reviewer", { cwd, model, packageVersion: "0.7.1-rc.158" })
-    const manifest = JSON.parse(await readFile(initialized.packageManifest, "utf8")) as Record<string, unknown>
-
-    expect(manifest).toEqual({
-      private: true,
-      scripts: { check: "tsc --noEmit" },
-      dependencies: { effect: "4.0.0-rc.110", tardie: "0.7.1-rc.158" }
-    })
-  })
 })
 
 describe("initSummary", () => {
   test("prints the complete local path", async () => {
     const cwd = await temporaryRoot()
     const initialized = await initActor("reviewer", { cwd, model })
-    const summary = initSummary(initialized, cwd)
+    const summary = initSummary(initialized, {
+      configPath: initialized.manifest,
+      celldConfigPath: initialized.celldManifest,
+      secretsPath: join(initialized.directory, ".dev.vars")
+    }, {
+      provider: "openrouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      credential: "held",
+      protocol: "openai-chat-completions",
+      env: ["OPENROUTER_API_KEY"],
+      model_id: "google/gemini-flash-latest"
+    }, { cwd })
 
-    expect(summary).toContain("created reviewer/actor.ts")
-    expect(summary).toContain("created reviewer/worker.ts")
-    expect(summary).toContain("created reviewer/wrangler.jsonc")
-    expect(summary).toContain("created reviewer/celld.jsonc")
-    expect(summary).toContain("created reviewer/package.json")
-    expect(summary).toContain("cd reviewer")
-    expect(summary).not.toContain("tdg push")
-    expect(summary).not.toContain("tdg build actor.ts")
-    expect(summary).toContain("tdg call message")
-    expect(summary).toContain("tdg dev")
-    expect(summary).toContain("bunx wrangler deploy")
-    expect(summary).toContain("celld deploy --config celld.jsonc")
-    expect(summary).toContain('--actor reviewer')
+    expect(summary).toBe(`
+  ✓ actor "reviewer" created in ./reviewer
+    files       actor.ts
+                worker.ts
+                wrangler.jsonc
+                celld.jsonc
+                package.json
+    credential  OPENROUTER_API_KEY (.dev.vars)
+
+  → next
+    cd reviewer
+    tdg dev
+
+  → call from another terminal
+    tdg call message '{"text":"Read this repository and tell me what it does"}'
+
+  ↗ deploy
+    Cloudflare  bunx wrangler deploy
+    Celld       celld deploy --config celld.jsonc
+
+  ? help
+    https://discord.gg/Z74jwRxz4k
+`)
+  })
+
+  test("uses color only for an interactive terminal", () => {
+    expect(terminalColorsEnabled({}, true)).toBe(true)
+    expect(terminalColorsEnabled({ NO_COLOR: "1" }, true)).toBe(false)
+    expect(terminalColorsEnabled({}, false)).toBe(false)
   })
 })

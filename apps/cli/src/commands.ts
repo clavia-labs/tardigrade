@@ -1,7 +1,9 @@
 import { Clock, Console, Effect, Layer, Option } from "effect"
+import { existsSync } from "node:fs"
+import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
-import { Argument, CliError, Command, Flag } from "effect/unstable/cli"
-import type { ActorDefinition } from "tardie"
+import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
+import { ACTOR_NAME_PATTERN, type ActorDefinition } from "tardie"
 import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
@@ -11,8 +13,8 @@ import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, loadBuiltActor } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
-import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary } from "./init"
-import { DEFAULT_ACTOR_DIRECTORY, pushActor, pushSummary, PUSH_TARGETS } from "./push"
+import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { withLoader } from "./loader"
 import {
   defaultModelFrom,
   defaultSetupJson,
@@ -36,7 +38,6 @@ import {
   writeSetupPlan
 } from "./setup"
 import {
-  actorsTable,
   DEFAULT_DETAIL_WIDTH,
   eventsTable,
   jsonOf,
@@ -83,6 +84,18 @@ const userErrorOf = (cause: unknown): CliError.UserError =>
 
 const call = <A>(promise: () => Promise<A>): Effect.Effect<A, CliError.UserError> =>
   Effect.tryPromise({ try: promise, catch: userErrorOf })
+
+const removeIncompleteProject = (
+  directory: string,
+  error: CliError.UserError
+): Effect.Effect<never, CliError.UserError> =>
+  Effect.tryPromise({
+    try: () => rm(directory, { recursive: true, force: true }),
+    catch: userErrorOf
+  }).pipe(
+    Effect.catch((cause) => userErrorOf(`${error.message}\ncould not remove incomplete project at ${directory}: ${cause.message}`)),
+    Effect.flatMap(() => userErrorOf(`${error.message}\nremoved incomplete project at ${directory}`))
+  )
 
 // The flags a command that talks to a server takes. They are values rather than a shape repeated
 // per command, so `--url` means the same thing everywhere it appears.
@@ -228,6 +241,8 @@ export const NON_INTERACTIVE_DEFAULT_SETUP =
   "tdg setup default needs --provider and --model when stdin is not interactive; see `tdg setup default --help`"
 export const NON_INTERACTIVE_INIT =
   "tdg init needs --provider, --provider-config, and --default-model when stdin is not interactive; see `tdg init --help`"
+export const NON_INTERACTIVE_INIT_NAME =
+  "tdg init needs <name> when stdin is not interactive; see `tdg init --help`"
 
 export const setupProviderCommand = Command.make("provider", {
   provider: Argument.string("provider").pipe(
@@ -314,19 +329,18 @@ export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*
   const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
   yield* Console.log(setupPlanSummary(files, plan))
 })).pipe(
-  Command.withDescription("Add provider connections, choose the project default, then write the platform manifests and .dev.vars at 0600."),
+  Command.withDescription("Configure project providers and a default model in the platform manifests. Entered credentials are stored in .dev.vars at 0600."),
   Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
 )
 
 export const initCommand = Command.make("init", {
-  name: Argument.string("name").pipe(Argument.withDescription("The actor name")),
+  name: Argument.string("name").pipe(
+    Argument.withDescription("The actor name. Prompted when omitted from an interactive terminal."),
+    Argument.optional
+  ),
   dir: Flag.string("dir").pipe(
     Flag.withDescription("The directory to create. Defaults to a directory named after the actor."),
     Flag.optional
-  ),
-  force: Flag.boolean("force").pipe(
-    Flag.withDescription("Replace actor.ts when it already exists."),
-    Flag.withDefault(false)
   ),
   provider: setupProvider,
   providerConfig: setupProviderConfig,
@@ -335,8 +349,23 @@ export const initCommand = Command.make("init", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
+    const declaredName = stated(flags.name)
+    const name = declaredName ?? (canAsk()
+      ? yield* Prompt.text({
+        message: "Actor name",
+        validate: (value) => {
+          const candidate = value.trim()
+          return ACTOR_NAME_PATTERN.test(candidate)
+            ? Effect.succeed(candidate)
+            : Effect.fail(`actor name must match ${String(ACTOR_NAME_PATTERN)}`)
+        }
+      })
+      : yield* userErrorOf(NON_INTERACTIVE_INIT_NAME))
     const directory = stated(flags.dir)
-    const initializedRoot = resolve(cli.cwd, directory ?? defaultInitDirectory(flags.name))
+    const initializedRoot = resolve(cli.cwd, directory ?? defaultInitDirectory(name))
+    if (existsSync(initializedRoot)) {
+      return yield* userErrorOf(`init target already exists at ${initializedRoot}. Choose a new directory.`)
+    }
     const declared = yield* Effect.try({
       try: () => setupAnswersFrom({
         provider: stated(flags.provider),
@@ -346,28 +375,37 @@ export const initCommand = Command.make("init", {
       catch: userErrorOf
     })
     const answers = declared ?? (canAsk()
-      ? yield* Effect.mapError(setupPromptIn(initializedRoot, cli.env), userErrorOf)
+      ? yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_INIT))
     const initialized = yield* Effect.tryPromise({
-      try: () => initActor(flags.name, {
+      try: () => initActor(name, {
         cwd: cli.cwd,
         ...(directory === undefined ? {} : { directory }),
-        model: { provider: answers.provider, defaultModel: answers.model_id },
-        force: flags.force
+        model: { provider: answers.provider, defaultModel: answers.model_id }
       }),
       catch: userErrorOf
     })
-    const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
-    yield* Effect.tryPromise({
-      try: () => cli.installProject(initialized.directory),
-      catch: userErrorOf
-    })
-    yield* Console.log(flags.json
-      ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
-      : `${setupSummary(files, answers)}\n\n${initSummary(initialized, cli.cwd)}`)
+    yield* Effect.gen(function*() {
+      yield* Effect.tryPromise({
+        try: () => withLoader(
+          "Installing dependencies",
+          () => cli.installProject(initialized.directory),
+          { enabled: flags.json === false && process.stdout.isTTY === true }
+        ),
+        catch: userErrorOf
+      })
+      const files = yield* Effect.mapError(writeSetup(initialized.directory, answers, cli.env), userErrorOf)
+      yield* Console.log(flags.json
+        ? jsonOf({ ...initialized, setup: setupJson(files, answers) })
+        : initSummary(initialized, files, answers, {
+          colors: terminalColorsEnabled(cli.env),
+          cwd: cli.cwd
+        }))
+    }).pipe(Effect.catch((error) => removeIncompleteProject(initialized.directory, error)))
   })).pipe(
     Command.withDescription("Create an editable actor and configure its first provider connection."),
     Command.withExamples([
+      { command: "tdg init", description: "Choose an actor name and provider interactively" },
       { command: "tdg init researcher", description: "Choose a provider and create a ready actor" },
       {
         command: "tdg init researcher --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
@@ -395,50 +433,6 @@ export const buildCommand = Command.make("build", {
     Command.withDescription("Bundle and validate one named actor as a portable artifact."),
     Command.withExamples([
       { command: "tdg build ./actors/researcher.ts", description: "Build one actor into the default artifact root" }
-    ])
-  )
-
-export const pushCommand = Command.make("push", {
-  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to build and push")),
-  target: Flag.choice("target", PUSH_TARGETS).pipe(
-    Flag.withDescription("Where to push the actor. State local or hosted explicitly.")
-  ),
-  out: Flag.string("out").pipe(
-    Flag.withDescription(`The artifact root. Defaults to ${DEFAULT_BUILD_DIRECTORY}.`),
-    Flag.optional
-  ),
-  actors: Flag.string("actors").pipe(
-    Flag.withDescription(`The local actor root. Defaults to ${DEFAULT_ACTOR_DIRECTORY}.`),
-    Flag.optional
-  ),
-  url,
-  token,
-  json
-}, (flags) =>
-  Effect.gen(function*() {
-    const cli = yield* Cli
-    const file = yield* readFileConfig(cli.env)
-    const resolved = flags.target === "hosted"
-      ? resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env, file)
-      : undefined
-    const out = stated(flags.out)
-    const actors = stated(flags.actors)
-    const pushed = yield* Effect.tryPromise({
-      try: () => pushActor(flags.entry, {
-        target: flags.target,
-        ...(out === undefined ? {} : { out }),
-        ...(actors === undefined ? {} : { actors }),
-        ...(resolved === undefined ? {} : { baseUrl: resolved.baseUrl }),
-        ...(resolved?.token === undefined ? {} : { token: resolved.token })
-      }),
-      catch: userErrorOf
-    })
-    yield* Console.log(flags.json ? jsonOf(pushed) : pushSummary(pushed))
-  })).pipe(
-    Command.withDescription("Build one named actor and push the same artifact to a local or hosted actor root."),
-    Command.withExamples([
-      { command: "tdg push ./actors/researcher.ts --target local", description: "Push an actor into the local actor root" },
-      { command: "tdg push ./actors/researcher.ts --target hosted --url https://api.example.com", description: "Push an actor to a hosted server" }
     ])
   )
 
@@ -551,8 +545,8 @@ export const methodsCommand = Command.make("methods", remote, (flags) =>
   })).pipe(
     Command.withDescription("List method names and their input and output schemas."),
     Command.withExamples([
-      { command: "tdg methods --actor researcher", description: "Inspect an actor's callable interface" },
-      { command: "tdg methods --actor researcher --json", description: "Print the method catalog as JSON" }
+      { command: "tdg methods", description: "Inspect the mounted actor's callable interface" },
+      { command: "tdg methods --json", description: "Print the method catalog as JSON" }
     ])
   )
 
@@ -594,7 +588,7 @@ export const callCommand = Command.make("call", {
       flags.json
         ? jsonOf({ ...accepted, ...state })
         : state.status === "completed"
-        ? `${methodLines(accepted.thread, accepted.call, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, client.actor, accepted.thread)}`
+        ? `${methodLines(accepted.thread, accepted.call, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, accepted.thread)}`
         : methodLines(accepted.thread, accepted.call, state)
     )
     if (state.status !== "completed") {
@@ -616,19 +610,6 @@ export const lsCommand = Command.make("ls", remote, (flags) =>
   })).pipe(
     Command.withDescription("List every thread a store holds, parent before child. An execution that spawned nine children lists ten rows."),
     Command.withAlias("list")
-  )
-
-export const actorsCommand = Command.make("actors", { url, token, json }, (flags) =>
-  Effect.gen(function*() {
-    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
-    const actors = yield* call(() => client.actors())
-    yield* Console.log(flags.json ? jsonOf(actors) : actorsTable(actors))
-  })).pipe(
-    Command.withDescription("List every actor available on the server."),
-    Command.withExamples([
-      { command: "tdg actors", description: "List actors as a table" },
-      { command: "tdg actors --json", description: "Print the actor summaries as JSON" }
-    ])
   )
 
 export const providersCommand = Command.make("providers", {
@@ -718,21 +699,11 @@ export const eventsCommand = Command.make("events", {
 // The root. It has no handler, so `tdg` with no subcommand renders the help the declaration
 // generates, and an unknown subcommand fails with the module's own message and a non-zero exit.
 export const tdg = Command.make("tdg").pipe(
-  Command.withDescription(
-    "The tardigrade command. Every read is a projection of a durable log, and every failure is the server's own problem document."
-  ),
+  Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
-    initCommand,
-    setupCommand,
-    buildCommand,
-    pushCommand,
-    devCommand,
-    providersCommand,
-    modelsCommand,
-    actorsCommand,
-    methodsCommand,
-    callCommand,
-    lsCommand,
-    eventsCommand
+    { group: "CREATE", commands: [initCommand, setupCommand, buildCommand] },
+    { group: "RUN", commands: [devCommand, callCommand] },
+    { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
+    { group: "INSPECT", commands: [lsCommand, eventsCommand] }
   ])
 )

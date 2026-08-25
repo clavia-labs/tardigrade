@@ -1,5 +1,4 @@
 import type {
-  ActorSummary,
   EventRow,
   MethodState,
   MethodSummary,
@@ -60,18 +59,6 @@ export const threadsTable = (threads: ReadonlyArray<ThreadSummary>): string =>
         String(thread.events),
         timeOf(thread.lastAt),
         thread.parent ?? ABSENT
-      ])
-    )
-
-export const actorsTable = (actors: ReadonlyArray<ActorSummary>): string =>
-  actors.length === 0
-    ? "no actors"
-    : table(
-      ["ACTOR", "KIND", "DIGEST"],
-      actors.map((actor) => [
-        actor.name,
-        actor.builtIn ? "built-in" : "pushed",
-        actor.digest ?? ABSENT
       ])
     )
 

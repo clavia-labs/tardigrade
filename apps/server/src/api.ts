@@ -82,8 +82,9 @@ const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unkn
 const failureMessage = (failure: unknown): string =>
   failure instanceof Error ? failure.message : String(failure)
 
+// selectedActor maps the reserved route to the current runtime and keeps declared names addressable (apps/cli/src/dev.test.ts, "a project actor mounts directly").
 const selectedActor = (threads: Context.Service.Shape<typeof Threads>, actor: string): Effect.Effect<ActorThreads | void> =>
-  actor === (threads.actorName ?? RESERVED_ACTOR)
+  actor === RESERVED_ACTOR || actor === threads.actorName
     ? Effect.succeed(threads)
     : (threads.actor?.(actor) ?? Effect.void)
 
@@ -93,6 +94,16 @@ const actorOf = (actor: string): Effect.Effect<ActorThreads, ReturnType<typeof U
     Effect.flatMap(selectedActor(threads, actor), (found) => found === undefined
       ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
       : Effect.succeed(found)))
+
+// actorIdentityOf names the runtime behind a route alias (apps/cli/src/dev.test.ts, "a project actor mounts directly").
+const actorIdentityOf = (actor: string) =>
+  Effect.flatMap(Threads, (threads) =>
+    Effect.flatMap(selectedActor(threads, actor), (found) => found === undefined
+      ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
+      : Effect.succeed({
+        name: actor === RESERVED_ACTOR ? threads.actorName ?? actor : actor,
+        sqlite: found.sqlite
+      })))
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
@@ -230,6 +241,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   return HttpApiBuilder.group(Api, "threads", (handlers) =>
     handlers
+      .handle("actor", ({ params }) => actorIdentityOf(params.actor))
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
       // layerRequestProblems), so the handler only ever sees an event.

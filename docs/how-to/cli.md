@@ -16,8 +16,8 @@ Or run it without installing: `bunx tardie <command>`. Bun 1.4 or later.
 tdg init researcher
 cd researcher
 tdg dev
-tdg methods --actor researcher
-tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
+tdg methods
+tdg call message '{"text":"read this repo and tell me what it does"}'
 ```
 
 ## Commands
@@ -29,17 +29,15 @@ tdg call message '{"text":"read this repo and tell me what it does"}' --actor re
 | `tdg setup provider` | Add or update one provider connection |
 | `tdg setup default` | Choose the default model from configured providers |
 | `tdg build <entry>` | Build and validate an actor artifact |
-| `tdg push <entry> --target <local\|hosted>` | Build and push an actor to a self-hosted registry |
 | `tdg dev` | Build `actor.ts`, then serve its API and UI on one port |
 | `tdg providers` | List provider protocols and setup requirements |
 | `tdg models` | Search and page the public model catalog |
-| `tdg actors` | List actors available on the server |
 | `tdg methods` | List an actor's methods and schemas |
 | `tdg call <method> <input>` | Call a method with JSON input and wait for its result |
 | `tdg ls` | List threads |
 | `tdg events <thread>` | Print a thread's log |
 
-Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
+Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. Actor-scoped commands address the mounted actor by default; `--actor` selects a named actor on a server that hosts more than one. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
 
 ## Configuration
 
@@ -50,13 +48,13 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Server to call | `--url` | | `http://localhost:4242` |
 | Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
-| Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/agents.sqlite` |
+| Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
 | Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
 | Project configuration | | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc` |
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.dev.vars` |
 
-`tdg init` asks for a provider connection and default model. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and `celld.jsonc`, and stores the credential in `.dev.vars` at mode 0600. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated platform settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for the actor name when omitted, a provider connection, and a default model. Its target directory must be new. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and `celld.jsonc`, and stores the credential in `.dev.vars` at mode 0600. A failed initialization removes the new target directory. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated platform settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. It stores the actor's threads in `.tardigrade/actor.sqlite` under that directory, so keep the actor directory present while the server runs. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
 An agent or CI job can avoid prompts by supplying the provider connection as JSON during initialization. The JSON names the credential environment variable and never contains its value:
 
@@ -137,14 +135,13 @@ No shell: a directory or a host list can be scoped and a shell cannot.
 ## Examples
 
 ```bash
-tdg methods --actor reviewer
-tdg call message '{"text":"summarize the open PRs"}' --actor reviewer --json
-tdg call message '{"text":"take a deeper pass","model":"anthropic/claude-opus-4-6"}' --actor reviewer
-tdg call inspect '{"path":"README.md"}' --actor reviewer --no-wait
-tdg actors
+tdg methods
+tdg call message '{"text":"summarize the open PRs"}' --json
+tdg call message '{"text":"take a deeper pass","model":"anthropic/claude-opus-4-6"}'
+tdg call inspect '{"path":"README.md"}' --no-wait
 tdg providers --json
 tdg models --provider openrouter --search claude --json
-tdg build ./actors/reviewer.ts
+tdg build actor.ts
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"
 tdg events root --types TurnFailed
 tdg dev --port 8080 --db runs.sqlite

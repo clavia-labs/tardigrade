@@ -4,8 +4,7 @@ import { routeOf } from "./nav"
 
 describe("routeOf", () => {
   test("the API surface is a shareable view", () => {
-    expect(routeOf("?actor=default&view=api")).toEqual({
-      actor: "default",
+    expect(routeOf("?view=api")).toEqual({
       thread: undefined,
       view: "api",
       operation: undefined,
@@ -20,5 +19,9 @@ describe("routeOf", () => {
 
   test("an API operation survives a refresh", () => {
     expect(routeOf("?view=api&operation=get%3A%2Fhealthz").operation).toBe("get:/healthz")
+  })
+
+  test("the new thread surface is shareable", () => {
+    expect(routeOf("?view=new").view).toBe("new")
   })
 })

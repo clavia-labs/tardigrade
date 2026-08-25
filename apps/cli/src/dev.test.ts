@@ -211,11 +211,21 @@ describe("tdg dev", () => {
 
   test("a project actor mounts directly", async () => {
     const response = await booted(async (baseUrl) => {
-      const methods = await fetch(`${baseUrl}/v1/actors/reviewer/methods`)
-      return { status: methods.status, body: await methods.json() }
+      const methods = await fetch(`${baseUrl}/v1/actors/default/methods`)
+      const named = await fetch(`${baseUrl}/v1/actors/reviewer/methods`)
+      const identity = await fetch(`${baseUrl}/v1/actors/default`)
+      return {
+        current: { status: methods.status, body: await methods.json() },
+        named: { status: named.status, body: await named.json() },
+        identity: { status: identity.status, body: await identity.json() }
+      }
     }, {}, { actor: directActor })
 
-    expect(response).toEqual({ status: 200, body: [] })
+    expect(response).toEqual({
+      current: { status: 200, body: [] },
+      named: { status: 200, body: [] },
+      identity: { status: 200, body: { name: "reviewer", sqlite: ":memory:" } }
+    })
   })
 
   test("a local push refreshes the actor registry", async () => {
@@ -273,7 +283,7 @@ describe("tdg dev", () => {
     })
     expect(seen.ran.failed).toBe(false)
     expect(seen.ran.lines[0]).toBe(
-      `root m1 completed\nthe scripted answer\n\ntrace\n  ${seen.baseUrl}/?actor=default&thread=root`
+      `root m1 completed\nthe scripted answer\n\ntrace\n  ${seen.baseUrl}/?thread=root`
     )
     expect(JSON.parse(seen.listed.lines[0] ?? "")).toMatchObject([{ id: "root", status: "settled" }])
     expect(seen.logged.lines[0]).toContain("MessageReceived")

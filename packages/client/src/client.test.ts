@@ -101,6 +101,13 @@ describe("the address a call goes to", () => {
     expect(lastUrl().pathname).toBe("/v1/actors")
   })
 
+  test("reads the selected actor identity", async () => {
+    answer = () => Response.json({ name: "reviewer", sqlite: "/work/.tardigrade/actor.sqlite" })
+    const identity = await makeClient({ baseUrl: "http://localhost:4111", fetch: stub }).identity()
+    expect(identity).toEqual({ name: "reviewer", sqlite: "/work/.tardigrade/actor.sqlite" })
+    expect(lastUrl().pathname).toBe("/v1/actors/default")
+  })
+
   // The transport reads its default fetch once per process, so a stated one is the only way a
   // caller routes requests elsewhere: a global assigned later is never consulted (client.ts,
   // ClientOptions.fetch).
