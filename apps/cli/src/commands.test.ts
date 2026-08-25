@@ -7,9 +7,7 @@ import { CliError, Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
 import {
   ProblemError,
-  RESERVED_ACTOR,
-  type ActorSummary,
-  type Client,
+  type ActorClient,
   type EventRow,
   type MethodAccepted,
   type MethodState,
@@ -50,7 +48,6 @@ const clientOf = (
   recorded: Recorded,
   answers: {
     readonly list?: ReadonlyArray<ThreadSummary>
-    readonly actors?: ReadonlyArray<ActorSummary>
     readonly events?: ReadonlyArray<EventRow>
     readonly methods?: ReadonlyArray<MethodSummary>
     readonly models?: ModelCatalogPage
@@ -58,15 +55,11 @@ const clientOf = (
     readonly states?: ReadonlyArray<MethodState>
     readonly fail?: ProblemError
   }
-): Client => {
+): ActorClient => {
   let read = 0
   return {
     baseUrl: "http://localhost:0",
-    actor: RESERVED_ACTOR,
-    identity: () => Promise.resolve({ name: RESERVED_ACTOR, sqlite: "/work/.tardigrade/actor.sqlite" }),
-    actors: () => answers.fail === undefined
-      ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
-      : Promise.reject(answers.fail),
+    metadata: () => Promise.resolve({ name: "test", storage: { kind: "sqlite", location: "/work/.tardigrade/actor.sqlite" } }),
     providers: (options) => {
       recorded.catalog.push({ kind: "providers", options })
       return Promise.resolve(answers.providers ?? {
@@ -110,7 +103,6 @@ const clientOf = (
       })
       return answers.fail === undefined
         ? Promise.resolve({
-          actor: RESERVED_ACTOR,
           thread,
           method: name,
           call: invocation.id
@@ -118,7 +110,7 @@ const clientOf = (
         : Promise.reject(answers.fail)
     },
     append: refuse,
-    projection: refuse as Client["projection"],
+    projection: refuse as ActorClient["projection"],
     tree: refuse,
     resume: refuse,
     health: refuse,
@@ -309,7 +301,6 @@ describe("parsing", () => {
     expect(help).toContain("--limit")
     expect(help).toContain("--types")
     expect(help).toContain("--json")
-    expect(help).toContain("--actor")
     const devHelp = (await drive(["dev", "--no-open", "--help"])).lines.join("\n")
     expect(devHelp).toContain("--open")
     expect(devHelp).toContain("--no-open")
@@ -559,7 +550,6 @@ describe("call", () => {
       answers: { states: [{ status: "completed", output: "done" }] }
     })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual({
-      actor: RESERVED_ACTOR,
       thread: "root",
       method: "message",
       call: "m1",

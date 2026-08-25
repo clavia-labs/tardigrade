@@ -1,7 +1,7 @@
 import { useCallback, useSyncExternalStore } from "react"
 
-// The URL is the app's only navigation state. `?thread=` chooses a trace, `?view=` chooses a
-// utility surface, and `?from=` and `?to=` carry the window's two edges, so a view is shareable and
+// The URL is the app's only navigation state. `?thread=` chooses a trace, `?view=new` chooses the
+// new-thread surface, and `?from=` and `?to=` carry the window's two edges, so a view is shareable and
 // survives a refresh (voyager-spec.md, "Conventions").
 
 // The params the app reads. Anything else in the query belongs to something other than navigation
@@ -12,8 +12,7 @@ import { useCallback, useSyncExternalStore } from "react"
 // rather than a seq the app would have to derive from it.
 export interface Route {
   readonly thread: string | undefined
-  readonly view: "api" | "new" | undefined
-  readonly operation: string | undefined
+  readonly view: "new" | undefined
   readonly from: number | undefined
   readonly to: number | undefined
 }
@@ -28,11 +27,9 @@ const parse = (search: string): Route => {
   const params = new URLSearchParams(search)
   const thread = params.get("thread")
   const view = params.get("view")
-  const operation = params.get("operation")
   return {
     thread: thread === null || thread.length === 0 ? undefined : thread,
-    view: view === "api" || view === "new" ? view : undefined,
-    operation: operation === null || operation.length === 0 ? undefined : operation,
+    view: view === "new" ? view : undefined,
     from: fraction(params.get("from")),
     to: fraction(params.get("to"))
   }
@@ -50,7 +47,6 @@ export const navigate = (next: Partial<Route>, options: { readonly replace?: boo
   }
   if ("thread" in next) write("thread", next.thread)
   if ("view" in next) write("view", next.view)
-  if ("operation" in next) write("operation", next.operation)
   if ("from" in next) write("from", next.from)
   if ("to" in next) write("to", next.to)
   const search = params.toString()

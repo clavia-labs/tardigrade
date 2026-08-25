@@ -4,7 +4,7 @@ import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN, type ActorDefinition } from "tardie"
-import { NO_ANSWER, ProblemError, RESERVED_ACTOR, type Client, type MethodState } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, type ActorClient, type MethodState } from "@clavia/tardigrade-client"
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
@@ -134,11 +134,6 @@ const setupModel = Flag.string("model").pipe(
   Flag.optional
 )
 
-const actor = Flag.string("actor").pipe(
-  Flag.withDescription(`The actor to address. Defaults to ${RESERVED_ACTOR}.`),
-  Flag.withDefault(RESERVED_ACTOR)
-)
-
 const callId = Flag.string("id").pipe(
   Flag.withDescription(
     "The call id. A fresh id is minted unless stated; reuse it for an idempotent retry."
@@ -146,7 +141,7 @@ const callId = Flag.string("id").pipe(
   Flag.optional
 )
 
-const remote = { url, token, actor, json }
+const remote = { url, token, json }
 const catalogRemote = { url, token, json }
 
 const catalogSearch = Flag.string("search").pipe(
@@ -169,13 +164,12 @@ const catalogLimit = Flag.integer("limit").pipe(
 const clientOf = (flags: {
   readonly url: Option.Option<string>
   readonly token: Option.Option<string>
-  readonly actor: string
 }) =>
   Effect.gen(function*() {
     const cli = yield* Cli
     const file = yield* readFileConfig(cli.env)
     const resolved = resolveRemote({ url: stated(flags.url), token: stated(flags.token) }, cli.env, file)
-    return cli.openClient({ baseUrl: resolved.baseUrl, token: resolved.token, actor: flags.actor })
+    return cli.openClient({ baseUrl: resolved.baseUrl, token: resolved.token })
   })
 
 const stated = (option: Option.Option<string>): string | undefined => Option.getOrUndefined(option)
@@ -187,7 +181,7 @@ const methodInput = (source: string): Effect.Effect<unknown, CliError.UserError>
   })
 
 const settle = (
-  client: Client,
+  client: ActorClient,
   thread: string,
   method: string,
   callId: string,
@@ -619,7 +613,7 @@ export const providersCommand = Command.make("providers", {
   ...catalogRemote
 }, (flags) =>
   Effect.gen(function*() {
-    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const client = yield* clientOf(flags)
     const page = yield* call(() => client.providers({
       cursor: stated(flags.cursor),
       limit: Option.getOrUndefined(flags.limit),
@@ -645,7 +639,7 @@ export const modelsCommand = Command.make("models", {
   ...catalogRemote
 }, (flags) =>
   Effect.gen(function*() {
-    const client = yield* clientOf({ ...flags, actor: RESERVED_ACTOR })
+    const client = yield* clientOf(flags)
     const page = yield* call(() => client.models({
       cursor: stated(flags.cursor),
       limit: Option.getOrUndefined(flags.limit),

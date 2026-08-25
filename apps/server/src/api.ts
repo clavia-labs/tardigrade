@@ -1,4 +1,4 @@
-import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
+import { Clock, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -11,7 +11,6 @@ import {
   ModelCatalogUnavailable,
   RESERVED_ACTOR,
   unacceptableField,
-  UnknownActor,
   UnknownMethod,
   UnknownMethodCall,
   UnknownProjection,
@@ -34,7 +33,7 @@ import { treeOf, type ThreadSummary } from "./projections"
 // a cursor for the connection it serves and nothing else, so two processes reading the same log
 // answer the same way.
 
-// The page size of GET /v1/actors/:actor/threads/:id/events when the caller states no `limit`
+// The page size of GET /v1/threads/:id/events when the caller states no `limit`
 // (docs/how-to/server.md, "Endpoints").
 export const DEFAULT_EVENT_LIMIT = 200
 
@@ -68,9 +67,6 @@ const integerOf = (raw: string | undefined): number | undefined => {
 
 const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id)} has ever existed.`
 
-const unknownActorDetail = (actor: string) =>
-  `No actor named ${JSON.stringify(actor)} is available on this server.`
-
 const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unknown>>): string => {
   const declared = Object.keys(methods)
   const available = declared.length === 0
@@ -81,29 +77,6 @@ const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unkn
 
 const failureMessage = (failure: unknown): string =>
   failure instanceof Error ? failure.message : String(failure)
-
-// selectedActor maps the reserved route to the current runtime and keeps declared names addressable (apps/cli/src/dev.test.ts, "a project actor mounts directly").
-const selectedActor = (threads: Context.Service.Shape<typeof Threads>, actor: string): Effect.Effect<ActorThreads | void> =>
-  actor === RESERVED_ACTOR || actor === threads.actorName
-    ? Effect.succeed(threads)
-    : (threads.actor?.(actor) ?? Effect.void)
-
-// actorOf is the guard every declared route runs first.
-const actorOf = (actor: string): Effect.Effect<ActorThreads, ReturnType<typeof UnknownActor.of>, Threads> =>
-  Effect.flatMap(Threads, (threads) =>
-    Effect.flatMap(selectedActor(threads, actor), (found) => found === undefined
-      ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
-      : Effect.succeed(found)))
-
-// actorIdentityOf names the runtime behind a route alias (apps/cli/src/dev.test.ts, "a project actor mounts directly").
-const actorIdentityOf = (actor: string) =>
-  Effect.flatMap(Threads, (threads) =>
-    Effect.flatMap(selectedActor(threads, actor), (found) => found === undefined
-      ? Effect.fail(UnknownActor.of(unknownActorDetail(actor)))
-      : Effect.succeed({
-        name: actor === RESERVED_ACTOR ? threads.actorName ?? actor : actor,
-        sqlite: found.sqlite
-      })))
 
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
@@ -196,39 +169,37 @@ const tail = (
 // answer, while this route hands back a connection that outlives the handler and carries its own
 // cursor, heartbeat, and Last-Event-ID resume. It is merged beside the HttpApi app and inherits the
 // same bearer gate by being part of the same router (http.ts, layerApp).
+const streamResponse = (
+  threads: ActorThreads,
+  id: string,
+  poll: Duration.Input,
+  heartbeat: Duration.Input
+) => Effect.gen(function*() {
+  const log = yield* threads.events(id)
+  if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
+  const query = yield* HttpServerRequest.ParsedSearchParams
+  const rawAfter = singleOf(query["after"])
+  const after = integerOf(rawAfter)
+  if (rawAfter !== undefined && after === undefined) {
+    return problemResponse(invalidRequest("Query", [unacceptableField("after")]))
+  }
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const from = integerOf(request.headers["last-event-id"]) ?? after ?? 0
+  return HttpServerResponse.stream(tail(threads.events, id, from, poll, heartbeat), {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
+  })
+})
+
 export const layerStream = (options: ApiOptions = {}) => {
   const poll = options.poll ?? DEFAULT_SSE_POLL
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
   return HttpRouter.add(
     "GET",
-    "/v1/actors/:actor/threads/:id/events/stream",
+    "/v1/threads/:id/events/stream",
     Effect.gen(function*() {
       const params = yield* HttpRouter.params
-      const actor = paramOf(params, "actor")
-      // The tail answers the same actor guard the declared routes do. It is spelled out rather than
-      // shared with them because this route decodes its own request: it is not a declared endpoint
-      // (contract.ts, the SSE note; api.test.ts, "the tail refuses an actor nobody deployed").
-      const id = paramOf(params, "id")
-      const registry = yield* Threads
-      const threads = yield* selectedActor(registry, actor)
-      if (threads === undefined) return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
-      const log = yield* threads.events(id)
-      if (log.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
-      const query = yield* HttpServerRequest.ParsedSearchParams
-      const rawAfter = singleOf(query["after"])
-      const after = integerOf(rawAfter)
-      if (rawAfter !== undefined && after === undefined) {
-        return problemResponse(invalidRequest("Query", [unacceptableField("after")]))
-      }
-      // Last-Event-ID is the browser's own resume and it wins: a reconnecting EventSource replays
-      // the URL it was opened with, so the query would otherwise take the stream back to where the
-      // first connection began.
-      const request = yield* HttpServerRequest.HttpServerRequest
-      const from = integerOf(request.headers["last-event-id"]) ?? after ?? 0
-      return HttpServerResponse.stream(tail(threads.events, id, from, poll, heartbeat), {
-        contentType: "text/event-stream",
-        headers: { "cache-control": "no-cache" }
-      })
+      return yield* streamResponse(yield* Threads, paramOf(params, "id"), poll, heartbeat)
     })
   )
 }
@@ -241,24 +212,23 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   return HttpApiBuilder.group(Api, "threads", (handlers) =>
     handlers
-      .handle("actor", ({ params }) => actorIdentityOf(params.actor))
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
       // layerRequestProblems), so the handler only ever sees an event.
       .handle("append", ({ params, payload }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(params.actor)
+          const threads = yield* Threads
           yield* threads.append(params.id, payload)
-          return { actor: params.actor, thread: params.id }
+          return { thread: params.id }
         }))
-      .handle("list", ({ params }) =>
+      .handle("list", () =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(params.actor)
+          const threads = yield* Threads
           return flatten(treeOf(logsOf(yield* threads.list)))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(params.actor)
+          const threads = yield* Threads
           const log = yield* logOf(threads.events, params.id)
           const { after, limit: page } = query
           // The comma list is the one rule the query Schema does not state: every value it could
@@ -271,7 +241,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(params.actor)
+          const threads = yield* Threads
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
           const node = findNode(treeOf(logsOf(yield* threads.list)), params.id)
@@ -281,6 +251,14 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
           return node
         })))
 }
+
+// layerRuntimeGroup describes the actor mounted at the runtime origin.
+export const layerRuntimeGroup = HttpApiBuilder.group(Api, "runtime", (handlers) =>
+  handlers.handle("metadata", () =>
+    Effect.map(Threads, (threads) => ({
+      name: threads.actorName ?? RESERVED_ACTOR,
+      storage: { kind: "sqlite", location: threads.sqlite }
+    }))))
 
 // ServerApi is the surface this process serves: the platform's log routes, actor methods, and declared projections.
 export const ServerApi = apiOf(agentProjections)
@@ -300,11 +278,11 @@ const methodOf = (threads: ActorThreads, name: string) => {
     : Effect.succeed(method)
 }
 
-// layerMethodsGroup invokes and reads the method declarations carried by the selected actor runtime.
+// layerMethodsGroup invokes and reads the method declarations carried by the mounted actor runtime.
 export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
   handlers
-    .handle("methods", ({ params }) =>
-      Effect.map(actorOf(params.actor), (threads) =>
+    .handle("methods", () =>
+      Effect.map(Threads, (threads) =>
         Object.entries(threads.methods).map(([name, method]) => ({
           name,
           inputSchema: jsonSchemaOf(method.input),
@@ -312,7 +290,7 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         }))))
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
-        const threads = yield* actorOf(params.actor)
+        const threads = yield* Threads
         const method = yield* methodOf(threads, params.method)
         const at = yield* Clock.currentTimeMillis
         const event = yield* Effect.try({
@@ -322,11 +300,11 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
           )
         })
         yield* threads.append(params.id, event)
-        return { actor: params.actor, thread: params.id, method: params.method, call: params.call }
+        return { thread: params.id, method: params.method, call: params.call }
       }))
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
-        const threads = yield* actorOf(params.actor)
+        const threads = yield* Threads
         const method = yield* methodOf(threads, params.method)
         const log = yield* logOf(threads.events, params.id)
         const state = method.state(log, params.call)
@@ -348,11 +326,11 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
 // projection means reaches this module; the actor holds all of it (actor.ts, agentProjections).
 const readOf = (declaration: ProjectionDeclaration) =>
 (request: {
-  readonly params: { readonly actor: string; readonly id: string }
+  readonly params: { readonly id: string }
   readonly query: never
 }) =>
   Effect.gen(function*() {
-    const threads = yield* actorOf(request.params.actor)
+    const threads = yield* Threads
     const log = yield* logOf(threads.events, request.params.id)
     return declaration.run(log, request.query)
   })
@@ -385,14 +363,9 @@ const declaredDetail = declaredProjections.length === 0
 
 export const layerUnknownProjection = HttpRouter.add(
   "GET",
-  "/v1/actors/:actor/threads/:id/projections/:name",
+  "/v1/threads/:id/projections/:name",
   Effect.gen(function*() {
     const params = yield* HttpRouter.params
-    const actor = paramOf(params, "actor")
-    const registry = yield* Threads
-    if ((yield* selectedActor(registry, actor)) === undefined) {
-      return problemResponse(UnknownActor.of(unknownActorDetail(actor)))
-    }
     const name = paramOf(params, "name")
     return problemResponse(
       UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${declaredDetail}`)

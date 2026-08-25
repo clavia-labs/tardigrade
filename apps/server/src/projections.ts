@@ -15,7 +15,7 @@ import { boundaryOf } from "tardie/boundary"
 // outcome comes from the thread's boundary (tardie/boundary). The vocabulary the wire
 // speaks is the only thing added here.
 
-// ThreadStatus is the summary vocabulary of GET /v1/actors/:actor/threads. Four answers, in the order they are
+// ThreadStatus is the summary vocabulary of GET /v1/threads. Four answers, in the order they are
 // decided: a thread whose work cannot move is blocked, a thread that owes a transition is running,
 // a thread whose last turn died owing nothing is failed, and anything else has settled.
 export type ThreadStatus = "settled" | "running" | "blocked" | "failed"
@@ -46,7 +46,7 @@ export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> =
 
 // statusOf reports what the thread is doing, decided in one order because the states overlap in the
 // log: a blocked lane also has a turn without a terminal, and a failed turn is only failed once
-// nothing is owed (apps-server-spec.md, "GET /v1/actors/:actor/threads").
+// nothing is owed (apps-server-spec.md, "GET /v1/threads").
 //
 // The first two answers are the code lane's own head-of-queue reading, not a second derivation of
 // it: `workOwed` is this head plus `canProgress`, so blocked is exactly the case that leaves
@@ -67,7 +67,7 @@ export const statusOf = (events: ReadonlyArray<Event>): ThreadStatus => {
   return boundary.kind === "failed" ? "failed" : "settled"
 }
 
-// ThreadSummary is one row of GET /v1/actors/:actor/threads: what a thread is, without its events. `parent` is absent
+// ThreadSummary is one row of GET /v1/threads: what a thread is, without its events. `parent` is absent
 // for a root, and `lastAt` for a thread whose events carry no timestamp.
 export interface ThreadSummary {
   readonly id: string
@@ -97,7 +97,7 @@ export const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: str
   }
 }
 
-// ThreadNode is a summary with the threads it spawned, the shape GET /v1/actors/:actor/threads/:id/tree serves.
+// ThreadNode is a summary with the threads it spawned, the shape GET /v1/threads/:id/tree serves.
 export interface ThreadNode extends ThreadSummary {
   readonly children: ReadonlyArray<ThreadNode>
 }

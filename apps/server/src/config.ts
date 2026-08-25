@@ -74,7 +74,7 @@ export interface ServerConfigValue {
   readonly actorData: string
   readonly maxConcurrentLanes: number
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
-  // makes a bearer token required on actor routes. Process metadata stays public (http.ts).
+  // makes a bearer token required on runtime and control routes. Health, API documents, and model catalog routes stay public (http.ts).
   readonly token: string | undefined
   readonly model: ModelConfig
   readonly modelCredentials: ModelCredentials

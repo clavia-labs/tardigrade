@@ -4,11 +4,12 @@ import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 import type { ActorMethodInput, ActorMethodOutput, ActorMethods, ActorMethodState } from "tardie"
 
 import {
-  apiOf,
-  RESERVED_ACTOR,
+  actorApiOf,
+  controlApi,
   ResumeRefused,
   type Accepted,
-  type ActorIdentity,
+  type ActorArtifact,
+  type ActorMetadata,
   type ActorSummary,
   type Append,
   type ThreadNode,
@@ -46,32 +47,31 @@ export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
 export const SERVER_ERROR_TITLE = "Server Error"
 
 export const SERVER_ERROR_DETAIL =
-  "The server could not read this actor. Check that its project directory and `.tardigrade/actor.sqlite` still exist, then restart `tdg dev`."
+  "The server could not read this actor. Check the actor host logs. For `tdg dev`, confirm that the project directory and `.tardigrade/actor.sqlite` still exist, then restart it."
 
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 
 // One derived projection call, as much of its shape as the lookup below needs. The declaration's
-// own types are what a caller sees (Client.projection); this is the untyped middle.
+// own types are what a caller sees (ActorClient.projection); this is the untyped middle.
 // The client HttpApiClient derives for one actor's API: the log's methods, the actor's projections
 // keyed by name, and the health probe.
 type GroupsOf<Api> = Api extends HttpApi.HttpApi<string, infer Groups> ? Groups : never
 
-type DerivedApi<P extends Projections> = HttpApiClient.Client<GroupsOf<ReturnType<typeof apiOf<P>>>>
+type DerivedActorApi<P extends Projections> = HttpApiClient.Client<GroupsOf<ReturnType<typeof actorApiOf<P>>>>
+
+type DerivedControlApi = HttpApiClient.Client<GroupsOf<typeof controlApi>>
 
 type ProjectionCall = (request: {
-  readonly params: { readonly actor: string; readonly id: string }
+  readonly params: { readonly id: string }
   readonly query: unknown
 }) => Effect.Effect<unknown, unknown>
 
-export interface ClientOptions<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
+export interface ActorClientOptions<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
   // The server's address. A path on it is kept, so a server mounted under a prefix works.
   readonly baseUrl?: string | undefined
   // The bearer token, sent as an `authorization` header on every request (apps/server/src/http.ts,
   // layerAuth). The tail cannot carry it (stream.ts).
   readonly token?: string | undefined
-  // Which actor's threads this client addresses. The default is the one name a v1 server reserves
-  // for the assembly it compiled in (contract.ts, RESERVED_ACTOR).
-  readonly actor?: string | undefined
   // How the tail opens a connection. The default is `globalThis.EventSource`.
   readonly eventSource?: OpenEventSource | undefined
   // How a request reaches the network. The default is the platform's own fetch, read through
@@ -84,7 +84,7 @@ export interface ClientOptions<P extends Projections = {}, M extends ActorMethod
   // client that reads the log alone states none; one that calls a projection states the same
   // declaration the server mounts (contract.ts, apiOf).
   readonly projections?: P | undefined
-  // methods preserves the selected actor's call types at this client boundary.
+  // methods preserves the mounted actor's call types at this client boundary.
   readonly methods?: M | undefined
 }
 
@@ -107,7 +107,7 @@ export interface ModelPageOptions extends CatalogPageOptions {
 }
 
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
-export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "actor" | "eventSource">
+export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "eventSource">
 
 // The query one projection accepts, and what it answers: both read from the actor's own
 // declaration, so a caller states what that projection states and gets back what it promises
@@ -124,13 +124,10 @@ export type MethodCall<M extends ActorMethods, Name extends keyof M> = {
 
 type SchemaStructType<Fields> = Fields extends Schema.Struct.Fields ? Schema.Struct<Fields>["Type"] : never
 
-export interface Client<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
+export interface ActorClient<P extends Projections = {}, M extends ActorMethods = ActorMethods> {
   readonly baseUrl: string
-  // The actor every call addresses, resolved once at construction (ClientOptions, actor).
-  readonly actor: string
-  // identity reads the mounted actor behind the selected route (apps/cli/src/dev.test.ts, "a project actor mounts directly").
-  readonly identity: () => Promise<ActorIdentity>
-  readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
+  // metadata describes the actor mounted behind this runtime origin.
+  readonly metadata: () => Promise<ActorMetadata>
   // providers reads setup requirements from the validated public catalog.
   readonly providers: (options?: CatalogPageOptions) => Promise<ProviderCatalogPage>
   // models searches the validated public catalog.
@@ -141,7 +138,7 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (thread: string, event: Append) => Promise<Accepted>
-  // methods lists the selected actor's callable interface and JSON Schema documents.
+  // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // invoke commits one declared method call and returns its durable handle.
   readonly invoke: <const Name extends keyof M & string>(
@@ -171,6 +168,14 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   // Follows one thread's log and answers with the unsubscribe.
   readonly follow: (thread: string, options: FollowOptions) => (() => void)
 }
+
+export interface ControlClient {
+  readonly baseUrl: string
+  readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
+  readonly pushActor: (artifact: ActorArtifact) => Promise<ActorSummary>
+}
+
+export type ControlClientOptions = Pick<ActorClientOptions, "baseUrl" | "token" | "fetch">
 
 const messageOf = (failure: unknown): string =>
   failure instanceof Error ? failure.message : String(failure)
@@ -235,18 +240,18 @@ const catalogQuery = (options: ModelPageOptions) => {
   return query
 }
 
-// makeClient builds the client once. The derivation reads the declaration and compiles an encoder
+// makeActorClient builds the client once. The derivation reads the declaration and compiles an encoder
 // and a decoder per endpoint, so it happens at construction rather than per call.
-export const makeClient = <const P extends Projections = {}, const M extends ActorMethods = ActorMethods>(
-  options: ClientOptions<P, M> = {}
-): Client<P, M> => {
+export const makeActorClient = <const P extends Projections = {}, const M extends ActorMethods = ActorMethods>(
+  options: ActorClientOptions<P, M> = {}
+): ActorClient<P, M> => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
   const token = options.token
   // The derivation's own requirement is `HttpClient`, which the layer below provides, plus whatever
   // the API's middleware asks a client for. RequestProblems asks for nothing, so nothing is left to
   // provide; the compiler proves that for a stated declaration and cannot for a generic one, which
   // is what the annotation states here rather than at every call site.
-  const derived = HttpApiClient.make(apiOf(options.projections ?? ({} as P)), {
+  const derived = HttpApiClient.make(actorApiOf(options.projections ?? ({} as P)), {
     baseUrl,
     ...(token === undefined
       ? {}
@@ -259,13 +264,9 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
   )
   // derived has no requirements for every concrete declaration, which a generic P cannot reduce.
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-  const api = Effect.runSync(derived as Effect.Effect<DerivedApi<P>>)
-  // The actor this client addresses. One name today, because the server compiles one assembly in
-  // and reserves that name for it (contract.ts, RESERVED_ACTOR); it is an option rather than a
-  // literal at each call so a deploy that serves more than one is a client option, not a rewrite.
-  const actor = options.actor ?? RESERVED_ACTOR
+  const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
   const append = (thread: string, event: Append): Promise<Accepted> =>
-    run(api.threads.append({ params: { actor, id: thread }, payload: event }))
+    run(api.threads.append({ params: { id: thread }, payload: event }))
 
   // turnsOf reads the `turns` projection through the derivation, which is where the resume
   // convenience gets the epoch it has to stamp. It is spelled by name rather than through
@@ -282,30 +283,28 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
     }
     // call erases the selected endpoint failure before run converts it to ProblemError.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-    return await run(call({ params: { actor, id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
+    return await run(call({ params: { id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
   return {
     baseUrl,
-    actor,
-    identity: () => run(api.threads.actor({ params: { actor } })),
-    actors: () => run(api.actors.actors({})),
+    metadata: () => run(api.runtime.metadata({})),
     providers: (options = {}) => run(api.models.providers({ query: catalogQuery(options) })),
     models: (options = {}) => run(api.models.models({ query: catalogQuery(options) })),
-    list: () => run(api.threads.list({ params: { actor } })),
-    tree: (thread) => run(api.threads.tree({ params: { actor, id: thread } })),
+    list: () => run(api.threads.list({})),
+    tree: (thread) => run(api.threads.tree({ params: { id: thread } })),
     events: (thread, events = {}) =>
-      run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
+      run(api.threads.events({ params: { id: thread }, query: eventsQuery(events) })),
     append,
-    methods: () => run(api.methods.methods({ params: { actor } })),
+    methods: () => run(api.methods.methods({})),
     invoke: (thread, name, call) =>
       run(api.methods.invoke({
-        params: { actor, id: thread, method: name, call: call.id },
+        params: { id: thread, method: name, call: call.id },
         payload: call.input
       })),
     methodState: (thread, name, call) =>
       run(api.methods.methodState({
-        params: { actor, id: thread, method: name, call }
+        params: { id: thread, method: name, call }
       })) as never,
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
@@ -346,7 +345,7 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
       // ProjectionCall erases the selected endpoint failure before run converts it to ProblemError.
       // @effect-diagnostics-next-line anyUnknownInErrorContext:off
       run((api.projections as Record<string, ProjectionCall>)[name]!({
-        params: { actor, id: thread },
+        params: { id: thread },
         query: query ?? {}
       })) as never,
     follow: (thread, follow) =>
@@ -354,8 +353,30 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
         ...follow,
         baseUrl,
         thread,
-        actor,
         ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
       })
+  }
+}
+
+// makeControlClient builds the client for actor deployment and discovery at a hosting origin.
+export const makeControlClient = (options: ControlClientOptions = {}): ControlClient => {
+  const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
+  const token = options.token
+  const derived = HttpApiClient.make(controlApi, {
+    baseUrl,
+    ...(token === undefined
+      ? {}
+      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
+  }).pipe(
+    Effect.provide(FetchHttpClient.layer),
+    options.fetch === undefined
+      ? (self) => self
+      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
+  )
+  const api = Effect.runSync(derived as Effect.Effect<DerivedControlApi>)
+  return {
+    baseUrl,
+    actors: () => run(api.actors.actors({})),
+    pushActor: (artifact) => run(api.actors.pushActor({ payload: artifact }))
   }
 }

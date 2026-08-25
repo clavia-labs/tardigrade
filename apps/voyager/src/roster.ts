@@ -1,6 +1,6 @@
 import type { ThreadStatus, ThreadSummary } from "@clavia/tardigrade-client"
 
-// The rail's projections. GET /v1/actors/:actor/threads answers with every thread and its parent, and the rail shows
+// The rail's projections. GET /v1/threads answers with every thread and its parent, and the rail shows
 // roots alone, so these functions turn one flat listing into the rows the rail renders. They are
 // pure, so the screen holds no arithmetic of its own.
 
@@ -40,7 +40,7 @@ const rootOf = (id: string, parents: ReadonlyMap<string, string | undefined>): s
   }
 }
 
-// rosterOf projects the listing into the rail. The roots keep the order GET /v1/actors/:actor/threads published, which
+// rosterOf projects the listing into the rail. The roots keep the order GET /v1/threads published, which
 // is first event time, so two polls of one run render identically.
 export const rosterOf = (summaries: ReadonlyArray<ThreadSummary>): Roster => {
   const parents = new Map(summaries.map((summary) => [summary.id, summary.parent]))

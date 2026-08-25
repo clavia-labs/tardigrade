@@ -215,7 +215,7 @@ const Problem = ({ problem }: { readonly problem: ProblemError }): ReactElement 
 const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => (
   <div className="thread-head">
     <span className="thread-id-label">thread id</span>
-    <span className="mono" style={{ fontSize: "var(--text-dense)", fontWeight: 500 }}>{id}</span>
+    <span className="mono thread-id-value" title={id}>{id}</span>
     <CopyButton className="thread-copy" text={id} confirmMs={COPY_CONFIRM_MS} label="Copy thread ID" />
     {status === undefined ? null : (
       <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>

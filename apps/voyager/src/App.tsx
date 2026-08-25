@@ -1,8 +1,7 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
-import { ApiSurface } from "./ApiSurface"
-import { NO_ANSWER, ProblemError, type ActorIdentity, type ThreadSummary } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, type ActorMetadata, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { client } from "./client"
 import { navigate, useRoute } from "./nav"
@@ -21,16 +20,16 @@ interface Reading {
   readonly at: number
 }
 
-const useActorIdentity = (): ActorIdentity | undefined => {
-  const [identity, setIdentity] = useState<ActorIdentity | undefined>(undefined)
+const useActorMetadata = (): ActorMetadata | undefined => {
+  const [metadata, setMetadata] = useState<ActorMetadata | undefined>(undefined)
   useEffect(() => {
     let live = true
-    void client.identity().then((found) => {
-      if (live) setIdentity(found)
+    void client.metadata().then((found) => {
+      if (live) setMetadata(found)
     }).catch(() => undefined)
     return () => { live = false }
   }, [])
-  return identity
+  return metadata
 }
 
 // useRoster polls the current project's thread listing once for the whole screen. The rail's rows and the header's status chip share that reading, and the last good reading survives a server restart.
@@ -73,7 +72,7 @@ const useRoster = (intervalMs: number) => {
 
 export const App = (): ReactElement => {
   const route = useRoute()
-  const actorIdentity = useActorIdentity()
+  const actorMetadata = useActorMetadata()
   const { problem, reading, summaries, ready } = useRoster(ROSTER_POLL_MS)
   const status = summaries.find((summary) => summary.id === route.thread)?.status
   useEffect(() => {
@@ -82,15 +81,14 @@ export const App = (): ReactElement => {
     if (latest === undefined) return
     navigate({ thread: latest.id, from: undefined, to: undefined }, { replace: true })
   }, [reading.roster, ready, route.thread, route.view])
-  if (route.view === "api") return <ApiSurface />
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
-      <Rail actorIdentity={actorIdentity} roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
+      <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {route.view === "new" ? (
-          <Quickstart />
+          <Quickstart actorMetadata={actorMetadata} />
         ) : route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
-          <Quickstart />
+          <Quickstart actorMetadata={actorMetadata} />
         ) : route.thread === undefined ? (
           <div className="mono pane-empty">{ready ? "select a thread" : "loading threads"}</div>
         ) : (

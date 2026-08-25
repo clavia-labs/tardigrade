@@ -13,7 +13,7 @@ import type { Action } from "tardie/events"
 import { openStreams } from "./api"
 import { layerModelCatalogValue } from "./catalog"
 import { layerConfig, readConfig } from "./config"
-import { PROBLEM_TYPE_BASE, RESERVED_ACTOR, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { PROBLEM_TYPE_BASE, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { layerThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import type { TurnViewShape as TurnView } from "./actor"
@@ -139,18 +139,18 @@ const put = (base: string, path: string, body: unknown) =>
 // agentProjections).
 const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
   const views = (await (await fetch(
-    `${base}/v1/actors/default/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
+    `${base}/v1/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
   )).json()) as ReadonlyArray<TurnView>
   return views[0]
 }
 
 const birth = async (base: string, id: string, message: { id: string; text: string }) => {
-  const response = await post(base, `/v1/actors/default/threads/${id}/events`, {
+  const response = await post(base, `/v1/threads/${id}/events`, {
     type: "MessageReceived",
     ...message
   })
   expect(response.status).toBe(202)
-  expect(await response.json()).toEqual({ actor: RESERVED_ACTOR, thread: id })
+  expect(await response.json()).toEqual({ thread: id })
   return until(`turn ${message.id} of ${id}`, async () => {
     const view = await turnOf(base, id, message.id)
     return view === undefined || view.status === "pending" ? undefined : view
@@ -160,18 +160,17 @@ const birth = async (base: string, id: string, message: { id: string; text: stri
 const callMessage = async (base: string, thread: string, call: string, text: string) => {
   const response = await put(
     base,
-    `/v1/actors/default/threads/${thread}/methods/message/calls/${call}`,
+    `/v1/threads/${thread}/methods/message/calls/${call}`,
     { text }
   )
   expect(response.status).toBe(202)
   expect(await response.json()).toEqual({
-    actor: RESERVED_ACTOR,
     thread,
     method: "message",
     call
   })
   return until(`method call ${call} of ${thread}`, async () => {
-    const state = await get(base, `/v1/actors/default/threads/${thread}/methods/message/calls/${call}`)
+    const state = await get(base, `/v1/threads/${thread}/methods/message/calls/${call}`)
     const body = await state.json() as Record<string, unknown>
     return body["status"] === "pending" ? undefined : body
   })
@@ -225,7 +224,7 @@ describe("models", () => {
 describe("actor methods", () => {
   test("the actor exposes its method schemas", async () => {
     const methods = await serving(async (base) =>
-      await (await get(base, "/v1/actors/default/methods")).json() as ReadonlyArray<{
+      await (await get(base, "/v1/methods")).json() as ReadonlyArray<{
         readonly name: string
         readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, { readonly properties?: Record<string, unknown> }> }
         readonly outputSchema: { readonly type?: unknown }
@@ -248,16 +247,16 @@ describe("actor methods", () => {
   test("putting the same call URL is absorbed", async () => {
     const read = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
-      const eventsAt = async () => await (await get(base, "/v1/actors/default/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const eventsAt = async () => await (await get(base, "/v1/threads/alpha/events")).json() as ReadonlyArray<EventRow>
       const before = await eventsAt()
-      const repeated = await put(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1", { text: "different" })
+      const repeated = await put(base, "/v1/threads/alpha/methods/message/calls/m1", { text: "different" })
       const after = await eventsAt()
-      const state = await get(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1")
+      const state = await get(base, "/v1/threads/alpha/methods/message/calls/m1")
       return { repeated: { status: repeated.status, body: await repeated.json() }, before, after, state: await state.json() }
     })
     expect(read.repeated).toEqual({
       status: 202,
-      body: { actor: RESERVED_ACTOR, thread: "alpha", method: "message", call: "m1" }
+      body: { thread: "alpha", method: "message", call: "m1" }
     })
     expect(read.after).toEqual(read.before)
     expect(read.state).toEqual({ status: "completed", output: "ok: hello" })
@@ -265,7 +264,7 @@ describe("actor methods", () => {
 
   test("an invalid input is refused before it reaches the log", async () => {
     const refusal = await serving(async (base) => {
-      const response = await put(base, "/v1/actors/default/threads/alpha/methods/message/calls/m1", {})
+      const response = await put(base, "/v1/threads/alpha/methods/message/calls/m1", {})
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(400)
@@ -276,7 +275,7 @@ describe("actor methods", () => {
 
   test("an unknown method names the methods the actor declares", async () => {
     const refusal = await serving(async (base) => {
-      const response = await put(base, "/v1/actors/default/threads/alpha/methods/missing/calls/m1", {})
+      const response = await put(base, "/v1/threads/alpha/methods/missing/calls/m1", {})
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(404)
@@ -287,7 +286,7 @@ describe("actor methods", () => {
   test("a call the method cannot derive is its own 404", async () => {
     const refusal = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
-      const response = await get(base, "/v1/actors/default/threads/alpha/methods/message/calls/missing")
+      const response = await get(base, "/v1/threads/alpha/methods/message/calls/missing")
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(404)
@@ -305,8 +304,8 @@ describe("appending", () => {
   // other fields mean is the actor's knowledge (contract.ts, Append).
   test("a body with no type is refused", async () => {
     const problems = await serving(async (base) => {
-      const noType = await post(base, "/v1/actors/default/threads/alpha/events", { id: "m1", text: "hello" })
-      const emptyType = await post(base, "/v1/actors/default/threads/alpha/events", { type: "" })
+      const noType = await post(base, "/v1/threads/alpha/events", { id: "m1", text: "hello" })
+      const emptyType = await post(base, "/v1/threads/alpha/events", { type: "" })
       return [
         { status: noType.status, type: noType.headers.get("content-type"), body: await noType.json() },
         { status: emptyType.status, type: emptyType.headers.get("content-type"), body: await emptyType.json() }
@@ -326,16 +325,16 @@ describe("appending", () => {
   test("a redelivered message id answers the same and writes nothing", async () => {
     const counts = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = ((await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
-      const again = await post(base, "/v1/actors/default/threads/alpha/events", {
+      const before = ((await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const again = await post(base, "/v1/threads/alpha/events", {
         type: "MessageReceived",
         id: "m1",
         text: "hello"
       })
       expect(again.status).toBe(202)
-      expect(await again.json()).toEqual({ actor: RESERVED_ACTOR, thread: "alpha" })
+      expect(await again.json()).toEqual({ thread: "alpha" })
       await sleep(50)
-      const after = ((await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const after = ((await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
       return [before, after]
     })
     expect(counts[1]).toBe(counts[0]!)
@@ -343,7 +342,7 @@ describe("appending", () => {
 })
 
 describe("actors", () => {
-  test("a pushed actor is discovered and serves its own log", async () => {
+  test("a pushed actor is discovered by the control plane", async () => {
     const root = await mkdtemp(join(tmpdir(), "tardigrade-actors-"))
     const actorData = await mkdtemp(join(tmpdir(), "tardigrade-actor-data-"))
     const isolatedConfig = layerConfig(readConfig({
@@ -372,21 +371,13 @@ describe("actors", () => {
             module
           })
           const summary = await pushed.json()
-          const accepted = await post(base, "/v1/actors/reviewer/threads/review/events", {
-            type: "MessageReceived",
-            id: "m1",
-            text: "inspect"
-          })
           const actors = await (await get(base, "/v1/actors")).json()
-          const events = await (await get(base, "/v1/actors/reviewer/threads/review/events")).json() as ReadonlyArray<EventRow>
-          return { pushStatus: pushed.status, summary, accepted: await accepted.json(), actors, events }
+          return { pushStatus: pushed.status, summary, actors }
         })
       }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)
       expect(result.pushStatus).toBe(200)
       expect(result.summary).toEqual({ name: "reviewer", builtIn: false, digest })
-      expect(result.accepted).toEqual({ actor: "reviewer", thread: "review" })
       expect(result.actors).toContainEqual({ name: "reviewer", builtIn: false, digest })
-      expect(result.events.map((row: EventRow) => row.event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     } finally {
       await rm(root, { recursive: true, force: true })
       await rm(actorData, { recursive: true, force: true })
@@ -398,7 +389,7 @@ describe("the listing", () => {
   test("a thread that has settled lists as settled", async () => {
     const listed = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      return (await (await fetch(`${base}/v1/actors/default/threads`)).json()) as ReadonlyArray<ThreadSummary>
+      return (await (await fetch(`${base}/v1/threads`)).json()) as ReadonlyArray<ThreadSummary>
     })
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({ id: "alpha", status: "settled", depth: 0 })
@@ -412,13 +403,13 @@ describe("events", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<EventRow>
-      const all = await json("/v1/actors/default/threads/alpha/events")
+      const all = await json("/v1/threads/alpha/events")
       return {
         all,
-        page: await json("/v1/actors/default/threads/alpha/events?after=1&limit=2"),
-        completed: await json("/v1/actors/default/threads/alpha/events?types=TurnCompleted"),
-        both: await json(`/v1/actors/default/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
-        empty: await json("/v1/actors/default/threads/alpha/events?types=NothingLikeThis")
+        page: await json("/v1/threads/alpha/events?after=1&limit=2"),
+        completed: await json("/v1/threads/alpha/events?types=TurnCompleted"),
+        both: await json(`/v1/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
+        empty: await json("/v1/threads/alpha/events?types=NothingLikeThis")
       }
     })
     expect(read.all.map((row) => row.seq)).toEqual(read.all.map((_, i) => i + 1))
@@ -437,53 +428,12 @@ describe("events", () => {
   test("a log that never existed is the only 404", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const missing = await fetch(`${base}/v1/actors/default/threads/ghost/events`)
+      const missing = await fetch(`${base}/v1/threads/ghost/events`)
       return { status: missing.status, type: missing.headers.get("content-type"), body: await missing.json() }
     })
     expect(answers.status).toBe(404)
     expect(answers.type).toContain(PROBLEM_CONTENT_TYPE)
     expect(answers.body).toMatchObject({ status: 404, title: "Unknown Thread" })
-  })
-})
-
-describe("the actor level", () => {
-  // The actor is a path parameter so the declaration states the shape a deploy will vary, and this
-  // build answers for one name (contract.ts, RESERVED_ACTOR). A name it does not serve is code
-  // nobody deployed here, which is a different fact from a log nobody has written, so it carries a
-  // different problem type even though both are 404 (api.ts, actorOf).
-  test("an actor nobody deployed is its own 404", async () => {
-    const answers = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const read = async (path: string) => {
-        const response = await fetch(`${base}${path}`)
-        return { status: response.status, body: await response.json() as Record<string, unknown> }
-      }
-      return {
-        served: await read(`/v1/actors/${RESERVED_ACTOR}/threads`),
-        ghost: await read("/v1/actors/ghost/threads"),
-        ghostThread: await read("/v1/actors/ghost/threads/alpha/events")
-      }
-    })
-    expect(answers.served.status).toBe(200)
-    expect(answers.ghost.status).toBe(404)
-    expect(answers.ghost.body).toMatchObject({ title: "Unknown Actor" })
-    // The actor is answered before the thread, so a real thread under a name nobody deployed still
-    // reports the actor rather than the log.
-    expect(answers.ghostThread.status).toBe(404)
-    expect(answers.ghostThread.body).toMatchObject({ title: "Unknown Actor" })
-  })
-
-  // The tail decodes its own request because it is not a declared endpoint (contract.ts, the SSE
-  // note), so it carries its own copy of the same guard.
-  test("the tail refuses an actor nobody deployed", async () => {
-    const answers = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/actors/ghost/threads/alpha/events/stream`)
-      return { status: response.status, type: response.headers.get("content-type"), body: await response.json() }
-    })
-    expect(answers.status).toBe(404)
-    expect(answers.type).toContain(PROBLEM_CONTENT_TYPE)
-    expect(answers.body).toMatchObject({ title: "Unknown Actor" })
   })
 })
 
@@ -505,9 +455,9 @@ describe("the event stream", () => {
   test("a reconnect replays from Last-Event-ID and then runs live, once each", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = (await (await fetch(`${base}/v1/actors/default/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
+      const before = (await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
       const abort = new AbortController()
-      const response = await fetch(`${base}/v1/actors/default/threads/alpha/events/stream?after=0`, {
+      const response = await fetch(`${base}/v1/threads/alpha/events/stream?after=0`, {
         // The header wins over the query, which is the whole of what a resuming EventSource can
         // state: it replays the URL it was opened with and carries the id in the header.
         headers: { "last-event-id": "2" },
@@ -532,7 +482,7 @@ describe("the event stream", () => {
       expect(openStreams()).toBe(1)
 
       // Then a message delivered while the stream is open arrives on it.
-      await post(base, "/v1/actors/default/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
+      await post(base, "/v1/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
       await until("the live frames", async () => (framesOf(text).length > replayed.length ? true : undefined))
       const live = framesOf(text)
 
@@ -564,7 +514,7 @@ describe("projections", () => {
   test("a declared projection serves what the actor computes", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/actors/default/threads/alpha/projections/turns`)
+      const response = await fetch(`${base}/v1/threads/alpha/projections/turns`)
       return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
     })
     expect(read.status).toBe(200)
@@ -583,8 +533,7 @@ describe("projections", () => {
         }
       }
       return {
-        ghost: await read("/v1/actors/default/threads/alpha/projections/facts"),
-        actor: await read("/v1/actors/ghost/threads/alpha/projections/facts")
+        ghost: await read("/v1/threads/alpha/projections/facts")
       }
     })
     expect(answers.ghost.status).toBe(404)
@@ -596,15 +545,12 @@ describe("projections", () => {
     // The detail lists what the actor does declare, so a caller who guessed a name learns the ones
     // that exist rather than only that this one does not.
     expect(String(answers.ghost.body["detail"])).toContain('"turns"')
-    // The actor is answered before the projection: a name nobody deployed is not a place where
-    // asking what it declares means anything.
-    expect(answers.actor.body).toMatchObject({ title: "Unknown Actor" })
   })
 
   test("the event log keeps its platform route", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const events = await fetch(`${base}/v1/actors/default/threads/alpha/events`)
+      const events = await fetch(`${base}/v1/threads/alpha/events`)
       return { status: events.status, type: events.headers.get("content-type") }
     })
     expect(answers.status).toBe(200)
@@ -616,8 +562,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        now: await json("/v1/actors/default/threads/alpha/projections/turns"),
-        atTwo: await json("/v1/actors/default/threads/alpha/projections/turns?at=2")
+        now: await json("/v1/threads/alpha/projections/turns"),
+        atTwo: await json("/v1/threads/alpha/projections/turns?at=2")
       }
     })
     expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
@@ -632,8 +578,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        one: await json("/v1/actors/default/threads/alpha/projections/turns?turn=m1"),
-        ghost: await json("/v1/actors/default/threads/alpha/projections/turns?turn=m9")
+        one: await json("/v1/threads/alpha/projections/turns?turn=m1"),
+        ghost: await json("/v1/threads/alpha/projections/turns?turn=m9")
       }
     })
     expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
@@ -654,9 +600,9 @@ describe("the tree", () => {
         return health.status === "resting" ? health : undefined
       })
       return {
-        tree: (await (await fetch(`${base}/v1/actors/default/threads/root/tree`)).json()) as ThreadNode,
-        listed: (await (await fetch(`${base}/v1/actors/default/threads`)).json()) as ReadonlyArray<ThreadSummary>,
-        ghost: (await fetch(`${base}/v1/actors/default/threads/ghost/tree`)).status
+        tree: (await (await fetch(`${base}/v1/threads/root/tree`)).json()) as ThreadNode,
+        listed: (await (await fetch(`${base}/v1/threads`)).json()) as ReadonlyArray<ThreadSummary>,
+        ghost: (await fetch(`${base}/v1/threads/ghost/tree`)).status
       }
     })
     expect(read.tree.id).toBe("root")
