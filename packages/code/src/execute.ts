@@ -36,6 +36,15 @@ import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events
 // never settles) or settled (the body's promise resolves with the result).
 type CallOutcome = { readonly parked: true } | { readonly parked: false; readonly result: unknown }
 
+// canonicalJson sorts object members recursively and preserves array order
+// (execute.test.ts, "object member order survives replay").
+const canonicalJson = (value: unknown): string | undefined =>
+  JSON.stringify(value, (_key, entry: unknown) => {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry
+    const record = entry as Readonly<Record<string, unknown>>
+    return Object.fromEntries(Object.keys(record).sort().map((key) => [key, record[key]]))
+  })
+
 // executeRecorded runs one attempt. The proxy keys each call {execId}.{n} in execution order
 // (callId, src/grammar/grammar.ts); a committed answer replays, an uncommitted call runs live
 // and records its pair before the body continues. A parked call records no pair: the next
@@ -103,7 +112,7 @@ const executeRecorded = <R = never>(
                 const drift =
                   String(sent.name) !== askedName
                     ? `asked ${askedName} where the log recorded ${String(sent.name)}`
-                    : JSON.stringify(sent.arguments) !== JSON.stringify(args)
+                    : canonicalJson(sent.arguments) !== canonicalJson(args)
                       ? `asked ${askedName} with different arguments than the log recorded`
                       : undefined
                 if (drift !== undefined) {

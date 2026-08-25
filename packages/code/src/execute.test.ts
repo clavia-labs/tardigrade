@@ -177,6 +177,43 @@ describe("the replay guard", () => {
     expect(settle.error).toContain("nondeterministic body")
     expect(settle.error).toContain("different arguments")
   })
+
+  test("object member order survives replay", async () => {
+    const replayed = `
+      const a = await world.read({
+        tool: "list_deployments",
+        parameters: { region: "us", filters: { owner: "me", status: "active" } },
+        order: ["newest", "oldest"]
+      })
+      return { a }
+    `
+    const log: Event[] = [
+      { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+      { type: "CodeDispatched", execId: "e1", code: replayed, turn: "t1", at: 2 },
+      {
+        type: "PackageCalled",
+        callId: "e1.0",
+        name: "world.read",
+        arguments: {
+          order: ["newest", "oldest"],
+          parameters: { filters: { status: "active", owner: "me" }, region: "us" },
+          tool: "list_deployments"
+        },
+        turn: "t1",
+        at: 3
+      },
+      { type: "PackageReturned", callId: "e1.0", result: { ok: "read" }, turn: "t1", at: 4 }
+    ]
+    const events = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        return yield* Effect.flatMap(EventLog, (l) => l.read)
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+    )
+    const settle = events.find((e) => e.type === "CodeSettled") as { error?: string; result?: unknown }
+    expect(settle.error).toBeUndefined()
+    expect(settle.result).toEqual({ a: { ok: "read" } })
+  })
 })
 
 describe("the shadow router rule", () => {
