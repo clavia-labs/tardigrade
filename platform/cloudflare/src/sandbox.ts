@@ -282,6 +282,22 @@ interface SandboxReplayBoundary extends SandboxResult {
   readonly calls?: ReadonlyArray<SandboxBridgeCall>
 }
 
+// disposeWorker releases loader implementations that expose deterministic cleanup. Worker stubs without either extension remain governed by their platform lifecycle (sandbox.test.ts, "disposes every replay worker before loading the next round" and "disposes a failed capability worker").
+const disposeWorker = async (worker: WorkerStub): Promise<void> => {
+  const candidate = worker as unknown as Readonly<Record<PropertyKey, unknown>>
+  const dispose = candidate["dispose"]
+  if (typeof dispose === "function") {
+    await dispose.call(worker)
+    return
+  }
+  const symbol = (Symbol as { readonly dispose?: symbol }).dispose
+  if (symbol === undefined) return
+  const symbolDispose = candidate[symbol]
+  if (typeof symbolDispose === "function") await symbolDispose.call(worker)
+}
+
+const discardBody = (response: Response): Promise<ArrayBuffer> => response.arrayBuffer()
+
 export const cloudflareSandboxServiceFor = (
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
@@ -329,15 +345,22 @@ export const cloudflareSandboxServiceFor = (
               globalOutbound: resolved.globalOutbound,
               ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
             })
-            const response = await worker.getEntrypoint().fetch(request())
-            if (!response.ok) return { error: `sandbox returned HTTP ${response.status}` }
-            const boundary = await response.json() as SandboxReplayBoundary
-            if (boundary.calls === undefined) return boundary
-            if (boundary.calls.length === 0) return { error: "sandbox replay returned an empty call boundary" }
-            const outcomes = await Promise.all(boundary.calls.map((entry) =>
-              call(entry.ordinal, entry.packageName, entry.method, entry.args)
-            ))
-            replay.push(...boundary.calls.map((entry, index) => ({ call: entry, outcome: outcomes[index]! })))
+            try {
+              const response = await worker.getEntrypoint().fetch(request())
+              if (!response.ok) {
+                await discardBody(response)
+                return { error: `sandbox returned HTTP ${response.status}` }
+              }
+              const boundary = await response.json() as SandboxReplayBoundary
+              if (boundary.calls === undefined) return boundary
+              if (boundary.calls.length === 0) return { error: "sandbox replay returned an empty call boundary" }
+              const outcomes = await Promise.all(boundary.calls.map((entry) =>
+                call(entry.ordinal, entry.packageName, entry.method, entry.args)
+              ))
+              replay.push(...boundary.calls.map((entry, index) => ({ call: entry, outcome: outcomes[index]! })))
+            } finally {
+              await disposeWorker(worker)
+            }
           }
         }
         const bridge = bridgeFor(call)
@@ -357,9 +380,16 @@ export const cloudflareSandboxServiceFor = (
           globalOutbound: resolved.globalOutbound,
           ...(resolved.limits === undefined ? {} : { limits: resolved.limits })
         })
-          const response = await worker.getEntrypoint().fetch(request())
-          if (!response.ok) return { error: `sandbox returned HTTP ${response.status}` }
-          return await response.json() as SandboxResult
+          try {
+            const response = await worker.getEntrypoint().fetch(request())
+            if (!response.ok) {
+              await discardBody(response)
+              return { error: `sandbox returned HTTP ${response.status}` }
+            }
+            return await response.json() as SandboxResult
+          } finally {
+            await disposeWorker(worker)
+          }
         } finally {
           bridge.close()
         }

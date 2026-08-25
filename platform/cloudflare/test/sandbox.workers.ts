@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox"
 import type { Env } from "../src/worker"
 import { cloudflareSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
+import { replaySequenceWith } from "./sandbox.cases"
 
 const bridgeFor: SandboxBridgeFactory = (_call) => ({
   binding: (env as Env).ACTORS.getByName("sandbox-test"),
@@ -87,25 +88,7 @@ describe("cloudflare sandbox", () => {
   })
 
   test("replays sequential and concurrent package calls", async () => {
-    const sandbox = cloudflareSandboxServiceFor((env as Env).LOADER, bridgeFor, { transport: "replay" })
-    const observed: Array<{ readonly ordinal: number; readonly value: number }> = []
-    const result = await Effect.runPromise(sandbox.run(
-      `const first = await tools.double({ value: 3 })
-      const pair = await Promise.all([
-        tools.double({ value: first }),
-        tools.double({ value: 5 })
-      ])
-      return pair`,
-      {
-        tools: {
-          double: async (input, ordinal) => {
-            const value = (input as { readonly value: number }).value
-            observed.push({ ordinal, value })
-            return sandboxReturned(value * 2)
-          }
-        }
-      }
-    ))
+    const { result, observed } = await replaySequenceWith((env as Env).LOADER)
 
     expect(result).toEqual({ result: [12, 10] })
     expect(observed).toEqual([
