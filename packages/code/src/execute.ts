@@ -2,7 +2,7 @@ import { Clock, Deferred, Effect, Fiber } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { workOwed } from "./projections"
 import { annotationsOf, type Package, type PackageRequirements } from "./packages"
 import { checkInput, renderSignature } from "./contract"
@@ -351,7 +351,7 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     if (dispatch === undefined) return []
     const d = dispatch as { code?: unknown; at?: unknown }
     return [
-      transition<
+      effect<
         { execId: string; code: string; turn: string | undefined; at: number | undefined },
         KeyValueStore.KeyValueStore | R
       >({

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/turns"
 import { modelRequest, renderMessages } from "./request"
-import { canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, toolList } from "./index"
+import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, toolList } from "./index"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -17,6 +17,7 @@ const SCOUT = output({
 })
 
 const CODE = renderOf([codeMode(), nativeOutput], [])
+const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget([codeMode()]), nativeOutput], log)
 
 // The request is a pure projection of the trajectory: the message conversation, and the tool and
 // prompt policy. Both live in the domain, so they test without a provider.
@@ -152,14 +153,14 @@ describe("modelRequest tool and prompt policy", () => {
 
   test("once the budget is spent, execute is dropped and the nudge is added", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }])
-    const req = modelRequest(spent, CODE)
+    const req = modelRequest(spent, budgetedCode(spent))
     expect(req.tools.map((t) => t.name)).toEqual([])
     expect(req.system).toContain("tool budget for this turn is spent")
   })
 
   test("the wall drops the work tools and leaves the contract standing", () => {
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
-    const req = modelRequest(spent, CODE)
+    const req = modelRequest(spent, budgetedCode(spent))
     expect(req.tools.map((t) => t.name)).toEqual([])
     expect(req.output?.kind === "contract" && req.output.contract.name).toBe("scout")
   })
@@ -171,7 +172,7 @@ describe("modelRequest tool and prompt policy", () => {
       { type: "TurnCompleted", output: "done", turn: "m1", at: 2 },
       { type: "MessageReceived", id: "m2", text: "new", at: 3 }
     ]
-    expect(modelRequest(trajectory, CODE).tools.map((t) => t.name)).toEqual(["execute"])
+    expect(modelRequest(trajectory, budgetedCode(trajectory)).tools.map((t) => t.name)).toEqual(["execute"])
   })
 
   // A declaration nobody can serve rides the request as a verdict rather than as an absence: a
@@ -280,16 +281,12 @@ describe("the repair exchange in the render", () => {
 })
 
 describe("the tool surface decides the tool table", () => {
-  const LAB = renderOf(
-    [
-      toolList([
-        { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
-        { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
-      ]),
-      nativeOutput
-    ],
-    []
-  )
+  const lab = toolList([
+    { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
+    { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
+  ])
+  const LAB = renderOf([lab, nativeOutput], [])
+  const budgetedLab = (log: ReadonlyArray<Event>) => renderOf([budget([lab]), nativeOutput], log)
   const head = (extra: Event[] = [], declared = false): Event[] => [
     { type: "MessageReceived", id: "m1", text: "go", ...(declared ? { output: { name: SCOUT.name, schema: SCOUT.schema } } : {}), at: 0 },
     ...extra
@@ -306,10 +303,10 @@ describe("the tool surface decides the tool table", () => {
     expect(modelRequest(head([], true), LAB).tools.map((t) => t.name)).toEqual(["read", "grep"])
     const spent = head([{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 5 }], true)
     // The wall drops the work tools whatever they are, and leaves the contract standing.
-    expect(modelRequest(spent, LAB).tools.map((t) => t.name)).toEqual([])
-    const spentReq = modelRequest(spent, LAB)
+    const spentReq = modelRequest(spent, budgetedLab(spent))
+    expect(spentReq.tools.map((t) => t.name)).toEqual([])
     expect(spentReq.output?.kind === "contract" && spentReq.output.contract.name).toBe("scout")
-    expect(modelRequest(spent, LAB).system).toContain("tool budget for this turn is spent")
+    expect(spentReq.system).toContain("tool budget for this turn is spent")
   })
 
   test("the turn frame is surface independent", () => {

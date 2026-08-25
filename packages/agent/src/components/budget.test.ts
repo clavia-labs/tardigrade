@@ -4,27 +4,27 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { actor } from "@clavia/tardigrade-core/component"
-import { Self } from "@clavia/tardigrade-core/actor"
+import { Self, settleActor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { Infer } from "../turn"
 import { NativeOutputSupport } from "../runtime/infer"
-import { budget, budgetReactor, budgetReactorFor, budgetOf, usedOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { infer } from "../runtime/agent"
+import { budget, budgetOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
+import { infer, renderOf } from "../runtime/agent"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { reply } from "./reply"
 import { nativeOutput } from "./native-output"
+import { toolList } from "./tool-list"
 import { agentKeys } from "../events"
 
 const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 
-const rootReactor = actor(infer([codeMode(), reply, budget, compaction(), nativeOutput], TEST_MODEL)).reactors[0]!
+const rootActor = actor(infer([budget([codeMode()]), reply, compaction(), nativeOutput], TEST_MODEL))
+const rootReactor = rootActor.reactors[0]!
 
-// The rest of the agent's environment, which every reactor's `act` is typed against whether or not
-// it reaches for it. Naming it is what proves the tools gate answers from the log alone: no model
-// is asked, no actor is addressed, and no store is read (turn.test.ts, noRouter).
+// rest supplies the environment required by effect transitions in this assembled agent.
 const rest = Layer.mergeAll(
   KeyValueStore.layerMemory,
   Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
@@ -33,11 +33,10 @@ const rest = Layer.mergeAll(
   }),
   Layer.succeed(Self, parseActorId("test-agent")),
   Layer.succeed(NativeOutputSupport, { withTools: true }),
-  Layer.succeed(Infer, { react: () => Effect.die("the tools gate never asks the model") })
+  Layer.succeed(Infer, { react: () => Effect.die("the budget guard never asks the model") })
 )
 
-// A turn: a `MessageReceived` head carrying `budget`, then `calls` execute tool-calls (each answered
-// except the last), then any extra events appended after.
+// turn builds a budgeted trajectory whose final execute call is unanswered.
 const turn = (calls: number, budget?: number, extra: Event[] = []): Event[] => {
   const id = "m1"
   const log: Event[] = [{ type: "MessageReceived", id, text: "go", ...(budget === undefined ? {} : { budget }), at: 0 }]
@@ -48,60 +47,105 @@ const turn = (calls: number, budget?: number, extra: Event[] = []): Event[] => {
   return [...log, ...extra]
 }
 
-// Drive the reactor over an in-memory log and return only what serving appended.
-const fire = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> => {
-  const events: Event[] = [...log]
-  const memory = Layer.succeed(EventLog, withWatermark({
-    append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
-    read: Effect.sync(() => events as ReadonlyArray<Event>)
-  }))
-  const derived = budgetReactor(events)
-  if (derived.length > 0) {
-    const out = await Effect.runPromise(derived[0]!.act(derived[0]!.input).pipe(Effect.provide(memory)))
-    events.push(...out)
+describe("budget admission reacts to BudgetExhausted", () => {
+  // dispatch runs the first transition and returns its events.
+  const dispatch = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> => {
+    const events: Event[] = [...log]
+    const memory = Layer.succeed(EventLog, withWatermark({
+      append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
+      read: Effect.sync(() => events as ReadonlyArray<Event>)
+    }))
+    const derived = rootReactor(events)
+    if (derived.length > 0) {
+      const transition = derived[0]!
+      const out = transition.kind === "intent"
+        ? transition.events(transition.input, 0)
+        : await Effect.runPromise(
+            transition.act(transition.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
+          )
+      events.push(...out)
+    }
+    return events.slice(log.length)
   }
-  return events.slice(log.length)
-}
 
-describe("the budget reactor", () => {
-  test("rests while under budget", () => {
-    expect(budgetReactor(turn(2, 2))).toHaveLength(0) // two calls, budget two
+  test("with no wall on the turn, execute dispatches", async () => {
+    const out = await dispatch(turn(2, 12))
+    expect(out[0]!.type).toBe("CodeDispatched")
   })
 
-  test("owes the wall on the call that passes the budget", () => {
-    expect(budgetReactor(turn(3, 2))).toHaveLength(1) // third call, budget two
+  test("admission commits an intent before code execution becomes an effect", () => {
+    const log = turn(1, 12)
+    const admission = rootReactor(log).find((transition) => transition.key === "cd:c1")
+    expect(admission?.kind).toBe("intent")
+    const execution = rootReactor([
+      ...log,
+      { type: "CodeDispatched", execId: "c1", code: "x1", turn: "m1", at: 3 }
+    ]).find((transition) => transition.key === "cs:c1")
+    expect(execution?.kind).toBe("effect")
   })
 
-  test("with no budget it rests up to the generous default", () => {
-    expect(budgetReactor(turn(5))).toHaveLength(0)
-  })
+  test("the exported default and a turn override decide the wall", () => {
+    const defaultTwo = actor(
+      infer([budget([codeMode()], { defaultToolBudget: 2 }), reply, nativeOutput], TEST_MODEL)
+    ).reactors[0]!
 
-  test("the default is the consumer's: a stated ceiling walls a brief that states none", () => {
-    expect(budgetReactorFor({ defaultToolBudget: 2 })(turn(3))).toHaveLength(1)
-    expect(budgetReactorFor({ defaultToolBudget: 2 })(turn(2))).toHaveLength(0)
+    expect(defaultTwo(turn(2)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
+    expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain("bw:m1/2")
+    expect(defaultTwo(turn(3, 9)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
     expect(budgetOf(turn(1), { defaultToolBudget: 2 })).toBe(2)
-    // A brief that states its own budget still outranks the default.
     expect(budgetOf(turn(1, 9), { defaultToolBudget: 2 })).toBe(9)
   })
 
-  test("serving fires BudgetExhausted once, with the counts", async () => {
+  test("the first call past the limit derives the wall without deriving dispatch", () => {
+    const keys = rootReactor(turn(3, 2)).map((transition) => transition.key)
+
+    expect(keys).toContain("bw:m1/2")
+    expect(keys).not.toContain("cd:c3")
+  })
+
+  test("settling an over-budget execute records the wall and never dispatches the call", async () => {
+    const initial = turn(3, 2)
+    const events: Event[] = [...initial]
+    const memory = Layer.succeed(EventLog, withWatermark({
+      append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
+      read: Effect.sync(() => events as ReadonlyArray<Event>)
+    }))
+    const environment = Layer.mergeAll(
+      memory,
+      KeyValueStore.layerMemory,
+      Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
+      Layer.succeed(Router, { send: () => Effect.void }),
+      Layer.succeed(Self, parseActorId("test-agent")),
+      Layer.succeed(NativeOutputSupport, { withTools: true }),
+      Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "done" }) })
+    )
+
+    await Effect.runPromise(settleActor(rootActor).pipe(Effect.provide(environment)))
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "BudgetExhausted",
+      budget: 2,
+      used: 3,
+      turn: "m1"
+    }))
+    expect(events.some(
+      (event) => event.type === "CodeDispatched" && String((event as { execId?: unknown }).execId) === "c3"
+    )).toBe(false)
+  })
+
+  test("the wall records the applied limit and observed demand", async () => {
     const log = turn(3, 2)
-    const emitted = await fire(log)
+    const wall = rootReactor(log).find((transition) => transition.key === "bw:m1/2")!
+    expect(wall.kind).toBe("intent")
+    if (wall.kind !== "intent") throw new Error("budget wall must be an intent")
+    const emitted = wall.events(wall.input, 0)
+
     expect(emitted).toHaveLength(1)
     expect(emitted[0]).toMatchObject({ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1" })
-    // Once the event is on the log the wall stands, so it fires only once.
-    // Once the event is on the log the key is recorded; derivation still declares (declaring is
-    // free), and the runtime's diff retires it. The reactor-level fact is the same wall.
-    expect(budgetReactor([...log, emitted[0]!]).every((t) => t.key === `bw:m1/2`)).toBe(true)
+    expect(rootReactor([...log, ...emitted]).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
   })
 
-  test("budgetOf and usedOf read the turn", () => {
-    const log = turn(3, 7)
-    expect(budgetOf(log)).toBe(7)
-    expect(usedOf(log)).toBe(3)
-  })
-
-  test("the guard is pure: the fold runs with the clock and randomness rigged to throw", () => {
+  test("the admission fold reads neither clock nor randomness", () => {
     const realNow = Date.now
     const realRandom = Math.random
     Date.now = () => {
@@ -111,35 +155,11 @@ describe("the budget reactor", () => {
       throw new Error("random in the budget guard")
     }
     try {
-      expect(budgetReactor(turn(3, 2))).toHaveLength(1)
+      expect(rootReactor(turn(3, 2)).map((transition) => transition.key)).toContain("bw:m1/2")
     } finally {
       Date.now = realNow
       Math.random = realRandom
     }
-  })
-})
-
-describe("the tools gate reacts to BudgetExhausted", () => {
-  // Drive the reactor over an in-memory log and return only what serving appended.
-  const dispatch = async (log: ReadonlyArray<Event>): Promise<ReadonlyArray<Event>> => {
-    const events: Event[] = [...log]
-    const memory = Layer.succeed(EventLog, withWatermark({
-      append: (more: ReadonlyArray<Event>) => Effect.sync(() => void events.push(...more)),
-      read: Effect.sync(() => events as ReadonlyArray<Event>)
-    }))
-    const derived = rootReactor(events)
-    if (derived.length > 0) {
-      const out = await Effect.runPromise(
-        derived[0]!.act(derived[0]!.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
-      )
-      events.push(...out)
-    }
-    return events.slice(log.length)
-  }
-
-  test("with no wall on the turn, execute dispatches", async () => {
-    const out = await dispatch(turn(2, 12))
-    expect(out[0]!.type).toBe("CodeDispatched")
   })
 
   test("once BudgetExhausted is on the turn, the work tool is refused with an answer nudge", async () => {
@@ -152,7 +172,40 @@ describe("the tools gate reacts to BudgetExhausted", () => {
   })
 })
 
-// The lifecycle events, appended after a spent turn's execute calls.
+describe("the budget component boundary", () => {
+  const readTool = toolList([
+    { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
+  ])
+
+  test("a non-code child is admitted by the same tool-call policy", () => {
+    const root = actor(infer([budget([readTool], { defaultToolBudget: 1 }), reply, nativeOutput], TEST_MODEL)).reactors[0]!
+    const log: Event[] = [
+      { type: "MessageReceived", id: "m1", text: "go", at: 0 },
+      { type: "ToolCalled", callId: "r1", name: "read", arguments: {}, turn: "m1", at: 1 },
+      { type: "ToolReturned", callId: "r1", result: "ok", turn: "m1", at: 2 },
+      { type: "ToolCalled", callId: "r2", name: "read", arguments: {}, turn: "m1", at: 3 }
+    ]
+
+    expect(root(log).map((transition) => transition.key)).toContain("bw:m1/1")
+  })
+
+  test("a wall withdraws only tools inside the budget subtree", () => {
+    const log = turn(3, 2, [{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 99 }])
+    const rendered = renderOf([budget([codeMode()]), readTool, nativeOutput], log)
+
+    expect(rendered.tools.map((tool) => tool.name)).toEqual(["read"])
+  })
+
+  test("a wall has no global effect without a budget component", () => {
+    const log = turn(3, 2, [{ type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 99 }])
+    const rendered = renderOf([codeMode(), nativeOutput], log)
+
+    expect(rendered.tools.map((tool) => tool.name)).toEqual(["execute"])
+    expect(rendered.system).not.toContain("tool budget for this turn is spent")
+  })
+})
+
+// exhausted records the wall used by escalation lifecycle tests.
 const exhausted: Event = { type: "BudgetExhausted", budget: 2, used: 3, turn: "m1", at: 100 }
 const granted = (amount: number): Event => ({ type: "BudgetGranted", amount, turn: "m1", at: 101 })
 const denied: Event = { type: "BudgetDenied", reason: "no", turn: "m1", at: 101 }
@@ -165,16 +218,30 @@ describe("the escalation lifecycle", () => {
     expect(agentKeys.keyOf(denial)).toBe("bdec:request-1")
   })
 
-  test("usedOf counts only execute; the turn's exits are free", () => {
-    const log: Event[] = [
-      { type: "MessageReceived", id: "m1", text: "go", budget: 5, at: 0 },
-      { type: "ToolCalled", callId: "e1", name: "execute", arguments: {}, turn: "m1", at: 1 },
-      { type: "ToolCalled", callId: "rb1", name: "request_budget", arguments: {}, turn: "m1", at: 2 },
-      // A rejected final response is no tool call at all, so it draws nothing down
-      // (src/output.ts, OutputFallback).
-      { type: "OutputRejected", contract: "scout", attempt: "m1/infer/1", text: "{}", errors: ["/: bad"], turn: "m1", at: 3 }
-    ]
-    expect(usedOf(log)).toBe(1)
+  test("the budget component owns request and decision routing", () => {
+    const head: Event = { type: "MessageReceived", id: "m1", text: "go", budget: 2, escalatable: true, at: 0 }
+    const call: Event = {
+      type: "ToolCalled",
+      callId: "request-1",
+      name: "request_budget",
+      arguments: { reason: "one source remains", amount: 2 },
+      turn: "m1",
+      at: 2
+    }
+    const requested: Event = {
+      type: "BudgetRequested",
+      callId: "request-1",
+      reason: "one source remains",
+      amount: 2,
+      turn: "m1",
+      at: 3
+    }
+    const grant: Event = { type: "BudgetGranted", callId: "request-1", amount: 2, turn: "m1", at: 4 }
+    const atWall = [head, exhausted, call]
+
+    expect(rootReactor(atWall).map((transition) => transition.key)).toContain("br:request-1")
+    expect(rootReactor([...atWall, requested])).toEqual([])
+    expect(rootReactor([...atWall, requested, grant]).map((transition) => transition.key)).toContain("tr:request-1")
   })
 
   test("budgetPhase reads the most recent marker", () => {
@@ -187,8 +254,8 @@ describe("the escalation lifecycle", () => {
   test("a grant raises the ceiling, so budgetOf grows and the machine reopens", () => {
     const log = turn(3, 2, [exhausted, granted(5)])
     expect(budgetOf(log)).toBe(7) // base 2 + grant 5
-    expect(budgetReactor(log)).toHaveLength(0)
-    // execute is offered again after a grant; withdrawn after exhaustion and after a denial.
+    expect(renderOf([budget([codeMode()]), nativeOutput], log).tools.map((tool) => tool.name)).toEqual(["execute"])
+    // rendered exposes execute after a grant and withdraws it after exhaustion or denial.
     expect(budgetSpent(turn(3, 2, [exhausted]))).toBe(true)
     expect(budgetSpent(log)).toBe(false)
     expect(budgetSpent(turn(3, 2, [exhausted, denied]))).toBe(true)

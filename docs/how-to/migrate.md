@@ -26,7 +26,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer([...], { provider, default_model })) })` |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
-| `stopWhen`, maximum steps, and retry options | `budgetFor`, `infer` policy, and domain components with explicit policy values |
+| `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
 | `prepareStep` and dynamic context | A component whose `derive(log)` changes its view from recorded events |
 | Message arrays and conversation storage | One append-only event log per thread |
 | Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
@@ -54,7 +54,7 @@ Move related tools to code packages only when the decision rule above applies. M
 
 ### Policies and output
 
-State every policy that affects behavior. `budgetFor({ defaultToolBudget })` limits `execute` calls, so it is not a direct replacement for a model-step limit that counts completions and native tools. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
+State every policy that affects behavior. `budget([codeMode(packages)], { defaultToolBudget })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
 
 Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
 

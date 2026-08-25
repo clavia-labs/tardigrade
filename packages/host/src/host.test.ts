@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
-import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { createHost } from "./host"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
@@ -46,7 +46,7 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
     if (pending === undefined) return []
     const n = Number(pending.n ?? 0)
     return [
-      transition({
+      effect({
         key: `an:${str(pending.id)}`,
         input: { id: str(pending.id), n },
         act: (input) =>
@@ -90,7 +90,7 @@ describe("the host", () => {
           .filter((event) => event.type === "MessageReceived")
           .map((event) => {
             const id = str((event as { id?: unknown }).id)
-            return transition({
+            return effect({
               key: `done:${id}`,
               input: id,
               act: (input: string) => Effect.promise(async () => {
@@ -210,7 +210,7 @@ describe("the observe privilege", () => {
       events.some((e) => e.type === "Saw")
         ? []
         : [
-            transition({
+            effect({
               key: "saw:one",
               input: null,
               act: () =>

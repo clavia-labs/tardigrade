@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import { actorMethod, defineActor } from "tardie"
-import { transition } from "@clavia/tardigrade-core/actor"
+import { effect } from "@clavia/tardigrade-core/actor"
 import { ActorHost, cloudflareWorker } from "../src/worker"
 
 const echo = actorMethod({
@@ -29,7 +29,7 @@ const worker = cloudflareWorker(defineActor({
       if (events.some((candidate) =>
         candidate.type === "EchoCompleted" && (candidate as { readonly id?: unknown }).id === id
       )) return []
-      return [transition({
+      return [effect({
         key: `echo-complete:${id}`,
         input: { id, text: String(request.text) },
         act: (input) => Effect.promise(async () => {

@@ -220,8 +220,9 @@ export const ReplyDelivered = Schema.Struct({
   at: Schema.Finite
 })
 
-// BudgetExhausted is the wall, fired once when the spend passes the brief's budget. The tools
-// reactor reads it and refuses further execute, so the model answers with its best result.
+// BudgetExhausted records the wall when a component subtree passes the turn's budget. The budget
+// wrapper withdraws its tools and refuses the pending call (components/budget.test.ts, "settling an
+// over-budget execute records the wall and never dispatches the call").
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
   budget: Schema.Finite,

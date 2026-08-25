@@ -12,6 +12,7 @@ The specifications describe the runtime and communication contracts independentl
 | `communication/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
 | `communication/Reply` | Terminal and budget reports through the reversed accepted link | `Reply.cfg`, `ReplyLive.cfg` | `ReplyHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
+| `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
 | `runtime/ConcurrentDriver` | Bounded parallel settlement, keyed commits, and parked fiber release | `ConcurrentDriver.cfg`, `ConcurrentDriverLive.cfg` | `ConcurrentDriverUnbounded.cfg`, `ConcurrentDriverParkLeak.cfg` |
 | `runtime/Driver` | Wake accounting, service, isolation, and bounded failure | `Driver.cfg`, `DriverLive.cfg`, `DriverIsolate.cfg`, `DriverPoisoned.cfg` | `DriverDrop.cfg` |
 | `runtime/Execution` | Mixed package completion and parked fiber release | `Execution.cfg` | `ExecutionReadyLeak.cfg` |

@@ -86,7 +86,7 @@ export {
   type RepairPolicy
 } from "./components/repair"
 export { nativeOutput } from "./components/native-output"
-export { budgetReactorFor, DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
+export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export { replyReactor } from "./components/reply"
 export {
@@ -177,15 +177,18 @@ export {
 export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./components/code"
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
-export { budget, budgetFor } from "./components/budget"
+export { budget } from "./components/budget"
 export { compaction } from "./components/compaction"
 export { reply } from "./components/reply"
 export {
   actor,
   composeComponents,
+  independentTransitions,
   reactorOf,
   type Component,
   type ComponentRequirements,
+  type CompositionOptions,
   type Derivation,
+  type TransitionReconciler,
   type ViewAlgebra
 } from "@clavia/tardigrade-core/component"

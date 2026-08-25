@@ -25,15 +25,16 @@ export default defineActor({
   // actor carries component and output requirements into the host type.
   actor: actor(infer([
     system(actorInstructions),
-    // codeMode gives the model one code tool over the components listed here.
-    codeMode([
-      // Package components grant access to local files, HTTP, child agents, and saved tool results.
-      filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
+    // budget scopes the tool-call limit to the codeMode subtree.
+    budget([
+      // codeMode gives the model one code tool over the package components listed here.
+      codeMode([
+        // codeMode package components grant access to files, HTTP, child agents, and saved results.
+        filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
+      ])
     ]),
     // reply returns a finished turn to the actor that delegated it.
     reply,
-    // budget stops work tools when the turn reaches its tool-call limit.
-    budget,
     // compaction summarizes older context when a long turn outgrows its context window.
     compaction(),
     // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.

@@ -210,7 +210,10 @@ describe("a projected repair is invisible to compaction as well as to the render
       { type: "ToolReturned", callId: "c2", result: "ok", turn: "m2", at: 7 }
     ]
     const events = await Effect.runPromise(
-      Effect.all(reactor(log).map((t) => t.act(t.input as never))).pipe(
+      Effect.all(reactor(log).map((transition) => {
+        if (transition.kind !== "effect") throw new Error("compaction must be an effect")
+        return transition.act(transition.input as never)
+      })).pipe(
         Effect.provide(
           Layer.succeed(Infer, {
             react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {

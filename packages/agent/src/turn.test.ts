@@ -3,7 +3,7 @@ import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { send, settleActor, transition } from "@clavia/tardigrade-core/actor"
+import { send, settleActor, effect } from "@clavia/tardigrade-core/actor"
 import { definePackage, type Package } from "@clavia/tardigrade-code/packages"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox"
 import { Router } from "@clavia/tardigrade-core/router"
@@ -42,7 +42,7 @@ const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 // The default assembly over a stated scope. The infer root contains model inference, call routing,
 // and every child transition in one projection.
 const agentWith = (packages: ReadonlyArray<Package>) =>
-  actor(infer([codeMode(packages), reply, budget, compaction(), nativeOutput], TEST_MODEL))
+  actor(infer([budget([codeMode(packages)]), reply, compaction(), nativeOutput], TEST_MODEL))
 const rlmAgent = agentWith([])
 const rootReactor = rlmAgent.reactors[0]!
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
@@ -191,13 +191,11 @@ describe("the agent with execute as the only tool", () => {
     const events = await run(readLog, memoryLog(spilled))
     const [answer] = rootReactor(events)
     expect(answer).toBeDefined()
+    if (answer?.kind !== "intent") throw new Error("tool answer must be an intent")
     // Every reactor's `act` is typed against the agent's whole environment, so a settle that only
     // reads the log still states it. Providing it is what proves the settle never reaches for the
     // sandbox or the model to answer from a pointer.
-    const returned = await run(
-      answer!.act(answer!.input as never),
-      Layer.mergeAll(KeyValueStore.layerMemory, memoryLog(), codeThenComplete({ calls: 0 }), jsSandbox, noRouter)
-    )
+    const returned = answer.events(answer.input as never, 0)
     expect(returned[0]!.type).toBe("ToolReturned")
     const result = (returned[0] as unknown as { result: { result: Record<string, unknown> } }).result.result
     expect(result.tmp).toBe("t1.result")
@@ -453,7 +451,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
-  actor(infer([codeMode(), reply, budget, compaction(), outputRepairFor(policy)], TEST_MODEL))
+  actor(infer([budget([codeMode()]), reply, compaction(), outputRepairFor(policy)], TEST_MODEL))
 
 describe("a turn that declares an output contract", () => {
   test("a conforming response completes the turn, and outputOf reads it back typed", async () => {
@@ -949,7 +947,7 @@ describe("the mind on a native surface", () => {
 })
 
 describe("the validate-once implementation", () => {
-  const validateOnceAgent = actor(infer([codeMode(), reply, budget, compaction(), outputValidateOnce], TEST_MODEL))
+  const validateOnceAgent = actor(infer([budget([codeMode()]), reply, compaction(), outputValidateOnce], TEST_MODEL))
 
   test("a missed response ends the turn with its own cause, and never asks again", async () => {
     let asked = 0
@@ -1031,7 +1029,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => ({
       return {
         view,
         transitions: [
-          transition({
+          effect({
             key: `tn:${String(owed.turn)}`,
             input: { turn: String(owed.turn) },
             act: (input) =>
@@ -1046,7 +1044,7 @@ const houseStyle = (options: { readonly asks: number }): AgentComponent => ({
     return {
       view,
       transitions: [
-        transition({
+        effect({
           key: `oq:${String(owed.attempt)}`,
           input: { rejection: String(owed.attempt), turn: String(owed.turn) },
           act: (input) =>

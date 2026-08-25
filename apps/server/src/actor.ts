@@ -52,9 +52,8 @@ export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
 
 export const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
   actor(infer([
-    codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()]),
+    budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])]),
     reply,
-    budget,
     compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
     outputValidateOnce
   ], {

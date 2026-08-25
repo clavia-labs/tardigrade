@@ -10,6 +10,7 @@ import { replyReactor } from "./reply"
 const fireReply = async (log: ReadonlyArray<Event>, self: { readonly actor: string; readonly thread: string }) => {
   const sent: Array<Envelope<unknown, Event, unknown>> = []
   const transition = replyReactor(log)[0]!
+  if (transition.kind !== "effect") throw new Error("reply must be an effect")
   const layers = Layer.mergeAll(
     Layer.succeed(Router, {
       send: (envelope) => Effect.sync(() => sent.push(envelope))
