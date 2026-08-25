@@ -23,6 +23,7 @@ packages/core/tla/states/
 *.log
 .env*
 .dev.vars*
+.data/
 
 # SQLite files and spill directories the examples write when they run
 examples/.data/
