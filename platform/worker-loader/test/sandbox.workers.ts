@@ -2,12 +2,12 @@ import { env } from "cloudflare:test"
 import { Effect } from "effect"
 import { describe, expect, test } from "vitest"
 import { sandboxReturned } from "@clavia/tardigrade-code/sandbox"
-import type { Env } from "../src/worker"
-import { cloudflareSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
+import { workerLoaderSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
+import type { Env } from "./fixture.worker"
 import { replaySequenceWith } from "./sandbox.cases"
 
 const bridgeFor: SandboxBridgeFactory = (_call) => ({
-  binding: (env as Env).ACTORS.getByName("sandbox-test"),
+  binding: (env as Env).BRIDGE.getByName("sandbox-test"),
   execution: "unused",
   close: () => undefined
 })
@@ -41,9 +41,9 @@ const reverseRecordedOrder = (value: unknown): unknown => {
   return input
 }
 
-describe("cloudflare sandbox", () => {
+describe("worker loader sandbox", () => {
   test("runs generated code with deterministic ambient values", async () => {
-    const sandbox = cloudflareSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
     const result = await Effect.runPromise(sandbox.run(
       `const [left, right] = await Promise.all([Promise.resolve(5), Promise.resolve(13)])
       console.log("totals", left, right)
@@ -60,7 +60,7 @@ describe("cloudflare sandbox", () => {
   })
 
   test("cuts captured output at the configured cap", async () => {
-    const sandbox = cloudflareSandboxServiceFor((env as Env).LOADER, bridgeFor, { logCapBytes: 3 })
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor, { logCapBytes: 3 })
     const result = await Effect.runPromise(sandbox.run(
       `console.log("four")
       console.log("later")
@@ -74,7 +74,7 @@ describe("cloudflare sandbox", () => {
   })
 
   test("blocks ambient network access", async () => {
-    const sandbox = cloudflareSandboxServiceFor((env as Env).LOADER, bridgeFor)
+    const sandbox = workerLoaderSandboxServiceFor((env as Env).LOADER, bridgeFor)
     const result = await Effect.runPromise(sandbox.run(
       `try {
         await fetch("https://example.com")
@@ -99,7 +99,7 @@ describe("cloudflare sandbox", () => {
   })
 
   test("replay ignores object member order across the loader boundary", async () => {
-    const sandbox = cloudflareSandboxServiceFor(mapLoaderInput(reorderObjectKeys), bridgeFor, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reorderObjectKeys), bridgeFor, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run(
       `return await tools.inspect({
         tool: "list_deployments",
@@ -119,7 +119,7 @@ describe("cloudflare sandbox", () => {
   })
 
   test("replay keeps argument array order significant", async () => {
-    const sandbox = cloudflareSandboxServiceFor(mapLoaderInput(reverseRecordedOrder), bridgeFor, { transport: "replay" })
+    const sandbox = workerLoaderSandboxServiceFor(mapLoaderInput(reverseRecordedOrder), bridgeFor, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run(
       `return await tools.inspect({ order: ["newest", "oldest"] })`,
       { tools: { inspect: async (input) => sandboxReturned(input) } }

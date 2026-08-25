@@ -148,6 +148,7 @@
         "@clavia/tardigrade-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
+        "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/sql-sqlite-do": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
@@ -173,6 +174,19 @@
         "@tanstack/ai-openai": "0.20.0",
         "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
+      },
+    },
+    "platform/worker-loader": {
+      "name": "@clavia/tardigrade-worker-loader",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-code": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+      "devDependencies": {
+        "@cloudflare/vitest-pool-workers": "^0.20.1",
+        "@cloudflare/workers-types": "^5.20260804.1",
+        "vitest": "^4.1.10",
       },
     },
   },
@@ -252,6 +266,8 @@
     "@clavia/tardigrade-server": ["@clavia/tardigrade-server@workspace:apps/server"],
 
     "@clavia/tardigrade-voyager": ["@clavia/tardigrade-voyager@workspace:apps/voyager"],
+
+    "@clavia/tardigrade-worker-loader": ["@clavia/tardigrade-worker-loader@workspace:platform/worker-loader"],
 
     "@cloudflare/kv-asset-handler": ["@cloudflare/kv-asset-handler@0.5.0", "", {}, "sha512-jxQYkj8dSIzc0cD6cMMNdOc1UVjqSqu8BZdor5s8cGjW2I8BjODt/kWPVdY+u9zj3ms75Q5qaZgnxUad83+eAg=="],
 
