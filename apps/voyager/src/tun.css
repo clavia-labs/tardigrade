@@ -463,28 +463,6 @@ textarea {
   padding: 10px var(--space-3);
 }
 
-.rail-actor {
-  min-width: 0;
-}
-
-.rail-actor-name,
-.rail-actor-sqlite {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.rail-actor-name {
-  color: var(--ink-2);
-  font-size: var(--text-meta);
-}
-
-.rail-actor-sqlite {
-  margin-top: 2px;
-  color: var(--faint);
-  font-size: 10px;
-}
-
 .rail-new-thread {
   display: flex;
   width: 100%;
@@ -562,8 +540,20 @@ textarea {
 }
 
 .thread-id-label {
+  flex-shrink: 0;
   color: var(--faint);
   font-size: 10px;
+  white-space: nowrap;
+}
+
+.thread-id-value {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: var(--text-dense);
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-copy:active {
@@ -907,12 +897,15 @@ textarea {
 }
 
 .quickstart {
-  width: min(720px, 100%);
+  display: grid;
+  width: min(960px, 100%);
+  grid-template-columns: fit-content(260px) 1px minmax(0, 1fr);
+  align-items: center;
+  gap: var(--space-5);
 }
 
 .quickstart-intro {
   margin-bottom: var(--space-4);
-  text-align: center;
 }
 
 .quickstart-intro h1 {
@@ -926,6 +919,67 @@ textarea {
   margin: 0;
   color: var(--ink-2);
   font-size: var(--text-read);
+}
+
+.quickstart-actor {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-4);
+}
+
+.quickstart-actor-fact {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+}
+
+.quickstart-actor-label,
+.quickstart-actor-value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quickstart-actor-label {
+  color: var(--faint);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+
+.quickstart-actor-value {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.quickstart-actor-fact:first-child .quickstart-actor-value {
+  font-size: var(--text-page);
+  letter-spacing: -0.02em;
+}
+
+.quickstart-api {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-2);
+  font-size: 12px;
+  text-decoration: none;
+  transition: color var(--fast) var(--ease);
+}
+
+.quickstart-api:hover {
+  color: var(--ink);
+}
+
+.quickstart-divider {
+  width: 1px;
+  height: 96px;
+  background: var(--hair);
+}
+
+.quickstart-action {
+  min-width: 0;
 }
 
 .quickstart-command {
@@ -988,6 +1042,15 @@ textarea {
   .quickstart-empty {
     align-items: start;
     padding: var(--space-5) var(--space-4);
+  }
+
+  .quickstart {
+    grid-template-columns: 1fr;
+    gap: var(--space-6);
+  }
+
+  .quickstart-divider {
+    display: none;
   }
 
   .quickstart-copy {

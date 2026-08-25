@@ -1,6 +1,6 @@
 import { useState, type ReactElement } from "react"
 
-import type { ActorMetadata, ProblemError } from "@clavia/tardigrade-client"
+import type { ProblemError } from "@clavia/tardigrade-client"
 import { ArrowUpRight, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
 import { docsUrl } from "./client"
 import { navigate } from "./nav"
@@ -50,11 +50,7 @@ const Row = ({
   )
 }
 
-const storageLabel = (location: string): string =>
-  location === ":memory:" ? location : location.split(/[\\/]/).slice(-2).join("/")
-
 export const Rail = ({
-  actorMetadata,
   collapsedWidth = RAIL_COLLAPSED_WIDTH,
   headerHeight = RAIL_HEADER_HEIGHT,
   now,
@@ -63,7 +59,6 @@ export const Rail = ({
   selected,
   width = RAIL_WIDTH
 }: {
-  readonly actorMetadata: ActorMetadata | undefined
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly now: number
@@ -97,16 +92,6 @@ export const Rail = ({
         </div>
       </div>
       {collapsed ? null : <><div className="rail-actions">
-        <div className="rail-actor">
-          <div className="mono rail-actor-name">{actorMetadata?.name ?? "\u00a0"}</div>
-          <div className="mono rail-actor-sqlite" title={actorMetadata?.storage.location ?? actorMetadata?.storage.kind}>
-            {actorMetadata === undefined
-              ? "\u00a0"
-              : actorMetadata.storage.location === undefined
-              ? actorMetadata.storage.kind
-              : storageLabel(actorMetadata.storage.location)}
-          </div>
-        </div>
         <input
           className="input rail-search"
           value={query}

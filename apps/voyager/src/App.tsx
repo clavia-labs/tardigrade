@@ -83,12 +83,12 @@ export const App = (): ReactElement => {
   }, [reading.roster, ready, route.thread, route.view])
   return (
     <div style={{ height: "100%", display: "flex", overflow: "hidden", position: "relative" }}>
-      <Rail actorMetadata={actorMetadata} roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
+      <Rail roster={reading.roster} now={reading.at} problem={problem} selected={route.thread} />
       <main style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0 }}>
         {route.view === "new" ? (
-          <Quickstart />
+          <Quickstart actorMetadata={actorMetadata} />
         ) : route.thread === undefined && ready && summaries.length === 0 && problem === undefined ? (
-          <Quickstart />
+          <Quickstart actorMetadata={actorMetadata} />
         ) : route.thread === undefined ? (
           <div className="mono pane-empty">{ready ? "select a thread" : "loading threads"}</div>
         ) : (
