@@ -1,6 +1,6 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/event-log"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { intent, effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { modelCalled, modelResolved, outputRejected, textReturned, turnFailed } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Action } from "../events"
@@ -318,7 +318,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   const model = resolvedModel ?? selectedModelOf(head, policy.model)
   if (model !== undefined && resolvedModel === undefined) {
     return [
-      transition({
+      effect({
         key: `mr:${turn}`,
         input: { turn, model },
         act: (input) =>
@@ -371,25 +371,21 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
       readonly policy: unknown
     }
   ) => [
-    transition({
+    intent({
       key: terminalKey(turn, epoch),
       input: { turn, epoch, attempt, ...input },
-      act: (given) =>
-        Effect.gen(function* () {
-          const at = yield* Clock.currentTimeMillis
-          return [
-            turnFailed({
-              error: given.error,
-              cause: given.cause,
-              attempts: given.attempts,
-              attemptKey: given.attempt,
-              policy: given.policy,
-              turn: given.turn,
-              ...epochStamp(given.epoch),
-              at
-            })
-          ]
+      events: (given, at) => [
+        turnFailed({
+          error: given.error,
+          cause: given.cause,
+          attempts: given.attempts,
+          attemptKey: given.attempt,
+          policy: given.policy,
+          turn: given.turn,
+          ...epochStamp(given.epoch),
+          at
         })
+      ]
     })
   ]
   // A declaration that is not a contract this repository can serve ends the turn here, before a
@@ -450,7 +446,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   // its mark. The completed tool calls count logical attempts, so an operator resume keeps the
   // failed inference's provider idempotency key. The mark ordinal remains unique per physical run.
   return [
-    transition({
+    effect({
       key: `mc:${turn}/${marks}`,
       input: {
         turn,

@@ -18,7 +18,7 @@ Tardigrade is a typescript framework for building durable, modular agents that c
 ### Agents that can self-improve
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and state transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
+We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
 
 $$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
@@ -87,7 +87,7 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-An agent is made of components. A component derives a view and owed transitions from the log. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
+An agent is made of components. A component derives a view and transitions from the log. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
 import type { AgentComponent } from "tardie"
@@ -115,7 +115,7 @@ const deploys: AgentComponent = {
 }
 ```
 
-`derive` is a pure log projection. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` mints the transition that records the result. Replace the sample result with a call to your deployment API.
+`derive` is a pure log projection. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` constructs the intent that records the result. Replace the sample result with a call to your deployment API.
 
 The call follows one route:
 
@@ -147,13 +147,15 @@ const releaseAnalyst = defineActor({
   actor: actor(infer([
     instructions, // the agent's system prompt
     deploys,     // recent_deploys and its paired handler
-    codeMode([
-      filesPackage(),
-      fetchPackage(),
-      agentsPackage(),
-      workspacePackage()
+    // budget scopes the tool-call limit to the codeMode subtree.
+    budget([
+      codeMode([
+        filesPackage(),
+        fetchPackage(),
+        agentsPackage(),
+        workspacePackage()
+      ])
     ]),
-    budget,      // a per-turn code budget
     compaction(), // bounded model context
     reply,       // results for parent agents
     outputValidateOnce // validates one structured result without correction
@@ -175,6 +177,8 @@ const boundedContext = compaction({
 When compaction runs, its checkpoint records the applied policy with the summary.
 
 `codeMode([...components])` combines code packages behind one `execute` tool. Define a package with `definePackage(...)`. Group packages with `composeComponents(...)`.
+
+`budget([...components], policy?)` limits calls to tools derived by its child components. Components beside the wrapper remain outside that budget.
 
 This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
 
@@ -247,11 +251,11 @@ Every message, model action, tool result, and checkpoint lands in the log. React
 
 $$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
 
-The host runs transitions with unrecorded keys. It appends the returned events and repeats until the agent rests.
+The host runs transitions with unrecorded keys. It appends their events and repeats until the agent rests.
 
 If the process stops during `recent_deploys`, the log still contains its unanswered `ToolCalled`. `host.recover()` derives the same key and input, then runs the handler again.
 
-Effects have at-least-once execution. Each keyed result is recorded once. Providers can use the transition key as an idempotency key.
+External effects have at-least-once execution. Each keyed result is recorded once. Providers can use the transition key as an idempotency key.
 
 ## Learn more
 

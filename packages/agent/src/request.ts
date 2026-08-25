@@ -9,7 +9,6 @@ import {
   type OutputContract,
   type OutputFallback
 } from "./output"
-import { budgetSpent, canRequestBudget } from "./components/budget"
 
 // The model request, decided from the trajectory: system prompt, tool surface, message
 // projection. Domain policy lives with the agent; the platform maps these provider-agnostic
@@ -68,24 +67,6 @@ export interface ModelRequest {
   readonly output?: OutputRequest
 }
 
-// REQUEST_BUDGET_TOOL is offered only at the wall, and only when the brief made the turn
-// escalatable. The model calls it to ask its parent for more tool calls instead of answering.
-// The call parks the turn until the parent grants or denies; a grant reopens the work tools.
-const REQUEST_BUDGET_TOOL: ToolSpec = {
-  name: "request_budget",
-  description:
-    "Ask for more tool-call budget when the work is not done and the budget is spent. State why the extra spend is worth it and how many more calls you need. The parent decides; a grant lets you keep working, a denial means finish with what you have.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      reason: { type: "string", description: "Why more budget is worth it: what is still missing and what you will do with the calls." },
-      amount: { type: "number", description: "How many more tool calls you need." }
-    },
-    required: ["reason", "amount"],
-    additionalProperties: false
-  }
-}
-
 // SYSTEM frames the turn around whatever surface is in play: the surface states how the model
 // acts, and the frame states how a turn ends. The two are separate so a surface swap rewrites
 // only its own half. The frame says nothing about the shape of the answer: a turn that declares
@@ -94,12 +75,6 @@ const REQUEST_BUDGET_TOOL: ToolSpec = {
 // (request.test.ts, "the frame never mentions the contract, declared or not").
 const SYSTEM = (surface: string): string =>
   `You are an agent. ${surface}\nWhen the work is done, reply directly: that reply is your final answer and ends the turn. Reply without calling a tool when no action is needed.`
-
-const BUDGET_NUDGE =
-  "Your tool budget for this turn is spent, so the work tools are gone. Finish now: answer with your best result from what you have already gathered."
-
-const ESCALATE_NUDGE =
-  "If the work genuinely needs more and the extra spend is worth it, you may call request_budget with a reason and an amount instead of answering. Ask only when it changes the result; otherwise answer now."
 
 // feedbackFor is what the model reads back after a rejection, and undefined when nobody has
 // decided to ask again yet. The framework repair loop's own text is written here because that
@@ -232,10 +207,8 @@ export const renderMessages = (
   return messages
 }
 
-// modelRequest folds the turn's policies over the surface's tool table. A spent budget drops the
-// work tools and adds the budget nudge, so the model can only answer. A declared output contract
-// rides the request as itself: it adds no tool, no tool choice, and no sentence to the base
-// prompt, because the binding sends it on the provider's own response-format surface
+// modelRequest folds output and context policy over the component-derived surface. A declared output
+// contract adds no tool, tool choice, or prompt sentence because the binding uses the provider's format
 // (request.test.ts, "a contract is never a tool, a tool choice, or a sentence in the prompt").
 //
 // `context` sets what the render truncates. It rides the same rule the surface does: the actor's
@@ -252,16 +225,11 @@ export const modelRequest = (
 ): ModelRequest => {
   const declared = declaredOutputOf(trajectory)
   const fallback = render.output
-  const spent = budgetSpent(trajectory)
-  const canRequest = canRequestBudget(trajectory)
-  const work = spent ? [] : render.tools
-  const tools = canRequest ? [...work, REQUEST_BUDGET_TOOL] : work
   const base = SYSTEM(render.system)
-  const budgetLine = canRequest ? `${BUDGET_NUDGE}\n${ESCALATE_NUDGE}` : BUDGET_NUDGE
   return {
-    system: spent ? `${base}\n${budgetLine}` : base,
+    system: base,
     messages: renderMessages(trajectory, context),
-    tools,
+    tools: render.tools,
     ...(declared.kind === "none"
       ? {}
       : {

@@ -7,7 +7,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
 import { Router } from "@clavia/tardigrade-core/router"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { Facets } from "@clavia/tardigrade-core/facets"
-import { Self, transition } from "@clavia/tardigrade-core/actor"
+import { Self, effect } from "@clavia/tardigrade-core/actor"
 import { actor, composeComponents } from "@clavia/tardigrade-core/component"
 import {
   CODE_VIEW_ALGEBRA,
@@ -165,7 +165,7 @@ describe("infer component", () => {
         )
       }
     })
-    const agent = actor(infer([echoTable, reply, budget, compaction(), nativeOutput], TEST_MODEL))
+    const agent = actor(infer([budget([echoTable]), reply, compaction(), nativeOutput], TEST_MODEL))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, { id: "m1", text: "go" })
@@ -424,7 +424,7 @@ describe("infer component", () => {
       derive: () => ({
         view: { packages: [] },
         transitions: [
-          transition({
+          effect({
             key: "up:daily",
             input: undefined,
             act: () => Effect.succeed([{ type: "CodeUpkeepCompleted", id: "daily" }])
@@ -437,7 +437,7 @@ describe("infer component", () => {
     const derived = component.derive([])
 
     expect(derived.view.system[0]).toContain("notes: the team's notes\nsearch: the team's index")
-    expect(derived.transitions.map((candidate) => candidate.key)).toEqual(["up:daily"])
+    expect(derived.transitions.map((transition) => transition.key)).toEqual(["up:daily"])
     expect(component.keys?.keyOf({ type: "CodeUpkeepCompleted", id: "daily" })).toBe("up:daily")
   })
 

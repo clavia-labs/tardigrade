@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { transition, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
 import { Facets } from "@clavia/tardigrade-core/facets"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
@@ -45,7 +45,7 @@ const echoReactor: Reactor = (events) =>
     .filter((e) => e.type === "MessageReceived")
     .map((e) => {
       const id = String((e as { id?: unknown }).id)
-      return transition({
+      return effect({
         key: `dn:${id}`,
         input: id,
         act: (input: string) => Effect.succeed([{ type: "Done", id: input, at: 1 } as Event])
@@ -88,7 +88,7 @@ describe("the bun host", () => {
           .filter((event) => event.type === "MessageReceived")
           .map((event) => {
             const id = String((event as { id?: unknown }).id)
-            return transition({
+            return effect({
               key: `dn:${id}`,
               input: id,
               act: (input: string) => Effect.promise(async () => {
@@ -261,7 +261,7 @@ const reactorOver = (
     .filter((e) => e.type === "MessageReceived")
     .map((e) => {
       const id = String((e as { id?: unknown }).id)
-      return transition({
+      return effect({
         key: `${type}:${id}`,
         input: id,
         act: (input: string) => act(input).pipe(Effect.map((event) => [event]), Effect.orDie)
@@ -414,7 +414,7 @@ const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStor
         .filter((e) => e.type === "MessageReceived")
         .map((e) => {
           const id = String((e as { id?: unknown }).id)
-          return transition({
+          return effect({
             key: `Answered:${id}`,
             input: id,
             act: (input: string) =>
@@ -589,7 +589,7 @@ describe("the observe privilege", () => {
       events.some((e) => e.type === "Saw")
         ? []
         : [
-            transition({
+            effect({
               key: "saw:one",
               input: null,
               act: () =>

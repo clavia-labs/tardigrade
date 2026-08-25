@@ -15,9 +15,8 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 const actorModel = { provider: "openai", default_model: "gpt-5.2" } as const
 
 const rlm = actor(inferAgent([
-  codeMode([agentsPackage(), workspacePackage()]),
+  budget([codeMode([agentsPackage(), workspacePackage()])]), // the per-turn code budget, inherited by spawned children
   reply, // reports each turn's terminal to whoever asked
-  budget, // the per-turn code budget, inherited by spawned children
   compaction(), // bounded model context over long investigations
   outputValidateOnce // handles structured results without adding a retry
 ], actorModel))

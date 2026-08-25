@@ -1,4 +1,4 @@
-import type { Reactor, Transition } from "@clavia/tardigrade-core/actor"
+import type { Transition, Reactor } from "@clavia/tardigrade-core/actor"
 import {
   composeComponents,
   type Component,
@@ -151,7 +151,7 @@ const viewFrom = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentCo
 // offerLogFor returns the prefix from which inference offered a pending call's tools. ModelCalled
 // is appended before inference, so the preceding prefix is exactly the log passed to render
 // (infer.ts, inferReactorFor; tla/runtime/Component.tla, OfferedIsRoutable). Calls created outside
-// inference have no mark and use the current log.
+// inference have no mark and use the prefix before the call.
 const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<Event> => {
   const called = log.findIndex(
     (event) => event.type === "ToolCalled" && String((event as { callId?: unknown }).callId) === call.callId
@@ -163,7 +163,7 @@ const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArra
     const turn = (event as { turn?: unknown }).turn
     if (call.turn === undefined || turn === undefined || String(turn) === call.turn) return log.slice(0, index)
   }
-  return log
+  return log.slice(0, called)
 }
 
 // Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
@@ -233,7 +233,7 @@ export const infer = <
   const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
     toolsOf(offerLogFor(log, call))
   const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
-    const tool = offeredTools(log, call).find((candidate) => candidate.spec.name === call.name)
+    const tool = offeredTools(log, call).find((offered) => offered.spec.name === call.name)
     return tool?.serve(call, log, answer) as ReadonlyArray<Transition<never, R>> | undefined
   }
 
@@ -251,7 +251,7 @@ export const infer = <
     derive: (log) => {
       const children = combined.derive(log)
       const inferred = inference(log)
-      const resolvingModel = inferred.some((candidate) => candidate.key.startsWith("mr:"))
+      const resolvingModel = inferred.some((transition) => transition.key.startsWith("mr:"))
       return {
         view: children.view,
         transitions: resolvingModel ? inferred : [

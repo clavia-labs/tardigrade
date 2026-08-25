@@ -1,6 +1,5 @@
-import { Clock, Effect } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
-import { transition, type Transition } from "@clavia/tardigrade-core/actor"
+import { intent, type Transition } from "@clavia/tardigrade-core/actor"
 import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/component"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/event-log"
@@ -67,14 +66,10 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
   }
   const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
   return [
-    transition({
+    intent({
       key: `cd:${call.callId}`,
       input: { execId: call.callId, code },
-      act: (input) =>
-        Effect.gen(function* () {
-          const at = yield* Clock.currentTimeMillis
-          return [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
-        })
+      events: (input, at) => [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
     })
   ]
 }

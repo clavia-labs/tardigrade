@@ -1,6 +1,6 @@
 import { Clock, Effect } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { Self, transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { Self, effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { budgetRequestReported, replyDelivered } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { boundaryEvent, terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
@@ -110,7 +110,7 @@ const budgetReport = (log: ReadonlyArray<Event>): {
 export const replyReactor: Reactor<Router | Self> = (log) => {
   const request = budgetReport(log)
   const budgetTransitions = request === undefined ? [] : [
-    transition({
+    effect({
       key: `brr:${request.request}`,
       input: request,
       act: (input) =>
@@ -134,7 +134,7 @@ export const replyReactor: Reactor<Router | Self> = (log) => {
   if (replyView(log).length === 0) return budgetTransitions
   const turn = owedTurn(log)
   return [...budgetTransitions,
-    transition({
+    effect({
       key: `rd:${turn.id}`,
       input: turn,
       act: (input) =>

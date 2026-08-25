@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { transition } from "./actor"
+import { intent, effect } from "./actor"
 import { actor, composeComponents, reactorOf, type Component, type ViewAlgebra } from "./component"
 import type { Event } from "./event"
 
@@ -18,7 +18,7 @@ const component = (name: string, event: string): Component<Facts> => ({
   derive: (log) => ({
     view: { names: log.some((entry) => entry.type === event) ? [name] : [] },
     transitions: log.some((entry) => entry.type === event)
-      ? [transition({ key: name, input: name, act: () => Effect.succeed([]) })]
+      ? [effect({ key: name, input: name, act: () => Effect.succeed([]) })]
       : []
   })
 })
@@ -32,6 +32,69 @@ describe("components", () => {
 
     expect(composed.derive(log).view).toEqual({ names: ["left", "right"] })
     expect(composed.derive(log).transitions.map((owed) => owed.key)).toEqual(["left", "right"])
+  })
+
+  test("composition reconciles the complete transition set", () => {
+    const left = component("left", "Ready")
+    const right = component("right", "Ready")
+    const log: ReadonlyArray<Event> = [{ type: "Ready" }]
+    const observed: Array<{ log: ReadonlyArray<Event>; keys: ReadonlyArray<string> }> = []
+    const composed = composeComponents("selected", facts, [left, right], {
+      reconcile: (events, transitions) => {
+        observed.push({ log: events, keys: transitions.map((transition) => transition.key) })
+        return transitions.filter((transition) => transition.key === "right")
+      }
+    })
+
+    expect(composed.derive(log).transitions.map((owed) => owed.key)).toEqual(["right"])
+    expect(observed).toEqual([{ log, keys: ["left", "right"] }])
+  })
+
+  test("reconciliation sees intents and external effects in one transition set", () => {
+    const source: Component<Facts> = {
+      name: "mixed",
+      derive: () => ({
+        view: facts.empty,
+        transitions: [
+          intent({ key: "decision", input: undefined, events: () => [] }),
+          effect({ key: "work", input: undefined, act: () => Effect.succeed([]) })
+        ]
+      })
+    }
+    const observed: string[] = []
+    const composed = composeComponents("mixed-root", facts, [source], {
+      reconcile: (_events, transitions) => {
+        observed.push(...transitions.map((transition) => transition.kind))
+        return transitions.filter((transition) => transition.kind === "intent")
+      }
+    })
+
+    expect(observed).toEqual([])
+    expect(composed.derive([]).transitions.map((transition) => transition.key)).toEqual(["decision"])
+    expect(observed).toEqual(["intent", "effect"])
+  })
+
+  test("composition refuses work a reconciler did not receive", () => {
+    const source = component("source", "Ready")
+    const foreign = effect({ key: "foreign", input: undefined, act: () => Effect.succeed([]) })
+    const composed = composeComponents("invalid", facts, [source], {
+      reconcile: () => [foreign]
+    })
+
+    expect(() => composed.derive([{ type: "Ready" }])).toThrow(
+      'component "invalid" reconciler returned work outside its transition set'
+    )
+  })
+
+  test("composition refuses a transition selected more than once", () => {
+    const source = component("source", "Ready")
+    const composed = composeComponents("duplicate", facts, [source], {
+      reconcile: (_events, transitions) => [transitions[0]!, transitions[0]!]
+    })
+
+    expect(() => composed.derive([{ type: "Ready" }])).toThrow(
+      'component "duplicate" reconciler returned transition "source" more than once'
+    )
   })
 
   test("the empty composition derives the algebra's empty view and no work", () => {

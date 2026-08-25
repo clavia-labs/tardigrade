@@ -17,24 +17,36 @@ type TurnCompleted = { type: "TurnCompleted"; output: string }
 // event order; it is recomputed on every read, never stored, never appended.
 type Projection<T> = (events: Event[]) => T
 
-// key and input are projections of the event set, so a retried fire is the
-// same work, absorbed by its key. act may be nondeterministic.
-type Transition<T, E extends Event = Event> = {
+// Intent proposes events without external work.
+type Intent<T, E extends Event = Event> = {
+  kind: "intent"
+  key: string
+  input: T
+  events: (input: T, at: number) => E[]
+}
+
+// ExternalEffect performs outside-world work and returns events that record its outcome.
+type ExternalEffect<T, E extends Event = Event> = {
+  kind: "effect"
   key: string
   input: T
   act: (input: T) => Promise<E[]>
 }
 
-// A Reactor derives the transitions the log enables. The runtime fires each
+// Transition is an intent or external effect offered from one log snapshot.
+type Transition<T, E extends Event = Event> = Intent<T, E> | ExternalEffect<T, E>
+
+// Reactor derives the transitions the log enables. The runtime fires each
 // key the log does not record and appends the results, keyed record last.
 type Reactor = (events: Event[]) => Transition<never>[]
 
-// An Actor is the single writer of one log and the reactors over it.
+// Actor is the single writer of one log and the reactors over it.
 type Actor = { reactors: Reactor[] }
 
-// transition pins T at the construction site, then forgets it: the runtime only ever calls
+// effect pins T at the construction site, then forgets it: the runtime only ever calls
 // act(input) with the input the same derivation produced, so the erasure is sound.
-const transition = <T>(t: Transition<T>): Transition<never> => t as unknown as Transition<never>
+const effect = <T>(work: Omit<ExternalEffect<T>, "kind">): ExternalEffect<never> =>
+  ({ kind: "effect", ...work }) as unknown as ExternalEffect<never>
 
 // The runtime. One log, one settle loop. The library records fired keys in the log itself,
 // so a crash loses nothing; this in-memory stand-in records them in a set, which is enough
@@ -42,17 +54,17 @@ const transition = <T>(t: Transition<T>): Transition<never> => t as unknown as T
 const log: Event[] = []
 const recorded = new Set<string>()
 
-// settle renders every reactor and fires each transition the set does not
-// record, until a full pass enables nothing.
+// settle derives and fires transitions until none remain.
 const settle = async (actor: Actor): Promise<void> => {
   for (;;) {
     const fires = actor.reactors.flatMap((r) => r(log)).filter((t) => !recorded.has(t.key))
     if (fires.length === 0) return
     for (const t of fires) {
-      const events = await t.act(t.input)
+      const events = t.kind === "intent" ? t.events(t.input, Date.now()) : await t.act(t.input)
       recorded.add(t.key)
       log.push(...events)
       for (const e of events) console.log(`  ${t.key} -> ${render(e)}`)
+      break
     }
   }
 }
@@ -88,7 +100,7 @@ const runTool = async (call: ToolCalled): Promise<ToolReturned[]> => {
 
 // tools: one transition per unanswered call.
 const tools: Reactor = (events) =>
-  unansweredCalls(events).map((call) => transition({ key: call.callId, input: call, act: runTool }))
+  unansweredCalls(events).map((call) => effect({ key: call.callId, input: call, act: runTool }))
 
 // The model. A script stands where inference goes: look at deploys, read the diff, answer.
 type Action =
@@ -116,7 +128,7 @@ const infer: Reactor = (events) => {
   if (done(events)) return []
   if (unansweredCalls(events).length > 0) return []
   const attempt = events.filter((e) => e.type === "ToolReturned").length
-  return [transition({ key: `llm/${attempt}`, input: events, act: runLlm })]
+  return [effect({ key: `llm/${attempt}`, input: events, act: runLlm })]
 }
 
 // The budget. Small on purpose, so compaction fires inside this short run.
@@ -158,7 +170,7 @@ const compact = async (span: Span): Promise<CompactionCompleted[]> => {
 const compaction: Reactor = (events) => {
   const span = spanOf(events)
   if (!span) return []
-  return [transition({ key: `compact/${span.from}`, input: span, act: compact })]
+  return [effect({ key: `compact/${span.from}`, input: span, act: compact })]
 }
 
 // render names an event in one line for the run's printout.

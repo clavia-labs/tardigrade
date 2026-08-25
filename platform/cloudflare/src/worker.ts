@@ -228,9 +228,8 @@ function defaultAssemblyOf(
   const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
   const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
   return actor(inferAgent([
-    codeMode([agentsPackage(), workspacePackage(), fetchPackage()]),
+    budget([codeMode([agentsPackage(), workspacePackage(), fetchPackage()])]),
     reply,
-    budget,
     compaction({
       ...(models === undefined ? {} : {
         contextWindowTokens: (model: ModelRef | undefined) =>

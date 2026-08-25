@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { compactionCompleted } from "../events"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
@@ -359,7 +359,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
   const prior = checkpointOf(view)
   const span = view.slice(keepFromIndex(view, prior.keepFrom), cut.index)
   return [
-    transition({
+    effect({
       key: `cc:${cut.keepFrom}`,
       input: {
         keepFrom: cut.keepFrom,

@@ -2,43 +2,58 @@ import { actorFromReactors, type Actor, type Reactor, type Transition } from "./
 import type { Event } from "./event"
 import { composeKeys, type KeyFragment } from "./event-log"
 
-// Derivation is one component's reading of a log: a view for consumers and transitions for the
-// actor runtime. The view follows tla/runtime/Projection.tla, ViewFaithful. The
-// transitions follow tla/runtime/Reconcile.tla, NoVoid.
+// Derivation contains one component's view and transition projections
+// (tla/runtime/Projection.tla, ViewFaithful; tla/runtime/Reconcile.tla, NoVoid).
 export interface Derivation<V, R = never> {
   readonly view: V
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
 
-// Component derives a view and owed work from the same log. Its key fragment declares how
-// the events its transitions append prove commitment to the actor runtime.
+// Component derives a view and transitions from one log and declares their committing keys.
 export interface Component<V, R = never> {
   readonly name: string
   readonly keys?: KeyFragment
   readonly derive: (log: ReadonlyArray<Event>) => Derivation<V, R>
 }
 
-// ViewAlgebra states how independently derived views compose. Callers supply the empty value and
-// combination rule because ordering, collisions, and overrides belong to the view's consumer.
+// ViewAlgebra defines the empty view and how two independently derived views combine.
 export interface ViewAlgebra<V> {
   readonly empty: V
   readonly combine: (left: V, right: V) => V
 }
 
-// ComponentRequirements extracts a component's environment so composition carries the union of every
-// member's requirements to the actor that hosts it.
+// TransitionReconciler selects work from the complete child transition set before external effects
+// begin (tla/runtime/Coherence.tla, NoSuppressedCommit). It returns only transitions it received,
+// each at most once (component.test.ts, "composition refuses work a reconciler did not receive" and
+// "composition refuses a transition selected more than once").
+export type TransitionReconciler<R = never> = (
+  log: ReadonlyArray<Event>,
+  transitions: ReadonlyArray<Transition<never, R>>
+) => ReadonlyArray<Transition<never, R>>
+
+// independentTransitions preserves every transition in child order.
+export const independentTransitions = <R>(
+  _log: ReadonlyArray<Event>,
+  transitions: ReadonlyArray<Transition<never, R>>
+): ReadonlyArray<Transition<never, R>> => transitions
+
+// CompositionOptions sets the reconciliation policy at this component boundary.
+export interface CompositionOptions<R = never> {
+  readonly reconcile?: TransitionReconciler<R>
+}
+
+// ComponentRequirements extracts a component's service requirements.
 export type ComponentRequirements<C> = C extends Component<unknown, infer R> ? R : never
 
-// composeComponents derives the algebraic sum of each component's view and concatenates
-// its transitions in component order. The name is explicit because traces and collision errors
-// identify the resulting component with it.
+// composeComponents combines child views and reconciles their complete transition set.
 export const composeComponents = <
   V,
   const Cs extends ReadonlyArray<Component<V, never> | Component<V, unknown>>
 >(
   name: string,
   algebra: ViewAlgebra<V>,
-  components: Cs
+  components: Cs,
+  options: CompositionOptions<ComponentRequirements<Cs[number]>> = {}
 ): Component<V, ComponentRequirements<Cs[number]>> => {
   const members = components as ReadonlyArray<Component<V, ComponentRequirements<Cs[number]>>>
   const fragments = members.flatMap((component) => component.keys === undefined ? [] : [component.keys])
@@ -48,6 +63,7 @@ export const composeComponents = <
         prefixes: fragments.flatMap((fragment) => fragment.prefixes),
         keyOf: composeKeys(...fragments)
       }
+  const reconcile = options.reconcile ?? independentTransitions
   return {
     name,
     ...(keys === undefined ? {} : { keys }),
@@ -59,18 +75,28 @@ export const composeComponents = <
         view = algebra.combine(view, derived.view)
         transitions.push(...derived.transitions)
       }
-      return { view, transitions }
+      const resolved = reconcile(log, transitions)
+      const received = new Set(transitions)
+      const seen = new Set<Transition<never, ComponentRequirements<Cs[number]>>>()
+      for (const selected of resolved) {
+        if (!received.has(selected)) {
+          throw new Error(`component "${name}" reconciler returned work outside its transition set`)
+        }
+        if (seen.has(selected)) {
+          throw new Error(`component "${name}" reconciler returned transition "${selected.key}" more than once`)
+        }
+        seen.add(selected)
+      }
+      return { view, transitions: resolved }
     }
   }
 }
 
-// reactorOf exposes a component's owed-work projection to the existing actor reconciler.
+// reactorOf exposes a component's transition projection as a reactor.
 export const reactorOf = <V, R>(component: Component<V, R>): Reactor<R> =>
   (log) => component.derive(log).transitions
 
-// actor composes root components at the execution boundary. Composite components own their
-// view algebra; the actor preserves root order, adapts each transition projection to a reactor,
-// and combines every committing key fragment for reconciliation.
+// actor adapts root components to reactors and combines their committing key fragments.
 export const actor = <
   const Cs extends ReadonlyArray<Component<unknown, never> | Component<unknown, unknown>>
 >(...components: Cs): Actor<ComponentRequirements<Cs[number]>> => {

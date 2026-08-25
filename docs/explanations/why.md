@@ -4,9 +4,9 @@ Building and running an agent in production is tough. Your agents can fail for a
 
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. To enable this, we need a harness that can be inspected, forked, and varied. 
 ### Log is all you need
-How can a harness be fully customizable, easy to author, and yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React derives its component tree and declared effects from state, `{ UI, effects } = f(state)` [1]. A harness has the same shape over its event log, `{ view, transitions } = f(log)`, with transitions grounded in Harel's statecharts [2]. This simplicity enables expressive authoring without sacrificing reliability.
+How can a harness be fully customizable, easy to author, and yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React derives its component tree and declared effects from state, `{ UI, effects } = f(state)` [1]. A harness has the same shape over its event log, `{ view, transitions } = f(log)`, with transitions grounded in Harel's statecharts [2]. A transition is either an intent that proposes events or an external effect. This simplicity enables expressive authoring without sacrificing reliability.
 
-Tobi Lütke (CEO, Shopify) echoed a similar idea in an August 2026 [post](https://x.com/tobi/status/2086192833061323111) [3]: "everything that can be will be converted into `state = memo { f(log) }`... all other state management is just too complex at the limit." We take this idea further: the view and all state transitions of a harness can be described as one function over the log.
+Tobi Lütke (CEO, Shopify) echoed a similar idea in an August 2026 [post](https://x.com/tobi/status/2086192833061323111) [3]: "everything that can be will be converted into `state = memo { f(log) }`... all other state management is just too complex at the limit." We take this idea further: the view and all transitions of a harness can be described as one function over the log.
 
 $$
 \{\mathrm{view},\ \mathrm{transitions}\} = f(\mathrm{log})
@@ -64,7 +64,7 @@ flowchart LR
 
 #### Durable effects
 
-If a process is disposable, how do we ensure that any work that was mid-flight gets done if the process crashes? In tardigrade, every transition has a key derived from the log. If the process crashes in flight, it leaves the transition unrecorded. When a new process starts, it re-derives the exact same transition and retries it, since transitions are a pure function of the log. Every effect runs at least once and is recorded in the log exactly once. The transition key also functions as an idempotency key for providers that accept one.
+If a process is disposable, how do we ensure that any work that was mid-flight gets done if the process crashes? In tardigrade, every transition has a key derived from the log. If the process crashes during an external effect, it leaves that transition unrecorded. When a new process starts, it re-derives the same transition and retries it because transitions are a pure function of the log. Every external effect runs at least once and its keyed result is recorded once. The transition key also functions as an idempotency key for providers that accept one.
 
 ```mermaid
 flowchart TB

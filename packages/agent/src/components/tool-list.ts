@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import { transition } from "@clavia/tardigrade-core/actor"
+import { effect } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { toolReturned } from "../events"
 import type { ToolSpec } from "../request"
@@ -28,7 +28,7 @@ export const toolList = <R = never>(
         serve: (call) => {
           const stamp = call.turn === undefined ? {} : { turn: call.turn }
           return [
-            transition({
+            effect({
               key: `tr:${call.callId}`,
               input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
               act: (input) =>

@@ -27,7 +27,7 @@ export type RlmR = AgentR
 // and fills from its own exported default (infer.ts, budget.ts, compaction.ts,
 // packages/code/src/execute.ts). `infer` is the root component's policy; `workspace`
 // bounds the workspace package's own read and grep answers (packages/code/src/workspace.ts); the
-// rest ride their components (budgetFor, compaction, codeMode).
+// rest ride their components (budget, compaction, codeMode).
 export interface AgentPolicy {
   readonly infer: Partial<InferPolicy>
   readonly budget: Partial<BudgetPolicy>

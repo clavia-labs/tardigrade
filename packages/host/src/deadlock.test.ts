@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
@@ -36,7 +36,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
     // A brief with no declared await: declare one.
     if (has(events, "MessageReceived", "brief") && !has(events, "Awaiting")) {
       return [
-        transition({
+        effect({
           key: `aw:${me}.await`,
           input: { partner, callId: `${me}.await` },
           act: (input) =>
@@ -47,7 +47,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
     // The awaited reply is home: settle enabled.
     if (!has(events, "MessageReceived", `${me}.await.reply`)) return []
     return [
-      transition({
+      effect({
         key: "st:1",
         input: { partner },
         act: (input) =>

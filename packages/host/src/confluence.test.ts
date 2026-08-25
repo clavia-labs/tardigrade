@@ -3,7 +3,7 @@ import fc from "fast-check"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "@clavia/tardigrade-core/router"
-import { transition, type Reactor } from "@clavia/tardigrade-core/actor"
+import { effect, type Reactor } from "@clavia/tardigrade-core/actor"
 import { createHost, type HostOptions } from "./host"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -37,7 +37,7 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
     if (pending === undefined) return []
     const n = Number(pending.n ?? 0)
     return [
-      transition({
+      effect({
         key: `an:${str(pending.id)}`,
         input: { id: str(pending.id), n },
         act: (input) =>
