@@ -1,13 +1,15 @@
 import { useState, type ReactElement } from "react"
 
 import type { ProblemError } from "@clavia/tardigrade-client"
-import { ArrowUpRight, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
+import { ArrowUpRight, CaretLeft, CaretRight, GithubLogo, Plus } from "@phosphor-icons/react"
 import { docsUrl } from "./client"
 import { navigate } from "./nav"
 import { ICON_SIZE, RAIL_COLLAPSED_WIDTH, RAIL_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
 import { ThemeToggle } from "./ThemeToggle"
+
+const SOURCE_URL = "https://github.com/clavia-labs/tardigrade"
 
 // The rail: the run's roots and nothing else (mock.html, the aside). A root is a run, and the tree
 // under it is the run's own business, so the rail lists the six things a reader chooses between
@@ -128,6 +130,15 @@ export const Rail = ({
         >
           <ArrowUpRight size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span>API</span>
+        </a>
+        <a
+          className="rail-utility"
+          href={SOURCE_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <GithubLogo size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <span>GitHub</span>
         </a>
         <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
       </div>
