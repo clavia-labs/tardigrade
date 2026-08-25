@@ -128,7 +128,7 @@ const main = async (): Promise<void> => {
     await command([
       "run", "--rm", ...common,
       "--mount", `type=bind,source=${repository},target=/workspace,readonly`,
-      "--workdir", "/workspace/platform/cloudflare/test/celld",
+      "--workdir", "/workspace/platform/worker-loader/test/celld",
       deployImage, "deploy", ".", "--bucket", "s3://tardigrade",
       "--endpoint", `http://${storeAddress}:9000`, "--region", "us-east-1"
     ])

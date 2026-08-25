@@ -26,6 +26,7 @@
     "@clavia/tardigrade-host": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
     "@clavia/tardigrade-server": "workspace:*",
+    "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-do": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
   },
@@ -40,7 +41,6 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "test:workers": "vitest run --config vitest.config.ts",
-    "test:celld": "bun run test/celld/run.ts"
+    "test:workers": "vitest run --config vitest.config.ts"
   }
 }

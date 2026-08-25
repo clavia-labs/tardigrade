@@ -22,15 +22,15 @@ import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/com
 import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { DEFAULT_MAX_CONCURRENT_LANES, driverPolicyOf } from "@clavia/tardigrade-host/driver"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox"
+import {
+  layerWorkerLoaderSandbox,
+  type SandboxBridgeCall,
+  type SandboxBridgeLease,
+  type WorkerLoaderSandboxLimits,
+  type WorkerLoaderSandboxTransport
+} from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, type AlarmPolicy } from "./alarm"
 import { createCloudflareHost, type CloudflareHost } from "./host"
-import {
-  layerCloudflareSandbox,
-  type SandboxBridgeCall,
-  type CloudflareSandboxLimits,
-  type CloudflareSandboxTransport,
-  type SandboxBridgeLease
-} from "./sandbox"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 
@@ -213,7 +213,7 @@ const optionalRatio = (raw: string | undefined, name: string): number | undefine
   return value
 }
 
-const sandboxTransportOf = (raw: string | undefined): CloudflareSandboxTransport => {
+const sandboxTransportOf = (raw: string | undefined): WorkerLoaderSandboxTransport => {
   const selected = raw ?? "capability"
   if (selected === "capability" || selected === "replay") return selected
   throw new Error(`TARDIGRADE_SANDBOX_TRANSPORT must be "capability" or "replay", got ${JSON.stringify(raw)}`)
@@ -337,13 +337,13 @@ export class ActorHost extends DurableObject<Env> {
       this.env.TARDIGRADE_SANDBOX_SUBREQUESTS,
       "TARDIGRADE_SANDBOX_SUBREQUESTS"
     )
-    const sandboxLimits: CloudflareSandboxLimits = {
+    const sandboxLimits: WorkerLoaderSandboxLimits = {
       ...(sandboxCpuMs === undefined ? {} : { cpuMs: sandboxCpuMs }),
       ...(sandboxSubRequests === undefined ? {} : { subRequests: sandboxSubRequests })
     }
     const actorName = this.ctx.id.name
     if (actorName === undefined) throw new Error("actor host requires a named durable object")
-    const sandboxLayer = layerCloudflareSandbox(
+    const sandboxLayer = layerWorkerLoaderSandbox(
       this.env.LOADER,
       (call): SandboxBridgeLease => {
         const execution = crypto.randomUUID()

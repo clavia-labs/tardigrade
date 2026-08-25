@@ -2,14 +2,14 @@ import { Effect } from "effect"
 import { describe, expect, test } from "vitest"
 import { sandboxParked, sandboxReturned } from "@clavia/tardigrade-code/sandbox"
 import {
-  DEFAULT_CLOUDFLARE_SANDBOX_POLICY,
-  cloudflareSandboxServiceFor,
+  DEFAULT_WORKER_LOADER_SANDBOX_POLICY,
+  workerLoaderSandboxServiceFor,
   type SandboxBridgeBinding
 } from "./sandbox"
 
-describe("cloudflare sandbox bridge", () => {
+describe("worker loader sandbox bridge", () => {
   test("keeps the capability transport as the default", () => {
-    expect(DEFAULT_CLOUDFLARE_SANDBOX_POLICY.transport).toBe("capability")
+    expect(DEFAULT_WORKER_LOADER_SANDBOX_POLICY.transport).toBe("capability")
   })
 
   test("forwards package calls and closes the capability", async () => {
@@ -32,7 +32,7 @@ describe("cloudflare sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, (call) => ({
+    const sandbox = workerLoaderSandboxServiceFor(loader, (call) => ({
       binding: {
         sandboxCallBatch: (_execution, calls) => Promise.all(calls.map((entry) =>
           call(entry.ordinal, entry.packageName, entry.method, entry.args)
@@ -76,7 +76,7 @@ describe("cloudflare sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, (call) => ({
+    const sandbox = workerLoaderSandboxServiceFor(loader, (call) => ({
       binding: {
         sandboxCallBatch: (_execution, calls) => Promise.all(calls.map((entry) =>
           call(entry.ordinal, entry.packageName, entry.method, entry.args)
@@ -121,7 +121,7 @@ describe("cloudflare sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, () => {
+    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
       throw new Error("replay transport must not open a capability")
     }, { transport: "replay" })
     const calls: Array<number> = []
@@ -160,7 +160,7 @@ describe("cloudflare sandbox bridge", () => {
         })
       })
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, () => {
+    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
       throw new Error("replay transport must not open a capability")
     }, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run("return 0", {
@@ -197,7 +197,7 @@ describe("cloudflare sandbox bridge", () => {
         }
       }
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, () => {
+    const sandbox = workerLoaderSandboxServiceFor(loader, () => {
       throw new Error("replay transport must not open a capability")
     }, { transport: "replay" })
     const result = await Effect.runPromise(sandbox.run("return 0", {
@@ -228,7 +228,7 @@ describe("cloudflare sandbox bridge", () => {
         }
       }
     } as unknown as WorkerLoader
-    const sandbox = cloudflareSandboxServiceFor(loader, () => ({
+    const sandbox = workerLoaderSandboxServiceFor(loader, () => ({
       binding: { sandboxCallBatch: async () => [] },
       execution: "test-execution",
       close: () => {

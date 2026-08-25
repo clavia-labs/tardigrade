@@ -12,7 +12,7 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
 const packages = ["core", "code", "agent", "host", "channels", "client"]
 const platformPkg = (name: string) => `${root}platform/${name}`
-const platforms = ["model", "bun", "cloudflare"]
+const platforms = ["model", "bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
@@ -67,6 +67,7 @@ const tasks: ReadonlyArray<Task> = [
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
+  { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),

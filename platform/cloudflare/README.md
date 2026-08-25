@@ -10,12 +10,11 @@ Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader sur
 bun run --cwd platform/cloudflare typecheck
 bun run --cwd platform/cloudflare test
 bun run --cwd platform/cloudflare test:workers
-bun run --cwd platform/cloudflare test:celld
 bun run --cwd platform/cloudflare bundle
 bun run --cwd platform/cloudflare deploy
 ```
 
-`test:workers` runs the runtime suite on workerd. `test:celld` requires a running Apple Container service and runs the shared replay case on Celld with a loaded Worker limit of one. It starts a local object store, deploys the fixture, verifies the result through HTTP, and removes its generated containers, network, and deploy image. Set `TARDIGRADE_CELLD_IMAGE`, `TARDIGRADE_CELLD_NODE_IMAGE`, `TARDIGRADE_CELLD_ESBUILD_VERSION`, `TARDIGRADE_CELLD_STORE_IMAGE`, `TARDIGRADE_CELLD_STORE_CLIENT_IMAGE`, `TARDIGRADE_CELLD_LOADED_WORKER_LIMIT`, `TARDIGRADE_CELLD_PORT`, or `TARDIGRADE_CELLD_TIMEOUT_MILLIS` to override a test dependency or policy.
+The [Worker Loader platform](../worker-loader/README.md) owns Code Mode sandbox policy and its shared workerd and Celld runtime tests.
 
 Set authentication before using the event API:
 
@@ -111,4 +110,4 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model reference as visible JSON configuration in `wrangler.jsonc` |
 | `TARDIGRADE_SANDBOX_TRANSPORT` | `capability` | Selects direct capability calls or deterministic JSON `replay` for loaded Workers |
 
-`wrangler.jsonc` also makes the Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_CLOUDFLARE_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerCloudflareSandbox` accepts overrides for each value.
+`wrangler.jsonc` also makes the Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_WORKER_LOADER_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerWorkerLoaderSandbox` accepts overrides for each value.
