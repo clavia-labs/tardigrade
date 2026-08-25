@@ -175,11 +175,16 @@ export default {
 
 // REPLAY_HARNESS_SOURCE returns JSON call boundaries and refuses positional drift (packages/core/tla/runtime/Replay.tla, RightAnswer).
 const REPLAY_HARNESS_SOURCE = `${HARNESS_PREAMBLE}
+const canonicalJson = (value) => JSON.stringify(value, (_key, entry) => {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+  return Object.fromEntries(Object.keys(entry).sort().map((key) => [key, entry[key]]));
+});
+
 const sameCall = (left, right) =>
   left.ordinal === right.ordinal &&
   left.packageName === right.packageName &&
   left.method === right.method &&
-  JSON.stringify(left.args) === JSON.stringify(right.args);
+  canonicalJson(left.args) === canonicalJson(right.args);
 
 export default {
   async fetch(_request, env) {
