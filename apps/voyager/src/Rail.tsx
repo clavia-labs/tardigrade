@@ -1,12 +1,15 @@
 import { useState, type ReactElement } from "react"
 
-import type { ActorIdentity, ProblemError } from "@clavia/tardigrade-client"
-import { BracketsCurly, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
+import type { ProblemError } from "@clavia/tardigrade-client"
+import { ArrowUpRight, CaretLeft, CaretRight, GithubLogo, Plus } from "@phosphor-icons/react"
+import { docsUrl } from "./client"
 import { navigate } from "./nav"
 import { ICON_SIZE, RAIL_COLLAPSED_WIDTH, RAIL_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
 import { ThemeToggle } from "./ThemeToggle"
+
+const SOURCE_URL = "https://github.com/clavia-labs/tardigrade"
 
 // The rail: the run's roots and nothing else (mock.html, the aside). A root is a run, and the tree
 // under it is the run's own business, so the rail lists the six things a reader chooses between
@@ -49,11 +52,7 @@ const Row = ({
   )
 }
 
-const sqliteLabel = (location: string): string =>
-  location === ":memory:" ? location : location.split(/[\\/]/).slice(-2).join("/")
-
 export const Rail = ({
-  actorIdentity,
   collapsedWidth = RAIL_COLLAPSED_WIDTH,
   headerHeight = RAIL_HEADER_HEIGHT,
   now,
@@ -62,7 +61,6 @@ export const Rail = ({
   selected,
   width = RAIL_WIDTH
 }: {
-  readonly actorIdentity: ActorIdentity | undefined
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly now: number
@@ -96,12 +94,6 @@ export const Rail = ({
         </div>
       </div>
       {collapsed ? null : <><div className="rail-actions">
-        <div className="rail-actor">
-          <div className="mono rail-actor-name">{actorIdentity?.name ?? "\u00a0"}</div>
-          <div className="mono rail-actor-sqlite" title={actorIdentity?.sqlite}>
-            {actorIdentity === undefined ? "\u00a0" : sqliteLabel(actorIdentity.sqlite)}
-          </div>
-        </div>
         <input
           className="input rail-search"
           value={query}
@@ -112,7 +104,7 @@ export const Rail = ({
         <button
           type="button"
           className="rail-new-thread"
-          onClick={() => navigate({ thread: undefined, view: "new", operation: undefined, from: undefined, to: undefined })}
+          onClick={() => navigate({ thread: undefined, view: "new", from: undefined, to: undefined })}
         >
           <Plus size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span>New thread</span>
@@ -130,14 +122,24 @@ export const Rail = ({
         ))}
       </div>
       <div className="rail-footer">
-        <button
-          type="button"
+        <a
           className="rail-utility"
-          onClick={() => navigate({ thread: undefined, view: "api", operation: undefined, from: undefined, to: undefined })}
+          href={docsUrl()}
+          target="_blank"
+          rel="noreferrer"
         >
-          <BracketsCurly size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <ArrowUpRight size={ICON_SIZE} weight="light" aria-hidden="true" />
           <span>API</span>
-        </button>
+        </a>
+        <a
+          className="rail-utility"
+          href={SOURCE_URL}
+          target="_blank"
+          rel="noreferrer"
+        >
+          <GithubLogo size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <span>GitHub</span>
+        </a>
         <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
       </div>
       </>}

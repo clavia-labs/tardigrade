@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test"
 
-import { apiUrl, defaultApiUrl, DEFAULT_API_URL, token, TOKEN_KEY } from "./client"
+import { apiUrl, defaultApiUrl, DEFAULT_API_URL, docsUrl, token, TOKEN_KEY } from "./client"
 
 // The two things a browser decides: which server this tab talks to, and which token it holds.
 // Everything else the app does with the server is the client package's (packages/client).
@@ -46,6 +46,14 @@ describe("apiUrl", () => {
 
   test("Vite development keeps the client default", () => {
     expect(defaultApiUrl(undefined, "http://localhost:5173", false)).toBe(DEFAULT_API_URL)
+  })
+})
+
+describe("docsUrl", () => {
+  test("points at the server's Scalar page", () => {
+    withGlobal("location", { search: "?api=http://127.0.0.1:9000/" }, () => {
+      expect(docsUrl()).toBe("http://127.0.0.1:9000/docs")
+    })
   })
 })
 

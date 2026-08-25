@@ -25,10 +25,7 @@ import { Event } from "@clavia/tardigrade-core/event"
 // constant is what a hand-written helper follows the declaration with (stream.ts, streamUrl).
 export const V1_PREFIX = "/v1"
 
-// The one actor this build serves. The server compiles one assembly into the binary, so the actor
-// level is declared as a path parameter and answered for exactly this name: the shape is honest
-// about what a deploy will vary, and no URL has to be taught twice when it does
-// (apps/server/src/api.ts, actorOf).
+// RESERVED_ACTOR is the internal name of the built-in actor mounted by the generic host.
 export const RESERVED_ACTOR = "default"
 
 // Where the derived OpenAPI document is served, and where the reference page renders it. Both are
@@ -85,18 +82,12 @@ export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 
 // A thread exists once its log has its ThreadCreated event, so an empty log is the only unknown thread there is (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
 
-// An actor is deployed code, and this build has one compiled in, so every name but the reserved one
-// is an actor this server does not serve (apps/server/src/api.test.ts, "an actor nobody deployed is
-// its own 404"). It is a separate failure from an unknown thread because the two say different
-// things to a caller: one names code that is not here, the other a log that has never been written.
-export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
-
 // A name the actor never declared. The platform mounts what an actor declares and nothing else, so
 // this is the answer for any other name under a thread, and its detail lists the names that do
 // exist (apps/server/src/api.ts, layerProjections).
 export const UnknownProjection = problemKind("unknown-projection", "Unknown Projection", 404)
 
-// UnknownMethod reports a method name the selected actor did not declare.
+// UnknownMethod reports a method name the mounted actor did not declare.
 export const UnknownMethod = problemKind("unknown-method", "Unknown Method", 404)
 
 // UnknownMethodCall reports a call id the selected method cannot derive from the thread log.
@@ -138,7 +129,7 @@ export const ThreadStatus = Schema.Literals(["settled", "running", "blocked", "f
 
 export type ThreadStatus = typeof ThreadStatus.Type
 
-// One row of GET /v1/actors/:actor/threads: what a thread is, without its events. `parent` is absent for a root, and
+// One row of GET /v1/threads: what a thread is, without its events. `parent` is absent for a root, and
 // `lastAt` for a thread whose events carry no timestamp.
 export const ThreadSummary = Schema.Struct({
   id: Schema.String,
@@ -155,7 +146,7 @@ export interface ThreadNode extends ThreadSummary {
   readonly children: ReadonlyArray<ThreadNode>
 }
 
-// A summary with the threads it spawned, the shape GET /v1/actors/:actor/threads/:id/tree serves.
+// A summary with the threads it spawned, the shape GET /v1/threads/:id/tree serves.
 export const ThreadNode = Schema.Struct({
   ...ThreadSummary.fields,
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
@@ -179,7 +170,7 @@ export const TurnView = Schema.Struct({
 
 export type TurnView = typeof TurnView.Type
 
-// One row of GET /v1/actors/:actor/threads/:id/events. `seq` is the event's 1-based position in the whole log,
+// One row of GET /v1/threads/:id/events. `seq` is the event's 1-based position in the whole log,
 // assigned before any filter runs, so a `types` filter narrows the rows without renumbering them
 // and `after` still means the same place (apps/server/src/api.test.ts, "after and limit page the
 // log, and types filters without renumbering it").
@@ -190,12 +181,11 @@ export const EventRow = Schema.Struct({
 
 export type EventRow = typeof EventRow.Type
 
-// What an append answers: the two levels the request named. 202 because the event is committed and
+// What an append answers: the thread the request named. 202 because the event is committed and
 // the settle loop takes it from there, and because the actor's own key absorbs a duplicate, so a
 // retrying caller gets this same answer and never learns it retried. Nothing turn-shaped is echoed:
 // a turn is the actor's reading of the log, and the caller already holds whatever id it sent.
 export const Accepted = Schema.Struct({
-  actor: Schema.String,
   thread: Schema.String
 }).annotate({ identifier: "Accepted" }).pipe(HttpApiSchema.status(202))
 
@@ -203,7 +193,6 @@ export type Accepted = typeof Accepted.Type
 
 // MethodAccepted identifies the method call committed for asynchronous reconciliation.
 export const MethodAccepted = Schema.Struct({
-  actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
   call: Schema.String
@@ -237,13 +226,16 @@ export const Health = Schema.Struct({
 
 export type Health = typeof Health.Type
 
-// ActorIdentity names the runtime mounted behind an actor route.
-export const ActorIdentity = Schema.Struct({
+// ActorMetadata describes the actor and storage mounted at this runtime origin.
+export const ActorMetadata = Schema.Struct({
   name: Schema.String,
-  sqlite: Schema.String
-}).annotate({ identifier: "ActorIdentity" })
+  storage: Schema.Struct({
+    kind: Schema.String,
+    location: Schema.optionalKey(Schema.String)
+  })
+}).annotate({ identifier: "ActorMetadata" })
 
-export type ActorIdentity = typeof ActorIdentity.Type
+export type ActorMetadata = typeof ActorMetadata.Type
 
 export const ActorSummary = Schema.Struct({
   name: Schema.String,
@@ -382,66 +374,56 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-// The actor level, on every route that reads or writes a thread. It is a parameter rather than the
-// literal `agent` so the declaration states the shape a deploy will vary, and every route can refuse
-// a name this build does not serve in the same way (apps/server/src/api.ts, actorOf).
-const ActorParams = { actor: Schema.String }
+const RuntimeThreadParams = { id: Schema.String }
 
-const ThreadParams = { actor: Schema.String, id: Schema.String }
+const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
-const MethodCallParams = { ...ThreadParams, method: Schema.String, call: Schema.String }
+// runtimeGroup describes the actor mounted at this runtime origin.
+export const runtimeGroup = HttpApiGroup.make("runtime").add(
+  HttpApiEndpoint.get("metadata", "/v1/metadata", { success: ActorMetadata })
+)
 
 // threadsGroup declares the platform's raw log operations: list threads, append an event, and read events back.
 export const threadsGroup = HttpApiGroup.make("threads").add(
-  HttpApiEndpoint.get("actor", "/v1/actors/:actor", {
-    params: ActorParams,
-    success: ActorIdentity,
-    error: [UnknownActor.schema]
-  }),
   // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
-  HttpApiEndpoint.post("append", "/v1/actors/:actor/threads/:id/events", {
-    params: ThreadParams,
+  HttpApiEndpoint.post("append", "/v1/threads/:id/events", {
+    params: RuntimeThreadParams,
     payload: Append,
-    success: Accepted,
-    error: [UnknownActor.schema]
+    success: Accepted
   }),
-  HttpApiEndpoint.get("list", "/v1/actors/:actor/threads", {
-    params: ActorParams,
-    success: Schema.Array(ThreadSummary),
-    error: [UnknownActor.schema]
+  HttpApiEndpoint.get("list", "/v1/threads", {
+    success: Schema.Array(ThreadSummary)
   }),
-  HttpApiEndpoint.get("events", "/v1/actors/:actor/threads/:id/events", {
-    params: ThreadParams,
+  HttpApiEndpoint.get("events", "/v1/threads/:id/events", {
+    params: RuntimeThreadParams,
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
-    error: [UnknownActor.schema, UnknownThread.schema]
+    error: [UnknownThread.schema]
   }),
   // The tree reads the whole family because each thread owns its identity while parent addresses resolve against the other ThreadCreated records in the actor's listing.
-  HttpApiEndpoint.get("tree", "/v1/actors/:actor/threads/:id/tree", {
-    params: ThreadParams,
+  HttpApiEndpoint.get("tree", "/v1/threads/:id/tree", {
+    params: RuntimeThreadParams,
     success: ThreadNode,
-    error: [UnknownActor.schema, UnknownThread.schema]
+    error: [UnknownThread.schema]
   })
 )
 
 // methodsGroup turns typed actor input into a durable event and projects each call from the same log.
 export const methodsGroup = HttpApiGroup.make("methods").add(
-  HttpApiEndpoint.get("methods", "/v1/actors/:actor/methods", {
-    params: ActorParams,
-    success: Schema.Array(MethodSummary),
-    error: [UnknownActor.schema]
+  HttpApiEndpoint.get("methods", "/v1/methods", {
+    success: Schema.Array(MethodSummary)
   }),
-  HttpApiEndpoint.put("invoke", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
-    params: MethodCallParams,
+  HttpApiEndpoint.put("invoke", "/v1/threads/:id/methods/:method/calls/:call", {
+    params: RuntimeMethodCallParams,
     payload: Schema.Unknown,
     success: MethodAccepted,
-    error: [InvalidRequest.schema, UnknownActor.schema, UnknownMethod.schema]
+    error: [InvalidRequest.schema, UnknownMethod.schema]
   }),
-  HttpApiEndpoint.get("methodState", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
-    params: MethodCallParams,
+  HttpApiEndpoint.get("methodState", "/v1/threads/:id/methods/:method/calls/:call", {
+    params: RuntimeMethodCallParams,
     success: MethodState,
-    error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+    error: [UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   })
 )
 
@@ -515,11 +497,11 @@ const projectionEndpoint = <
   Params extends Schema.Struct.Fields,
   Result extends Schema.Top
 >(name: Name, params: Params, result: Result) =>
-  HttpApiEndpoint.get(name, `/v1/actors/:actor/threads/:id/projections/${name}` as const, {
-    params: ThreadParams,
+  HttpApiEndpoint.get(name, `/v1/threads/:id/projections/${name}` as const, {
+    params: RuntimeThreadParams,
     query: params,
     success: result,
-    error: [UnknownActor.schema, UnknownThread.schema]
+    error: [UnknownThread.schema]
   })
 
 export type ProjectionEndpoint<Name extends string, D extends ProjectionDeclaration> = ReturnType<
@@ -554,19 +536,35 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
   { error: InvalidRequest.schema }
 ) {}
 
-// apiOf combines the model and actor registries, raw logs, actor methods, declared projections, and health probe.
+// actorApiOf declares the runtime mounted at one origin.
+export const actorApiOf = <const P extends Projections>(projections: P) =>
+  HttpApi.make("tardigrade-actor").add(modelsGroup, runtimeGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
+    .middleware(RequestProblems)
+
+// controlApi declares the host operations that manage several actors.
+export const controlApi = HttpApi.make("tardigrade-control").add(actorsGroup).middleware(RequestProblems)
+
+// apiOf combines the mounted runtime, control plane, and health probe served by one process.
 export const apiOf = <const P extends Projections>(projections: P) =>
-  HttpApi.make("tardigrade").add(modelsGroup, actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
+  HttpApi.make("tardigrade").add(
+    modelsGroup,
+    runtimeGroup,
+    actorsGroup,
+    threadsGroup,
+    methodsGroup,
+    projectionsGroupOf(projections),
+    healthGroup
+  )
     .middleware(RequestProblems)
     .annotateMerge(
       OpenApi.annotations({
         title: "Tardigrade",
         description:
-          "The public model catalog describes known coordinates and metadata. Actors expose durable methods over thread logs. Raw events and declared projections remain available for inspection. Every failure is an RFC 9457 problem document."
+          "The mounted actor exposes durable methods over thread logs. The actor registry manages hosted actors separately. Raw events and declared projections remain available for inspection. Every failure is an RFC 9457 problem document."
       })
     )
 
 // The platform's own API, with no actor mounted. It is what a consumer that reads the log alone
-// derives from (client.ts, makeClient), and the group identifiers it carries are the ones every
+// derives from (client.ts, makeActorClient), and the group identifiers it carries are the ones every
 // build shares, so a handler written against it serves an API with projections too.
 export const Api = apiOf({})

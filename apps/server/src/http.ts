@@ -2,7 +2,18 @@ import { Context, Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
-import { layerActorsGroup, layerMethodsGroup, layerModelsGroup, layerProjectionsGroup, layerThreadsGroup, layerStream, layerUnknownProjection, ServerApi, type ApiOptions } from "./api"
+import {
+  layerActorsGroup,
+  layerMethodsGroup,
+  layerModelsGroup,
+  layerProjectionsGroup,
+  layerRuntimeGroup,
+  layerStream,
+  layerThreadsGroup,
+  layerUnknownProjection,
+  ServerApi,
+  type ApiOptions
+} from "./api"
 import { ServerConfig } from "./config"
 import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
@@ -151,6 +162,38 @@ export const layerCors = HttpRouter.cors({
   exposedHeaders: ["content-type"]
 })
 
+const scalarCss = `
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap");
+
+:root {
+  --scalar-font: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --scalar-font-code: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+  --scalar-background-1: #f3f0e4;
+  --scalar-background-2: #faf8ef;
+  --scalar-background-3: #e9eadc;
+  --scalar-background-accent: #e2eadf;
+  --scalar-color-1: #243128;
+  --scalar-color-2: #556158;
+  --scalar-color-3: #879087;
+  --scalar-color-accent: #4f6f52;
+  --scalar-border-color: #d1d6c2;
+  --scalar-radius: 6px;
+  --scalar-radius-lg: 6px;
+}
+
+.dark-mode {
+  --scalar-background-1: #131514;
+  --scalar-background-2: #1b1d1c;
+  --scalar-background-3: #0e100f;
+  --scalar-background-accent: #22302a;
+  --scalar-color-1: #e8eae8;
+  --scalar-color-2: #a3a8a4;
+  --scalar-color-3: #6b706c;
+  --scalar-color-accent: #7fae8c;
+  --scalar-border-color: #2a2d2b;
+}
+`.trim()
+
 // The application: the declared API, the stream beside it, the document and the page derived from
 // the same declaration, plus the conventions that wrap them all. A route inherits the gate and the
 // error shape by being part of the same router.
@@ -160,6 +203,7 @@ export const layerApp = (options: ApiOptions = {}) =>
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
         layerActorsGroup,
         layerModelsGroup,
+        layerRuntimeGroup,
         layerThreadsGroup(options),
         layerMethodsGroup,
         layerProjectionsGroup,
@@ -167,7 +211,14 @@ export const layerApp = (options: ApiOptions = {}) =>
       ]),
       layerRequestProblems
     ),
-    HttpApiScalar.layer(ServerApi, { path: DOCS_PATH }),
+    HttpApiScalar.layer(ServerApi, {
+      path: DOCS_PATH,
+      scalar: {
+        customCss: scalarCss,
+        theme: "none",
+        withDefaultFonts: false
+      }
+    }),
     layerStream(options),
     // layerUnknownProjection names the declared projections when a lookup misses.
     layerUnknownProjection,
