@@ -10,9 +10,12 @@ Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader sur
 bun run --cwd platform/cloudflare typecheck
 bun run --cwd platform/cloudflare test
 bun run --cwd platform/cloudflare test:workers
+bun run --cwd platform/cloudflare test:celld
 bun run --cwd platform/cloudflare bundle
 bun run --cwd platform/cloudflare deploy
 ```
+
+`test:workers` runs the runtime suite on workerd. `test:celld` requires a running Apple Container service and runs the shared replay case on Celld with a loaded Worker limit of one. It starts a local object store, deploys the fixture, verifies the result through HTTP, and removes its generated containers, network, and deploy image. Set `TARDIGRADE_CELLD_IMAGE`, `TARDIGRADE_CELLD_NODE_IMAGE`, `TARDIGRADE_CELLD_ESBUILD_VERSION`, `TARDIGRADE_CELLD_STORE_IMAGE`, `TARDIGRADE_CELLD_STORE_CLIENT_IMAGE`, `TARDIGRADE_CELLD_LOADED_WORKER_LIMIT`, `TARDIGRADE_CELLD_PORT`, or `TARDIGRADE_CELLD_TIMEOUT_MILLIS` to override a test dependency or policy.
 
 Set authentication before using the event API:
 

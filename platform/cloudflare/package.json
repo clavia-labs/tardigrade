@@ -40,6 +40,7 @@
     "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
-    "test:workers": "vitest run --config vitest.config.ts"
+    "test:workers": "vitest run --config vitest.config.ts",
+    "test:celld": "bun run test/celld/run.ts"
   }
 }

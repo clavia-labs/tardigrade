@@ -1,0 +1,7 @@
+{
+  "$schema": "../../../node_modules/wrangler/config-schema.json",
+  "name": "tardigrade-celld-test",
+  "main": "worker.ts",
+  "compatibility_date": "2026-08-08",
+  "compatibility_flags": ["nodejs_compat"]
+}
