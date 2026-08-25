@@ -30,6 +30,15 @@ if (!Number.isSafeInteger(FIXTURE_PORT) || FIXTURE_PORT < 1 || FIXTURE_PORT > 65
 // shape, and this is the number that gives it one.
 export const FIXTURE_FANOUT = 3
 
+// ONBOARDING_BRIEF is the prompt Voyager suggests on an empty actor (src/Quickstart.tsx).
+export const ONBOARDING_BRIEF = "Read this repository and tell me what it does"
+
+// ONBOARDING_THREAD keeps the captured development trace stable across fixture runs.
+export const ONBOARDING_THREAD = "7d91ce90-5511-4d75-890f-29f01c0878da"
+
+// ONBOARDING_FINDINGS is the answer shown after the fixture researches the repository in parallel.
+export const ONBOARDING_FINDINGS = "Tardigrade is a TypeScript framework for durable AI actors. It records each turn in an append-only event log and safely resumes work across Bun, Cloudflare Workers, and Celld."
+
 // The prefix a brief carries to ask the scripted mind to spawn rather than answer.
 export const SPAWN_BRIEF = "spawn "
 
@@ -41,17 +50,29 @@ const briefOf = (trajectory: ReadonlyArray<Event>): string => {
   return ""
 }
 
-// The scripted mind answers a plain brief in one attempt, and answers a `spawn <name>` brief by
-// running one execution that briefs FIXTURE_FANOUT children and reporting what they said. The tool
-// call id is the brief's own name, so the children's ids are stated by the caller rather than by a
-// counter (packages/agent/src/spawn.ts, `sibling`).
+// The scripted mind researches the onboarding brief through two child threads. A `spawn <name>`
+// brief keeps the same development seam available for arbitrary forests. The tool call id is the
+// brief's own name, so the children's ids are stated by the caller rather than by a counter
+// (packages/agent/src/spawn.ts, `sibling`).
 const scripted = ({ trajectory }: InferRequest): Action => {
   const brief = briefOf(trajectory)
-  if (!brief.startsWith(SPAWN_BRIEF)) return { kind: "complete", output: `ok: ${brief}` }
   const start = trajectory.reduce((n, event, i) => (event.type === "MessageReceived" ? i : n), 0)
   const returned = trajectory.slice(start).find((event) => event.type === "ToolReturned") as
     | { result?: { result?: unknown } }
     | undefined
+  if (brief === ONBOARDING_BRIEF) {
+    if (returned !== undefined) return { kind: "complete", output: ONBOARDING_FINDINGS }
+    return {
+      kind: "call",
+      callId: "research-repository",
+      name: "execute",
+      arguments: {
+        summary: "Research the repository in parallel and synthesize its architecture.",
+        code: "const findings = await Promise.all([agents.run({ text: 'Read the documentation and summarize the framework contract.' }), agents.run({ text: 'Inspect the packages and platforms, then summarize the actor runtime.' })]); return findings.map((finding) => finding.output);"
+      }
+    }
+  }
+  if (!brief.startsWith(SPAWN_BRIEF)) return { kind: "complete", output: `ok: ${brief}` }
   if (returned !== undefined) return { kind: "complete", output: JSON.stringify(returned.result?.result ?? null) }
   return {
     kind: "call",
@@ -85,9 +106,7 @@ const app = Layer.provideMerge(serve({ disableLogger: true }), [
 // The briefs the fixture delivers at boot, so the UI has a forest before anyone types anything. The
 // server dedups by message id, so re-running a brief costs nothing (apps/server/src/host.ts).
 export const FIXTURE_BRIEFS: ReadonlyArray<{ readonly thread: string; readonly id: string; readonly text: string }> = [
-  { thread: "root", id: "m1", text: `${SPAWN_BRIEF}survey` },
-  { thread: "root", id: "m2", text: "summarize the survey" },
-  { thread: "deriver", id: "m3", text: "derive the shape of the log" }
+  { thread: ONBOARDING_THREAD, id: "onboarding", text: ONBOARDING_BRIEF }
 ]
 
 const post = (thread: string, body: unknown) =>
