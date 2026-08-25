@@ -111,6 +111,8 @@ describe("the OpenAPI document", () => {
     expect(answers.page.status).toBe(200)
     expect(answers.page.type).toContain("text/html")
     expect(answers.page.body).toContain("Scalar")
+    expect(answers.page.body).toContain("--scalar-background-1: #f3f0e4")
+    expect(answers.page.body).toContain("IBM Plex Sans")
   })
 
   // Public process capabilities stay readable when a token closes actor state (http.ts, UNAUTHENTICATED_PATHS).
