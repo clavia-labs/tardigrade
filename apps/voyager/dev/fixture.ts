@@ -16,8 +16,15 @@ import { serve } from "@clavia/tardigrade-server/http"
 // Every thread this fixture serves is invented by the script below. Nothing here is imported by the
 // app; the app only ever speaks HTTP.
 
-// Where the fixture listens, matching the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
-export const FIXTURE_PORT = 4242
+// DEFAULT_FIXTURE_PORT matches the client's DEFAULT_BASE_URL (packages/client/src/client.ts).
+export const DEFAULT_FIXTURE_PORT = 4242
+
+// FIXTURE_PORT lets concurrent development sessions select another local listener.
+export const FIXTURE_PORT = Number(process.env.VOYAGER_FIXTURE_PORT ?? DEFAULT_FIXTURE_PORT)
+
+if (!Number.isSafeInteger(FIXTURE_PORT) || FIXTURE_PORT < 1 || FIXTURE_PORT > 65_535) {
+  throw new Error(`VOYAGER_FIXTURE_PORT must be a port, got ${JSON.stringify(process.env.VOYAGER_FIXTURE_PORT)}`)
+}
 
 // How many children the spawning brief asks for. The forest is worth looking at only when it has a
 // shape, and this is the number that gives it one.

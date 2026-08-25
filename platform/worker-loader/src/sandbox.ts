@@ -9,23 +9,23 @@ import type {
 } from "@clavia/tardigrade-code/sandbox"
 import { DEFAULT_SANDBOX_POLICY, Sandbox } from "@clavia/tardigrade-code/sandbox"
 
-export interface CloudflareSandboxLimits {
+export interface WorkerLoaderSandboxLimits {
   readonly cpuMs?: number
   readonly subRequests?: number
 }
 
-export const CLOUDFLARE_SANDBOX_TRANSPORTS = ["capability", "replay"] as const
-export type CloudflareSandboxTransport = typeof CLOUDFLARE_SANDBOX_TRANSPORTS[number]
+export const WORKER_LOADER_SANDBOX_TRANSPORTS = ["capability", "replay"] as const
+export type WorkerLoaderSandboxTransport = typeof WORKER_LOADER_SANDBOX_TRANSPORTS[number]
 
-export interface CloudflareSandboxPolicy extends SandboxPolicy {
+export interface WorkerLoaderSandboxPolicy extends SandboxPolicy {
   readonly compatibilityDate: string
   readonly compatibilityFlags: ReadonlyArray<string>
-  readonly limits?: CloudflareSandboxLimits
+  readonly limits?: WorkerLoaderSandboxLimits
   readonly globalOutbound: Fetcher | null
-  readonly transport: CloudflareSandboxTransport
+  readonly transport: WorkerLoaderSandboxTransport
 }
 
-export const DEFAULT_CLOUDFLARE_SANDBOX_POLICY: CloudflareSandboxPolicy = {
+export const DEFAULT_WORKER_LOADER_SANDBOX_POLICY: WorkerLoaderSandboxPolicy = {
   ...DEFAULT_SANDBOX_POLICY,
   compatibilityDate: "2026-08-08",
   compatibilityFlags: [],
@@ -260,7 +260,7 @@ const bodySource = (names: ReadonlyArray<string>, code: string): string =>
 const scopeNames = (bindings: Bindings, ambient: Ambient | undefined): ReadonlyArray<string> =>
   Object.keys({ ...bindings, console: undefined, ...(ambient === undefined ? {} : { Date: undefined, Math: undefined }) })
 
-const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: CloudflareSandboxPolicy) => {
+const sandboxInput = (bindings: Bindings, ambient: Ambient | undefined, policy: WorkerLoaderSandboxPolicy) => {
   const names = scopeNames(bindings, ambient)
   const packages: Record<string, ReadonlyArray<string>> = {}
   const values: Record<string, unknown> = {}
@@ -298,20 +298,20 @@ const disposeWorker = async (worker: WorkerStub): Promise<void> => {
 
 const discardBody = (response: Response): Promise<ArrayBuffer> => response.arrayBuffer()
 
-export const cloudflareSandboxServiceFor = (
+export const workerLoaderSandboxServiceFor = (
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
-  policy: Partial<CloudflareSandboxPolicy> = {}
+  policy: Partial<WorkerLoaderSandboxPolicy> = {}
 ): SandboxService => {
-  const resolved: CloudflareSandboxPolicy = {
-    logCapBytes: policy.logCapBytes ?? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.logCapBytes,
-    compatibilityDate: policy.compatibilityDate ?? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.compatibilityDate,
-    compatibilityFlags: policy.compatibilityFlags ?? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.compatibilityFlags,
+  const resolved: WorkerLoaderSandboxPolicy = {
+    logCapBytes: policy.logCapBytes ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.logCapBytes,
+    compatibilityDate: policy.compatibilityDate ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.compatibilityDate,
+    compatibilityFlags: policy.compatibilityFlags ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.compatibilityFlags,
     ...(policy.limits === undefined ? {} : { limits: policy.limits }),
     globalOutbound: policy.globalOutbound === undefined
-      ? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.globalOutbound
+      ? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.globalOutbound
       : policy.globalOutbound,
-    transport: policy.transport ?? DEFAULT_CLOUDFLARE_SANDBOX_POLICY.transport
+    transport: policy.transport ?? DEFAULT_WORKER_LOADER_SANDBOX_POLICY.transport
   }
   return {
     run: (code, bindings, ambient) => Effect.promise(async (signal) => {
@@ -400,8 +400,8 @@ export const cloudflareSandboxServiceFor = (
   }
 }
 
-export const layerCloudflareSandbox = (
+export const layerWorkerLoaderSandbox = (
   loader: WorkerLoader,
   bridgeFor: SandboxBridgeFactory,
-  policy: Partial<CloudflareSandboxPolicy> = {}
-): Layer.Layer<never> => Layer.succeed(Sandbox)(cloudflareSandboxServiceFor(loader, bridgeFor, policy))
+  policy: Partial<WorkerLoaderSandboxPolicy> = {}
+): Layer.Layer<never> => Layer.succeed(Sandbox)(workerLoaderSandboxServiceFor(loader, bridgeFor, policy))
