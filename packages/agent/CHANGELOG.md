@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/clavia-labs/tardigrade/compare/v0.7.1...v0.8.0) (2026-08-25)
+
+
+### Features
+
+* **cli:** streamline actor onboarding ([#254](https://github.com/clavia-labs/tardigrade/issues/254)) ([cdb77fd](https://github.com/clavia-labs/tardigrade/commit/cdb77fd2e66df9864ce93a58faba74e0cafb9853))
+
 ## [0.7.1](https://github.com/clavia-labs/tardigrade/compare/v0.7.0...v0.7.1) (2026-08-24)
 
 
