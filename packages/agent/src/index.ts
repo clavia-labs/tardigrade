@@ -174,7 +174,13 @@ export {
   type InferOptions,
   type Rendered
 } from "./runtime/agent"
-export { codeMode, CODE_SYSTEM, codeSystemFor, type CodeModeOptions } from "./components/code"
+export {
+  codeMode,
+  CODE_SYSTEM,
+  codeSystemFor,
+  DEFAULT_CODE_SUMMARY_MAX_LENGTH,
+  type CodeModeOptions
+} from "./components/code"
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export { budget } from "./components/budget"

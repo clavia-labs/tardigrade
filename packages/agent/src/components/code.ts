@@ -15,17 +15,28 @@ import type { AgentComponent } from "../runtime/agent"
 import type { Answer, PendingCall } from "../runtime/tools"
 import type { ToolSpec } from "../request"
 
-const EXECUTE_TOOL: ToolSpec = {
+export const DEFAULT_CODE_SUMMARY_MAX_LENGTH = 240
+
+const executeTool = (summaryMaxLength: number): ToolSpec => ({
   name: "execute",
   description:
     "Run an async JavaScript body against the connected packages. Package objects are already in scope; await their methods and end with `return <value>`. The returned value comes back as this call's result, and console output comes back beside it as `logs` (capped; return the value you need, print to inspect).",
   inputSchema: {
     type: "object",
-    properties: { code: { type: "string", description: "The JavaScript body to run." } },
+    properties: {
+      code: { type: "string", description: "The JavaScript body to run." },
+      summary: {
+        type: "string",
+        description: "One or two concise user-facing sentences that describe what this execution does and why.",
+        minLength: 1,
+        maxLength: summaryMaxLength,
+        pattern: "\\S"
+      }
+    },
     required: ["code"],
     additionalProperties: false
   }
-}
+})
 
 const CODE_SYSTEM_LEAD = "The execute tool runs an async JavaScript body with the connected packages already in scope as objects. Use ordinary JavaScript to coordinate calls. The calling pattern is `const value = await package.method(input); return value`. The packages in scope are:"
 export const CODE_SYSTEM = `${CODE_SYSTEM_LEAD}\nnone`
@@ -77,6 +88,15 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
 export interface CodeModeOptions {
   readonly policy?: Partial<CodePolicy>
   readonly system?: string | ((log: ReadonlyArray<Event>) => string)
+  readonly summaryMaxLength?: number
+}
+
+const summaryMaxLengthOf = (value: number | undefined): number => {
+  const length = value ?? DEFAULT_CODE_SUMMARY_MAX_LENGTH
+  if (!Number.isSafeInteger(length) || length < 1) {
+    throw new Error("code summaryMaxLength must be a positive safe integer")
+  }
+  return length
 }
 
 const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
@@ -96,6 +116,7 @@ export const codeMode = <
 ): AgentComponent<KeyValueStore.KeyValueStore | ComponentRequirements<Cs[number]>> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = KeyValueStore.KeyValueStore | ComponentR
+  const summaryMaxLength = summaryMaxLengthOf(options.summaryMaxLength)
   const combined = composeComponents("code.children", CODE_VIEW_ALGEBRA, components) as CodeComponent<ComponentR>
   const packagesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Package<ComponentR>> =>
     combined.derive(log).view.packages as unknown as ReadonlyArray<Package<ComponentR>>
@@ -114,7 +135,7 @@ export const codeMode = <
       return {
         view: {
           system: [typeof options.system === "function" ? options.system(log) : options.system ?? codeSystemFor(packages)],
-          tools: [{ spec: EXECUTE_TOOL, serve: (call, current, answer) => serveCode(current, call, answer) }],
+          tools: [{ spec: executeTool(summaryMaxLength), serve: (call, current, answer) => serveCode(current, call, answer) }],
           context: [],
           output: []
         },
