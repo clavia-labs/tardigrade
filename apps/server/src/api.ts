@@ -1,7 +1,7 @@
 import { Clock, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
 import {
   Api,

@@ -12,7 +12,7 @@ const accepts = <T>(_value: T): void => {}
 
 // A capability is a closed union: an endpoint that promises nothing has no tool-combination
 // question to answer, and a native one must answer it. Neither half can be left to a default,
-// because both are what a turn is refused or served on (src/output.ts, outputModeOf).
+// because both are what a turn is refused or served on (src/output/contract.ts, outputModeOf).
 export const capabilities = (): void => {
   accepts<OutputCapability>({ guarantee: "none" })
   accepts<OutputCapability>({ guarantee: "native", withTools: true })

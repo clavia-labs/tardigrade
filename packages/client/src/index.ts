@@ -48,4 +48,4 @@ export type {
   TurnStatus,
   TurnView
 } from "./contract"
-export type { Event } from "@clavia/tardigrade-core/event"
+export type { Event } from "@clavia/tardigrade-core/log/event"

@@ -1,10 +1,10 @@
-import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/actor"
-import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/component"
-import { budgetExhausted, budgetRequested } from "../events"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { turnHead, turnView } from "@clavia/tardigrade-code/turns"
-import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/agent"
-import type { ToolSpec } from "../request"
+import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
+import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { budgetExhausted, budgetRequested } from "../log/events"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
+import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
+import type { ToolSpec } from "../inference/request"
 
 // BudgetPolicy sets the default tool-call ceiling for turns that declare no budget.
 export interface BudgetPolicy {

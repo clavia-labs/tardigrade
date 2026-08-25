@@ -6,9 +6,9 @@ import { tmpdir } from "node:os"
 import { Effect, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Infer, type InferRequest } from "tardie"
-import type { Action } from "tardie/events"
+import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
 import { layerModelCatalogValue } from "./catalog"
@@ -43,7 +43,7 @@ const briefOf = (trajectory: ReadonlyArray<Event>): string => {
 // one execution that briefs a child and answers with the child's answer, which is the shape the
 // library's own spawn test drives (packages/agent/src/index.test.ts, the scripted mind). The tool
 // call id is derived from the brief, so the child's id is stated by the test rather than by a
-// counter (packages/agent/src/spawn.ts, `sibling`).
+// counter (packages/agent/src/packages/agents.ts, `sibling`).
 const scripted = ({ trajectory }: InferRequest): Action => {
   const brief = briefOf(trajectory)
   if (!brief.startsWith("spawn ")) return { kind: "complete", output: `ok: ${brief}` }
@@ -320,7 +320,7 @@ describe("appending", () => {
     expect((problems[1]!.body as { detail: string }).detail).toContain("`type` is not a value it accepts")
   })
 
-  // Duplicate suppression is the actor's, keyed by its own `keyOf` (packages/core/src/message.ts,
+  // Duplicate suppression is the actor's, keyed by its own `keyOf` (packages/core/src/communication/message.ts,
   // messageKeys), so the platform appends and the assembly decides what a repeat means.
   test("a redelivered message id answers the same and writes nothing", async () => {
     const counts = await serving(async (base) => {
@@ -357,7 +357,7 @@ describe("actors", () => {
       isolatedCatalog,
       Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
     ])
-    const module = `export default { name: "reviewer", methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
+    const module = `export default { name: "reviewer", methods: {}, components: [], reactors: [], keyOf: () => undefined }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
     try {
       const result = await Effect.gen(function*() {
@@ -367,7 +367,7 @@ describe("actors", () => {
         const base = `http://127.0.0.1:${port}`
         return yield* Effect.promise(async () => {
           const pushed = await put(base, "/v1/actors", {
-            manifest: { schema: 2, name: "reviewer", module: "actor.mjs", digest },
+            manifest: { schema: 3, name: "reviewer", module: "actor.mjs", digest },
             module
           })
           const summary = await pushed.json()

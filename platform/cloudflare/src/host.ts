@@ -1,17 +1,17 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog } from "@clavia/tardigrade-core/event-log"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { formatActorId, isActorId, parseActorId, type ActorId, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
-import { traceparentOf } from "@clavia/tardigrade-core/trace"
+import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
+import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameActorId, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
@@ -75,6 +75,7 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     event: Event,
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ActorId>,
+    call?: ActorMethodInvocation,
     flush = true
   ): Effect.Effect<void> => {
     const address = formatActorId(target)
@@ -109,7 +110,9 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
       } else if (created === undefined && link !== undefined && isActorId(link.source)) {
         return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
       }
-      const landed = link !== undefined && stamped.type === "MessageReceived" ? linkedEventOf({ link, event: stamped }) : stamped
+      const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
+        ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
+        : stamped
       const at = (event as { readonly at?: unknown }).at
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
         return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
@@ -125,7 +128,7 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
 
   const localTransport: Transport<ActorId, ActorEnvelope> = {
     name: "local",
-    send: (_destination, envelope) => commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link)
+    send: (_destination, envelope) => commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
   }
   const routes = [
     directoryRoute(localTransport, mappedDirectory((id: ActorId) => id.actor === options.principal ? id : undefined), isActorEnvelope, (envelope) => envelope.link.target),
@@ -143,8 +146,7 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     }),
     router,
     workspace,
-    Layer.succeed(Self, parseActorId(self(lane))),
-    Layer.succeed(Facets, { read: readEffect })
+    Layer.succeed(Self, parseActorId(self(lane)))
   )
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
     const extra = (options.layersFor ?? (() => Layer.empty as unknown as CloudflareLaneEnv<R>))(lane)
@@ -179,10 +181,10 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
   return {
     read: (lane) => Effect.runPromise(readEffect(lane)),
     lanes,
-    commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link)),
-    stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, false)),
+    commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
+    stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined)),
-    stageRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined, undefined, false)),
+    stageRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined, undefined, undefined, false)),
     drive,
     recover,
     resting,

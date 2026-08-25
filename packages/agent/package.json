@@ -26,7 +26,13 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    "./actor/*": "./src/actor/*.ts",
+    "./components/*": "./src/components/*.ts",
+    "./inference/*": "./src/inference/*.ts",
+    "./log/*": "./src/log/*.ts",
+    "./output/*": "./src/output/*.ts",
+    "./packages/*": "./src/packages/*.ts",
+    "./runtime/*": "./src/runtime/*.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",

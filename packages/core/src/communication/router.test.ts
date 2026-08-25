@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Event } from "../event"
+import type { Event } from "../log/event"
 import { mappedDirectory } from "./directory"
 import type { ActorId, ProviderEndpoint } from "./endpoint"
 import { envelopeOf, isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type ProviderEnvelope } from "./envelope"

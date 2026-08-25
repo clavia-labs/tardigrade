@@ -30,6 +30,7 @@ export interface SlackOptions {
   readonly botToken: string
   readonly signingSecret: string
   readonly target: (source: SlackEndpoint) => ActorId
+  readonly method?: string
   readonly apiBaseUrl?: string
   readonly fetch?: SlackFetch
   readonly signatureToleranceSeconds?: number
@@ -204,6 +205,8 @@ const providerOf = (options: SlackOptions): ChannelProvider<SlackEndpoint> => {
 }
 
 // slack constructs a bidirectional channel whose source address preserves the Slack reply thread.
+export const DEFAULT_SLACK_METHOD = "message"
+
 export const slack = (options: SlackOptions): Channel<SlackEndpoint> => {
   if (options.name.length === 0) throw new Error("Slack provider name cannot be empty")
   if (options.botToken.length === 0) throw new Error("Slack bot token cannot be empty")
@@ -212,5 +215,5 @@ export const slack = (options: SlackOptions): Channel<SlackEndpoint> => {
   if (!Number.isSafeInteger(tolerance) || tolerance < 0) {
     throw new Error("Slack signature tolerance must be a non-negative integer")
   }
-  return channelOf(providerOf(options), options.target)
+  return channelOf(providerOf(options), options.target, { method: options.method ?? DEFAULT_SLACK_METHOD })
 }

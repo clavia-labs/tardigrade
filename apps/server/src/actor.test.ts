@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { replyId } from "@clavia/tardigrade-core/message"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { replyId } from "@clavia/tardigrade-core/communication/message"
 import { projection, projectionsOf } from "@clavia/tardigrade-client/contract"
 
 import { agentProjections, builtInActor } from "./actor"
@@ -89,7 +89,7 @@ describe("reading one turn", () => {
   })
 
   // The epoch is on the wire because resuming stamps the next one, and a resumed turn reads the
-  // epoch its active attempt belongs to (packages/agent/src/resume.ts, resumeTurn).
+  // epoch its active attempt belongs to (packages/agent/src/runtime/resume.ts, resumeTurn).
   test("a resumed turn reads the epoch its active attempt belongs to", () => {
     const log = [
       inbound("m1"),

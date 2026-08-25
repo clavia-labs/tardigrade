@@ -4,9 +4,9 @@ import { dirname } from "node:path"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog } from "@clavia/tardigrade-core/event-log"
-import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog } from "@clavia/tardigrade-core/log"
+import { assertSupportedBun } from "./runtime"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -25,13 +25,13 @@ import {
   type ProviderEndpoint
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
+import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
+import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
-import { traceparentOf } from "@clavia/tardigrade-core/trace"
+import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import {
   sameActorId,
   sameThreadLineage,
@@ -45,7 +45,7 @@ import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
 // work from what survived; replay is re-derivation, recovery is re-settling
-// (packages/core/src/event-log.ts). The store keeps the port's six guarantees: append-only
+// (packages/core/src/log/service.ts). The store keeps the port's six guarantees: append-only
 // rows, one rising seq per lane, this process as the one writer, batch appends in one
 // transaction, dedup by key inside that transaction under a unique index, and the ordered tail
 // read from a watermark. Conformance is behavioral: host.test.ts mirrors the reference host's
@@ -56,7 +56,7 @@ import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 
 // BunPorts are the services this binding leaves an actor no work to bind: packages/host's four,
 // plus the workspace store, which on bun is durable and therefore the platform's to give
-// (packages/code/src/store.ts). BunLaneEnv is the rest of an actor's R, the same shape the
+// (packages/code/src/storage/store.ts). BunLaneEnv is the rest of an actor's R, the same shape the
 // reference host asks for.
 type BunPorts = HostPorts | KeyValueStore.KeyValueStore
 type BunLaneEnv<R> = Layer.Layer<Exclude<R, BunPorts>, never, BunPorts>
@@ -202,7 +202,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     target: ActorId,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorId>
+    link?: Link<unknown, ActorId>,
+    call?: ActorMethodInvocation
   ): Effect.Effect<void, never> => {
     const address = formatActorId(target)
     return Effect.gen(function* () {
@@ -218,7 +219,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const lane = laneOf(address)
       // The platform stamps the sending span's context onto the event it persists (the W3C
       // header form), so a later settle on the receiving lane links back to this delivery: one
-      // business event, one trace, across lanes (packages/core/src/trace.ts). An event already
+      // business event, one trace, across lanes (packages/core/src/log/trace.ts). An event already
       // carrying a context keeps it: the first stamp is the causal one.
       const current = yield* Effect.currentSpan.pipe(Effect.option)
       const stamped =
@@ -249,8 +250,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           } else if (created === undefined && link !== undefined && isActorId(link.source)) {
             return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
           }
-          const landed = link !== undefined && stamped.type === "MessageReceived"
-            ? linkedEventOf({ link, event: stamped })
+          const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
+            ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
             : stamped
           if (landed.type === "MessageReceived") {
             const id = String((landed as { id?: unknown }).id)
@@ -274,7 +275,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   }
 
   const commitEnvelopeEffect = (envelope: Envelope<unknown, Event, ActorId>): Effect.Effect<void, never> =>
-    commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link)
+    commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
 
   const commitRootEffect = (address: string, event: Event): Effect.Effect<void, never> =>
     commitEffect(parseActorId(address), event, undefined)
@@ -314,11 +315,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, parseActorId(self(lane))),
-      // Every lane's log lives in this one durable store, so the observe privilege is the same
-      // read the host serves itself (packages/core/src/facets.ts, Facets). A binding whose lanes
-      // are remote proxies or refuses instead.
-      Layer.succeed(Facets, { read: (name: string) => readEffect(name) })
+      Layer.succeed(Self, parseActorId(self(lane)))
     )
 
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {

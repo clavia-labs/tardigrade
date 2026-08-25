@@ -9,7 +9,8 @@ import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
 import { Threads } from "./host"
 import { layerModelCatalogUnavailable } from "./catalog"
-import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
+import { PROBLEM_CONTENT_TYPE, serve } from "./http"
+import { layerGaugeResting } from "./driver-gauge"
 
 // The declaration, from the outside. These assertions are about what the declaration produces: the
 // document a client generates from, and the failure shape that document promises. The routes

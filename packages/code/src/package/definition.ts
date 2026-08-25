@@ -1,0 +1,171 @@
+import type { Effect } from "effect"
+import type { Component, ViewAlgebra } from "@clavia/tardigrade-core/actor"
+import type { Park } from "../execution/errors"
+
+// DoorRequest is a request through a connection's door: method, a RELATIVE path (the door
+// joins it onto the pinned origin, so an absolute URL cannot name another host), headers, and a
+// string body. The answer comes back as a value; a provider error is a status the caller reads.
+export interface DoorRequest {
+  readonly method: string
+  readonly path: string // path plus query, always starting with "/"
+  readonly headers?: Readonly<Record<string, string>>
+  readonly body?: string
+  readonly binary?: boolean // answer body comes back base64 (a file download)
+  // The calling method's own readOnlyHint, carried onto the request because the door cannot see
+  // the package's annotation table: it sees only what crosses the wire. The shadow wall reads
+  // this bit; a call that omits it reads as a write, the same dangerous-default the annotations
+  // table itself takes.
+  readonly readOnlyHint?: boolean
+}
+export interface DoorAnswer {
+  readonly status: number
+  readonly body: string
+  readonly contentType?: string
+  // Response headers, lowercased, set-cookie excluded. A provider protocol that answers in
+  // headers (MCP's session id) reads them here; they carry the provider's words, never a stored
+  // credential, so the door's confinement holds.
+  readonly headers?: Readonly<Record<string, string>>
+}
+export type DoorFetch = (request: DoorRequest) => Promise<DoorAnswer>
+
+// Connection declares what a package's door needs. `origin` is the pinned egress target,
+// derived from the stored values (a region base, a workspace domain). `headers` builds the auth
+// attachment INSIDE the door; it may fetch (an OAuth refresh leg) and the credential it reads
+// never leaves the door. `required` names the keys that make the connection usable.
+export interface Connection {
+  readonly required: ReadonlyArray<string>
+  readonly origin: (values: Readonly<Record<string, string>>) => string
+  readonly headers: (
+    values: Readonly<Record<string, string>>,
+    fetchImpl: typeof globalThis.fetch
+  ) => Promise<Readonly<Record<string, string>>> | Readonly<Record<string, string>>
+  // Providers that authenticate in the request body (Composio's connected_account_id) attach it
+  // here, inside the door, so the value stays confined exactly like a header credential.
+  readonly body?: (values: Readonly<Record<string, string>>, body: string | undefined) => string | undefined
+  // Providers whose stored endpoint carries a path (an MCP server URL) rewrite the request path
+  // here, inside the door, so the package never reads the value. The result must start with "/".
+  readonly path?: (values: Readonly<Record<string, string>>, path: string) => string
+  // Providers with expiring credentials renew them here, inside the door, before `headers` reads
+  // them. An answer of undefined means nothing changed; changed values are used for this request
+  // and persisted by the door's owner, so the renewed credential's whole life stays confined. A
+  // throw fails only this request.
+  readonly refresh?: (
+    values: Readonly<Record<string, string>>,
+    fetchImpl: typeof globalThis.fetch
+  ) => Promise<Readonly<Record<string, string>> | undefined>
+}
+
+// MethodDoc documents one method for `packages.describe` and the dispatch funnel's contract
+// gate (contract.ts). `input` and `output` are JSON Schemas of the args object and the returned
+// value. The input is enforced at the funnel, and both shapes are rendered into code mode's
+// system contract (packages/agent/src/components/code.ts).
+export interface MethodDoc {
+  readonly description: string
+  readonly input: unknown // JSON schema of the args object
+  readonly output: unknown // JSON schema of the returned value
+}
+
+// MethodAnnotations follows the MCP tool-annotation vocabulary and its defaults: a method that
+// declares nothing reads as the most dangerous thing it could be (not read-only, destructive,
+// not idempotent, open world). The hints are behavioral advice, never security: the shadow-run
+// router and the docs read them, and a wrong hint misleads both, so a hint states only what the
+// method's own contract guarantees.
+export interface MethodAnnotations {
+  readonly readOnlyHint?: boolean // observes only; never mutates its environment (default false)
+  readonly destructiveHint?: boolean // a non-read-only call may destroy or irreversibly change data (default true)
+  readonly idempotentHint?: boolean // repeating the call with the same args adds no further effect (default false)
+  readonly openWorldHint?: boolean // touches the world beyond the runtime (default true)
+}
+
+export const ANNOTATION_DEFAULTS: Required<MethodAnnotations> = {
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true
+}
+
+// CodeView is the package scope a code component offers to code mode. Package order is visible
+// in the model's scope description and duplicate names fail when code mode derives the view.
+export interface CodeView {
+  readonly packages: ReadonlyArray<Package<unknown>>
+}
+
+// CODE_VIEW_ALGEBRA composes package scopes in component order.
+export const CODE_VIEW_ALGEBRA: ViewAlgebra<CodeView> = {
+  empty: { packages: [] },
+  combine: (left, right) => ({ packages: [...left.packages, ...right.packages] })
+}
+
+// CodeComponent derives package scope and package-level work from the log.
+export interface CodeComponent<R = never> extends Component<CodeView, R> {}
+
+// annotationsOf resolves one method's annotations over the dangerous defaults. It reads the name
+// table only, so a package's requirements are irrelevant to it: `unknown` is the shape every
+// `Package<R>` widens to.
+export const annotationsOf = (pkg: Package<unknown>, method: string): Required<MethodAnnotations> => ({
+  ...ANNOTATION_DEFAULTS,
+  ...pkg.annotations?.[method]
+})
+
+// Package is a leaf CodeComponent on an actor's world face. It declares what code is offered
+// (`name`, `description`, `docs`) and what settles its calls (`methods`). Code calls methods as
+// `zohorecruit.insert_record(args)`. The platform binds the methods to providers; tests bind
+// fakes. An MCP adapter produces the same package shape.
+//
+// `ctx.callId` is the call's recorded pair key. A method that sends a message across actors
+// uses it as the message id, so a replayed call carries the same id and the receiver absorbs
+// the duplicate.
+//
+// Inbound delivery, where a provider's webhooks or polls become `MessageReceived`, is
+// deliberately outside Package: it belongs to the host boundary and gets its own concept once a
+// consumer exists.
+//
+// Which package components an assembly passes is component scoping: a task that cannot send
+// messages is given no sending package, and the code cannot name what the assembly did not pass.
+// The powerless default is the empty array (execute.ts, codeReactor).
+//
+// `R` is what a package's methods need from the environment, the dual of `AgentComponent<R>` on the
+// model face. A package that reaches for a service names it in its type, and the reactor that
+// runs the package declares the union of what its packages need (execute.ts, codeReactorFor); a
+// package that reaches for nothing is `Package<never>` and runs anywhere.
+export interface Package<R = never> extends CodeComponent<R> {
+  readonly name: string
+  readonly description: string
+  // Method docs, two levels: describe({name}) lists names and one-liners; describe({name,
+  // method}) adds the args. Undocumented methods still list, blank.
+  readonly docs?: Readonly<Record<string, MethodDoc>>
+  // Present when the package speaks to a credentialed provider: its calls go through the
+  // connection's door, and the package itself never holds a value.
+  readonly connection?: Connection
+  // MCP-style behavior hints per method; a missing entry reads as ANNOTATION_DEFAULTS.
+  readonly annotations?: Readonly<Record<string, MethodAnnotations>>
+  // A method's error channel carries `Park` only: the awaiting fires (`tasks.fire`,
+  // `tasks.result`) fail it when a reply has not landed yet, and every other method's `never`
+  // error is a subtype of it, so nothing else changes shape.
+  readonly methods: Readonly<
+    Record<string, (args: unknown, ctx: { readonly callId: string }) => Effect.Effect<unknown, Park, R>>
+  >
+}
+
+// PackageDefinition is the leaf declaration accepted by definePackage.
+export type PackageDefinition<R = never> = Omit<Package<R>, "derive" | "keys">
+
+// definePackage makes a package declaration a leaf code component.
+export const definePackage = <R>(definition: PackageDefinition<R>): Package<R> => {
+  let pkg: Package<R>
+  pkg = {
+    ...definition,
+    derive: () => ({
+      view: { packages: [pkg as Package<unknown>] },
+      transitions: []
+    })
+  }
+  return pkg
+}
+
+// PackageRequirements extracts one package's R, so a mixed list infers the union of what its
+// members need rather than collapsing on the first element's R. It is the package-face twin of
+// ComponentRequirements (packages/core/src/actor/component.ts), and what makes the environment a code
+// reactor demands a function of the packages it was passed (execute.test.ts, "a package's
+// requirements ride its type").
+export type PackageRequirements<T> = T extends Package<infer R> ? R : never

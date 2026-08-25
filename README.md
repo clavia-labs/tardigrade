@@ -131,8 +131,8 @@ Mount the component beside the built-in parts that this task needs:
 ```ts
 import {
   actor, agentMethods, agentsPackage, budget, codeMode,
-  compaction, defineActor, fetchPackage, filesPackage, infer,
-  outputValidateOnce, reply, system, workspacePackage
+  compaction, fetchPackage, filesPackage, infer,
+  outputValidateOnce, system, workspacePackage
 } from "tardie"
 
 const instructions = system(
@@ -141,10 +141,10 @@ const instructions = system(
 
 const releaseModel = { provider: "openai", default_model: "gpt-5.2" } as const
 
-const releaseAnalyst = defineActor({
+const releaseAnalyst = actor({
   name: "release-analyst",
   methods: agentMethods,
-  actor: actor(infer([
+  components: [infer([
     instructions, // the agent's system prompt
     deploys,     // recent_deploys and its paired handler
     // budget scopes the tool-call limit to the codeMode subtree.
@@ -157,13 +157,12 @@ const releaseAnalyst = defineActor({
       ])
     ]),
     compaction(), // bounded model context
-    reply,       // results for parent agents
     outputValidateOnce // validates one structured result without correction
-  ], releaseModel))
+  ], releaseModel)]
 })
 ```
 
-`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `defineActor` gives that loop a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result. `model` is a model ID for that turn; it cannot change the actor's provider connection.
+`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `actor` binds those components to a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result. The actor returns linked calls through their method state, so response delivery does not require an agent component. `model` is a model ID for that turn; it cannot change the actor's provider connection.
 
 `compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 

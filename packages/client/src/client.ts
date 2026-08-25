@@ -311,7 +311,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a
     // TurnResumed, and a TurnResumed for a turn that is not failed derives nothing, so a race costs
     // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
-    // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/events.ts,
+    // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/log/events.ts,
     // agentKeys).
     resume: async (thread, turn) => {
       const views = await turnsOf(thread, turn)
@@ -329,7 +329,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         })
       }
       // The next execution epoch, stamped the way the library stamps it
-      // (packages/agent/src/resume.ts, resumeTurn).
+      // (packages/agent/src/runtime/resume.ts, resumeTurn).
       return append(thread, {
         type: "TurnResumed",
         turn,

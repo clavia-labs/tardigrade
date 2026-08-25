@@ -2,7 +2,7 @@ import { Console, Context, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
-import type { ActorDefinition } from "tardie"
+import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
@@ -114,7 +114,7 @@ export const layerVoyager = (root: string) =>
 export interface DevOptions {
   readonly config: ServerConfigValue
   // actor mounts one project definition directly. An omitted actor enables the self-hosted registry.
-  readonly actor?: ActorDefinition<ServerR> | undefined
+  readonly actor?: Actor<ServerR> | undefined
   // Where the built UI lives. Absent, the two layouts a build can arrive in are tried in order
   // (assets.ts, ASSET_CANDIDATES).
   readonly assets?: string | undefined

@@ -1,9 +1,9 @@
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import { formatActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
-import { REPLY_SUFFIX } from "@clavia/tardigrade-core/message"
-import { canProgress, factsOf } from "@clavia/tardigrade-code/projections"
-import { boundaryOf } from "tardie/boundary"
+import { REPLY_SUFFIX } from "@clavia/tardigrade-core/communication/message"
+import { canProgress, factsOf } from "@clavia/tardigrade-code/execution/projections"
+import { boundaryOf } from "tardie/output/boundary"
 
 // The read side of the API. Every endpoint that answers a question about a thread answers it here,
 // as a pure function of that thread's events (apps-server-spec.md, "Principles": every read is a
@@ -11,7 +11,7 @@ import { boundaryOf } from "tardie/boundary"
 // a lookup plus one of these calls, and a test is an array of events.
 //
 // The projections read the framework's own projections wherever one already answers the question:
-// the lane's owed work comes from the code lane (@clavia/tardigrade-code/projections), and a turn's
+// the lane's owed work comes from the code lane (@clavia/tardigrade-code/execution/projections), and a turn's
 // outcome comes from the thread's boundary (tardie/boundary). The vocabulary the wire
 // speaks is the only thing added here.
 
@@ -29,7 +29,7 @@ const idOf = (event: Event): string => String((event as { id?: unknown }).id ?? 
 
 // inboundOf returns the ids of the turns a log was asked to serve, in log order. A reply is an
 // inbound event and never an inbound turn: it answers an id this thread sent out, under that id's
-// own `<id>.reply` name (@clavia/tardigrade-core/message, REPLY_SUFFIX), so listing it would report
+// own `<id>.reply` name (@clavia/tardigrade-core/communication/message, REPLY_SUFFIX), so listing it would report
 // a child's answer as a turn of the parent (projections.test.ts, "a reply message is not a turn").
 export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
   const ids: string[] = []
@@ -50,7 +50,7 @@ export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> =
 //
 // The first two answers are the code lane's own head-of-queue reading, not a second derivation of
 // it: `workOwed` is this head plus `canProgress`, so blocked is exactly the case that leaves
-// `workOwed` empty while an execution is still open (@clavia/tardigrade-code/projections). Blocked
+// `workOwed` empty while an execution is still open (@clavia/tardigrade-code/execution/projections). Blocked
 // means an open `BlockedOn` whose awaited reply has not landed; the moment it lands the same head
 // can progress and reads running again (projections.test.ts, "a landed reply unblocks the lane").
 //

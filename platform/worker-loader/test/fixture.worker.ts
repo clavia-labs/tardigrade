@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import type { SandboxBridgeCall } from "../src/sandbox"
-import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox"
+import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 
 export interface Env {
   readonly BRIDGE: DurableObjectNamespace<SandboxBridge>

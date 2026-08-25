@@ -24,10 +24,11 @@ const BROKEN: Stamp = { fg: "var(--fail)", bg: "var(--fail-wash)" }
 // the rust (mock.html, the event rows; voyager-design-system.md, principle 1).
 const STAMPS: Readonly<Record<string, Stamp>> = {
   MessageReceived: NEUTRAL,
+  MethodResponseReceived: NEUTRAL,
   ModelCalled: NEUTRAL,
   TextReturned: NEUTRAL,
   CompactionCompleted: NEUTRAL,
-  ReplyDelivered: NEUTRAL,
+  MethodResponseDelivered: NEUTRAL,
   CodeDispatched: DISPATCH,
   ToolCalled: DISPATCH,
   TurnResumed: DISPATCH,
@@ -46,7 +47,7 @@ const STAMPS: Readonly<Record<string, Stamp>> = {
 
 // stampOf is a row's chip color. A type the app has never heard of is neutral: an unknown event
 // still renders, because the log's alphabet is open and a reader must see what landed
-// (packages/core/src/event.ts).
+// (packages/core/src/log/event.ts).
 export const stampOf = (type: string): Stamp => STAMPS[type] ?? NEUTRAL
 
 const str = (value: unknown): string | undefined => (typeof value === "string" ? value : undefined)
@@ -54,6 +55,7 @@ const num = (value: unknown): number | undefined => (typeof value === "number" ?
 
 // truncate flattens a value onto one line and cuts it to `chars`. Newlines are collapsed rather
 // than escaped: a row is one line high, and a code body must not be able to change that.
+/** @internal */
 export const truncate = (text: string, chars: number): string => {
   const flat = text.replace(/\s+/gu, " ").trim()
   return flat.length <= chars ? flat : `${flat.slice(0, Math.max(0, chars - 1))}…`
@@ -72,6 +74,7 @@ const parsedJson = (value: string): unknown => {
 
 // structuredValue decodes JSON-shaped strings while preserving the object fields that contain
 // them. depth bounds strings nested inside strings and is a caller-visible display policy.
+/** @internal */
 export const structuredValue = (value: unknown, depth: number = DEFAULT_JSON_PARSE_DEPTH): unknown => {
   if (typeof value === "string") {
     if (depth <= 0) return value
@@ -107,9 +110,10 @@ const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =
   truncate(parts.filter((part) => part !== undefined && part !== "").join(" · "), chars)
 
 // summaryOf is the one line a row shows for an event: what a reader needs to decide whether to open
-// it. The known alphabet is the agent lane's and the code lane's (packages/agent/src/events.ts,
-// packages/code/src/events.ts); a type from neither renders its field names, so an event the app has
+// it. The known alphabet is the agent lane's and the code lane's (packages/agent/src/log/events.ts,
+// packages/code/src/execution/events.ts); a type from neither renders its field names, so an event the app has
 // never seen still says what it carries rather than nothing.
+/** @internal */
 export const summaryOf = (
   event: Event,
   chars: number = SUMMARY_CHARS,
@@ -126,6 +130,8 @@ export const summaryOf = (
       }
       return line([str(event.text) ?? ""], chars)
     }
+    case "MethodResponseReceived":
+      return line(["response", `status: ${str(event.status) ?? ""}`, str(event.from)], chars)
     case "ModelCalled":
       return line([`attempt ${(num(event.ordinal) ?? 0) + 1}`, str(event.turn)], chars)
     case "TextReturned":
@@ -155,10 +161,8 @@ export const summaryOf = (
       return line([str(event.cause) ?? "failed", str(event.error)], chars)
     case "TurnResumed":
       return line([str(event.turn), `epoch ${String(num(event.failedEpoch))} to ${String(num(event.epoch))}`], chars)
-    case "ReplyDelivered": {
-      const to = str(event.to)
-      return line([to === undefined ? "settled locally" : `to ${to}`], chars)
-    }
+    case "MethodResponseDelivered":
+      return line([str(event.method), str(event.call), str(event.revision)], chars)
     case "BudgetExhausted":
       return line([`used ${String(num(event.used))} of ${String(num(event.budget))}`], chars)
     case "BudgetRequested":
@@ -187,6 +191,7 @@ export const clockOf = (at: number): string => {
 // instantOf is the same wall clock to the millisecond, which is the resolution the log orders by.
 // An expanded field states the instant rather than the epoch number, because no reader reads an
 // epoch and the ordering of two events a few milliseconds apart is what the field is opened for.
+/** @internal */
 export const instantOf = (at: number): string => {
   const when = new Date(at)
   return `${clockOf(at)}:${pad(when.getSeconds(), 2)}.${pad(when.getMilliseconds(), 3)}`
@@ -208,12 +213,13 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 
 // The field order per event type: what names the event, then when it happened, then what it
 // carries. A reader opens a row to find an id to follow or a payload to read, and those are the two
-// ends of the list. The orders name the lanes' own fields (packages/core/src/message.ts,
-// packages/agent/src/events.ts, packages/code/src/events.ts). A field an order does not name still
+// ends of the list. The orders name the lanes' own fields (packages/core/src/communication/message.ts,
+// packages/agent/src/log/events.ts, packages/code/src/execution/events.ts). A field an order does not name still
 // renders, after the named ones and in the event's own key order, so a type this table is behind on
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   MessageReceived: ["id", "from", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
+  MethodResponseReceived: ["id", "method", "call", "status", "from", ...STAMP, "output", "error", "reason", "data"],
   ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
   TextReturned: [...STAMP, "text"],
   ToolCalled: ["callId", "name", "mode", ...STAMP, "arguments", "usage", "endpoint"],
@@ -228,7 +234,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   TurnCompleted: ["epoch", "attemptKey", "mode", ...STAMP, "output", "usage", "endpoint"],
   TurnFailed: ["epoch", "cause", "attempts", "attemptKey", "mode", ...STAMP, "error", "usage", "policy", "endpoint"],
   TurnResumed: ["failedEpoch", "epoch", ...STAMP],
-  ReplyDelivered: ["to", ...STAMP],
+  MethodResponseDelivered: ["method", "call", "revision", ...STAMP],
   BudgetExhausted: ["budget", "used", ...STAMP],
   BudgetRequested: ["callId", "amount", "reason", ...STAMP],
   BudgetGranted: ["callId", "amount", ...STAMP],
@@ -238,6 +244,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
 
 // TIME_FIELDS are the fields whose number is an instant rather than a quantity. The lanes stamp
 // every event with `at` and nothing else carries a clock.
+/** @internal */
 export const TIME_FIELDS: ReadonlyArray<string> = ["at"]
 
 // valueOf renders one field for the value cell. A string is itself, so a code body keeps its own
@@ -287,6 +294,7 @@ export const merged = (rows: ReadonlyArray<EventRow>, next: ReadonlyArray<EventR
 
 // spanOf renders an elapsed time in one unit, the same ladder the ages use. Under a second reads in
 // milliseconds, because a dispatch that returns instantly is a fact worth seeing.
+/** @internal */
 export const spanOf = (ms: number): string => {
   if (ms < 1000) return `${Math.max(0, Math.round(ms))}ms`
   const seconds = Math.round(ms / 1000)
@@ -299,6 +307,7 @@ export const spanOf = (ms: number): string => {
 // The events that are the end of a pair and nothing else. They carry no summary a reader wants as
 // its own row: `CodeSettled` says what the dispatch returned and `PackageReturned` what the call
 // answered, so each is folded into the duration on the row that opened it. Every other type renders.
+/** @internal */
 export const FOLDED: ReadonlyArray<string> = ["CodeSettled", "PackageReturned"]
 
 // Moment is one rendered row: the log's own event, plus the three things the row states about it.
@@ -347,7 +356,7 @@ const endsOf = (rows: ReadonlyArray<EventRow>) => {
 // momentsOf is the whole list: the log in log order, with the pair-halves folded away and each
 // remaining row carrying the span it opened. A `CodeDispatched` spans to its `CodeSettled`, a
 // `PackageCalled` to its `PackageReturned`, and a `TurnCompleted` back to the `MessageReceived`
-// that opened its turn (packages/code/src/events.ts, packages/agent/src/events.ts). The three ids
+// that opened its turn (packages/code/src/execution/events.ts, packages/agent/src/log/events.ts). The three ids
 // are the lanes' own correlation keys, so nothing here parses an id or guesses a pairing, and a
 // span whose other half is outside the rows the screen holds simply has no duration.
 export const momentsOf = (rows: ReadonlyArray<EventRow>): ReadonlyArray<Moment> => {

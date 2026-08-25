@@ -105,7 +105,7 @@ describe("the address a call goes to", () => {
     answer = () => Response.json({ name: "reviewer", builtIn: false, digest: "sha256:reviewer" })
     await makeControlClient({ baseUrl: "http://localhost:4111", fetch: stub }).pushActor({
       manifest: {
-        schema: 2,
+        schema: 3,
         name: "reviewer",
         module: "actor.js",
         digest: "sha256:reviewer"
@@ -355,7 +355,7 @@ describe("resuming a turn", () => {
   })
 
   // The epoch is read rather than assumed, so resuming an already-resumed turn starts the next one
-  // rather than restating the last (packages/agent/src/resume.ts, resumeTurn).
+  // rather than restating the last (packages/agent/src/runtime/resume.ts, resumeTurn).
   test("the appended epoch is the one after the turn's active attempt", async () => {
     answer = accepting({ turn: "m1", status: "failed", epoch: 2, error: "boom" })
     await client().resume("root", "m1")

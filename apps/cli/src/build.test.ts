@@ -23,11 +23,11 @@ const entry = async (source: string): Promise<string> => {
 describe("buildActor", () => {
   test("writes a named portable artifact", async () => {
     const path = await entry(`
-      import { defineActor } from "tardie"
-      export default defineActor({
+      import { actor } from "tardie"
+      export default actor({
         name: "researcher",
         methods: {},
-        actor: { reactors: [], keyOf: () => "root" }
+        components: []
       })
     `)
     const built = await buildActor(path, { cwd: root, out: "output" })
@@ -47,7 +47,7 @@ describe("buildActor", () => {
     const path = await entry(`
       export default {
         name: "researcher",
-        actor: { reactors: [], keyOf: () => "root" }
+        components: [], reactors: [], keyOf: () => "root"
       }
     `)
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("must declare its methods")
@@ -55,11 +55,11 @@ describe("buildActor", () => {
 
   test("the summary identifies the artifact", async () => {
     const path = await entry(`
-      import { defineActor } from "tardie"
-      export default defineActor({
+      import { actor } from "tardie"
+      export default actor({
         name: "researcher",
         methods: {},
-        actor: { reactors: [], keyOf: () => "root" }
+        components: []
       })
     `)
     const built = await buildActor(path, { cwd: root, out: "output" })

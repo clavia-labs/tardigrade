@@ -1,33 +1,37 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { actor } from "@clavia/tardigrade-core/component"
-import { Self, settleActor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
-import { Router } from "@clavia/tardigrade-core/router"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
+import { actor } from "@clavia/tardigrade-core/actor"
+import { Self, settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { Router } from "@clavia/tardigrade-core/communication/router"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
-import { Infer } from "../turn"
-import { NativeOutputSupport } from "../runtime/infer"
+import { Infer } from "../runtime/turn"
+import { NativeOutputSupport } from "../inference/reactor"
 import { budget, budgetOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { infer, renderOf } from "../runtime/agent"
+import { infer, renderOf } from "../runtime/composition"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
-import { reply } from "./reply"
+import { agentMethods } from "../actor/message"
 import { nativeOutput } from "./native-output"
 import { toolList } from "./tool-list"
-import { agentKeys } from "../events"
+import { agentKeys } from "../log/events"
 
 const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 
-const rootActor = actor(infer([budget([codeMode()]), reply, compaction(), nativeOutput], TEST_MODEL))
+const assembled = <R>(component: import("../runtime/composition").AgentComponent<R>) => actor({
+  name: "test-agent",
+  methods: agentMethods,
+  components: [component]
+})
+
+const rootActor = assembled(infer([budget([codeMode()]), compaction(), nativeOutput], TEST_MODEL))
 const rootReactor = rootActor.reactors[0]!
 
 // rest supplies the environment required by effect transitions in this assembled agent.
 const rest = Layer.mergeAll(
   KeyValueStore.layerMemory,
-  Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
@@ -85,9 +89,11 @@ describe("budget admission reacts to BudgetExhausted", () => {
   })
 
   test("the exported default and a turn override decide the wall", () => {
-    const defaultTwo = actor(
-      infer([budget([codeMode()], { defaultToolBudget: 2 }), reply, nativeOutput], TEST_MODEL)
-    ).reactors[0]!
+    const defaultTwo = actor({
+      name: "default-two",
+      methods: agentMethods,
+      components: [infer([budget([codeMode()], { defaultToolBudget: 2 }), nativeOutput], TEST_MODEL)]
+    }).reactors[0]!
 
     expect(defaultTwo(turn(2)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
     expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain("bw:m1/2")
@@ -113,7 +119,6 @@ describe("budget admission reacts to BudgetExhausted", () => {
     const environment = Layer.mergeAll(
       memory,
       KeyValueStore.layerMemory,
-      Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
       Layer.succeed(Router, { send: () => Effect.void }),
       Layer.succeed(Self, parseActorId("test-agent")),
       Layer.succeed(NativeOutputSupport, { withTools: true }),
@@ -178,7 +183,7 @@ describe("the budget component boundary", () => {
   ])
 
   test("a non-code child is admitted by the same tool-call policy", () => {
-    const root = actor(infer([budget([readTool], { defaultToolBudget: 1 }), reply, nativeOutput], TEST_MODEL)).reactors[0]!
+    const root = assembled(infer([budget([readTool], { defaultToolBudget: 1 }), nativeOutput], TEST_MODEL)).reactors[0]!
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
       { type: "ToolCalled", callId: "r1", name: "read", arguments: {}, turn: "m1", at: 1 },

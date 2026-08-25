@@ -1,11 +1,9 @@
-export { type AgentPolicy, type AgentR, type RlmR, receive } from "./turn"
+export { type AgentPolicy, type AgentR, receive } from "./runtime/turn"
 export {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
-  defineActor,
-  type ActorArtifactManifest,
-  type ActorDefinition
-} from "./artifact"
+  type ActorArtifactManifest
+} from "./actor/artifact"
 export {
   ACTOR_METHOD_NAME_PATTERN,
   actorMethod,
@@ -18,8 +16,8 @@ export {
   type ActorMethodOutput,
   type ActorMethods,
   type ActorMethodState
-} from "./method"
-export { AgentMessageInput, agentMessageMethod, agentMethods, type AgentMessageInput as AgentMessageInputType } from "./message-method"
+} from "@clavia/tardigrade-core/actor/method"
+export { AgentMessageInput, agentMessageMethod, agentMethods } from "./actor/message"
 
 // The parts a caller lists. An agent is components over one log; the reactors underneath remain
 // reachable for a bespoke assembly.
@@ -32,8 +30,8 @@ export {
   type InferRequest,
   type ModelResolution,
   type Render
-} from "./runtime/infer"
-export { ModelRef, modelRefOf, type ModelRef as ModelRefType } from "./model"
+} from "./inference/reactor"
+export { ModelRef, modelRefOf } from "./inference/reference"
 
 // The turn's declared final response: the contract a caller states, the profile a binding can
 // send unchanged, and the implementation that obtains it. `output` is the whole declarative
@@ -73,7 +71,7 @@ export {
   type OutputProblems,
   type OutputSchema,
   type OutputStringFormat
-} from "./output"
+} from "./output/contract"
 export {
   outputRepair,
   outputRepairFor,
@@ -88,7 +86,6 @@ export {
 export { nativeOutput } from "./components/native-output"
 export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
-export { replyReactor } from "./components/reply"
 export {
   compactionReactor,
   contextPolicyOf,
@@ -98,8 +95,8 @@ export {
   type ContextPolicy,
   type ContextWindowTokens
 } from "./components/compaction"
-export { agentKeys, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./events"
-export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./resume"
+export { agentKeys, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
+export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"
 export {
   usageIn,
   usageOf,
@@ -112,24 +109,24 @@ export {
   type ProviderUsageReport,
   type CostSource,
   type ModelPricing
-} from "./usage"
+} from "./inference/usage"
 
 // Where a settle left a turn. A caller driving its own host reads the answer here, because a
 // boundary is a projection of the log rather than a value the driver returns (boundary.ts).
-export { boundaryOf, outputOf, type Boundary } from "./boundary"
+export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 
 // The spawn package: a value with no lane in it, so the assembly that mounts it and the host
-// that binds Router, Self, and Facets per lane cannot disagree about placement (spawn.ts).
-export { agentsPackage, INLINE_OUTPUT_NAME, type SpawnOptions } from "./spawn"
+// that binds Router and Self per lane cannot disagree about placement (spawn.ts).
+export { agentsPackage, INLINE_OUTPUT_NAME, type SpawnOptions } from "./packages/agents"
 
 // The workspace the model reads its spilled values back through, and the optional SQL binding a
 // platform lights its third verb up with.
-export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@clavia/tardigrade-code/workspace"
+export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@clavia/tardigrade-code/package/workspace"
 
 // The two packages that let an assembly reach past its own log: the files under one root, and HTTP
 // to any host. Both are built on Effect's platform services, so the host that mounts them binds a
-// FileSystem, a Path, and an HttpClient and nothing else changes (packages/code/src/files.ts,
-// packages/code/src/fetch.ts).
+// FileSystem, a Path, and an HttpClient and nothing else changes (packages/code/src/package/files.ts,
+// packages/code/src/package/fetch.ts).
 export {
   filesPackage,
   filesPolicyOf,
@@ -139,14 +136,14 @@ export {
   DEFAULT_FILES_MAX_MATCHES,
   DEFAULT_FILES_SKIP,
   type FilesPolicy
-} from "@clavia/tardigrade-code/files"
+} from "@clavia/tardigrade-code/package/files"
 export {
   fetchPackage,
   fetchPolicyOf,
   DEFAULT_FETCH_POLICY,
   DEFAULT_FETCH_BODY_CHARS,
   type FetchPolicy
-} from "@clavia/tardigrade-code/fetch"
+} from "@clavia/tardigrade-code/package/fetch"
 export {
   CODE_VIEW_ALGEBRA,
   definePackage,
@@ -154,10 +151,10 @@ export {
   type CodeView,
   type Package,
   type PackageDefinition
-} from "@clavia/tardigrade-code/packages"
+} from "@clavia/tardigrade-code/package/definition"
 
 // The component assembly: code mode is the default, and an agent measured against a fixed tool
-// list mounts its own (runtime/agent.ts).
+// list mounts its own (runtime/composition.ts).
 export {
   AGENT_VIEW_ALGEBRA,
   infer,
@@ -173,7 +170,7 @@ export {
   type OutputFragment,
   type InferOptions,
   type Rendered
-} from "./runtime/agent"
+} from "./runtime/composition"
 export {
   codeMode,
   CODE_SYSTEM,
@@ -185,16 +182,16 @@ export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export { budget } from "./components/budget"
 export { compaction } from "./components/compaction"
-export { reply } from "./components/reply"
 export {
   actor,
   composeComponents,
   independentTransitions,
   reactorOf,
+  type Actor,
   type Component,
   type ComponentRequirements,
   type CompositionOptions,
   type Derivation,
   type TransitionReconciler,
   type ViewAlgebra
-} from "@clavia/tardigrade-core/component"
+} from "@clavia/tardigrade-core/actor"

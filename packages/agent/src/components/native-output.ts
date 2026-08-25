@@ -1,5 +1,5 @@
-import { NativeOutputSupport } from "../runtime/infer"
-import type { AgentComponent } from "../runtime/agent"
+import { NativeOutputSupport } from "../inference/reactor"
+import type { AgentComponent } from "../runtime/composition"
 
 // nativeOutput selects provider-native structured output and carries its model-layer requirement into the host type.
 export const nativeOutput: AgentComponent<NativeOutputSupport> = {

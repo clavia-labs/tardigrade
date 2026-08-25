@@ -9,7 +9,7 @@ import {
   actorMethodsOf,
   type ActorMethods,
   type ActorArtifactManifest,
-  type ActorDefinition
+  type Actor
 } from "tardie"
 
 export const DEFAULT_BUILD_DIRECTORY = ".tardigrade/build"
@@ -27,33 +27,32 @@ export interface BuiltActor {
   readonly manifest: ActorArtifactManifest
 }
 
-const definitionOf = async (modulePath: string): Promise<ActorDefinition<unknown>> => {
+const definitionOf = async (modulePath: string): Promise<Actor<unknown>> => {
   const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?build=${crypto.randomUUID()}`)
   const definition = (loaded as { readonly default?: unknown }).default
   if (typeof definition !== "object" || definition === null) {
-    throw new Error("actor entry must default export defineActor({ name, methods, actor })")
+    throw new Error("actor entry must default export actor({ name, methods, components })")
   }
-  const candidate = definition as Partial<ActorDefinition<unknown>>
+  const candidate = definition as Partial<Actor<unknown>>
   if (typeof candidate.name !== "string" || !ACTOR_NAME_PATTERN.test(candidate.name)) {
     throw new Error(`actor entry name must match ${String(ACTOR_NAME_PATTERN)}`)
   }
   if (
-    typeof candidate.actor !== "object" ||
-    candidate.actor === null ||
-    !Array.isArray(candidate.actor.reactors) ||
-    typeof candidate.actor.keyOf !== "function"
+    !Array.isArray(candidate.reactors) ||
+    typeof candidate.keyOf !== "function" ||
+    !Array.isArray(candidate.components)
   ) {
-    throw new Error("actor entry must contain an Actor in its actor field")
+    throw new Error("actor entry must contain reconciled components")
   }
   if (typeof candidate.methods !== "object" || candidate.methods === null || Array.isArray(candidate.methods)) {
     throw new Error("actor entry must declare its methods")
   }
   actorMethodsOf(candidate.methods as ActorMethods)
-  return candidate as ActorDefinition<unknown>
+  return candidate as Actor<unknown>
 }
 
 // loadBuiltActor returns the validated definition from one built artifact.
-export const loadBuiltActor = (built: BuiltActor): Promise<ActorDefinition<unknown>> =>
+export const loadBuiltActor = (built: BuiltActor): Promise<Actor<unknown>> =>
   definitionOf(join(built.directory, ACTOR_MODULE_FILE))
 
 export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({

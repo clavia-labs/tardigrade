@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import {
   actor,
@@ -8,17 +8,15 @@ import {
   budget,
   codeMode,
   compaction,
-  defineActor,
   fetchPackage,
   filesPackage,
   infer,
   outputValidateOnce,
-  reply,
   workspacePackage,
-  type ModelRefType
+  type ModelRef
 } from "tardie"
-import { turnEpochOf } from "@clavia/tardigrade-code/turns"
-import { boundaryOf } from "tardie/boundary"
+import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
+import { boundaryOf } from "tardie/output/boundary"
 import { projection, projectionsOf, RESERVED_ACTOR, Seq, TurnView } from "@clavia/tardigrade-client/contract"
 
 import { inboundOf } from "./projections"
@@ -42,7 +40,7 @@ import { inboundOf } from "./projections"
 export interface AssemblyModelPolicy {
   readonly provider: string
   readonly default_model: string
-  readonly contextWindowTokens?: number | ((model: ModelRefType | undefined) => number)
+  readonly contextWindowTokens?: number | ((model: ModelRef | undefined) => number)
 }
 
 export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
@@ -50,23 +48,24 @@ export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
   default_model: "unconfigured"
 }
 
-export const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
-  actor(infer([
-    budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])]),
-    reply,
-    compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
-    outputValidateOnce
-  ], {
-    provider: models.provider,
-    default_model: models.default_model
-  }))
+const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
+  actor({
+    name: RESERVED_ACTOR,
+    methods: agentMethods,
+    components: [
+      infer([
+        budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])]),
+        compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
+        outputValidateOnce
+      ], {
+        provider: models.provider,
+        default_model: models.default_model
+      })
+    ]
+  })
 
 // builtInActor declares the built-in assembly and its callable interface together.
-export const builtInActor = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) => defineActor({
-  name: RESERVED_ACTOR,
-  methods: agentMethods,
-  actor: assemblyOf(models)
-})
+export const builtInActor = assemblyOf
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a
 // package added above lands in the host's obligation and a host that binds nothing for it fails to
@@ -81,7 +80,7 @@ export interface TurnViewShape {
   readonly turn: string
   readonly status: TurnStatus
   // The execution epoch the active attempt belongs to, zero until an operator has resumed the turn.
-  // It is on the wire because resuming stamps the next one (packages/agent/src/resume.ts).
+  // It is on the wire because resuming stamps the next one (packages/agent/src/runtime/resume.ts).
   readonly epoch: number
   readonly output?: string
   readonly error?: string

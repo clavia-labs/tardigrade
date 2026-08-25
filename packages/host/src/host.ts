@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -19,8 +19,8 @@ import {
   type ProviderEndpoint
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
+import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
+import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { providerTransportFrom, type Provider } from "./communication/provider"
 import { createLaneDriver, type DriverPolicy } from "./driver"
@@ -42,7 +42,7 @@ import {
 // HostPorts are the services every host binds per lane: the log, the
 // router, this lane's address, and the read over its siblings' logs.
 // layersFor may require them and must not provide them.
-export type HostPorts = EventLog | Router | Self | Facets
+export type HostPorts = EventLog | Router | Self
 
 // LaneEnv is the rest of an actor's R: what the host does not bind.
 // Construction may require HostPorts; Layer.provideMerge discharges them.
@@ -131,7 +131,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
   const read = (lane: string): ReadonlyArray<Event> => lanes.get(lane) ?? []
-  // append implements guarantee 5 of the log port (packages/core/src/event-log.ts): a keyed
+  // append implements guarantee 5 of the log port (packages/core/src/log/service.ts): a keyed
   // redelivery is absorbed. With keys deciding commitment (Actor.keyOf), the library tier
   // must keep the platform store's promise, or a re-parked attempt's BlockedOn lands twice
   // here and once there.
@@ -163,7 +163,8 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     target: ActorId,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorId>
+    link?: Link<unknown, ActorId>,
+    call?: ActorMethodInvocation
   ): void => {
     const address = formatActorId(target)
     // The membrane: every cross-lane event names its occurrence, or it does not travel.
@@ -197,8 +198,8 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     } else if (created === undefined && link !== undefined && isActorId(link.source)) {
       throw new Error(`initial actor delivery to ${address} must carry lineage`)
     }
-    const landed = link !== undefined && event.type === "MessageReceived"
-      ? linkedEventOf({ link, event })
+    const landed = link !== undefined && (event.type === "MessageReceived" || call !== undefined)
+      ? linkedEventOf({ link, event, ...(call === undefined ? {} : { call }) })
       : event
     if (seen(current, landed)) return
     append(lane, created === undefined ? [threadCreated(target, lineage, eventAt(event)), landed] : [landed])
@@ -206,7 +207,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   }
 
   const commit = (envelope: Envelope<unknown, Event, ActorId>): void =>
-    commitAt(envelope.link.target, envelope.event, envelope.lineage, envelope.link)
+    commitAt(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
 
   const commitRoot = (address: string, event: Event): void =>
     commitAt(parseActorId(address), event, undefined)
@@ -234,8 +235,6 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     send: (envelope) => sendThrough(routes, envelope)
   })
 
-  const logs = Layer.succeed(Facets, { read: (name: string) => Effect.sync(() => read(name)) })
-
   const self = (lane: string): string => `${principal}:${lane}`
 
   const portsOf = (lane: string) =>
@@ -248,11 +247,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         })
       ),
       router,
-      Layer.succeed(Self, parseActorId(self(lane))),
-      // All lanes share one store here, so the observe privilege is the host's own read
-      // (packages/core/src/logs.ts, Facets). A lane's own log still arrives as EventLog: this
-      // one reads a sibling and cannot append.
-      logs
+      Layer.succeed(Self, parseActorId(self(lane)))
     )
 
   // Exclude is not distributive over a generic R, so the merge is named

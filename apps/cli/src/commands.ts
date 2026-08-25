@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
-import { ACTOR_NAME_PATTERN, type ActorDefinition } from "tardie"
+import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
 import { NO_ANSWER, ProblemError, type ActorClient, type MethodState } from "@clavia/tardigrade-client"
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
@@ -514,7 +514,7 @@ export const devCommand = Command.make("dev", {
     const layer = yield* Effect.try({
       try: () => dev({
         config: config2,
-        actor: definition as ActorDefinition<ServerR>,
+        actor: definition as Actor<ServerR>,
         assets: stated(flags.ui),
         ...(flags.open ? { onListen: openBrowser } : {})
       }),

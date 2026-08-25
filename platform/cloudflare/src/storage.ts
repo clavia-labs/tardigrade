@@ -1,7 +1,7 @@
 import { Effect, Encoding, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
 export interface EventRow {
   readonly seq: number

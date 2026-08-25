@@ -1,7 +1,7 @@
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
-import { WorkspaceSql, type SqlRunner } from "@clavia/tardigrade-code/workspace"
+import { WorkspaceSql, type SqlRunner } from "@clavia/tardigrade-code/package/workspace"
 
 // The durable workspace on bun: Effect's SQL-backed KeyValueStore over the same SqlClient the log
 // uses, so a spilled value outlives the process that wrote it and replay hydrates a ref from disk
@@ -16,14 +16,14 @@ export const WORKSPACE_TABLE = "workspace"
 
 // bunWorkspace is the workspace layer createBunHost provides by default. It creates its table on
 // build, and it spans the whole database: what one workspace covers is the platform's call
-// (packages/code/src/store.ts), and a consumer that wants a narrower span hands the host its own
+// (packages/code/src/storage/store.ts), and a consumer that wants a narrower span hands the host its own
 // layer, over another table or over a prefixed view of this one.
 export const bunWorkspace = (
   table: string = WORKSPACE_TABLE
 ): Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient> => KeyValueStore.layerSql({ table })
 
 // The SQL surface behind workspace.sql: the model's own database, where it creates the tables a
-// long run needs structure for (packages/code/src/workspace.ts). It is a database of its own,
+// long run needs structure for (packages/code/src/package/workspace.ts). It is a database of its own,
 // beside the log rather than inside it, because the log is append-only and this process is its one
 // writer: a `DROP TABLE events` from a model that mistook its scratch space for its history would
 // take the run's whole source of truth with it. Spilled values stay reachable through read and
@@ -93,7 +93,7 @@ const boundedBy = (policy: BunWorkspaceSqlPolicy, rows: ReadonlyArray<Record<str
 
 // bunWorkspaceSql binds the workspace's sql verb to the ambient SqlClient. A query that fails comes
 // back as `{ error }` rather than as a failure, because a rejected statement is the model's next
-// piece of information and it is the one who has to fix the SQL (packages/code/src/workspace.ts;
+// piece of information and it is the one who has to fix the SQL (packages/code/src/package/workspace.ts;
 // host.test.ts, "a broken query answers an error the model can read").
 export const bunWorkspaceSql = (
   options: Partial<BunWorkspaceSqlPolicy> & { readonly doc?: string } = {}

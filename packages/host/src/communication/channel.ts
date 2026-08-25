@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Provider } from "./provider"
@@ -29,10 +29,15 @@ export interface Channel<Source extends ProviderEndpoint, R = never, E = never> 
   readonly webhook: Webhook<R, E>
 }
 
+export interface ChannelOptions {
+  readonly method: string
+}
+
 // channelOf adapts a provider into ingress envelopes using the application's source-to-actor binding.
 export const channelOf = <Source extends ProviderEndpoint, R = never, E = never>(
   provider: ChannelProvider<Source, R, E>,
-  target: (source: Source) => ActorId
+  target: (source: Source) => ActorId,
+  options: ChannelOptions
 ): Channel<Source, R, E> => ({
   provider,
   webhook: {
@@ -41,7 +46,11 @@ export const channelOf = <Source extends ProviderEndpoint, R = never, E = never>
       provider.receive(request).pipe(
         Effect.map((receipt) => ({
           envelopes: receipt.inbound.map((inbound) =>
-            envelopeOf(linkOf(inbound.source, target(inbound.source)), inbound.event)
+            methodEnvelopeOf(
+              linkOf(inbound.source, target(inbound.source)),
+              { method: options.method, id: inbound.event.id },
+              inbound.event
+            )
           ),
           response: receipt.response
         }))

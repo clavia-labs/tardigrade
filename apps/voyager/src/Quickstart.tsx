@@ -6,6 +6,7 @@ import { COPY_CONFIRM_MS, ICON_SIZE } from "./policy"
 import { client, docsUrl } from "./client"
 
 // START_COMMAND invokes the current actor with the onboarding brief (Quickstart.test.ts).
+/** @internal */
 export const START_COMMAND = "tdg call message '{\"text\":\"Read this repository and tell me what it does\"}'"
 
 const shellWord = (value: string): string =>
@@ -15,6 +16,7 @@ const storageLabel = (location: string): string =>
   location === ":memory:" ? location : location.split(/[\\/]/).slice(-2).join("/")
 
 // startCommand states the current server address in the copied invocation (Quickstart.test.ts).
+/** @internal */
 export const startCommand = (baseUrl: string): string =>
   `${START_COMMAND} --url ${shellWord(baseUrl)}`
 

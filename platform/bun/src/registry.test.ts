@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect, ManagedRuntime } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
-import type { ActorRegistration } from "@clavia/tardigrade-core/actor-registry"
+import type { ActorRegistration } from "@clavia/tardigrade-core/actor/registry"
 import { makeBunActorRegistry } from "./registry"
 
 interface Registration extends ActorRegistration {

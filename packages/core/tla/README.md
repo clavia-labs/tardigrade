@@ -10,7 +10,7 @@ The specifications describe the runtime and communication contracts independentl
 | --- | --- | --- | --- |
 | `communication/Delivery` | Spawn, await, settlement, and deadlock | `Delivery.cfg`, `DeliveryLive.cfg` | `DeliveryDeadlock.cfg` |
 | `communication/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
-| `communication/Reply` | Terminal and budget reports through the reversed accepted link | `Reply.cfg`, `ReplyLive.cfg` | `ReplyHint.cfg` |
+| `communication/Method` | Method state reports correlated to the method and reversed accepted call link | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
 | `runtime/ConcurrentDriver` | Bounded parallel settlement, keyed commits, and parked fiber release | `ConcurrentDriver.cfg`, `ConcurrentDriverLive.cfg` | `ConcurrentDriverUnbounded.cfg`, `ConcurrentDriverParkLeak.cfg` |
@@ -36,7 +36,7 @@ TLA2TOOLS_JAR=/absolute/path/to/tla2tools.jar bun run tla
 Set `TLA_JAVA` when `java` is outside `PATH`. Set `TLA_WORKERS` to choose the TLC worker count. The default is one worker. Set `TLA_TIMEOUT_MILLIS` to change the per-configuration limit. The default is 120000 milliseconds. Pass module names to run a subset:
 
 ```sh
-TLA2TOOLS_JAR=/absolute/path/to/tla2tools.jar bun run tla Thread Reply
+TLA2TOOLS_JAR=/absolute/path/to/tla2tools.jar bun run tla Thread Method
 ```
 
 The runner writes TLC state data to a temporary directory and removes it after the suite. TLC state data under `packages/core/tla/states` is ignored because it is generated output.

@@ -30,6 +30,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@smithy/fetch-http-handler": "^5.6.3",
     "@smithy/node-http-handler": "^4.11.2",

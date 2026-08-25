@@ -6,8 +6,8 @@ import type {
   SandboxPolicy,
   SandboxResult,
   SandboxService
-} from "@clavia/tardigrade-code/sandbox"
-import { DEFAULT_SANDBOX_POLICY, Sandbox } from "@clavia/tardigrade-code/sandbox"
+} from "@clavia/tardigrade-code/sandbox/service"
+import { DEFAULT_SANDBOX_POLICY, Sandbox } from "@clavia/tardigrade-code/sandbox/service"
 
 export interface WorkerLoaderSandboxLimits {
   readonly cpuMs?: number

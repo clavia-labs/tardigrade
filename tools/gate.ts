@@ -71,7 +71,11 @@ const tasks: ReadonlyArray<Task> = [
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
-  { id: "knip", cmd: ["bun", "--bun", "node_modules/.bin/knip"] }
+  // Knip checks the complete graph, the shipped graph, cycles, and tsconfig discovery as separate views.
+  { id: "knip", cmd: ["bun", "run", "knip"] },
+  { id: "knip:production", cmd: ["bun", "--bun", "node_modules/.bin/knip", "--production", "--no-progress", "--treat-config-hints-as-errors", "--treat-tag-hints-as-errors"] },
+  { id: "knip:cycles", cmd: ["bun", "--bun", "node_modules/.bin/knip", "--cycles", "--no-progress"] },
+  { id: "knip:tsconfigs", cmd: ["bun", "--bun", "node_modules/.bin/knip", "--use-tsconfig-files", "--no-progress", "--treat-config-hints-as-errors", "--treat-tag-hints-as-errors"] }
 ]
 
 const args = process.argv.slice(2)

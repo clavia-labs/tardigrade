@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import type { Event } from "../event"
+import type { Event } from "../log/event"
 import { mappedDirectory } from "./directory"
 import { actorIdOf, type ActorId } from "./endpoint"
 import { envelopeOf, isActorEnvelope, type ActorEnvelope } from "./envelope"
