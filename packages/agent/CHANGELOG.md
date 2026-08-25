@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/clavia-labs/tardigrade/compare/v0.8.0...v0.9.0) (2026-08-25)
+
+
+### Features
+
+* **agent:** summarize code execution ([#259](https://github.com/clavia-labs/tardigrade/issues/259)) ([6764d29](https://github.com/clavia-labs/tardigrade/commit/6764d2969cdf544854e21e26d94f90bd721d7b3d))
+
+
+### Bug Fixes
+
+* **cloudflare:** dispose loaded workers ([#261](https://github.com/clavia-labs/tardigrade/issues/261)) ([3ff0e68](https://github.com/clavia-labs/tardigrade/commit/3ff0e68bac05a071e10ab5fb29212a0fe8113c3e))
+* **code:** compare replay arguments structurally ([#260](https://github.com/clavia-labs/tardigrade/issues/260)) ([8b85922](https://github.com/clavia-labs/tardigrade/commit/8b85922b6dfab3bf15bdcc4a8d30531a4fb7b066))
+* **core:** reconcile component transitions ([#257](https://github.com/clavia-labs/tardigrade/issues/257)) ([524ffeb](https://github.com/clavia-labs/tardigrade/commit/524ffebf282e236773af1434b008f03a209a9146))
+
 ## [0.8.0](https://github.com/clavia-labs/tardigrade/compare/v0.7.1...v0.8.0) (2026-08-25)
 
 
