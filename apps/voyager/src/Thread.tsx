@@ -3,12 +3,12 @@ import { X } from "@phosphor-icons/react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
-import { clientFor } from "./client"
+import { client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
-import { BOTTOM_SLACK_PX, EVENT_INSPECTOR_WIDTH, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, PANE_HEADER_HEIGHT } from "./policy"
+import { BOTTOM_SLACK_PX, COPY_CONFIRM_MS, EVENT_INSPECTOR_WIDTH, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, PANE_HEADER_HEIGHT } from "./policy"
 import { axisOf, defaultWindowOf, FULL_WINDOW, shared, shownIn, type Window } from "./window"
-import { WindowBrush } from "./WindowBrush"
+import { CopyButton, WindowBrush } from "./WindowBrush"
 
 // The center pane: one thread's log as a flat chronological list under its own header and the window
 // brush (mock.html, the main element). The pane holds cursors only: which thread, which range the
@@ -22,7 +22,7 @@ const lastSeq = (rows: ReadonlyArray<EventRow>): number => rows[rows.length - 1]
 // useLog holds the pane's rows. The first read is the whole log and the stream carries it forward
 // from that seq; when the browser gives up reconnecting, the same rows keep filling from `events`,
 // which is an ordinary fetch and survives what EventSource cannot (packages/client/src/stream.ts).
-const useLog = (actor: string, id: string, pollMs: number) => {
+const useLog = (id: string, pollMs: number) => {
   const [rows, setRows] = useState<ReadonlyArray<EventRow>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
   const [dropped, setDropped] = useState(false)
@@ -32,7 +32,6 @@ const useLog = (actor: string, id: string, pollMs: number) => {
   const seen = useRef(0)
 
   useEffect(() => {
-    const client = clientFor(actor)
     let attached = true
     let unsubscribe: (() => void) | undefined
     setRows([])
@@ -65,11 +64,10 @@ const useLog = (actor: string, id: string, pollMs: number) => {
       attached = false
       unsubscribe?.()
     }
-  }, [actor, id])
+  }, [id])
 
   useEffect(() => {
     if (!dropped) return
-    const client = clientFor(actor)
     const timer = setInterval(() => {
       void client.events(id, { after: seen.current })
         .then((batch) => {
@@ -79,7 +77,7 @@ const useLog = (actor: string, id: string, pollMs: number) => {
         .catch((error: unknown) => setProblem(errorOf(error)))
     }, pollMs)
     return () => clearInterval(timer)
-  }, [actor, id, dropped, pollMs])
+  }, [id, dropped, pollMs])
 
   return { rows, problem, dropped, loaded }
 }
@@ -216,7 +214,9 @@ const Problem = ({ problem }: { readonly problem: ProblemError }): ReactElement 
 
 const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => (
   <div className="thread-head">
+    <span className="thread-id-label">thread id</span>
     <span className="mono" style={{ fontSize: "var(--text-dense)", fontWeight: 500 }}>{id}</span>
+    <CopyButton className="thread-copy" text={id} confirmMs={COPY_CONFIRM_MS} label="Copy thread ID" />
     {status === undefined ? null : (
       <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>
     )}
@@ -224,7 +224,6 @@ const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStat
 )
 
 export const Thread = ({
-  actor,
   fieldCollapsedHeight = FIELD_COLLAPSED_HEIGHT,
   headerHeight = PANE_HEADER_HEIGHT,
   id,
@@ -232,7 +231,6 @@ export const Thread = ({
   stampWidth = EVENT_STAMP_WIDTH,
   status
 }: {
-  readonly actor: string
   readonly id: string
   readonly fieldCollapsedHeight?: number | undefined
   readonly headerHeight?: number | undefined
@@ -246,7 +244,7 @@ export const Thread = ({
   // read its value back out of that publication would render one step behind the handle (src/nav.ts).
   const [window, setWindow] = useState<Window | undefined>(windowOf(route))
   const [selected, setSelected] = useState<number | undefined>(undefined)
-  const { dropped, loaded, problem, rows } = useLog(actor, id, LOG_POLL_MS)
+  const { dropped, loaded, problem, rows } = useLog(id, LOG_POLL_MS)
 
   const pane = useRef<HTMLDivElement | null>(null)
   // Whether the reader is at the log's end. Auto-scroll follows a live log only from there; a reader
@@ -260,7 +258,7 @@ export const Thread = ({
     setSelected(undefined)
     atEnd.current = true
     seeded.current = false
-  }, [actor, id])
+  }, [id])
 
   useEffect(() => {
     if (selected === undefined) return

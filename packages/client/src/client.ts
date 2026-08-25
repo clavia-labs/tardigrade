@@ -8,6 +8,7 @@ import {
   RESERVED_ACTOR,
   ResumeRefused,
   type Accepted,
+  type ActorIdentity,
   type ActorSummary,
   type Append,
   type ThreadNode,
@@ -45,7 +46,7 @@ export const UNEXPECTED_RESPONSE_TITLE = "Unexpected Response"
 export const SERVER_ERROR_TITLE = "Server Error"
 
 export const SERVER_ERROR_DETAIL =
-  "The server returned no error details. Check the `tdg dev` terminal and restart the server if needed."
+  "The server could not read this actor. Check that its project directory and `.tardigrade/actor.sqlite` still exist, then restart `tdg dev`."
 
 export const UNREADABLE_EXCHANGE_TITLE = "Unreadable Exchange"
 
@@ -127,6 +128,8 @@ export interface Client<P extends Projections = {}, M extends ActorMethods = Act
   readonly baseUrl: string
   // The actor every call addresses, resolved once at construction (ClientOptions, actor).
   readonly actor: string
+  // identity reads the mounted actor behind the selected route (apps/cli/src/dev.test.ts, "a project actor mounts directly").
+  readonly identity: () => Promise<ActorIdentity>
   readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
   // providers reads setup requirements from the validated public catalog.
   readonly providers: (options?: CatalogPageOptions) => Promise<ProviderCatalogPage>
@@ -285,6 +288,7 @@ export const makeClient = <const P extends Projections = {}, const M extends Act
   return {
     baseUrl,
     actor,
+    identity: () => run(api.threads.actor({ params: { actor } })),
     actors: () => run(api.actors.actors({})),
     providers: (options = {}) => run(api.models.providers({ query: catalogQuery(options) })),
     models: (options = {}) => run(api.models.models({ query: catalogQuery(options) })),

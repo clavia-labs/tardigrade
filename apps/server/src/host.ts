@@ -64,6 +64,7 @@ export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
 
 export interface ActorThreads {
   readonly methods: ActorMethods
+  readonly sqlite: string
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
@@ -76,6 +77,7 @@ export class Threads extends Context.Service<
   {
     readonly append: ActorThreads["append"]
     readonly methods: ActorThreads["methods"]
+    readonly sqlite: ActorThreads["sqlite"]
     readonly events: ActorThreads["events"]
     readonly list: ActorThreads["list"]
     readonly actorName?: string
@@ -392,6 +394,7 @@ const runtimeOf = async (
     })
   const threads: ActorThreads = {
     methods: definition.methods,
+    sqlite: log === ":memory:" ? log : resolve(log),
     append: (id, event) =>
       Effect.gen(function*() {
         yield* commitRoot(id, event)

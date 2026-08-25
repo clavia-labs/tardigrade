@@ -33,6 +33,7 @@ setDefaultTimeout(BOOT_MS)
 // nothing. The routes themselves are exercised against a real host in api.test.ts.
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
+  sqlite: ":memory:",
   append: () => Effect.void,
   events: () => Effect.succeed([]),
   list: Effect.succeed([]),

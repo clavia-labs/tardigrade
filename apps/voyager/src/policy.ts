@@ -6,6 +6,12 @@
 // measure (flamecast-v6/apps/web/src/system.css, .chat-split).
 export const RAIL_WIDTH = 236
 
+// RAIL_COLLAPSED_WIDTH keeps the sidebar toggle reachable while its content is hidden; Rail accepts another width when embedded (Rail.tsx, Rail).
+export const RAIL_COLLAPSED_WIDTH = 44
+
+// RAIL_HEADER_HEIGHT is the single-row product header above the thread search; Rail accepts another height when embedded (Rail.tsx, Rail).
+export const RAIL_HEADER_HEIGHT = 48
+
 // The shared identity-row height in pixels. Each pane's title begins on the same horizontal datum,
 // and each pane accepts another height when embedded in a tighter shell.
 export const PANE_HEADER_HEIGHT = 64

@@ -26,6 +26,7 @@ export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenE
 
 export type {
   Accepted,
+  ActorIdentity,
   ActorSummary,
   Append,
   EventRow,

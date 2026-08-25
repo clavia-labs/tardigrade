@@ -1,6 +1,6 @@
 ---
 name: tardigrade
-description: Create, migrate, author, build, deploy, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with an existing agent harness, actor.ts, a Tardigrade thread, a self-hosted actor registry, or GEPA harness optimization from run traces.
+description: Create, migrate, author, build, deploy, inspect, and improve Tardigrade actors with the tdg CLI. Use when a task works with an existing agent harness, actor.ts, a Tardigrade thread, or GEPA harness optimization from run traces.
 ---
 
 # Tardigrade
@@ -40,6 +40,8 @@ tdg build actor.ts
 tdg dev
 ```
 
+`tdg dev` mounts the actor in the current directory and stores its threads in `.tardigrade/actor.sqlite`. Keep that directory present until the server stops.
+
 Deploy the generated Worker with the platform CLI:
 
 ```bash
@@ -53,11 +55,11 @@ Keep the server running. From another shell, inspect provider requirements, sear
 ```bash
 tdg providers --json
 tdg models --provider openrouter --search claude --json
-tdg methods --actor researcher --json
-tdg call message '{"text":"Read this repository and tell me what it does"}' --actor researcher
+tdg methods --json
+tdg call message '{"text":"Read this repository and tell me what it does"}'
 ```
 
-Use `--json` for programmatic output. Use `--url` and `--token` for another server. Use `tdg push` only when an explicit self-hosted actor registry is the deployment target, and state `--target local` or `--target hosted` on every push. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
+Use `--json` for programmatic output. Use `--url` and `--token` for another server. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
 
 ## Migrate an existing harness
 

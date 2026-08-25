@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
@@ -63,6 +63,7 @@ const clientOf = (
   return {
     baseUrl: "http://localhost:0",
     actor: RESERVED_ACTOR,
+    identity: () => Promise.resolve({ name: RESERVED_ACTOR, sqlite: "/work/.tardigrade/actor.sqlite" }),
     actors: () => answers.fail === undefined
       ? Promise.resolve(answers.actors ?? [{ name: RESERVED_ACTOR, builtIn: true }])
       : Promise.reject(answers.fail),
@@ -142,6 +143,7 @@ const drive = async (
     readonly env?: Record<string, string | undefined>
     readonly ids?: ReadonlyArray<string>
     readonly cwd?: string
+    readonly installProject?: (directory: string) => Promise<void>
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
@@ -153,7 +155,7 @@ const drive = async (
     openClient: () => clientOf(recorded, options.answers ?? {}),
     installProject: (directory) => {
       recorded.installed.push(directory)
-      return Promise.resolve()
+      return options.installProject?.(directory) ?? Promise.resolve()
     },
     mintId: () => minted.shift() ?? "exhausted"
   }
@@ -193,13 +195,16 @@ describe("parsing", () => {
     expect(ran.lines.join("\n")).toContain("events")
   })
 
-  // Every command is a declaration, so a command that exists is a command the help names. `init`
-  // is the first one a person runs, so it is the first one listed (commands.ts, tdg).
-  test("the tree starts with init, and setup says what it writes", async () => {
+  // tdg help groups the same command declarations that the parser accepts, without changing their paths.
+  test("the tree groups commands, and setup says what it writes", async () => {
     const root = (await drive([])).lines.join("\n")
-    for (const command of ["setup", "init", "build", "push", "providers", "models", "actors", "methods", "call"]) {
+    for (const group of ["CREATE:", "RUN:", "CATALOG:", "INSPECT:"]) {
+      expect(root).toContain(group)
+    }
+    for (const command of ["setup", "init", "build", "providers", "models", "methods", "call"]) {
       expect(root).toContain(command)
     }
+    expect(root).not.toContain("push")
     expect(root.indexOf("init")).toBeLessThan(root.indexOf("setup"))
     expect(root).not.toContain("run ")
     expect(root).not.toContain("send")
@@ -261,6 +266,12 @@ describe("parsing", () => {
     expect(failureText(ran)).toContain("--provider-config")
   })
 
+  test("init requires a name when nobody can answer", async () => {
+    const ran = await drive(["init"])
+    expect(ran.failed).toBe(true)
+    expect(failureText(ran)).toContain("<name>")
+  })
+
   test("agent init writes one matching actor and connection", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tdg-init-command-"))
     try {
@@ -304,28 +315,76 @@ describe("parsing", () => {
     expect(devHelp).toContain("--no-open")
     expect(devHelp).toContain("--min-port")
     expect(devHelp).toContain("--max-concurrent-lanes")
-    const pushHelp = (await drive(["push", "--help"])).lines.join("\n")
-    expect(pushHelp).toContain("--target")
-    expect(pushHelp).toContain("local")
-    expect(pushHelp).toContain("hosted")
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
-    expect(initHelp).toContain("--force")
     for (const flag of ["--provider", "--provider-config", "--default-model"]) {
       expect(initHelp).toContain(flag)
     }
     expect(initHelp).not.toContain("--base-url")
   })
 
-  test("push requires an explicit target", async () => {
-    const ran = await drive(["push", "actor.ts"])
-    expect(ran.failed).toBe(true)
-    expect(failureText(ran)).toContain("target")
+  test("init leaves an existing target unchanged", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-init-existing-"))
+    const directory = join(cwd, "researcher")
+    const held = join(directory, "wrangler.jsonc")
+    try {
+      await mkdir(directory)
+      await writeFile(held, "keep me\n")
+      const ran = await drive([
+        "init",
+        "researcher",
+        "--provider",
+        "openrouter",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model",
+        "anthropic/claude-sonnet-4.6"
+      ], { cwd })
+
+      expect(ran.failed).toBe(true)
+      expect(failureText(ran)).toContain("target already exists")
+      expect(await readFile(held, "utf8")).toBe("keep me\n")
+      expect(ran.recorded.installed).toEqual([])
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("init removes its fresh directory when installation fails", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-init-failure-"))
+    const directory = join(cwd, "researcher")
+    try {
+      const ran = await drive([
+        "init",
+        "researcher",
+        "--provider",
+        "openrouter",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model",
+        "anthropic/claude-sonnet-4.6"
+      ], {
+        cwd,
+        installProject: () => Promise.reject(new Error("bun install exited 1"))
+      })
+
+      expect(ran.failed).toBe(true)
+      expect(failureText(ran)).toContain("bun install exited 1")
+      expect(failureText(ran)).toContain("removed incomplete project")
+      await expect(readFile(join(directory, "actor.ts"), "utf8")).rejects.toThrow()
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
   })
 
   test("an unknown command fails", async () => {
     const ran = await drive(["fly"])
     expect(ran.failed).toBe(true)
+  })
+
+  test("removed registry commands fail", async () => {
+    expect((await drive(["push"])).failed).toBe(true)
+    expect((await drive(["actors"])).failed).toBe(true)
   })
 
   test("a missing argument fails", async () => {
@@ -358,27 +417,6 @@ describe("ls", () => {
   test("--json prints the client's value verbatim", async () => {
     const ran = await drive(["ls", "--json"], { answers: { list: threads } })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual(threads)
-  })
-})
-
-describe("actors", () => {
-  const actors: ReadonlyArray<ActorSummary> = [
-    { name: "default", builtIn: true },
-    { name: "reviewer", builtIn: false, digest: "sha256:abc" }
-  ]
-
-  test("the human rendering lists kind and digest", async () => {
-    const ran = await drive(["actors"], { answers: { actors } })
-    expect(ran.failed).toBe(false)
-    expect(ran.lines[0]).toContain("ACTOR")
-    expect(ran.lines[0]).toContain("reviewer")
-    expect(ran.lines[0]).toContain("pushed")
-    expect(ran.lines[0]).toContain("sha256:abc")
-  })
-
-  test("--json prints the summaries verbatim", async () => {
-    const ran = await drive(["actors", "--json"], { answers: { actors } })
-    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(actors)
   })
 })
 
@@ -486,7 +524,7 @@ describe("call", () => {
     )
     expect(ran.failed).toBe(false)
     expect(ran.lines[0]).toBe(
-      "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?actor=default&thread=root"
+      "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?thread=root"
     )
     expect(ran.recorded.invoked).toEqual([{
       thread: "root",

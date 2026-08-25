@@ -1,9 +1,9 @@
 import { useState, type ReactElement } from "react"
 
-import type { ProblemError } from "@clavia/tardigrade-client"
-import { BracketsCurly } from "@phosphor-icons/react"
+import type { ActorIdentity, ProblemError } from "@clavia/tardigrade-client"
+import { BracketsCurly, CaretLeft, CaretRight, Plus } from "@phosphor-icons/react"
 import { navigate } from "./nav"
-import { ICON_SIZE, PANE_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
+import { ICON_SIZE, RAIL_COLLAPSED_WIDTH, RAIL_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
 import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
 import { ThemeToggle } from "./ThemeToggle"
@@ -49,14 +49,21 @@ const Row = ({
   )
 }
 
+const sqliteLabel = (location: string): string =>
+  location === ":memory:" ? location : location.split(/[\\/]/).slice(-2).join("/")
+
 export const Rail = ({
-  headerHeight = PANE_HEADER_HEIGHT,
+  actorIdentity,
+  collapsedWidth = RAIL_COLLAPSED_WIDTH,
+  headerHeight = RAIL_HEADER_HEIGHT,
   now,
   problem,
   roster,
   selected,
   width = RAIL_WIDTH
 }: {
+  readonly actorIdentity: ActorIdentity | undefined
+  readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
   readonly now: number
   readonly problem: ProblemError | undefined
@@ -64,28 +71,52 @@ export const Rail = ({
   readonly selected: string | undefined
   readonly width?: number | undefined
 }): ReactElement => {
-  // The search is the rail's own state and reads ids alone: a reader who knows the id types it, and
-  // nobody's prose is searched (mock.html, "search id…").
+  // query is the rail's local id filter (roster.test.ts, "matches").
   const [query, setQuery] = useState("")
+  const [collapsed, setCollapsed] = useState(false)
   const rows = roster.roots.filter((row) => matches(row.id, query))
   return (
-    <aside className="rail" style={{ width }}>
+    <aside className="rail" data-collapsed={collapsed} style={{ width: collapsed ? collapsedWidth : width }}>
       <div className="pane-chrome" style={{ height: headerHeight }}>
         <div className="rail-head">
-          <div className="rail-identity">
+          {collapsed ? null : <div className="rail-identity">
             <ProductMark />
-            <div className="mono rail-section-title">threads</div>
-          </div>
+          </div>}
+          <button
+            type="button"
+            className="rail-collapse"
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed((held) => !held)}
+          >
+            {collapsed
+              ? <CaretRight size={ICON_SIZE} weight="light" aria-hidden="true" />
+              : <CaretLeft size={ICON_SIZE} weight="light" aria-hidden="true" />}
+          </button>
         </div>
       </div>
-      <div style={{ padding: "10px var(--space-3)" }}>
+      {collapsed ? null : <><div className="rail-actions">
+        <div className="rail-actor">
+          <div className="mono rail-actor-name">{actorIdentity?.name ?? "\u00a0"}</div>
+          <div className="mono rail-actor-sqlite" title={actorIdentity?.sqlite}>
+            {actorIdentity === undefined ? "\u00a0" : sqliteLabel(actorIdentity.sqlite)}
+          </div>
+        </div>
         <input
           className="input rail-search"
           value={query}
-          placeholder="search id…"
-          aria-label="search id"
+          placeholder="search thread id"
+          aria-label="search thread id"
           onChange={(changed) => setQuery(changed.target.value)}
         />
+        <button
+          type="button"
+          className="rail-new-thread"
+          onClick={() => navigate({ thread: undefined, view: "new", operation: undefined, from: undefined, to: undefined })}
+        >
+          <Plus size={ICON_SIZE} weight="light" aria-hidden="true" />
+          <span>New thread</span>
+        </button>
       </div>
       {problem === undefined ? null : (
         <div className="problem" style={{ margin: "0 var(--space-3) 10px" }}>
@@ -109,6 +140,7 @@ export const Rail = ({
         </button>
         <ThemeToggle className="rail-utility" label={<span>Theme</span>} />
       </div>
+      </>}
     </aside>
   )
 }

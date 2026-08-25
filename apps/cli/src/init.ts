@@ -1,21 +1,22 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises"
-import { dirname, relative, resolve } from "node:path"
+import { mkdir, rm, writeFile } from "node:fs/promises"
+import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, type ActorTemplateModel } from "./template"
+import type { SetupAnswers, SetupFiles } from "./setup"
 import { versionIn } from "./version"
-import { callCommandFor, shellWord } from "./workflow"
+import { callCommand, shellWord } from "./workflow"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_WORKER_ENTRY = "worker.ts"
 export const DEFAULT_PACKAGE_MANIFEST = "package.json"
+export const DISCORD_INVITE_URL = "https://discord.gg/Z74jwRxz4k"
 
 export interface InitActorOptions {
   readonly model: ActorTemplateModel
   readonly cwd?: string
   readonly directory?: string
-  readonly force?: boolean
   readonly now?: Date
   readonly packageVersion?: string
 }
@@ -70,9 +71,6 @@ const packageTemplate = (version: string): string => `${JSON.stringify({
   dependencies: { tardie: version }
 }, undefined, 2)}\n`
 
-const existsError = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && error.code === "EEXIST"
-
 export const initActor = async (name: string, options: InitActorOptions): Promise<InitializedActor> => {
   const cwd = options.cwd ?? process.cwd()
   const directory = resolve(cwd, options.directory ?? defaultInitDirectory(name))
@@ -86,48 +84,18 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")
 
-  await mkdir(dirname(entry), { recursive: true })
+  const created = await mkdir(directory, { recursive: true })
+  if (created === undefined) throw new Error(`init target already exists at ${directory}. Choose a new directory.`)
+
   try {
-    await writeFile(entry, source, { encoding: "utf8", flag: options.force === true ? "w" : "wx" })
+    await writeFile(entry, source, "utf8")
+    await writeFile(worker, workerTemplate, "utf8")
+    await writeFile(manifest, manifestSource, "utf8")
+    await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
+    await writeFile(packageManifest, packageTemplate(packageVersion), "utf8")
   } catch (error) {
-    if (existsError(error)) {
-      throw new Error(`actor already exists at ${entry}. Choose another directory or pass --force.`)
-    }
+    await rm(directory, { recursive: true, force: true })
     throw error
-  }
-
-  try {
-    await writeFile(worker, workerTemplate, { encoding: "utf8", flag: "wx" })
-  } catch (error) {
-    if (!existsError(error)) throw error
-  }
-
-  try {
-    await writeFile(manifest, manifestSource, { encoding: "utf8", flag: "wx" })
-  } catch (error) {
-    if (!existsError(error)) throw error
-  }
-
-  try {
-    const currentManifest = await readFile(manifest, "utf8")
-    await writeFile(celldManifest, celldConfigOf(currentManifest, manifest).source, { encoding: "utf8", flag: "wx" })
-  } catch (error) {
-    if (!existsError(error)) throw error
-  }
-
-  try {
-    await writeFile(packageManifest, packageTemplate(packageVersion), { encoding: "utf8", flag: "wx" })
-  } catch (error) {
-    if (!existsError(error)) throw error
-    const current = JSON.parse(await readFile(packageManifest, "utf8")) as Record<string, unknown>
-    const dependencies = current["dependencies"]
-    if (dependencies !== undefined && (typeof dependencies !== "object" || dependencies === null || Array.isArray(dependencies))) {
-      throw new Error(`${packageManifest} dependencies must contain a JSON object`)
-    }
-    await writeFile(packageManifest, `${JSON.stringify({
-      ...current,
-      dependencies: { ...(dependencies as Record<string, unknown> | undefined), tardie: packageVersion }
-    }, undefined, 2)}\n`)
   }
 
   return { name, directory, entry, worker, manifest, celldManifest, packageManifest }
@@ -138,26 +106,58 @@ const shownPath = (cwd: string, path: string): string => {
   return shown.length === 0 ? "." : shown
 }
 
-export const initSummary = (actor: InitializedActor, cwd: string = process.cwd()): string => {
+export interface InitSummaryOptions {
+  readonly colors?: boolean
+  readonly cwd?: string
+}
+
+const styled = (value: string, codes: string, colors: boolean): string =>
+  colors ? `\u001b[${codes}m${value}\u001b[0m` : value
+
+const summaryField = (name: string, value: string, colors: boolean): string =>
+  `  ${styled(name.padEnd(12), "2", colors)}${value}`
+
+export const terminalColorsEnabled = (
+  env: Readonly<Record<string, string | undefined>>,
+  isTTY: boolean = process.stdout.isTTY === true
+): boolean => isTTY && (env["NO_COLOR"]?.trim().length ?? 0) === 0
+
+export const initSummary = (
+  actor: InitializedActor,
+  files: SetupFiles,
+  answers: SetupAnswers,
+  options: InitSummaryOptions = {}
+): string => {
+  const colors = options.colors ?? false
+  const cwd = options.cwd ?? process.cwd()
   const directory = shownPath(cwd, actor.directory)
-  return [
-    `created ${shownPath(cwd, actor.entry)}`,
-    `created ${shownPath(cwd, actor.worker)}`,
-    `created ${shownPath(cwd, actor.manifest)}`,
-    `created ${shownPath(cwd, actor.celldManifest)}`,
-    `created ${shownPath(cwd, actor.packageManifest)}`,
+  const shownDirectory = directory.startsWith("/") || directory.startsWith(".") ? directory : `./${directory}`
+  const credential = answers.credential === undefined
+    ? `${answers.env.join(" or ")} (environment)`
+    : `${answers.env[0]} (${shownPath(actor.directory, files.secretsPath)})`
+  const lines = [
+    styled(`✓ actor ${JSON.stringify(actor.name)} created in ${shownDirectory}`, "1;32", colors),
+    summaryField("files", shownPath(actor.directory, actor.entry), colors),
+    summaryField("", shownPath(actor.directory, actor.worker), colors),
+    summaryField("", shownPath(actor.directory, actor.manifest), colors),
+    summaryField("", shownPath(actor.directory, actor.celldManifest), colors),
+    summaryField("", shownPath(actor.directory, actor.packageManifest), colors),
+    summaryField("credential", credential, colors),
+    ...(answers.region === undefined ? [] : [summaryField("region", answers.region, colors)]),
     "",
-    "next",
+    styled("→ next", "1;36", colors),
     `  cd ${shellWord(directory)}`,
     "  tdg dev",
     "",
-    "then, in another terminal",
-    `  ${callCommandFor(actor.name)}`,
+    styled("→ call from another terminal", "1;36", colors),
+    `  ${callCommand()}`,
     "",
-    "deploy to Cloudflare",
-    "  bunx wrangler deploy",
+    styled("↗ deploy", "1;36", colors),
+    summaryField("Cloudflare", "bunx wrangler deploy", colors),
+    summaryField("Celld", `celld deploy --config ${shellWord(shownPath(actor.directory, actor.celldManifest))}`, colors),
     "",
-    "deploy to Celld",
-    `  celld deploy --config ${shellWord(shownPath(actor.directory, actor.celldManifest))}`
-  ].join("\n")
+    styled("? help", "1;36", colors),
+    `  ${DISCORD_INVITE_URL}`
+  ]
+  return `\n${lines.map((line) => line.length === 0 ? "" : `  ${line}`).join("\n")}\n`
 }

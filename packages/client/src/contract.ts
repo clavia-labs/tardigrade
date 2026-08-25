@@ -237,6 +237,14 @@ export const Health = Schema.Struct({
 
 export type Health = typeof Health.Type
 
+// ActorIdentity names the runtime mounted behind an actor route.
+export const ActorIdentity = Schema.Struct({
+  name: Schema.String,
+  sqlite: Schema.String
+}).annotate({ identifier: "ActorIdentity" })
+
+export type ActorIdentity = typeof ActorIdentity.Type
+
 export const ActorSummary = Schema.Struct({
   name: Schema.String,
   builtIn: Schema.Boolean,
@@ -385,6 +393,11 @@ const MethodCallParams = { ...ThreadParams, method: Schema.String, call: Schema.
 
 // threadsGroup declares the platform's raw log operations: list threads, append an event, and read events back.
 export const threadsGroup = HttpApiGroup.make("threads").add(
+  HttpApiEndpoint.get("actor", "/v1/actors/:actor", {
+    params: ActorParams,
+    success: ActorIdentity,
+    error: [UnknownActor.schema]
+  }),
   // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
   HttpApiEndpoint.post("append", "/v1/actors/:actor/threads/:id/events", {

@@ -20,20 +20,27 @@ Use deterministic checks when the output has a machine-readable contract. For su
 
 ## Run the baseline
 
-Build and push the unchanged actor. Record its name and digest:
+Build the unchanged actor, start `tdg dev`, and record its name and digest:
 
 ```bash
 tdg build actor.ts
-tdg push actor.ts --target local
-tdg actors --json
+tdg dev
+```
+
+In another terminal, confirm the served actor's interface:
+
+```bash
+tdg methods --json
 ```
 
 Run every development case with a fresh thread ID, then read the complete event log:
 
 ```bash
-tdg run "$brief" --actor "$candidate" --thread "$thread"
-tdg events "$thread" --actor "$candidate" --json
+tdg call message "$input" --thread "$thread" --json
+tdg events "$thread" --json
 ```
+
+Set `$input` to the method input JSON for the evaluation brief. Each candidate runs from its own actor directory, so local commands use the mounted actor without `--actor`.
 
 Score the final output and relevant trace behavior. Inspect tool errors, retries, model calls, budget events, and latency when they affect the rubric or constraints. Keep secrets and sensitive tool output out of reports and external model calls.
 
@@ -47,7 +54,7 @@ Repeat this GEPA loop within the stated limits:
 2. Read its weakest or most informative trajectories.
 3. Explain which instruction or harness choice caused the observed behavior.
 4. Propose a focused change to the allowed actor text.
-5. Build and push the proposal under a distinct candidate name.
+5. Build the proposal under a distinct candidate name, then restart `tdg dev` from its directory.
 6. Run the same development cases and score them with the same rubric.
 7. Retain the proposal when it improves at least one case without regressing another case or violating a constraint.
 
@@ -66,4 +73,4 @@ Run the surviving candidates and the unchanged baseline on the held-out cases. R
 - The limits and stop condition.
 - Regressions and evaluation gaps.
 
-Promote the selected source under the intended actor name after the user accepts the evidence. Rebuild it, verify the digest, and push it only to the authorized target.
+Promote the selected source under the intended actor name after the user accepts the evidence. Rebuild it, verify the digest, and deploy it only to the authorized target.

@@ -11,6 +11,9 @@
     "apps/*"
   ],
   "scripts": {
+    "tdg": "bun run apps/cli/src/main.ts",
+    "cli:build": "bun run pack",
+    "cli:check": "bun run gate --only=lint:effect:apps:cli,typecheck:app-cli,test:app-cli",
     "gate": "bun run tools/gate.ts",
     "lint": "oxlint",
     "lint:effect": "bun run gate --only=lint:effect",

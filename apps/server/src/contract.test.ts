@@ -18,6 +18,7 @@ import { layerGaugeResting, PROBLEM_CONTENT_TYPE, serve } from "./http"
 // A Threads that owns nothing, so every read is the empty log a 404 is made of.
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
+  sqlite: ":memory:",
   append: () => Effect.void,
   events: () => Effect.succeed([]),
   list: Effect.succeed([]),
@@ -59,6 +60,7 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/models"],
   ["get", "/v1/actors"],
   ["put", "/v1/actors"],
+  ["get", "/v1/actors/{actor}"],
   ["get", "/v1/actors/{actor}/methods"],
   ["post", "/v1/actors/{actor}/threads/{id}/events"],
   ["put", "/v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}"],
