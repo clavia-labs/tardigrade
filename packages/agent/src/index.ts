@@ -180,6 +180,13 @@ export {
   DEFAULT_CODE_SUMMARY_MAX_LENGTH,
   type CodeModeOptions
 } from "./components/code"
+export {
+  DEFAULT_PACKAGE_CALL_POLICY,
+  packageCallPolicyOf,
+  type CodePolicy,
+  type PackageCallFailure,
+  type PackageCallPolicy
+} from "@clavia/tardigrade-code/execution/reactor"
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
 export {

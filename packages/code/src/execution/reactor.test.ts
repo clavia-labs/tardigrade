@@ -7,7 +7,7 @@ import { settleActor, type Reactor } from "@clavia/tardigrade-core/reconciliatio
 import { messageKeys } from "@clavia/tardigrade-core/communication/message"
 import { definePackage, type Package } from "../package/definition"
 import { guestBindings, Sandbox, type Bindings } from "../sandbox/service"
-import { codeReactor, codeReactorFor } from "./reactor"
+import { DEFAULT_PACKAGE_CALL_POLICY, codeReactor, codeReactorFor, packageCallPolicyOf } from "./reactor"
 import { codeKeys } from "./events"
 
 // The shadow router rule, over the one funnel every package call crosses: `executeRecorded`. A
@@ -81,13 +81,13 @@ const settled = async (head: Event): Promise<ReadonlyArray<Event>> => {
   )
 }
 
-describe("transience never reaches the body", () => {
+describe("package call failure policy", () => {
   // A package fn's transient failure (an RPC hiccup, a reset stub) must never surface as a
   // rejected promise the body can catch and branch on: a rejection is an input that exists
   // nowhere in the log, so it makes replay a function of infrastructure luck (the real run
   // run-d7b8b037-183, 2026-08-16: a post-delivery failure fed a `.catch` fallback and the
-  // next attempt drifted). The failing call parks instead; the next attempt asks again.
-  test("a transiently failing call parks and the re-drive gets the real answer", async () => {
+  // next attempt drifted). A retry stays inside the call, and exhaustion becomes recorded data.
+  test("a transiently failing call retries before the body sees an answer", async () => {
     let attempts = 0
     const flakyPackage: Package = definePackage({
       name: "flaky",
@@ -112,19 +112,65 @@ describe("transience never reaches the body", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor({}, [flakyPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({
+          reactors: [codeReactorFor({ call: { retryDelaysMs: [0] } }, [flakyPackage])],
+          keyOf: composeKeys(messageKeys, codeKeys)
+        })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { result?: { a: unknown } } | undefined
     expect(settle).toBeDefined()
-    // The real answer, never the fallback: the first attempt parked on the transient failure
-    // and appended no return; the second asked again and got the truth.
+    // The real answer, never the fallback: the retry stays inside the recorded call.
     expect(settle!.result?.a).toEqual({ ok: "real" })
     expect(attempts).toBe(2)
-    // One send, one return: the transient attempt recorded nothing beyond the send.
+    // One send, one return: attempts are infrastructure detail until exhaustion.
     expect(events.filter((e) => e.type === "PackageCalled").length).toBe(1)
     expect(events.filter((e) => e.type === "PackageReturned").length).toBe(1)
+  })
+
+  test("a hanging call exhausts its deadline and backoff as one durable error", async () => {
+    let attempts = 0
+    const hangingPackage: Package = definePackage({
+      name: "hanging",
+      description: "never answers",
+      methods: {
+        read: () => Effect.sync(() => attempts++).pipe(Effect.andThen(Effect.never))
+      }
+    })
+    const log: Event[] = [
+      { type: "MessageReceived", id: "t1", text: "go", at: 1 },
+      {
+        type: "CodeDispatched",
+        execId: "e1",
+        code: "return await hanging.read({})",
+        turn: "t1",
+        at: 2
+      }
+    ]
+    const events = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* settleActor({
+          reactors: [codeReactorFor({ call: { attemptTimeoutMs: 10, retryDelaysMs: [1, 2] } }, [hangingPackage])],
+          keyOf: composeKeys(messageKeys, codeKeys)
+        })
+        return yield* Effect.flatMap(EventLog, (l) => l.read)
+      }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
+    )
+    const returned = events.find((e) => e.type === "PackageReturned") as { result?: unknown } | undefined
+    expect(attempts).toBe(3)
+    expect(returned?.result).toEqual({
+      error: "hanging.read failed after 3 attempts: timed out after 10ms",
+      attempts: 3,
+      policy: { attemptTimeoutMs: 10, retryDelaysMs: [1, 2] }
+    })
+    expect(events.some((e) => e.type === "CodeSettled")).toBe(true)
+  })
+
+  test("the exported policy resolves and validates every bound", () => {
+    expect(packageCallPolicyOf()).toEqual(DEFAULT_PACKAGE_CALL_POLICY)
+    expect(() => packageCallPolicyOf({ attemptTimeoutMs: 0 })).toThrow("attemptTimeoutMs")
+    expect(() => packageCallPolicyOf({ retryDelaysMs: [1, -1] })).toThrow("retryDelaysMs[1]")
   })
 })
 
