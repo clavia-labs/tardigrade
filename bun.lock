@@ -67,6 +67,21 @@
         "vite": "^8.0.16",
       },
     },
+    "apps/web": {
+      "name": "@clavia/tardigrade-web",
+      "version": "0.0.1",
+      "dependencies": {
+        "react": "^19.2.7",
+        "react-dom": "^19.2.7",
+      },
+      "devDependencies": {
+        "@types/react": "^19.2.16",
+        "@types/react-dom": "^19.2.3",
+        "@vitejs/plugin-react": "^6.0.2",
+        "typescript": "7.0.2",
+        "vite": "^8.0.16",
+      },
+    },
     "e2e": {
       "name": "@clavia/tardigrade-e2e",
       "devDependencies": {
@@ -282,6 +297,8 @@
     "@clavia/tardigrade-server": ["@clavia/tardigrade-server@workspace:apps/server"],
 
     "@clavia/tardigrade-voyager": ["@clavia/tardigrade-voyager@workspace:apps/voyager"],
+
+    "@clavia/tardigrade-web": ["@clavia/tardigrade-web@workspace:apps/web"],
 
     "@clavia/tardigrade-worker-loader": ["@clavia/tardigrade-worker-loader@workspace:platform/worker-loader"],
 
