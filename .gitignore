@@ -23,6 +23,7 @@ packages/core/tla/states/
 *.log
 .env*
 .dev.vars*
+apps/web/public/BerkeleyMonoTrial-Regular.otf
 
 # SQLite files and spill directories the examples write when they run
 examples/.data/

@@ -22,6 +22,7 @@
     "tla": "bun run tools/tla.ts",
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
     "test": "bun run --filter './packages/*' test",
+    "web": "bun run --cwd apps/web dev",
     "knip": "knip --no-progress --treat-config-hints-as-errors --treat-tag-hints-as-errors",
     "setup": "git config core.hooksPath .githooks",
     "pack": "bun run tools/publish.ts --dry-run"
