@@ -41,7 +41,7 @@ const counterexample = (
 export const checks: ReadonlyArray<Check> = [
   pass("communication", "Delivery", "Delivery.cfg"),
   pass("communication", "Delivery", "DeliveryLive.cfg"),
-  counterexample("communication", "Delivery", "DeliveryDeadlock.cfg", "Temporal properties were violated"),
+  counterexample("communication", "Delivery", "DeliveryDeadlock.cfg", "AllSettle was violated"),
   pass("communication", "Link", "Link.cfg"),
   pass("communication", "Link", "LinkLive.cfg"),
   counterexample("communication", "Link", "LinkMisroute.cfg", "Invariant NoMisroute is violated"),

@@ -67,6 +67,17 @@
         "vite": "^8.0.16",
       },
     },
+    "e2e": {
+      "name": "@clavia/tardigrade-e2e",
+      "devDependencies": {
+        "@clavia/tardigrade-code": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
+        "effect": "4.0.0-rc.110",
+        "fast-check": "^4.9.0",
+        "tardie": "workspace:*",
+      },
+    },
     "packages/agent": {
       "name": "tardie",
       "version": "0.0.1",
@@ -261,6 +272,8 @@
     "@clavia/tardigrade-code": ["@clavia/tardigrade-code@workspace:packages/code"],
 
     "@clavia/tardigrade-core": ["@clavia/tardigrade-core@workspace:packages/core"],
+
+    "@clavia/tardigrade-e2e": ["@clavia/tardigrade-e2e@workspace:e2e"],
 
     "@clavia/tardigrade-host": ["@clavia/tardigrade-host@workspace:packages/host"],
 

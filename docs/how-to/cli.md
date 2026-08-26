@@ -28,6 +28,7 @@ tdg call message '{"text":"read this repo and tell me what it does"}'
 | `tdg setup` | Add provider connections, then choose the default model |
 | `tdg setup provider` | Add or update one provider connection |
 | `tdg setup default` | Choose the default model from configured providers |
+| `tdg lint <entry>` | Validate an actor's component and method seams |
 | `tdg build <entry>` | Build and validate an actor artifact |
 | `tdg dev` | Build `actor.ts`, then serve its API and UI on one port |
 | `tdg providers` | List provider protocols and setup requirements |
@@ -38,6 +39,18 @@ tdg call message '{"text":"read this repo and tell me what it does"}'
 | `tdg events <thread>` | Print a thread's log |
 
 Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. The URL addresses one mounted actor. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
+
+## Validate actor composition
+
+Run `tdg lint` against the actor source before building or deploying it:
+
+```bash
+tdg lint actor.ts
+```
+
+The command bundles the source in a temporary directory and reads the method contracts derived from its components. It fails when a declared method has no handler, a component handles a method absent from the actor surface, several components handle the same method, or a fixed actor reference does not declare the method being called. A caller reference remains a deployment edge because its concrete actor depends on the incoming call.
+
+Successful output names the actor and counts its method and outgoing call seams. Pass `--json` to inspect each method's local or external handling and each call target. The command removes its temporary bundle and does not write an actor artifact.
 
 ## Configuration
 
@@ -141,6 +154,7 @@ tdg call message '{"text":"take a deeper pass","model":"anthropic/claude-opus-4-
 tdg call inspect '{"path":"README.md"}' --no-wait
 tdg providers --json
 tdg models --provider openrouter --search claude --json
+tdg lint actor.ts
 tdg build actor.ts
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"
 tdg events root --types TurnFailed

@@ -59,7 +59,7 @@ describe("methodResponseReactor", () => {
       expect.objectContaining({
         link: { source: target, target: source },
         event: expect.objectContaining({
-          type: "MethodResponseReceived",
+          type: "ResponseReceived",
           id: "call-1.reply",
           method: "ask",
           call: "call-1",
@@ -70,10 +70,9 @@ describe("methodResponseReactor", () => {
     ])
     expect(returned).toEqual([
       expect.objectContaining({
-        type: "MethodResponseDelivered",
+        type: "ResponseDelivered",
         method: "ask",
-        call: "call-1",
-        revision: "completed"
+        call: "call-1"
       })
     ])
   })
@@ -82,8 +81,25 @@ describe("methodResponseReactor", () => {
     const log: ReadonlyArray<Event> = [
       call,
       { type: "Answered", call: "call-1", output: "done", at: 2 } as Event,
-      { type: "MethodResponseDelivered", method: "ask", call: "call-1", revision: "completed", at: 3 } as Event
+      { type: "ResponseDelivered", method: "ask", call: "call-1", at: 3 } as Event
     ]
     expect(methodResponseReactor(methods)(log)).toEqual([])
+  })
+
+  test("invalid output becomes a failed response before crossing the link", () => {
+    const invalid = actorMethodsOf({
+      ask: actorMethod({
+        input: Schema.String,
+        output: Schema.String,
+        event: ({ id, input, at }): Event => ({ type: "Asked", id, input, at }),
+        state: () => ({ status: "completed", output: 42 as never })
+      })
+    })
+    const transition = methodResponseReactor(invalid)([call])[0]
+    expect(transition?.input).toEqual(expect.objectContaining({
+      response: expect.objectContaining({
+        state: expect.objectContaining({ status: "failed", error: expect.stringContaining("invalid ask output") })
+      })
+    }))
   })
 })

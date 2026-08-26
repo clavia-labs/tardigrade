@@ -229,7 +229,7 @@ describe("actor methods", () => {
         readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, { readonly properties?: Record<string, unknown> }> }
         readonly outputSchema: { readonly type?: unknown }
       }>)
-    expect(methods.map((method) => method.name)).toEqual(["message"])
+    expect(methods.map((method) => method.name)).toEqual(["message", "requestBudget"])
     expect(methods[0]?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
     expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
@@ -237,6 +237,7 @@ describe("actor methods", () => {
       properties: { model: { type: "string" } }
     })
     expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
+    expect(methods[1]?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
   })
 
   test("an invocation births a thread and exposes its completed state", async () => {

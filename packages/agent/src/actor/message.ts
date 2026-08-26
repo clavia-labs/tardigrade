@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { messageReceived } from "@clavia/tardigrade-core/communication/message"
 import { boundaryOf } from "../output/boundary"
 import { actorMethod, actorMethodsOf } from "@clavia/tardigrade-core/actor/method"
+import { requestBudgetMethod } from "./budget"
 
 export const AgentMessageInput = Schema.Struct({
   text: Schema.String,
@@ -36,24 +37,11 @@ export const agentMessageMethod = actorMethod({
     if (boundary.kind === "failed") {
       return { status: "failed", error: boundary.error, ...(data === undefined ? {} : { data }) }
     }
-    const sequence = events.filter((event) =>
-      (event.type === "BudgetGranted" || event.type === "BudgetDenied") &&
-      String((event as { readonly turn?: unknown }).turn) === id
-    ).length
-    return {
-      status: "blocked",
-      reason: boundary.reason,
-      revision: boundary.callId,
-      sequence,
-      data: {
-        ...data,
-        request: boundary.callId,
-        reason: boundary.reason,
-        amount: boundary.amount,
-        round: sequence
-      }
-    }
+    return { status: "pending" }
   }
 })
 
-export const agentMethods = actorMethodsOf({ message: agentMessageMethod })
+export const agentMethods = actorMethodsOf({
+  message: agentMessageMethod,
+  requestBudget: requestBudgetMethod
+})

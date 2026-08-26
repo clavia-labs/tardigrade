@@ -223,10 +223,7 @@ export const BudgetExhausted = Schema.Struct({
   at: Schema.Finite
 })
 
-// BudgetRequested opens the escalation lifecycle. At its wall an escalatable agent may ask its
-// parent for budget: request_budget records the ask and pauses the turn, agents.run hands the
-// request to the parent, and the answer reopens the budget (grant) or closes it (denial). See
-// docs/agent-budgets.md.
+// BudgetRequested opens the escalation lifecycle. At its wall an escalatable agent records the ask, calls its parent's requestBudget method, and remains pending until the decision reopens or closes the budget.
 export const BudgetRequested = Schema.Struct({
   type: Schema.Literal("BudgetRequested"),
   callId: Schema.String, // the request_budget call the parent's answer settles
@@ -236,11 +233,69 @@ export const BudgetRequested = Schema.Struct({
   at: Schema.Finite
 })
 
+// BudgetRequestReceived is the durable input of the requestBudget actor method.
+export const BudgetRequestReceived = Schema.Struct({
+  type: Schema.Literal("BudgetRequestReceived"),
+  id: Schema.String,
+  request: Schema.String,
+  turn: Schema.String,
+  reason: Schema.String,
+  amount: Schema.Finite,
+  at: Schema.Finite
+})
+
+// BudgetRequestDecided is the terminal decision produced by a budget authority.
+export const BudgetRequestDecided = Schema.Struct({
+  type: Schema.Literal("BudgetRequestDecided"),
+  callId: Schema.String,
+  grant: Schema.Finite,
+  reason: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// BudgetRequestFailed is the terminal failure produced when an authority cannot decide a request.
+export const BudgetRequestFailed = Schema.Struct({
+  type: Schema.Literal("BudgetRequestFailed"),
+  callId: Schema.String,
+  error: Schema.String,
+  at: Schema.Finite
+})
+
+// PermissionRequestReceived is the durable input of the requestPermission actor method.
+export const PermissionRequestReceived = Schema.Struct({
+  type: Schema.Literal("PermissionRequestReceived"),
+  id: Schema.String,
+  request: Schema.String,
+  turn: Schema.String,
+  tool: Schema.String,
+  action: Schema.String,
+  resource: Schema.optional(Schema.String),
+  reason: Schema.String,
+  at: Schema.Finite
+})
+
+// PermissionRequestDecided is the terminal decision produced by a permission authority.
+export const PermissionRequestDecided = Schema.Struct({
+  type: Schema.Literal("PermissionRequestDecided"),
+  callId: Schema.String,
+  granted: Schema.Boolean,
+  reason: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// PermissionRequestFailed is the terminal failure produced when a permission authority cannot decide a request.
+export const PermissionRequestFailed = Schema.Struct({
+  type: Schema.Literal("PermissionRequestFailed"),
+  callId: Schema.String,
+  error: Schema.String,
+  at: Schema.Finite
+})
+
 export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
   amount: Schema.Finite, // the tool calls added to this turn's budget
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
-  // ceiling (packages/agent/src/budget.ts), so a redelivered grant landing twice would silently
+  // ceiling (components/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
   callId: Schema.optional(Schema.String),
   turn: Schema.optional(Schema.String),
@@ -270,6 +325,12 @@ export const AgentEvent = Schema.Union([
   TurnResumed,
   BudgetExhausted,
   BudgetRequested,
+  BudgetRequestReceived,
+  BudgetRequestDecided,
+  BudgetRequestFailed,
+  PermissionRequestReceived,
+  PermissionRequestDecided,
+  PermissionRequestFailed,
   BudgetGranted,
   BudgetDenied
 ])
@@ -311,7 +372,7 @@ export type Action =
     } & Served)
 
 // agentKeys is the agent lane's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
-// pair; bdec names the budget request a decision answers, so a grant and denial for one request
+// pair; bdec names the budget request a local decision answers, so a grant and denial for one request
 // cannot both commit. A grant is summed into the ceiling, so a redelivery must also absorb. A
 // decision that carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
@@ -462,6 +523,30 @@ export const budgetExhausted = (
 export const budgetRequested = (
   fields: { readonly callId: string; readonly reason: string; readonly amount: number } & Stamp
 ): Event => ({ type: "BudgetRequested", ...fields }) as Event
+
+export const budgetRequestReceived = (
+  fields: { readonly id: string; readonly request: string; readonly turn: string; readonly reason: string; readonly amount: number; readonly at: number }
+): Event => ({ type: "BudgetRequestReceived", ...fields }) as Event
+
+export const budgetRequestDecided = (
+  fields: { readonly callId: string; readonly grant: number; readonly reason?: string; readonly at: number }
+): Event => ({ type: "BudgetRequestDecided", ...fields }) as Event
+
+export const budgetRequestFailed = (
+  fields: { readonly callId: string; readonly error: string; readonly at: number }
+): Event => ({ type: "BudgetRequestFailed", ...fields }) as Event
+
+export const permissionRequestReceived = (
+  fields: { readonly id: string; readonly request: string; readonly turn: string; readonly tool: string; readonly action: string; readonly resource?: string; readonly reason: string; readonly at: number }
+): Event => ({ type: "PermissionRequestReceived", ...fields }) as Event
+
+export const permissionRequestDecided = (
+  fields: { readonly callId: string; readonly granted: boolean; readonly reason?: string; readonly at: number }
+): Event => ({ type: "PermissionRequestDecided", ...fields }) as Event
+
+export const permissionRequestFailed = (
+  fields: { readonly callId: string; readonly error: string; readonly at: number }
+): Event => ({ type: "PermissionRequestFailed", ...fields }) as Event
 
 export const budgetGranted = (
   fields: { readonly amount: number; readonly callId?: string } & Stamp

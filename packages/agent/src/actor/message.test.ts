@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { requestBudgetMethod } from "./budget"
 import { agentMessageMethod, agentMethods } from "./message"
 
 const head = agentMessageMethod.event({
@@ -18,23 +19,17 @@ describe("agentMessageMethod", () => {
       model: "openai/gpt-5.2",
       at: 1
     })
-    expect(agentMethods).toEqual({ message: agentMessageMethod })
+    expect(agentMethods).toEqual({ message: agentMessageMethod, requestBudget: requestBudgetMethod })
   })
 
-  test("projects pending, blocked, completed, and failed states", () => {
+  test("stays pending through negotiation and projects terminal states", () => {
     expect(agentMessageMethod.state([], "m1")).toBeUndefined()
     expect(agentMessageMethod.state([head], "m2")).toBeUndefined()
     expect(agentMessageMethod.state([head], "m1")).toEqual({ status: "pending" })
     expect(agentMessageMethod.state([
       head,
       { type: "BudgetRequested", turn: "m1", callId: "c1", reason: "one more check", amount: 1, at: 2 } as Event
-    ], "m1")).toEqual({
-      status: "blocked",
-      reason: "one more check",
-      revision: "c1",
-      sequence: 0,
-      data: { request: "c1", reason: "one more check", amount: 1, round: 0 }
-    })
+    ], "m1")).toEqual({ status: "pending" })
     expect(agentMessageMethod.state([
       head,
       { type: "TurnCompleted", turn: "m1", output: "done", at: 2 } as Event

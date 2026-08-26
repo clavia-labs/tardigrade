@@ -1,22 +1,62 @@
-import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
-import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
-import { budgetExhausted, budgetRequested } from "../log/events"
+import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
+import {
+  actorCall,
+  calls,
+  composeComponents,
+  inheritComponentContract,
+  type ActorRef,
+  type ComponentRequirements
+} from "@clavia/tardigrade-core/actor"
+import { budgetDenied, budgetExhausted, budgetGranted, budgetRequested } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
-import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
+import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool, type AgentView } from "../runtime/composition"
 import type { ToolSpec } from "../inference/request"
+import { Router } from "@clavia/tardigrade-core/communication/router"
+import { formatActorId, isActorId, type ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { Link } from "@clavia/tardigrade-core/communication/link"
+import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { requestBudgetMethod } from "../actor/budget"
 
-// BudgetPolicy sets the default tool-call ceiling for turns that declare no budget.
+// BudgetPolicy sets the tool-call limit for turns that declare no budget.
 export interface BudgetPolicy {
-  readonly defaultToolBudget: number
+  readonly limit: number
+}
+
+export interface CallerBudgetAuthority {
+  readonly kind: "caller"
+  readonly methods: BudgetAuthorityMethods
+}
+
+export type BudgetAuthorityMethods = {
+  readonly requestBudget: typeof requestBudgetMethod
+}
+
+// BudgetAuthority identifies an actor that handles requestBudget or resolves it from the accepted call.
+export type BudgetAuthority = ActorRef<BudgetAuthorityMethods> | CallerBudgetAuthority
+
+// caller selects the actor that invoked the current message call as its budget authority.
+export const caller = (): CallerBudgetAuthority => ({
+  kind: "caller",
+  methods: { requestBudget: requestBudgetMethod }
+})
+
+export interface BudgetOptions extends Partial<BudgetPolicy> {
+  readonly authority?: BudgetAuthority
 }
 
 // DEFAULT_BUDGET_POLICY is the default policy applied by budget and spawned agents.
-export const DEFAULT_BUDGET_POLICY: BudgetPolicy = { defaultToolBudget: 40 }
+export const DEFAULT_BUDGET_POLICY: BudgetPolicy = { limit: 40 }
 
 // budgetPolicyOf applies the exported default to omitted policy fields.
 export const budgetPolicyOf = (policy: Partial<BudgetPolicy> = {}): BudgetPolicy => ({
-  defaultToolBudget: policy.defaultToolBudget ?? DEFAULT_BUDGET_POLICY.defaultToolBudget
+  limit: (() => {
+    const limit = policy.limit ?? DEFAULT_BUDGET_POLICY.limit
+    if (!Number.isSafeInteger(limit) || limit <= 0) {
+      throw new Error(`budget limit must be a positive integer, got ${JSON.stringify(limit)}`)
+    }
+    return limit
+  })()
 })
 
 // budgetOf returns the turn's declared or default budget plus every recorded grant
@@ -26,7 +66,7 @@ export const budgetOf = (view: ReadonlyArray<Event>, policy: Partial<BudgetPolic
   const base =
     typeof head?.budget === "number" && head.budget > 0
       ? Math.floor(head.budget)
-      : budgetPolicyOf(policy).defaultToolBudget
+      : budgetPolicyOf(policy).limit
   const granted = view.reduce((n, e) => (e.type === "BudgetGranted" ? n + Number((e as { amount?: unknown }).amount ?? 0) : n), 0)
   return base + granted
 }
@@ -99,7 +139,7 @@ const REQUEST_BUDGET_TOOL: ToolSpec = {
     type: "object",
     properties: {
       reason: { type: "string", description: "Why more budget is worth it: what is still missing and what you will do with the calls." },
-      amount: { type: "number", description: "How many more tool calls you need." }
+      amount: { type: "integer", minimum: 1, description: "How many more tool calls you need." }
     },
     required: ["reason", "amount"],
     additionalProperties: false
@@ -140,7 +180,10 @@ const requestBudgetTool: AgentTool = {
       })]
     }
     const args = call.arguments as { reason?: unknown; amount?: unknown } | undefined
-    const amount = typeof args?.amount === "number" && args.amount > 0 ? Math.floor(args.amount) : 0
+    const amount = args?.amount
+    if (typeof amount !== "number" || !Number.isSafeInteger(amount) || amount <= 0) {
+      return [answer({ error: `request_budget takes amount as a positive integer; got ${JSON.stringify(amount)}` })]
+    }
     return [
       intent({
         key: `br:${call.callId}`,
@@ -149,6 +192,84 @@ const requestBudgetTool: AgentTool = {
       })
     ]
   }
+}
+
+const requestCallId = (child: ActorId, turn: string, request: string): string =>
+  `budget/${formatActorId(child)}/${turn}/${request}`
+
+const authorityFor = (
+  log: ReadonlyArray<Event>,
+  turn: string,
+  authority: BudgetAuthority | undefined
+): ActorRef<BudgetAuthorityMethods> | undefined => {
+  if (authority === undefined) return undefined
+  if ("address" in authority) return authority
+  const head = log.find((event) =>
+    event.type === "MessageReceived" && String((event as { readonly id?: unknown }).id) === turn
+  ) as { readonly link?: Link<unknown, ActorId> } | undefined
+  return isActorId(head?.link?.source)
+    ? { address: head.link.source, methods: { requestBudget: requestBudgetMethod } }
+    : undefined
+}
+
+const sourceFor = (log: ReadonlyArray<Event>, turn: string): ActorId | undefined => {
+  const head = log.find((event) =>
+    event.type === "MessageReceived" && String((event as { readonly id?: unknown }).id) === turn
+  ) as { readonly link?: Link<unknown, unknown> } | undefined
+  if (isActorId(head?.link?.target)) return head.link.target
+  return threadCreatedOf(log)?.address
+}
+
+const budgetCommunication = (
+  log: ReadonlyArray<Event>,
+  authority: BudgetAuthority | undefined
+): ReadonlyArray<Transition<never, Router | Self>> => {
+  const requested = log.find((event) =>
+    event.type === "BudgetRequested" &&
+    !log.some((decision) =>
+      (decision.type === "BudgetGranted" || decision.type === "BudgetDenied") &&
+      String((decision as { readonly callId?: unknown }).callId) === String((event as { readonly callId?: unknown }).callId)
+    )
+  ) as { readonly callId?: unknown; readonly reason?: unknown; readonly amount?: unknown; readonly turn?: unknown } | undefined
+  if (requested === undefined) return []
+  const turn = String(requested.turn ?? "")
+  const request = String(requested.callId ?? "")
+  const target = authorityFor(log, turn, authority)
+  const source = sourceFor(log, turn)
+  if (target === undefined || source === undefined) return []
+  const callId = requestCallId(source, turn, request)
+  const call = actorCall(log, {
+    id: callId,
+    target,
+    method: "requestBudget",
+    input: {
+      request,
+      turn,
+      reason: String(requested.reason ?? ""),
+      amount: Number(requested.amount ?? 0)
+    }
+  })
+  if (call.transitions.length > 0) return call.transitions
+  if (call.state.status === "pending") return []
+  const output = call.state.status === "completed" ? call.state.output : undefined
+  const grant = Number(output !== undefined && "granted" in output ? output.granted : 0)
+  const reason = output !== undefined && "denied" in output ? output.reason : undefined
+  return [intent({
+    key: `bdec:${request}`,
+    input: { request, turn, grant, reason, state: call.state },
+    events: (current, at) => Number.isSafeInteger(current.grant) && current.grant > 0
+      ? [budgetGranted({ amount: current.grant, callId: current.request, turn: current.turn, at })]
+      : [budgetDenied({
+          reason: typeof current.reason === "string"
+            ? current.reason
+            : current.state.status === "failed"
+              ? current.state.error
+              : "the budget authority denied the request",
+          callId: current.request,
+          turn: current.turn,
+          at
+        })]
+  })]
 }
 
 const usedBy = (trajectory: ReadonlyArray<Event>, toolNames: ReadonlySet<string>): number =>
@@ -182,19 +303,20 @@ export const budget = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
   components: Cs,
-  policy: Partial<BudgetPolicy> = {}
-): AgentComponent<ComponentRequirements<Cs[number]>> => {
+  options: BudgetOptions = {}
+): AgentComponent<ComponentRequirements<Cs[number]> | Router | Self> => {
   type R = ComponentRequirements<Cs[number]>
-  const resolved = budgetPolicyOf(policy)
+  const resolved = budgetPolicyOf(options)
   const combined = composeComponents("budget.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<R>
-  return {
+  const component = inheritComponentContract<AgentView, R | Router | Self>({
     name: "budget",
     ...(combined.keys === undefined ? {} : { keys: combined.keys }),
     derive: (log) => {
       const children = combined.derive(log)
       const trajectory = turnView(log)
       const spent = budgetSpent(trajectory)
-      const canRequest = canRequestBudget(trajectory)
+      const turn = String((turnHead(trajectory) as { readonly id?: unknown } | undefined)?.id ?? "")
+      const canRequest = canRequestBudget(trajectory) && authorityFor(log, turn, options.authority) !== undefined
       const toolNames = new Set(children.view.tools.map((tool) => tool.spec.name))
       return {
         view: {
@@ -207,8 +329,11 @@ export const budget = <
           context: children.view.context,
           output: children.view.output
         },
-        transitions: children.transitions
+        transitions: [...budgetCommunication(log, options.authority), ...children.transitions]
       }
     }
-  }
+  }, combined)
+  return options.authority === undefined
+    ? component
+    : calls(options.authority, requestBudgetMethod, component)
 }

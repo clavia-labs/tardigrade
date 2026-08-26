@@ -2,6 +2,7 @@ import type { Event } from "../log/event"
 import { composeKeys } from "../log/keys"
 import type { Transition } from "../reconciliation"
 import type { Component, ComponentRequirements } from "./component"
+import { COMPONENT_CONTRACT, mergeComponentContracts } from "./contract"
 
 // ViewAlgebra defines the empty view and how two independently derived views combine.
 export interface ViewAlgebra<V> {
@@ -48,6 +49,7 @@ export const composeComponents = <
   return {
     name,
     ...(keys === undefined ? {} : { keys }),
+    [COMPONENT_CONTRACT]: mergeComponentContracts(members),
     derive: (log) => {
       let view = algebra.empty
       const transitions: Array<Transition<never, ComponentRequirements<Cs[number]>>> = []

@@ -10,12 +10,19 @@ export {
   type ActorMethods
 } from "./definition"
 export type { ActorMethodCall, ActorMethodInvocation } from "./call"
+export {
+  actorCall,
+  methodCallKeys,
+  type ActorCall,
+  type ActorCallOptions,
+  type CallDispatched
+} from "./outgoing"
 export type { ActorMethodState } from "./state"
 export {
   methodResponseKeys,
   methodResponseComponent,
   methodResponseReactor,
   type ActorMethodResponse,
-  type MethodResponseDelivered,
-  type MethodResponseReceived
+  type ResponseDelivered,
+  type ResponseReceived
 } from "./response"

@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "../log/event"
-import { actor } from "./definition"
+import { actor, validateActor } from "./definition"
+import { actorRef } from "./reference"
 import { actorMethod, actorMethodsOf } from "./method/definition"
+import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
 const component = { name: "inspect", derive: () => ({ view: undefined, transitions: [] }) }
 const methods = actorMethodsOf({
@@ -21,11 +23,59 @@ describe("actor", () => {
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
     expect(definition.reactors).toHaveLength(2)
+    expect(actorRef(definition, "shared")).toEqual({
+      address: { actor: "release-analyst", thread: "shared" },
+      methods
+    })
   })
 
   test("refuses an invalid actor name", () => {
     expect(() => actor({ name: "Release Analyst", methods, components: [component] })).toThrow(
       "actor name must match"
     )
+  })
+
+  test("validates local and external method implementations", () => {
+    expect(validateActor(actor({
+      name: "local",
+      methods,
+      components: [handles(methods.inspect, component)]
+    })).contract.methods[0]?.handling).toEqual(["local"])
+    expect(validateActor(actor({
+      name: "manual",
+      methods,
+      components: [externallyHandled(methods.inspect, component)]
+    })).contract.methods[0]?.handling).toEqual(["external"])
+  })
+
+  test("reports incomplete and undeclared method seams", () => {
+    expect(() => validateActor(actor({ name: "missing", methods, components: [component] }))).toThrow(
+      'method "inspect" has no handler'
+    )
+    expect(() => validateActor(actor({
+      name: "hidden",
+      methods: {},
+      components: [handles(methods.inspect, component)]
+    }))).toThrow("handled method(s) are absent from the actor surface")
+  })
+
+  test("checks fixed actor references against the exact method declaration", () => {
+    const remote = actor({ name: "remote", methods: {}, components: [] })
+    const dependent = actor({
+      name: "dependent",
+      methods: {},
+      components: [calls(actorRef(remote, "shared"), methods.inspect, component)]
+    })
+    expect(() => validateActor(dependent)).toThrow('actor "remote" does not declare the called method')
+  })
+
+  test("resolves a caller dependency from the caller contract", () => {
+    const caller: CallerRef<typeof methods> = { kind: "caller", methods }
+    const dependent = actor({
+      name: "dependent",
+      methods: {},
+      components: [calls(caller, methods.inspect, component)]
+    })
+    expect(validateActor(dependent).contract.calls[0]?.methodName).toBe("inspect")
   })
 })

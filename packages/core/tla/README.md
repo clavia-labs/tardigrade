@@ -8,9 +8,9 @@ The specifications describe the runtime and communication contracts independentl
 
 | Module | Contract | Passing configurations | Counterexample configurations |
 | --- | --- | --- | --- |
-| `communication/Delivery` | Spawn, await, settlement, and deadlock | `Delivery.cfg`, `DeliveryLive.cfg` | `DeliveryDeadlock.cfg` |
+| `communication/Delivery` | Spawn, await, independently served methods, settlement, and deadlock | `Delivery.cfg`, `DeliveryLive.cfg` | `DeliveryDeadlock.cfg` |
 | `communication/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
-| `communication/Method` | Method state reports correlated to the method and reversed accepted call link | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
+| `communication/Method` | Durable method futures from request through dispatch, acceptance, terminal resolution, and reversed-link response | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
 | `runtime/ConcurrentDriver` | Bounded parallel settlement, keyed commits, and parked fiber release | `ConcurrentDriver.cfg`, `ConcurrentDriverLive.cfg` | `ConcurrentDriverUnbounded.cfg`, `ConcurrentDriverParkLeak.cfg` |

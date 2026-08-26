@@ -15,6 +15,7 @@ const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
+const e2e = `${root}e2e`
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
 // can resolve and emit them.
 const bundled = ["voyager"]
@@ -28,7 +29,8 @@ const effectProjects = [
   ...tsconfigsIn(root),
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
-  ...apps.flatMap((name) => tsconfigsIn(appPkg(name)))
+  ...apps.flatMap((name) => tsconfigsIn(appPkg(name))),
+  ...tsconfigsIn(e2e)
 ]
 
 const effectTaskId = (project: string): string => {
@@ -64,11 +66,13 @@ const tasks: ReadonlyArray<Task> = [
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...apps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
   { id: "test:platform-cloudflare:workers", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "test:workers"] },
   { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
+  { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
   // Knip checks the complete graph, the shipped graph, cycles, and tsconfig discovery as separate views.

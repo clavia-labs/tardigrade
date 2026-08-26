@@ -24,11 +24,11 @@ const BROKEN: Stamp = { fg: "var(--fail)", bg: "var(--fail-wash)" }
 // the rust (mock.html, the event rows; voyager-design-system.md, principle 1).
 const STAMPS: Readonly<Record<string, Stamp>> = {
   MessageReceived: NEUTRAL,
-  MethodResponseReceived: NEUTRAL,
+  ResponseReceived: NEUTRAL,
   ModelCalled: NEUTRAL,
   TextReturned: NEUTRAL,
   CompactionCompleted: NEUTRAL,
-  MethodResponseDelivered: NEUTRAL,
+  ResponseDelivered: NEUTRAL,
   CodeDispatched: DISPATCH,
   ToolCalled: DISPATCH,
   TurnResumed: DISPATCH,
@@ -130,7 +130,7 @@ export const summaryOf = (
       }
       return line([str(event.text) ?? ""], chars)
     }
-    case "MethodResponseReceived":
+    case "ResponseReceived":
       return line(["response", `status: ${str(event.status) ?? ""}`, str(event.from)], chars)
     case "ModelCalled":
       return line([`attempt ${(num(event.ordinal) ?? 0) + 1}`, str(event.turn)], chars)
@@ -161,7 +161,7 @@ export const summaryOf = (
       return line([str(event.cause) ?? "failed", str(event.error)], chars)
     case "TurnResumed":
       return line([str(event.turn), `epoch ${String(num(event.failedEpoch))} to ${String(num(event.epoch))}`], chars)
-    case "MethodResponseDelivered":
+    case "ResponseDelivered":
       return line([str(event.method), str(event.call), str(event.revision)], chars)
     case "BudgetExhausted":
       return line([`used ${String(num(event.used))} of ${String(num(event.budget))}`], chars)
@@ -219,7 +219,7 @@ const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 // hides nothing; a type it lists not at all falls back to that order entirely.
 const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   MessageReceived: ["id", "from", "outcome", "source", "chat", "sender", ...STAMP, "text", "input", "output", "data"],
-  MethodResponseReceived: ["id", "method", "call", "status", "from", ...STAMP, "output", "error", "reason", "data"],
+  ResponseReceived: ["id", "method", "call", "status", "from", ...STAMP, "output", "error", "reason", "data"],
   ModelCalled: ["callId", "ordinal", "epoch", "output", ...STAMP],
   TextReturned: [...STAMP, "text"],
   ToolCalled: ["callId", "name", "mode", ...STAMP, "arguments", "usage", "endpoint"],
@@ -234,7 +234,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   TurnCompleted: ["epoch", "attemptKey", "mode", ...STAMP, "output", "usage", "endpoint"],
   TurnFailed: ["epoch", "cause", "attempts", "attemptKey", "mode", ...STAMP, "error", "usage", "policy", "endpoint"],
   TurnResumed: ["failedEpoch", "epoch", ...STAMP],
-  MethodResponseDelivered: ["method", "call", "revision", ...STAMP],
+  ResponseDelivered: ["method", "call", "revision", ...STAMP],
   BudgetExhausted: ["budget", "used", ...STAMP],
   BudgetRequested: ["callId", "amount", "reason", ...STAMP],
   BudgetGranted: ["callId", "amount", ...STAMP],

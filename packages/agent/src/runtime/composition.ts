@@ -1,6 +1,8 @@
 import type { Transition, Reactor } from "@clavia/tardigrade-core/reconciliation"
 import {
   composeComponents,
+  handles,
+  inheritComponentContract,
   type Component,
   type ComponentRequirements,
   type ViewAlgebra
@@ -16,6 +18,7 @@ import type { ModelRef } from "../inference/reference"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "./turn"
+import { agentMessageMethod } from "../actor/message"
 
 // AgentTool pairs one model-visible tool specification with the handler for calls to that tool.
 // A derived tool is therefore advertised and routable from the same value.
@@ -245,7 +248,7 @@ export const infer = <
   const inference = inferReactorFor({ ...policy, model }, (log) => renderView(viewOf(log))) as Reactor<R>
   const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
 
-  return {
+  return handles(agentMessageMethod, inheritComponentContract({
     name: "infer",
     keys: rootKeys(combined.keys),
     derive: (log) => {
@@ -261,5 +264,5 @@ export const infer = <
         ]
       }
     }
-  }
+  }, combined))
 }

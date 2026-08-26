@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Cause, Console, Effect, Exit, Layer, Option } from "effect"
@@ -187,13 +188,29 @@ describe("parsing", () => {
     expect(ran.lines.join("\n")).toContain("events")
   })
 
+  test("lint validates an actor without writing an artifact", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-lint-command-"))
+    try {
+      await writeFile(join(cwd, "actor.ts"), `
+        import { actor } from "tardie"
+        export default actor({ name: "researcher", methods: {}, components: [] })
+      `, "utf8")
+      const ran = await drive(["lint", "actor.ts"], { cwd })
+      expect(ran.failed).toBe(false)
+      expect(ran.lines).toEqual(["linted  researcher\nmethods 0\ncalls   0"])
+      expect(existsSync(join(cwd, ".tardigrade"))).toBe(false)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
   // tdg help groups the same command declarations that the parser accepts, without changing their paths.
   test("the tree groups commands, and setup says what it writes", async () => {
     const root = (await drive([])).lines.join("\n")
     for (const group of ["CREATE:", "RUN:", "CATALOG:", "INSPECT:"]) {
       expect(root).toContain(group)
     }
-    for (const command of ["setup", "init", "build", "providers", "models", "methods", "call"]) {
+    for (const command of ["setup", "init", "lint", "build", "providers", "models", "methods", "call"]) {
       expect(root).toContain(command)
     }
     expect(root).not.toContain("push")
@@ -570,14 +587,6 @@ describe("call", () => {
       answers: { states: [{ status: "failed", error: "no model is configured" }] }
     })
     expect(ran.lines[0]).toBe("root m1 failed\nno model is configured")
-    expect(ran.failed).toBe(true)
-  })
-
-  test("a blocked call prints its reason and exits non-zero", async () => {
-    const ran = await drive(["call", "message", "{\"text\":\"hello\"}", "--thread", "root", "--id", "m1", "--poll", "1"], {
-      answers: { states: [{ status: "blocked", reason: "budget" }] }
-    })
-    expect(ran.lines[0]).toBe("root m1 blocked\nbudget")
     expect(ran.failed).toBe(true)
   })
 

@@ -1,5 +1,5 @@
 import {
-  actor, agentMethods, agentsPackage, budget, codeMode,
+  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
   compaction, fetchPackage, filesPackage, infer,
   outputValidateOnce, system, workspacePackage
 } from "tardie"
@@ -23,19 +23,22 @@ export default actor({
   // methods declares the typed calls this actor accepts.
   methods: agentMethods,
   // components carry implementation and output requirements into the host type.
-  components: [infer([
-    system(actorInstructions),
-    // budget scopes the tool-call limit to the codeMode subtree.
-    budget([
-      // codeMode gives the model one code tool over the package components listed here.
-      codeMode([
-        // codeMode package components grant access to files, HTTP, child agents, and saved results.
-        filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
-      ])
-    ]),
-    // compaction summarizes older context when a long turn outgrows its context window.
-    compaction(),
-    // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
-    outputValidateOnce
-  ], actorModel)]
+  components: [
+    infer([
+      system(actorInstructions),
+      // budget scopes the tool-call limit to the codeMode subtree.
+      budget([
+        // codeMode gives the model one code tool over the package components listed here.
+        codeMode([
+          // codeMode package components grant access to files, HTTP, child agents, and saved results.
+          filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
+        ])
+      ], { authority: caller() }),
+      // compaction summarizes older context when a long turn outgrows its context window.
+      compaction(),
+      // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
+      outputValidateOnce
+    ], actorModel),
+    budgetAuthority()
+  ]
 })

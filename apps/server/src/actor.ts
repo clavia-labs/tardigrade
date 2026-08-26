@@ -6,6 +6,8 @@ import {
   agentMethods,
   agentsPackage,
   budget,
+  budgetAuthority,
+  caller,
   codeMode,
   compaction,
   fetchPackage,
@@ -26,7 +28,7 @@ import { inboundOf } from "./projections"
 // what the events mean, and that is the assembly that emitted them. The platform holds the log and
 // mounts what is declared here by name (packages/client/src/contract.ts, apiOf).
 
-// The assembly, one for every lane: code mode with four packages in scope, plus the four policy
+// The assembly, one for every lane: code mode with four packages in scope, plus the policy
 // components. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,
 // "Explicitly out of scope for v1").
 //
@@ -54,13 +56,14 @@ const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
     methods: agentMethods,
     components: [
       infer([
-        budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])]),
+        budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])], { authority: caller() }),
         compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
         outputValidateOnce
       ], {
         provider: models.provider,
         default_model: models.default_model
-      })
+      }),
+      budgetAuthority()
     ]
   })
 

@@ -29,8 +29,8 @@ const reply = (id: string, text = "done"): Event =>
 const turns = agentProjections.turns
 
 describe("the built-in actor", () => {
-  test("declares the message method", () => {
-    expect(Object.keys(builtInActor().methods)).toEqual(["message"])
+  test("declares message and budget methods", () => {
+    expect(Object.keys(builtInActor().methods)).toEqual(["message", "requestBudget"])
   })
 })
 

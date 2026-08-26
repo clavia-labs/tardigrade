@@ -7,16 +7,14 @@ import { budgetPolicyOf, type BudgetPolicy } from "../components/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { boundaryId } from "@clavia/tardigrade-core/communication/message"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { envelopeOf, methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { childLineageOf, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import {
   actorIdOf,
   formatActorId,
-  parseActorId,
   type ActorId
 } from "@clavia/tardigrade-core/communication/endpoint"
 import { decodeOutput, outputFrom, type OutputContract } from "../output/contract"
-import { budgetDenied, budgetGranted } from "../log/events"
 import { modelRefOf, type ModelRef } from "../inference/reference"
 
 // The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
@@ -44,9 +42,8 @@ import { modelRefOf, type ModelRef } from "../inference/reference"
 // `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a promise
 // that never settles for the code body). It never holds a call open.
 //
-// An escalatable run uses the same parked delivery protocol. The child reports each budget request
-// through the reversed accepted link, and `agents.continue` sends the parent's decision back through
-// Router before parking on the child's next boundary.
+// An escalatable run keeps the same call pending while the child negotiates through the parent's
+// requestBudget method. The original call receives only the child's terminal response.
 
 // SpawnOptions is the placement's environment: who the family works as, how a child's budget is
 // drawn from the run, and the isolation labels a brief carries down. Every field has a default,
@@ -72,26 +69,11 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
-const continuationHandleSchema = {
-  type: "object",
-  properties: {
-    address: { type: "string" },
-    turn: { type: "string" },
-    round: { type: "integer" },
-    request: { type: "string" }
-  },
-  required: ["address", "turn", "round", "request"]
-}
-
 const foregroundBoundarySchema = {
   type: "object",
   properties: {
     output: {},
-    error: { type: "string" },
-    requesting: { type: "boolean" },
-    reason: { type: "string" },
-    amount: { type: "number" },
-    handle: continuationHandleSchema
+    error: { type: "string" }
   }
 }
 
@@ -107,7 +89,7 @@ export const agentsPackage = (
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
   const worldOf = options.worldOf ?? (() => undefined)
-  const defaultBudget = budgetPolicyOf(options.budget).defaultToolBudget
+  const defaultBudget = budgetPolicyOf(options.budget).limit
   const outputs = options.outputs ?? {}
   const model = options.model === undefined ? undefined : modelRefOf(options.model)
   if (options.model !== undefined && model === undefined) {
@@ -116,15 +98,14 @@ export const agentsPackage = (
   const declared_ = Object.keys(outputs)
   return definePackage({
     name: "agents",
-    description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable run can ask for more budget at its wall; continue() answers the ask.",
+    description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
     annotations: {
       run: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
-      result: { readOnlyHint: true, openWorldHint: false },
-      continue: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false }
+      result: { readOnlyHint: true, openWorldHint: false }
     },
     docs: {
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the agent ask for more budget at the cap instead of answering; the run then returns { requesting, reason, amount, handle }, and you decide with continue().`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
         input: {
           type: "object",
           properties: {
@@ -132,7 +113,7 @@ export const agentsPackage = (
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
-            escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
+            escalatable: { type: "boolean", description: "true: at its budget the child may ask its parent's budget authority for more before answering" }
           },
           required: ["text"]
         },
@@ -156,18 +137,6 @@ export const agentsPackage = (
           type: "object",
           properties: { output: {}, error: { type: "string" } }
         }
-      },
-      continue: {
-        description: "Resolve a budget request from an escalatable run. Pass the request's `handle` and a `grant` of extra tool calls; a grant of 0 or less denies, and the agent finishes with what it has. A grant draws the run's shared budget, so a spent budget denies whatever you pass. Returns the agent's next boundary: another request, or its final answer, in the same shape run() returns.",
-        input: {
-          type: "object",
-          properties: {
-            handle: continuationHandleSchema,
-            grant: { type: "integer", description: "extra tool calls to grant, a whole number of calls; 0 or less denies" }
-          },
-          required: ["handle", "grant"]
-        },
-        output: foregroundBoundarySchema
       }
     },
     methods: {
@@ -228,11 +197,9 @@ export const agentsPackage = (
           const shadow = shadowOf()
           const world = worldOf()
           const target = place(ctx.callId, source)
-          const address = formatActorId(target)
           if (a?.background === true) {
-            // A background run has no synchronous parent to decide an escalation, so it never asks:
-            // the brief carries no `escalatable`, and the reply comes home as an inbound, awaited
-            // later by `agents.result({ id: callId })`.
+            // A background run uses the same actor protocol. Its budget request can be served while
+            // no code body awaits it, and its terminal is collected later by agents.result.
             const at = yield* Clock.currentTimeMillis
             yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
               type: "MessageReceived",
@@ -241,6 +208,7 @@ export const agentsPackage = (
               ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
               ...(model === undefined ? {} : { model }),
               budget,
+              ...(a?.escalatable === true ? { escalatable: true } : {}),
               ...(actor === undefined ? {} : { actor }),
               ...(shadow ? { shadow: true } : {}),
               ...(world === undefined ? {} : { world }),
@@ -249,10 +217,10 @@ export const agentsPackage = (
             }, lineage))
             return { dispatched: true, callId: ctx.callId }
           }
-          // Foreground runs park on their next reported boundary. A replay reads that boundary
+          // Foreground runs park on their terminal response. A replay reads that response
           // before redelivering the same brief.
-          const already = yield* awaitedBoundary(ctx.callId, 0)
-          if (already !== undefined) return shape(answerOf(already), address, ctx.callId, output)
+          const already = yield* awaitedBoundary(ctx.callId)
+          if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
           yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
             type: "MessageReceived",
@@ -280,53 +248,13 @@ export const agentsPackage = (
       //
       result: (args, ctx) =>
         Effect.gen(function* () {
-          const source = yield* Self
           const a = args as { id?: unknown } | undefined
           const id = String(a?.id ?? "")
           if (id === "") return { error: "agents.result needs { id }" }
-          // The child is where this package placed it, recomputed rather than taken from the
-          // caller: `place` is the one owner of that answer (sibling above).
-          const target = place(id, source)
-          const address = formatActorId(target)
-          const reply = yield* awaitedBoundary(id, 0)
+          const reply = yield* awaitedBoundary(id)
           if (reply?.contractError !== undefined) return { error: reply.contractError }
-          if (reply !== undefined) return shape(answerOf(reply), address, id, reply.contract)
+          if (reply !== undefined) return shape(answerOf(reply), id, reply.contract)
           return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(id, 0) })
-        }),
-      // Continue a child parked on a budget ask. `grant` is the tool calls to add; a non-positive grant,
-      // or a spent run budget, denies and the child finishes. The grant draws the run's budget like a
-      // fresh spawn does, so escalation stays inside the same whole-run bound. Returns the child's next
-      // boundary, another request or its final answer, in the same shape `run` returns.
-      continue: (args, ctx) =>
-        Effect.gen(function* () {
-          const router = yield* Router
-          const source = yield* Self
-          const a = args as { handle?: unknown; grant?: unknown } | undefined
-          const handle = a?.handle as { address?: unknown; turn?: unknown; round?: unknown; request?: unknown } | undefined
-          const address = String(handle?.address ?? "")
-          const turn = String(handle?.turn ?? "")
-          const round = handle?.round
-          const request = typeof handle?.request === "string" ? handle.request : ""
-          if (address === "" || turn === "" || typeof round !== "number" || !Number.isSafeInteger(round) || round < 0 || request === "") {
-            return { error: "agents.continue needs { handle, grant }; the handle comes from a run that is requesting" }
-          }
-          // grant accepts a whole count of calls because rounding could deny a request the parent
-          // tried to grant (spawn.test.ts, "a fractional grant").
-          const grant = a?.grant
-          if (typeof grant !== "number" || !Number.isInteger(grant)) {
-            return { error: `agents.continue takes grant as a whole number of tool calls; got ${JSON.stringify(grant)}` }
-          }
-          const target = parseActorId(address)
-          const already = yield* awaitedBoundary(turn, round + 1)
-          if (already?.contractError !== undefined) return { error: already.contractError }
-          if (already !== undefined) return shape(answerOf(already), address, turn, already.contract)
-          const granted = grant > 0 ? yield* Effect.promise(() => reserve(ctx.callId, grant)) : 0
-          const at = yield* Clock.currentTimeMillis
-          const decision = granted > 0
-            ? budgetGranted({ amount: granted, callId: request, turn, at })
-            : budgetDenied({ reason: "the parent declined the request", callId: request, turn, at })
-          yield* router.send(envelopeOf(linkOf(source, target), decision))
-          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(turn, round + 1) })
         })
     }
   })
@@ -372,14 +300,10 @@ const outputAsked = (
 // read this one and an operator can tell the two apart.
 export const INLINE_OUTPUT_NAME = "inline"
 
-// SpawnBoundary is one child boundary reported to its caller through the reversed accepted link.
+// SpawnBoundary is one child terminal reported to its caller through the reversed accepted link.
 interface SpawnBoundary {
-  readonly outcome: "completed" | "failed" | "requesting"
+  readonly outcome: "completed" | "failed"
   readonly text: string
-  readonly reason?: string
-  readonly amount?: number
-  readonly round?: number
-  readonly request?: string
   readonly contract?: OutputContract
   readonly contractError?: string
 }
@@ -401,34 +325,24 @@ const contractOf = (
 }
 
 // awaitedBoundary reads a child method response from the caller's own private log.
-const awaitedBoundary = (turn: string, round: number): Effect.Effect<SpawnBoundary | undefined, never, EventLog> =>
+const awaitedBoundary = (turn: string): Effect.Effect<SpawnBoundary | undefined, never, EventLog> =>
   Effect.gen(function* () {
     const log = yield* EventLog
     const events = yield* log.read
     const response = events.find(
-      (event) => event.type === "MethodResponseReceived" &&
-        (event as { readonly id?: unknown }).id === boundaryId(turn, round)
+      (event) => event.type === "ResponseReceived" &&
+        (event as { readonly id?: unknown }).id === boundaryId(turn, 0)
     ) as {
       readonly status?: unknown
       readonly output?: unknown
       readonly error?: unknown
-      readonly reason?: unknown
       readonly data?: unknown
     } | undefined
     if (response !== undefined) {
       const contract = contractOf(response.data, turn)
       if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
       if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
-      const data = response.data as { request?: unknown; reason?: unknown; amount?: unknown; round?: unknown } | undefined
-      return {
-        outcome: "requesting",
-        text: String(response.reason ?? ""),
-        reason: String(data?.reason ?? response.reason ?? ""),
-        amount: Number(data?.amount ?? 0),
-        round: Number(data?.round ?? round),
-        request: String(data?.request ?? ""),
-        ...contract
-      }
+      return undefined
     }
     return undefined
   })
@@ -440,48 +354,22 @@ const ERROR_PREFIX = "error: "
 const answerOf = (reply: SpawnBoundary): {
   readonly output?: string
   readonly error?: string
-  readonly requesting?: boolean
-  readonly reason?: string
-  readonly amount?: number
-  readonly round?: number
-  readonly request?: string
 } => {
-  if (reply.outcome === "requesting") {
-    return {
-      requesting: true,
-      ...(reply.reason === undefined ? {} : { reason: reply.reason }),
-      ...(reply.amount === undefined ? {} : { amount: reply.amount }),
-      ...(reply.round === undefined ? {} : { round: reply.round }),
-      ...(reply.request === undefined ? {} : { request: reply.request })
-    }
-  }
   return reply.outcome === "completed"
     ? { output: reply.text }
     : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }
 }
 
-// shape renders a boundary as the code's return value. A request carries a handle the code passes
-// back to `agents.continue`; the handle names where and which turn, and nothing about the answer's
-// shape, because each method response carries the declaration accepted with its call.
-//
+// shape renders a terminal as the code's return value.
 // A terminal under a contract comes back decoded and validated. A terminal that misses the
 // contract comes back as an error rather than as a value: the child's own reactor already refused
 // such an answer, so one arriving here means the reply did not come from that path, and reading it
 // as the contract's shape would be the reinterpretation this whole surface exists to prevent.
 const shape = (
-  answer: { output?: string; error?: string; requesting?: boolean; reason?: string; amount?: number; round?: number; request?: string },
-  address: string,
+  answer: { output?: string; error?: string },
   turn: string,
   contract: OutputContract | undefined
 ): unknown => {
-  if (answer.requesting === true) {
-    return {
-      requesting: true,
-      reason: answer.reason,
-      amount: answer.amount,
-      handle: { address, turn, round: answer.round, request: answer.request }
-    }
-  }
   if (contract === undefined || answer.output === undefined) return answer
   const decoded = decodeOutput(contract, answer.output)
   if (decoded.errors.length > 0) {

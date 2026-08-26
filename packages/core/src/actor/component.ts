@@ -1,6 +1,7 @@
 import type { Event } from "../log/event"
 import type { KeyFragment } from "../log/keys"
 import type { Reactor, Transition } from "../reconciliation"
+import type { COMPONENT_CONTRACT, ComponentContract } from "./contract"
 
 // Derivation contains one component's view and transition projections
 // (tla/runtime/Projection.tla, ViewFaithful; tla/runtime/Reconcile.tla, NoVoid).
@@ -13,6 +14,7 @@ export interface Derivation<V, R = never> {
 export interface Component<V, R = never> {
   readonly name: string
   readonly keys?: KeyFragment
+  readonly [COMPONENT_CONTRACT]?: ComponentContract
   readonly derive: (log: ReadonlyArray<Event>) => Derivation<V, R>
 }
 

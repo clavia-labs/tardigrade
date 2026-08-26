@@ -142,7 +142,7 @@ describe("an assembled agent", () => {
         depth: 1
       })
       expect(log.some((e) => e.type === "TurnCompleted")).toBe(true)
-      expect(log.some((e) => e.type === "MethodResponseDelivered")).toBe(true)
+      expect(log.some((e) => e.type === "ResponseDelivered")).toBe(true)
     }
     // And it is quiet: nothing owed anywhere.
     expect(mind.host.resting()).toBe(true)
@@ -257,7 +257,7 @@ describe("an assembled agent", () => {
     expect(log.filter((event) => event.type === "TurnCompleted")).toEqual([
       expect.objectContaining({ turn: "run-0", epoch: 1, output: "contents" })
     ])
-    expect(log.filter((event) => event.type === "MethodResponseDelivered")).toHaveLength(0)
+    expect(log.filter((event) => event.type === "ResponseDelivered")).toHaveLength(0)
   })
 
   test("only a failed active epoch can resume", async () => {

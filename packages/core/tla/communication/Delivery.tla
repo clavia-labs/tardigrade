@@ -5,15 +5,19 @@
    obligations discharge) and proves what composition adds and what it
    can destroy.
 
-   TWO EDGE KINDS, because they carry different liveness character.
+   THREE EDGE KINDS, because they carry different liveness character.
    A BRIEF edge spawns: the parent's call dispatches a fresh child and
    the child's settle replies home. Spawns cannot cycle in the real
    system (every fire mints a fresh lane), and the constant Briefs is
    assumed a forest. An AWAIT edge waits on an EXISTING lane's settle
    (the tasks.result shape) and is the only cycle-capable kind.
+   A SERVICE edge is a method an actor can settle independently of its
+   currently parked turn. Its reply requires the target to be dispatched,
+   not settled. The requestBudget call has this shape: a parent may await
+   a child while its budget component answers the child's reciprocal call.
 
    THE THEOREM PAIR. AwaitOrder: waiting, taken transitively over both
-   edge kinds, is irreflexive: no lane transitively waits for itself.
+   dependency edge kinds, is irreflexive: no lane transitively waits for itself.
    AllSettle (liveness): under fair briefing, replying, and settling,
    every reachable lane settles. AllSettle holds when AwaitOrder does
    (Delivery.cfg, DeliveryLive.cfg: a diamond with a cross await) and
@@ -28,7 +32,7 @@
 
 EXTENDS Naturals, FiniteSets, TLC
 
-CONSTANTS Lanes, Briefs, Awaits, Roots
+CONSTANTS Lanes, Briefs, Awaits, Services, Roots
 
 (* Named topologies, selected by the configs (cfg files cannot write
    tuple sets). The diamond: a spawn tree plus one cross await, order
@@ -37,21 +41,25 @@ DiamondLanes  == {"r", "a", "b", "j"}
 DiamondRoots  == {"r"}
 DiamondBriefs == {<<"r", "a">>, <<"r", "b">>, <<"r", "j">>}
 DiamondAwaits == {<<"a", "b">>}
+DiamondServices == {<<"a", "r">>}
 KnotLanes  == {"r", "p", "c"}
 KnotRoots  == {"r"}
 KnotBriefs == {<<"r", "p">>, <<"r", "c">>}
 KnotAwaits == {<<"p", "c">>, <<"c", "p">>}
+KnotServices == {}
 
 ASSUME Briefs \subseteq Lanes \X Lanes
 ASSUME Awaits \subseteq Lanes \X Lanes
+ASSUME Services \subseteq Lanes \X Lanes
 ASSUME Roots \subseteq Lanes
 
-Edges == Briefs \cup Awaits
+Dependencies == Briefs \cup Awaits
+Edges == Dependencies \cup Services
 
 (* Reachability by bounded iteration: paths need at most |Lanes| hops.
    Direct quantifiers only, per the house method. *)
-Step(R) == R \cup {<<a, c>> \in Lanes \X Lanes: \E b \in Lanes: <<a, b>> \in R /\ <<b, c>> \in Edges}
-R1 == Step(Edges)
+Step(R) == R \cup {<<a, c>> \in Lanes \X Lanes: \E b \in Lanes: <<a, b>> \in R /\ <<b, c>> \in Dependencies}
+R1 == Step(Dependencies)
 R2 == Step(R1)
 R3 == Step(R2)
 R4 == Step(R3)
@@ -83,12 +91,20 @@ Brief(p, c) ==
   /\ dispatched' = dispatched \cup {c}
   /\ UNCHANGED <<settled, replied>>
 
-(* A settled lane's reply discharges one edge that waited on it. The
+(* A settled lane's reply discharges one settlement-dependent edge that waited on it. The
    reply is an ordinary append at the receiver; at-least-once and dedup
    are Reconcile.tla's business, abstracted here to the one durable fact. *)
-Reply(a, b) ==
-  /\ <<a, b>> \in Edges
+ReplySettled(a, b) ==
+  /\ <<a, b>> \in Dependencies
   /\ b \in settled
+  /\ <<a, b>> \notin replied
+  /\ replied' = replied \cup {<<a, b>>}
+  /\ UNCHANGED <<dispatched, settled>>
+
+(* A component-served method may answer while another turn on the target lane remains parked. *)
+ReplyService(a, b) ==
+  /\ <<a, b>> \in Services
+  /\ b \in dispatched
   /\ <<a, b>> \notin replied
   /\ replied' = replied \cup {<<a, b>>}
   /\ UNCHANGED <<dispatched, settled>>
@@ -106,7 +122,8 @@ Settle(l) ==
 
 Next ==
   \/ \E p \in Lanes, c \in Lanes: Brief(p, c)
-  \/ \E a \in Lanes, b \in Lanes: Reply(a, b)
+  \/ \E a \in Lanes, b \in Lanes: ReplySettled(a, b)
+  \/ \E a \in Lanes, b \in Lanes: ReplyService(a, b)
   \/ \E l \in Lanes: Settle(l)
 
 Spec == Init /\ [][Next]_vars
@@ -114,7 +131,8 @@ Spec == Init /\ [][Next]_vars
 LiveSpec ==
   /\ Spec
   /\ \A p \in Lanes, c \in Lanes: WF_vars(Brief(p, c))
-  /\ \A a \in Lanes, b \in Lanes: WF_vars(Reply(a, b))
+  /\ \A a \in Lanes, b \in Lanes: WF_vars(ReplySettled(a, b))
+  /\ \A a \in Lanes, b \in Lanes: WF_vars(ReplyService(a, b))
   /\ \A l \in Lanes: WF_vars(Settle(l))
 
 -----------------------------------------------------------------------

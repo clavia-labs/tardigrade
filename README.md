@@ -130,7 +130,7 @@ Mount the component beside the built-in parts that this task needs:
 
 ```ts
 import {
-  actor, agentMethods, agentsPackage, budget, codeMode,
+  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
   compaction, fetchPackage, filesPackage, infer,
   outputValidateOnce, system, workspacePackage
 } from "tardie"
@@ -139,30 +139,37 @@ const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
-const releaseModel = { provider: "openai", default_model: "gpt-5.2" } as const
+const model = { provider: "openai", default_model: "gpt-5.2" } as const
 
 const releaseAnalyst = actor({
+  // name supplies the actor's stable identity.
   name: "release-analyst",
+  // methods declare how the world can communicate with this actor.
   methods: agentMethods,
-  components: [infer([
-    instructions, // the agent's system prompt
-    deploys,     // recent_deploys and its paired handler
-    // budget scopes the tool-call limit to the codeMode subtree.
-    budget([
-      codeMode([
-        filesPackage(),
-        fetchPackage(),
-        agentsPackage(),
-        workspacePackage()
-      ])
-    ]),
-    compaction(), // bounded model context
-    outputValidateOnce // validates one structured result without correction
-  ], releaseModel)]
+  // components implement those methods and derive transitions from the actor's private log.
+  components: [
+    // infer handles messages as model loops composed by children.
+    infer([
+      instructions, // the agent's system prompt
+      deploys,      // provides recent_deploys tool and its paired handler
+      // budget scopes the tool-call limit to the codeMode subtree
+      budget([
+        codeMode([  // sandboxed code execution
+          filesPackage(),    // access file system
+          fetchPackage(),    // make network fetch
+          agentsPackage(),   // call subagents
+          workspacePackage() // sqlite workspace
+        ])
+      ], { authority: caller() }), // declares authority to grant budget
+      compaction(), // bounded model context
+      outputValidateOnce // validates structured result once without correction
+    ], model),
+    budgetAuthority() // budgetAuthority handles requestBudget for this actor.
+  ]
 })
 ```
 
-`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `actor` binds those components to a stable name and callable interface. `agentMethods` provides a `message` method with `{ text, input?, model? }` input and a string result. The actor returns linked calls through their method state, so response delivery does not require an agent component. `model` is a model ID for that turn; it cannot change the actor's provider connection.
+`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `actor` binds those components to a stable name and callable interface. `agentMethods` provides `message` and `requestBudget`. Every actor method call is a durable future that remains pending until it receives one completed or failed terminal response. `model` is a model ID for that turn; it cannot change the actor's provider connection.
 
 `compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 
@@ -177,7 +184,7 @@ When compaction runs, its checkpoint records the applied policy with the summary
 
 `codeMode([...components])` combines code packages behind one `execute` tool. Define a package with `definePackage(...)`. Group packages with `composeComponents(...)`.
 
-`budget([...components], policy?)` limits calls to tools derived by its child components. Components beside the wrapper remain outside that budget.
+`budget([...components], { limit?, authority? })` meters calls to tools derived by its child components and closes that subtree at the limit. Components beside the wrapper remain outside that budget. An authority lets an escalatable child call `requestBudget`; `caller()` selects the actor that sent its current message. `budgetAuthority()` is the local automatic handler. Another actor can keep the same method pending while a service or human decides it.
 
 This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
 

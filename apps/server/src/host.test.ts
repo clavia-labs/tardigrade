@@ -152,7 +152,7 @@ describe("model selection", () => {
 describe("the threads service", () => {
   test("retains the built-in actor methods", async () => {
     const methods = await running((threads) => Effect.succeed(Object.keys(threads.methods)))
-    expect(methods).toEqual(["message"])
+    expect(methods).toEqual(["message", "requestBudget"])
   })
 
   test("the configured lane capacity runs model calls concurrently", async () => {

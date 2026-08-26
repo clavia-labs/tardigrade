@@ -294,7 +294,7 @@ describe("the agent with execute as the only tool", () => {
       { turn: "m1", output: "answer to: first ask" },
       { turn: "m2", output: "answer to: second ask" }
     ])
-    expect(events.filter((e) => e.type === "MethodResponseDelivered")).toHaveLength(0)
+    expect(events.filter((e) => e.type === "ResponseDelivered")).toHaveLength(0)
   })
 
   test("three dead model attempts settle the turn failed", async () => {

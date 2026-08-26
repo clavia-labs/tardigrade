@@ -1,12 +1,15 @@
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
+import { tmpdir } from "node:os"
 import { fileURLToPath, pathToFileURL } from "node:url"
 
 import {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
   actorMethodsOf,
+  validateActor,
+  type ActorContract,
   type ActorMethods,
   type ActorArtifactManifest,
   type Actor
@@ -25,6 +28,22 @@ export interface BuildActorOptions {
 export interface BuiltActor {
   readonly directory: string
   readonly manifest: ActorArtifactManifest
+}
+
+export interface LintedActorMethod {
+  readonly name: string
+  readonly handling: ReadonlyArray<"local" | "external">
+}
+
+export interface LintedActorCall {
+  readonly method: string
+  readonly target: string
+}
+
+export interface LintedActor {
+  readonly name: string
+  readonly methods: ReadonlyArray<LintedActorMethod>
+  readonly calls: ReadonlyArray<LintedActorCall>
 }
 
 const definitionOf = async (modulePath: string): Promise<Actor<unknown>> => {
@@ -62,6 +81,60 @@ export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
   }
 })
 
+const bundleActor = async (source: string, outdir: string): Promise<string> => {
+  const result = await Bun.build({
+    entrypoints: [source],
+    outdir,
+    naming: ACTOR_MODULE_FILE,
+    target: "bun",
+    format: "esm",
+    minify: false,
+    sourcemap: "none",
+    plugins: [tardiePlugin()]
+  })
+  if (!result.success) {
+    const detail = result.logs.map((log) => log.message).join("\n")
+    throw new Error(detail.length > 0 ? detail : `could not build ${source}`)
+  }
+  return join(outdir, ACTOR_MODULE_FILE)
+}
+
+const contractOf = (definition: Actor<unknown>): ActorContract => {
+  if (definition.contract === undefined) {
+    throw new Error("actor entry has no component method contract; construct it with actor()")
+  }
+  return validateActor(definition as Actor<unknown> & { readonly contract: ActorContract }).contract
+}
+
+// lintActor validates the method seams of one actor source without writing an artifact.
+export const lintActor = async (entry: string, options: Pick<BuildActorOptions, "cwd"> = {}): Promise<LintedActor> => {
+  const cwd = resolve(options.cwd ?? process.cwd())
+  const source = resolve(cwd, entry)
+  const temporary = await mkdtemp(join(tmpdir(), "tdg-lint-"))
+  try {
+    const definition = await definitionOf(await bundleActor(source, temporary))
+    const contract = contractOf(definition)
+    return {
+      name: definition.name,
+      methods: contract.methods.map((method) => ({ name: method.name, handling: method.handling })),
+      calls: contract.calls.map((call) => ({
+        method: call.methodName ?? "<undeclared>",
+        target: "kind" in call.target
+          ? "caller"
+          : `${call.target.address.actor}:${call.target.address.thread}`
+      }))
+    }
+  } finally {
+    await rm(temporary, { recursive: true, force: true })
+  }
+}
+
+export const lintSummary = (linted: LintedActor): string => [
+  `linted  ${linted.name}`,
+  `methods ${linted.methods.length}`,
+  `calls   ${linted.calls.length}`
+].join("\n")
+
 export const buildActor = async (entry: string, options: BuildActorOptions = {}): Promise<BuiltActor> => {
   const cwd = resolve(options.cwd ?? process.cwd())
   const source = resolve(cwd, entry)
@@ -69,21 +142,7 @@ export const buildActor = async (entry: string, options: BuildActorOptions = {})
   await mkdir(dirname(out), { recursive: true })
   const temporary = await mkdtemp(join(dirname(out), ".tdg-build-"))
   try {
-    const result = await Bun.build({
-      entrypoints: [source],
-      outdir: temporary,
-      naming: ACTOR_MODULE_FILE,
-      target: "bun",
-      format: "esm",
-      minify: false,
-      sourcemap: "none",
-      plugins: [tardiePlugin()]
-    })
-    if (!result.success) {
-      const detail = result.logs.map((log) => log.message).join("\n")
-      throw new Error(detail.length > 0 ? detail : `could not build ${entry}`)
-    }
-    const modulePath = join(temporary, ACTOR_MODULE_FILE)
+    const modulePath = await bundleActor(source, temporary)
     const definition = await definitionOf(modulePath)
     const code = await readFile(modulePath)
     const manifest: ActorArtifactManifest = {

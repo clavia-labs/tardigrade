@@ -53,7 +53,7 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
         returned.add(str(v.callId))
         break
       case "MessageReceived":
-      case "MethodResponseReceived":
+      case "ResponseReceived":
         replies.add(str(v.id))
         break
     }

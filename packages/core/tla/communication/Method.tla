@@ -1,7 +1,7 @@
 ------------------------------ MODULE Method ------------------------------
-(* Method models state reports derived from a declared method and the link accepted with its call. A response reads no destination outside that link. *)
+(* Method models unary responses derived from a declared method and the link accepted with its call. Intermediate coordination is another call with its own identity. *)
 
-EXTENDS FiniteSets, TLC
+EXTENDS Naturals, FiniteSets, TLC
 
 CONSTANTS Addresses, Calls, Methods, CallLink, CallMethod
 
@@ -14,71 +14,83 @@ Source(link) == link[1]
 Target(link) == link[2]
 Reverse(link) == <<Target(link), Source(link)>>
 
-ModelAddresses == {"telegram", "support", "reviewer"}
-ModelCalls == {"telegram-message", "parent-brief"}
-ModelMethods == {"message", "review"}
+ModelAddresses == {"parent", "child"}
+ModelCalls == {"child-run", "budget-request"}
+ModelMethods == {"message", "requestBudget"}
 ModelCallLink == [call \in ModelCalls |->
-  CASE call = "telegram-message" -> <<"telegram", "support">>
-    [] OTHER -> <<"support", "reviewer">>]
+  CASE call = "child-run" -> <<"parent", "child">>
+    [] OTHER -> <<"child", "parent">>]
 ModelCallMethod == [call \in ModelCalls |->
-  CASE call = "telegram-message" -> "message"
-    [] OTHER -> "review"]
+  CASE call = "child-run" -> "message"
+    [] OTHER -> "requestBudget"]
 
-VARIABLES accepted, blocked, terminal, responded, delivered, responses
+VARIABLES requested, sent, accepted, terminal, failed, responded, delivered, responses
 
-vars == <<accepted, blocked, terminal, responded, delivered, responses>>
+vars == <<requested, sent, accepted, terminal, failed, responded, delivered, responses>>
 
 TypeOK ==
+  /\ requested \subseteq Calls
+  /\ sent \subseteq Calls
   /\ accepted \subseteq Calls
-  /\ blocked \subseteq accepted
   /\ terminal \subseteq accepted
-  /\ responded \subseteq blocked \cup terminal
+  /\ failed \subseteq terminal
+  /\ responded \subseteq terminal
   /\ delivered \subseteq responded
   /\ responses \subseteq Calls \X Methods \X Links
 
 Init ==
+  /\ requested = {}
+  /\ sent = {}
   /\ accepted = {}
-  /\ blocked = {}
   /\ terminal = {}
+  /\ failed = {}
   /\ responded = {}
   /\ delivered = {}
   /\ responses = {}
 
+Request(call) ==
+  /\ call \notin requested
+  /\ requested' = requested \cup {call}
+  /\ UNCHANGED <<sent, accepted, terminal, failed, responded, delivered, responses>>
+
+Send(call) ==
+  /\ call \in requested
+  /\ call \notin sent
+  /\ sent' = sent \cup {call}
+  /\ UNCHANGED <<requested, accepted, terminal, failed, responded, delivered, responses>>
+
 Accept(call) ==
+  /\ call \in sent
   /\ call \notin accepted
   /\ accepted' = accepted \cup {call}
-  /\ UNCHANGED <<blocked, terminal, responded, delivered, responses>>
+  /\ UNCHANGED <<requested, sent, terminal, failed, responded, delivered, responses>>
 
-Block(call) ==
-  /\ call \in accepted
-  /\ call \notin blocked
-  /\ call \notin terminal
-  /\ blocked' = blocked \cup {call}
-  /\ UNCHANGED <<accepted, terminal, responded, delivered, responses>>
-
-Finish(call) ==
+Resolve(call) ==
   /\ call \in accepted
   /\ call \notin terminal
   /\ terminal' = terminal \cup {call}
-  /\ UNCHANGED <<accepted, blocked, responded, delivered, responses>>
+  /\ \/ failed' = failed
+     \/ failed' = failed \cup {call}
+  /\ UNCHANGED <<requested, sent, accepted, responded, delivered, responses>>
 
 Respond(call) ==
-  /\ call \in blocked \cup terminal
+  /\ call \in terminal
   /\ call \notin responded
   /\ responded' = responded \cup {call}
   /\ responses' = responses \cup {<<call, CallMethod[call], Reverse(CallLink[call])>>}
-  /\ UNCHANGED <<accepted, blocked, terminal, delivered>>
+  /\ UNCHANGED <<requested, sent, accepted, terminal, failed, delivered>>
 
 Deliver(call) ==
   /\ call \in responded
   /\ call \notin delivered
   /\ delivered' = delivered \cup {call}
-  /\ UNCHANGED <<accepted, blocked, terminal, responded, responses>>
+  /\ UNCHANGED <<requested, sent, accepted, terminal, failed, responded, responses>>
 
 Next ==
+  \/ \E call \in Calls: Request(call)
+  \/ \E call \in Calls: Send(call)
   \/ \E call \in Calls: Accept(call)
-  \/ \E call \in Calls: Block(call)
-  \/ \E call \in Calls: Finish(call)
+  \/ \E call \in Calls: Resolve(call)
   \/ \E call \in Calls: Respond(call)
   \/ \E call \in Calls: Deliver(call)
 
@@ -86,6 +98,9 @@ Spec == Init /\ [][Next]_vars
 
 LiveSpec ==
   /\ Spec
+  /\ \A call \in Calls: WF_vars(Send(call))
+  /\ \A call \in Calls: WF_vars(Accept(call))
+  /\ \A call \in Calls: WF_vars(Resolve(call))
   /\ \A call \in Calls: WF_vars(Respond(call))
   /\ \A call \in Calls: WF_vars(Deliver(call))
 
@@ -97,28 +112,39 @@ ResponseMatchesMethod ==
   \A response \in responses:
     response[2] = CallMethod[response[1]]
 
-ResponseRequiresAcceptedCall ==
-  responded \subseteq accepted /\ responded \subseteq blocked \cup terminal
+ResponseRequiresTerminalCall ==
+  responded \subseteq accepted /\ responded \subseteq terminal
+
+CallFollowsProtocol ==
+  accepted \subseteq sent /\ sent \subseteq requested
+
+AtMostOneResponsePerCall ==
+  \A call \in Calls: Cardinality({response \in responses: response[1] = call}) <= 1
 
 ResponseReturnsToSource ==
   \A response \in responses:
     Target(response[3]) = Source(CallLink[response[1]])
 
-AllReportableCallsRespond ==
+AllTerminalCallsRespond ==
   \A call \in Calls:
-    call \in blocked \cup terminal ~> call \in delivered
+    call \in terminal ~> call \in delivered
+
+AllRequestedCallsRespond ==
+  \A call \in Calls:
+    call \in requested ~> call \in delivered
 
 HintRespond(call, method, target) ==
-  /\ call \in blocked \cup terminal
+  /\ call \in terminal
   /\ call \notin responded
   /\ responded' = responded \cup {call}
   /\ responses' = responses \cup {<<call, method, <<Target(CallLink[call]), target>>>>}
-  /\ UNCHANGED <<accepted, blocked, terminal, delivered>>
+  /\ UNCHANGED <<requested, sent, accepted, terminal, failed, delivered>>
 
 HintNext ==
+  \/ \E call \in Calls: Request(call)
+  \/ \E call \in Calls: Send(call)
   \/ \E call \in Calls: Accept(call)
-  \/ \E call \in Calls: Block(call)
-  \/ \E call \in Calls: Finish(call)
+  \/ \E call \in Calls: Resolve(call)
   \/ \E call \in Calls, method \in Methods, target \in Addresses: HintRespond(call, method, target)
   \/ \E call \in Calls: Deliver(call)
 

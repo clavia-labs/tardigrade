@@ -5,7 +5,7 @@ import { join } from "node:path"
 
 import { ACTOR_ARTIFACT_VERSION } from "tardie"
 
-import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE, buildActor, buildSummary } from "./build"
+import { ACTOR_MANIFEST_FILE, ACTOR_MODULE_FILE, buildActor, buildSummary, lintActor, lintSummary } from "./build"
 
 let root = ""
 
@@ -69,5 +69,44 @@ describe("buildActor", () => {
       `at    ${built.directory}`,
       `hash  ${built.manifest.digest}`
     ].join("\n"))
+  })
+})
+
+describe("lintActor", () => {
+  test("reports the methods and calls derived from component contracts", async () => {
+    const path = await entry(`
+      import {
+        actor, agentMethods, budget, budgetAuthority, caller, codeMode, infer, nativeOutput
+      } from "tardie"
+      export default actor({
+        name: "researcher",
+        methods: agentMethods,
+        components: [
+          infer([budget([codeMode()], { authority: caller() }), nativeOutput], {
+            provider: "test",
+            default_model: "test"
+          }),
+          budgetAuthority()
+        ]
+      })
+    `)
+    const linted = await lintActor(path, { cwd: root })
+    expect(linted).toEqual({
+      name: "researcher",
+      methods: [
+        { name: "message", handling: ["local"] },
+        { name: "requestBudget", handling: ["local"] }
+      ],
+      calls: [{ method: "requestBudget", target: "caller" }]
+    })
+    expect(lintSummary(linted)).toBe("linted  researcher\nmethods 2\ncalls   1")
+  })
+
+  test("refuses a declared method with no component handler", async () => {
+    const path = await entry(`
+      import { actor, agentMessageMethod } from "tardie"
+      export default actor({ name: "researcher", methods: { message: agentMessageMethod }, components: [] })
+    `)
+    await expect(lintActor(path, { cwd: root })).rejects.toThrow('method "message" has no handler')
   })
 })

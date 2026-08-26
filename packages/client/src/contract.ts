@@ -203,7 +203,6 @@ export type MethodAccepted = typeof MethodAccepted.Type
 // MethodState is the durable state any declared actor method can expose on the wire.
 export const MethodState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending") }),
-  Schema.Struct({ status: Schema.Literal("blocked"), reason: Schema.String }),
   Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Unknown }),
   Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
 ]).annotate({ identifier: "MethodState" })

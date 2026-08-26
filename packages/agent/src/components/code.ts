@@ -1,6 +1,10 @@
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
-import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import {
+  composeComponents,
+  inheritComponentContract,
+  type ComponentRequirements
+} from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
 import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/execution/events"
@@ -11,7 +15,7 @@ import {
   type CodeComponent,
   type Package
 } from "@clavia/tardigrade-code/package/definition"
-import type { AgentComponent } from "../runtime/composition"
+import type { AgentComponent, AgentView } from "../runtime/composition"
 import type { Answer, PendingCall } from "../runtime/tools"
 import type { ToolSpec } from "../inference/request"
 
@@ -122,7 +126,7 @@ export const codeMode = <
     combined.derive(log).view.packages as unknown as ReadonlyArray<Package<ComponentR>>
 
   codeReactorFor(options.policy ?? {}, packagesOf([]))
-  return {
+  return inheritComponentContract<AgentView, R>({
     name: "code",
     keys: rootKeys(combined.keys),
     derive: (log) => {
@@ -145,5 +149,5 @@ export const codeMode = <
         ]
       }
     }
-  }
+  }, combined)
 }

@@ -18,6 +18,8 @@ export {
   type ActorMethodState
 } from "@clavia/tardigrade-core/actor/method"
 export { AgentMessageInput, agentMessageMethod, agentMethods } from "./actor/message"
+export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
+export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 
 // The parts a caller lists. An agent is components over one log; the reactors underneath remain
 // reachable for a bespoke assembly.
@@ -116,7 +118,7 @@ export {
 export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 
 // The spawn package: a value with no lane in it, so the assembly that mounts it and the host
-// that binds Router and Self per lane cannot disagree about placement (spawn.ts).
+// that binds Router and Self per lane cannot disagree about placement (packages/agents.ts).
 export { agentsPackage, INLINE_OUTPUT_NAME, type SpawnOptions } from "./packages/agents"
 
 // The workspace the model reads its spilled values back through, and the optional SQL binding a
@@ -180,14 +182,58 @@ export {
 } from "./components/code"
 export { system, type SystemText } from "./components/system"
 export { toolList, type NativeTool } from "./components/tool-list"
-export { budget } from "./components/budget"
+export {
+  budget,
+  caller,
+  type BudgetAuthority,
+  type BudgetAuthorityMethods,
+  type BudgetOptions,
+  type CallerBudgetAuthority
+} from "./components/budget"
+export {
+  budgetAuthority,
+  budgetAuthorityKeys,
+  DEFAULT_BUDGET_DECISION,
+  type BudgetAuthorityOptions,
+  type BudgetRequest,
+  type DecideBudget
+} from "./components/budget-authority"
+export {
+  permissions,
+  type PermissionAuthorityMethods,
+  type PermissionCall,
+  type PermissionsOptions,
+  type PermissionSubject
+} from "./components/permissions"
+export {
+  permissionAuthority,
+  permissionAuthorityKeys,
+  type DecidePermission,
+  type PermissionAuthorityOptions,
+  type PermissionRequest
+} from "./components/permission-authority"
 export { compaction } from "./components/compaction"
 export {
   actor,
+  actorCall,
+  actorContractErrors,
+  actorContractOf,
+  actorRef,
+  calls,
   composeComponents,
+  externallyHandled,
+  handles,
+  inheritComponentContract,
   independentTransitions,
   reactorOf,
+  validateActor,
   type Actor,
+  type ActorCall,
+  type ActorCallOptions,
+  type ActorCallContract,
+  type ActorContract,
+  type ActorMethodContract,
+  type ActorRef,
   type Component,
   type ComponentRequirements,
   type CompositionOptions,

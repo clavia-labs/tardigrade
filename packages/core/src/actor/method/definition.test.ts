@@ -54,11 +54,17 @@ describe("actorMethodsOf", () => {
   })
 
   test("refuses incomplete declarations", () => {
-    expect(() => actorMethodsOf({ broken: { ...inspect, output: {} as Schema.Top } })).toThrow(
+    expect(() => actorMethodsOf({ broken: { ...inspect, output: {} as Schema.ConstraintDecoder<unknown> } })).toThrow(
       "must declare input and output schemas"
     )
     expect(() => actorMethodsOf({ broken: { ...inspect, eventOf: undefined as never } })).toThrow(
       "must declare eventOf and state functions"
+    )
+  })
+
+  test("refuses two names for one method declaration", () => {
+    expect(() => actorMethodsOf({ inspect, alias: inspect })).toThrow(
+      'actor methods "inspect" and "alias" share one declaration'
     )
   })
 })

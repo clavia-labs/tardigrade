@@ -47,32 +47,27 @@ const env = (
 
 const response = (
   turn: string,
-  status: "blocked" | "completed" | "failed",
+  status: "completed" | "failed",
   value: string,
   options: { readonly round?: number; readonly data?: unknown; readonly at?: number } = {}
 ): Event => ({
-  type: "MethodResponseReceived",
+  type: "ResponseReceived",
   id: boundaryId(turn, options.round ?? 0),
   method: "message",
   call: turn,
   status,
   ...(status === "completed" ? { output: value } : {}),
   ...(status === "failed" ? { error: value } : {}),
-  ...(status === "blocked" ? { reason: value } : {}),
   ...(options.data === undefined ? {} : { data: options.data }),
   from: `mem:ag.${turn}`,
   at: options.at ?? 1
 })
 
 describe("agentsPackage", () => {
-  test("the code contract shows terminal and escalation boundary shapes", () => {
+  test("the code contract keeps run terminal while escalation stays internal", () => {
     const system = codeSystemFor([agentsPackage()])
-    expect(system).toContain(
-      "agents.continue({handle: {address: string, turn: string, round: number, request: string}, grant: number})"
-    )
-    expect(system).toContain(
-      "-> {output?: unknown, error?: string, requesting?: boolean, reason?: string, amount?: number, handle?: {address: string, turn: string, round: number, request: string}}"
-    )
+    expect(system).not.toContain("agents.continue")
+    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
   })
 
   test("the default placement is the host's own sibling address", async () => {
@@ -80,11 +75,12 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true }, { callId: "c1" }).pipe(Effect.provide(env(host.self("ag.root"), sent)))
+      pkg.methods.run!({ text: "scout", background: true, escalatable: true }, { callId: "c1" }).pipe(Effect.provide(env(host.self("ag.root"), sent)))
     )
     // Parity with the closure the in-process host used to pass: same principal, `ag.<callId>`
     // for the lane.
     expect(sent[0]?.link.target).toEqual({ actor: "mem", thread: "ag.c1" })
+    expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
   test("a stated place overrides the default", async () => {
@@ -168,66 +164,6 @@ describe("agentsPackage", () => {
     expect(formatActorId(sent[0]!.link.target as ActorId)).toBe("mem:ag.c5")
   })
 
-  test("a foreground run returns a budget request reported by its child", async () => {
-    const sent: Array<Sent> = []
-    const pkg = agentsPackage()
-    const lanes = {
-      "ag.root": [response("c5", "blocked", "one source remains", {
-        data: { request: "request-1", reason: "one source remains", amount: 2, round: 0 }
-      })]
-    } as Readonly<Record<string, ReadonlyArray<Event>>>
-
-    const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "research", escalatable: true }, { callId: "c5" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, lanes))
-      )
-    )
-
-    expect(answer).toEqual({
-      requesting: true,
-      reason: "one source remains",
-      amount: 2,
-      handle: { address: "mem:ag.c5", turn: "c5", round: 0, request: "request-1" }
-    })
-    expect(sent).toEqual([])
-  })
-
-  test("continue sends a budget decision and parks on the next boundary", async () => {
-    const sent: Array<Sent> = []
-    const pkg = agentsPackage()
-    const lanes = {
-      "ag.root": [{ type: "PackageCalled", callId: "c5", name: "agents.run", arguments: { text: "research", escalatable: true }, at: 0 }]
-    } as Readonly<Record<string, ReadonlyArray<Event>>>
-
-    const parked = await Effect.runPromise(
-      pkg.methods.continue!({
-        handle: { address: "mem:ag.c5", turn: "c5", round: 0, request: "request-1" },
-        grant: 2
-      }, { callId: "continue-1" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, lanes)),
-        Effect.flip,
-        Effect.orDie
-      )
-    )
-
-    expect(parked).toBeInstanceOf(Park)
-    expect((parked as Park).awaiting).toBe(boundaryId("c5", 1))
-    expect(sent).toEqual([
-      expect.objectContaining({
-        link: {
-          source: { actor: "mem", thread: "ag.root" },
-          target: { actor: "mem", thread: "ag.c5" }
-        },
-        event: expect.objectContaining({
-          type: "BudgetGranted",
-          callId: "request-1",
-          turn: "c5",
-          amount: 2
-        })
-      })
-    ])
-  })
-
   test("result reads the response from its own log", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
@@ -261,19 +197,6 @@ describe("agentsPackage", () => {
     expect(sent.length).toBe(0)
   })
 
-  test("a fractional grant is refused, never floored into a denial", async () => {
-    const sent: Array<Sent> = []
-    const pkg = agentsPackage()
-    const answer = await Effect.runPromise(
-      pkg.methods.continue!({
-        handle: { address: "mem:ag.c9", turn: "c9", round: 0, request: "request-1" },
-        grant: 0.5
-      }, { callId: "c10" }).pipe(
-        Effect.provide(env("mem:ag.root", sent))
-      )
-    )
-    expect(answer).toEqual({ error: "agents.continue takes grant as a whole number of tool calls; got 0.5" })
-  })
 })
 
 // The contracts a host declares for its children. A name resolves to one of these; anything else
@@ -413,23 +336,4 @@ describe("a run stays bound to the schema it was started under", () => {
     expect((answered as { error?: string }).error).toContain('the original output declaration for run "b1" is unavailable')
   })
 
-  test("continue recovers the same declaration, so a rewritten handle changes nothing", async () => {
-    const sent: Array<Sent> = []
-    const pkg = agentsPackage({ outputs: { scout: SCOUT_B } })
-    const recorded = lanes(declarationA, structured)
-    const withNextBoundary = {
-      ...recorded,
-      "ag.root": [
-        ...recorded["ag.root"]!,
-        response("b1", "completed", structured, { round: 1, data: { output: declarationA }, at: 3 })
-      ]
-    } as Readonly<Record<string, ReadonlyArray<Event>>>
-    const answered = await Effect.runPromise(
-      pkg.methods
-        .continue!({ handle: { address: "mem:ag.b1", turn: "b1", round: 0, request: "request-1" }, grant: 1 }, { callId: "later" })
-        .pipe(Effect.provide(env("mem:ag.root", sent, withNextBoundary)))
-    )
-    // Schema A read it, though the package now declares B under the same name.
-    expect(answered).toEqual({ output: { summary: "done" } })
-  })
 })

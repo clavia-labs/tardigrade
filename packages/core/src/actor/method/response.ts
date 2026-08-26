@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import type { Event } from "../../log/event"
 import type { KeyFragment } from "../../log"
 import { Self, effect, type Reactor } from "../../reconciliation"
@@ -17,61 +17,76 @@ import type { ActorMethodDeclaration, ActorMethods } from "./definition"
 import type { ActorMethodState } from "./state"
 import type { Component } from "../component"
 
-// ActorMethodResponse is one method state report correlated to its call.
+// ActorMethodResponse is the terminal response correlated to one method call.
 export interface ActorMethodResponse<Output = unknown> {
   readonly method: string
   readonly call: string
-  readonly revision: string
-  readonly sequence: number
   readonly state: Exclude<ActorMethodState<Output>, { readonly status: "pending" }>
 }
 
-// MethodResponseReceived is a method response accepted into the caller's private log.
-export interface MethodResponseReceived extends Event {
-  readonly type: "MethodResponseReceived"
+// ResponseReceived is a method response accepted into the caller's private log.
+export interface ResponseReceived extends Event {
+  readonly type: "ResponseReceived"
   readonly id: string
   readonly method: string
   readonly call: string
-  readonly status: "blocked" | "completed" | "failed"
+  readonly status: "completed" | "failed"
   readonly output?: unknown
   readonly error?: string
-  readonly reason?: string
   readonly data?: unknown
   readonly from: string
   readonly at: number
 }
 
-// MethodResponseDelivered records that one report crossed its accepted call link.
-export interface MethodResponseDelivered extends Event {
-  readonly type: "MethodResponseDelivered"
+// ResponseDelivered records that one terminal crossed its accepted call link.
+export interface ResponseDelivered extends Event {
+  readonly type: "ResponseDelivered"
   readonly method: string
   readonly call: string
-  readonly revision: string
   readonly at: number
 }
 
 export const methodResponseKeys: KeyFragment = {
   prefixes: ["mres:", "mrecv:"],
   keyOf: (event) => {
-    if (event.type === "MethodResponseDelivered") {
-      return `mres:${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}:${String((event as { readonly revision?: unknown }).revision)}`
+    if (event.type === "ResponseDelivered") {
+      return `mres:${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}`
     }
-    return event.type === "MethodResponseReceived"
+    return event.type === "ResponseReceived"
       ? `mrecv:${String((event as { readonly id?: unknown }).id)}`
       : undefined
   }
 }
 
-const revisionOf = (state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>): string =>
-  state.status === "blocked" ? state.revision ?? `blocked:${state.reason}` : state.status
-
-const sequenceOf = (state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>): number =>
-  state.sequence ?? 0
-
 const textOf = (state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>): string => {
   if (state.status === "failed") return `error: ${state.error}`
-  if (state.status === "blocked") return state.reason
-  return typeof state.output === "string" ? state.output : JSON.stringify(state.output)
+  if (typeof state.output === "string") return state.output
+  try {
+    return JSON.stringify(state.output) ?? String(state.output)
+  } catch {
+    return String(state.output)
+  }
+}
+
+const terminalOf = (
+  name: string,
+  method: ActorMethodDeclaration,
+  state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>
+): Exclude<ActorMethodState<unknown>, { readonly status: "pending" }> => {
+  if (state.status === "failed") return state
+  try {
+    return {
+      status: "completed",
+      output: Schema.decodeUnknownSync(method.output)(state.output),
+      ...(state.data === undefined ? {} : { data: state.data })
+    }
+  } catch (failure) {
+    return {
+      status: "failed",
+      error: `invalid ${name} output: ${failure instanceof Error ? failure.message : String(failure)}`,
+      ...(state.data === undefined ? {} : { data: state.data })
+    }
+  }
 }
 
 const responseOf = (
@@ -81,17 +96,14 @@ const responseOf = (
 ): ActorMethodResponse => ({
   method,
   call,
-  revision: revisionOf(state),
-  sequence: sequenceOf(state),
   state
 })
 
 const delivered = (log: ReadonlyArray<Event>, response: ActorMethodResponse): boolean =>
   log.some((event) =>
-    event.type === "MethodResponseDelivered" &&
+    event.type === "ResponseDelivered" &&
     String((event as { readonly method?: unknown }).method) === response.method &&
-    String((event as { readonly call?: unknown }).call) === response.call &&
-    String((event as { readonly revision?: unknown }).revision) === response.revision
+    String((event as { readonly call?: unknown }).call) === response.call
   )
 
 const linkedCalls = (
@@ -109,9 +121,10 @@ const linkedCalls = (
     if (!("source" in candidate.link) || !("target" in candidate.link) || !isActorId(candidate.link.target)) continue
     for (const [name, method] of Object.entries(methods)) {
       if (invocation !== undefined && invocation.method !== name) continue
-      const state = (method as ActorMethodDeclaration).state(log, id)
+      const declaration = method as ActorMethodDeclaration
+      const state = declaration.state(log, id)
       if (state === undefined || state.status === "pending") continue
-      const response = responseOf(name, id, state)
+      const response = responseOf(name, id, terminalOf(name, declaration, state))
       if (!delivered(log, response)) calls.push({ response, link: candidate.link as Link<unknown, ActorId> })
       break
     }
@@ -123,7 +136,7 @@ const linkedCalls = (
 export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | Self> => (log) =>
   linkedCalls(log, methods).slice(0, 1).map(({ response, link }) =>
     effect({
-      key: `mres:${response.method}:${response.call}:${response.revision}`,
+      key: `mres:${response.method}:${response.call}`,
       input: { response, link },
       act: ({ response: current, link: accepted }) =>
         Effect.gen(function* () {
@@ -133,9 +146,9 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
           const state = current.state
           const message = boundaryEvent({
             turn: current.call,
-            round: current.sequence,
+            round: 0,
             text: textOf(state),
-            outcome: state.status === "blocked" ? "requesting" : state.status,
+            outcome: state.status,
             from: formatActorId(self),
             ...(state.data === undefined ? {} : { data: state.data }),
             at
@@ -146,17 +159,14 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
               message
             ))
           } else if (isActorId(accepted.source)) {
-            const responseEvent: MethodResponseReceived = {
-              type: "MethodResponseReceived",
+            const responseEvent: ResponseReceived = {
+              type: "ResponseReceived",
               id: message.id,
               method: current.method,
               call: current.call,
               status: state.status,
               ...(state.status === "completed" ? { output: state.output } : {}),
               ...(state.status === "failed" ? { error: state.error } : {}),
-              ...(state.status === "blocked" ? {
-                reason: state.reason
-              } : {}),
               ...(state.data === undefined ? {} : { data: state.data }),
               from: formatActorId(self),
               at
@@ -167,12 +177,11 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
             ))
           }
           return [{
-            type: "MethodResponseDelivered",
+            type: "ResponseDelivered",
             method: current.method,
             call: current.call,
-            revision: current.revision,
             at
-          } satisfies MethodResponseDelivered]
+          } satisfies ResponseDelivered]
         })
     })
   )
