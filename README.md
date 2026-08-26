@@ -150,17 +150,17 @@ const releaseAnalyst = actor({
   components: [
     // infer handles messages as model loops composed by children.
     infer([
-      instructions, // the agent's system prompt
-      deploys,      // provides recent_deploys tool and its paired handler
+      instructions, // system prompt
+      deploys,      // provides recent_deploys tool and paired handler
       // budget scopes the tool-call limit to the codeMode subtree
       budget([
         codeMode([  // sandboxed code execution
-          filesPackage(),    // access file system
-          fetchPackage(),    // make network fetch
-          agentsPackage(),   // call subagents
-          workspacePackage() // sqlite workspace
+          filesPackage(),
+          fetchPackage(),
+          agentsPackage(),
+          workspacePackage()
         ])
-      ], { authority: caller() }), // declares authority to grant budget
+      ], { authority: caller() }),
       compaction(), // bounded model context
       outputValidateOnce // validates structured result once without correction
     ], model),
