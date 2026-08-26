@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.10.0](https://github.com/clavia-labs/tardigrade/compare/v0.9.0...v0.10.0) (2026-08-26)
+
+
+### Features
+
+* release callable actors ([bcb4fae](https://github.com/clavia-labs/tardigrade/commit/bcb4fae767233e18a52dd7d81141585d834dab1f))
+
 ## [0.9.0](https://github.com/clavia-labs/tardigrade/compare/v0.8.0...v0.9.0) (2026-08-25)
 
 
