@@ -293,7 +293,7 @@ const Durability = (): ReactElement => (
         </div>
         <figcaption>
           <span>FIG. 02</span>
-          <span>Tardigrade in suspended activity</span>
+          <span>Tardigrade</span>
         </figcaption>
       </figure>
     </div>
