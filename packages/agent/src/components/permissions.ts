@@ -19,6 +19,7 @@ export interface PermissionSubject {
   readonly action: string
   readonly resource?: string
   readonly reason: string
+  readonly timeoutMs?: number
 }
 
 export interface PermissionCall {
@@ -59,7 +60,8 @@ const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentT
         action: subject.action,
         ...(subject.resource === undefined ? {} : { resource: subject.resource }),
         reason: subject.reason
-      }
+      },
+      ...(subject.timeoutMs === undefined ? {} : { timeoutMs: subject.timeoutMs })
     })
     if (call.transitions.length > 0) return call.transitions
     if (call.state.status === "pending") return []

@@ -13,8 +13,10 @@ import type {
   ActorMethodOutput,
   ActorMethods
 } from "./definition"
+import { actorMethodTimeoutOf } from "./definition"
 import type { ActorMethodState } from "./state"
 import type { ResponseReceived } from "./response"
+import type { CallTimedOut } from "./timeout"
 
 type MethodName<Methods extends ActorMethods> = Extract<keyof Methods, string>
 
@@ -25,6 +27,8 @@ export interface CallDispatched extends Event {
   readonly method: string
   readonly target: string
   readonly input: unknown
+  readonly timeoutMs: number
+  readonly deadlineAt: number
   readonly at: number
 }
 
@@ -43,6 +47,7 @@ export interface ActorCallOptions<
   readonly target: ActorRef<Methods>
   readonly method: Name
   readonly input: ActorMethodInput<Methods[Name]>
+  readonly timeoutMs?: number
 }
 
 // ActorCall is one durable future and the transition still owed for it, if any.
@@ -54,18 +59,20 @@ export interface ActorCall<Output, R = never> {
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
 
-const responseFor = (
+const terminalFor = (
   log: ReadonlyArray<Event>,
   method: string,
   id: string,
   target: string
-): ResponseReceived | undefined =>
-  log.find((event) =>
-    event.type === "ResponseReceived" &&
-    String((event as { readonly method?: unknown }).method) === method &&
-    String((event as { readonly call?: unknown }).call) === id &&
+): ResponseReceived | CallTimedOut | undefined => log.find((event) => {
+  if (String((event as { readonly method?: unknown }).method) !== method) return false
+  if (String((event as { readonly call?: unknown }).call) !== id) return false
+  if (event.type === "CallTimedOut") {
+    return String((event as { readonly target?: unknown }).target) === target
+  }
+  return event.type === "ResponseReceived" &&
     String((event as { readonly from?: unknown }).from) === target
-  ) as ResponseReceived | undefined
+}) as ResponseReceived | CallTimedOut | undefined
 
 const canonicalJson = (value: unknown): string | undefined =>
   JSON.stringify(value, (_key, entry: unknown) => {
@@ -84,7 +91,16 @@ export const actorCall = <
 ): ActorCall<ActorMethodOutput<Methods[Name]>, Router | Self> => {
   const target = formatActorId(options.target.address)
   const declaration = options.target.methods[options.method] as ActorMethodDeclaration
-  const response = responseFor(log, options.method, options.id, target)
+  const response = terminalFor(log, options.method, options.id, target)
+  if (response?.type === "CallTimedOut") {
+    return {
+      id: options.id,
+      method: options.method,
+      target: options.target.address,
+      state: { status: "failed", error: `${options.method} timed out after ${response.timeoutMs}ms` },
+      transitions: []
+    }
+  }
   if (response?.status === "completed") {
     try {
       const output = Schema.decodeUnknownSync(declaration.output)(response.output) as ActorMethodOutput<Methods[Name]>
@@ -119,6 +135,11 @@ export const actorCall = <
     return { id: options.id, method: options.method, target: options.target.address, state: { status: "pending" }, transitions: [] }
   }
 
+  const timeoutMs = options.timeoutMs === undefined ? declaration.timeoutMs : actorMethodTimeoutOf(options.timeoutMs)
+  if (timeoutMs > declaration.timeoutMs) {
+    throw new Error(`actor call timeoutMs cannot exceed ${options.method}'s declared ${declaration.timeoutMs}ms`)
+  }
+
   const transition = effect({
     key: `mcall:${options.id}`,
     input: options,
@@ -126,6 +147,8 @@ export const actorCall = <
       const router = yield* Router
       const self = yield* Self
       const at = yield* Clock.currentTimeMillis
+      const deadlineAt = at + timeoutMs
+      if (!Number.isSafeInteger(deadlineAt)) return yield* Effect.die(new Error("actor call deadlineAt must be a safe integer"))
       yield* router.send(methodEnvelopeOf(
         linkOf(self, current.target.address),
         { method: current.method, id: current.id },
@@ -137,6 +160,8 @@ export const actorCall = <
         method: current.method,
         target: formatActorId(current.target.address),
         input: current.input,
+        timeoutMs,
+        deadlineAt,
         at
       } satisfies CallDispatched]
     })

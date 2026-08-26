@@ -47,14 +47,12 @@ export interface ResponseDelivered extends Event {
 }
 
 export const methodResponseKeys: KeyFragment = {
-  prefixes: ["mres:", "mrecv:"],
+  prefixes: ["mres:"],
   keyOf: (event) => {
     if (event.type === "ResponseDelivered") {
       return `mres:${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}`
     }
-    return event.type === "ResponseReceived"
-      ? `mrecv:${String((event as { readonly id?: unknown }).id)}`
-      : undefined
+    return undefined
   }
 }
 

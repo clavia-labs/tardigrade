@@ -26,6 +26,7 @@ import {
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
+import { alarmFired, earliestDeadlineOf } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
@@ -42,6 +43,7 @@ import {
 } from "@clavia/tardigrade-core/thread"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 import { bunSandboxFor, type BunSandboxPolicy } from "./sandbox"
+import { bunAlarmScheduler, type BunAlarmHandle, type BunAlarmScheduler } from "./alarm"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -91,6 +93,7 @@ export type BunHostOptions<R> = {
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly edgesOf?: EdgesOf
   readonly driver?: Partial<DriverPolicy>
+  readonly alarm?: BunAlarmScheduler
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (e: Event) => string | undefined
 } & LayersFor<R>
@@ -149,6 +152,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const sql = await runtime.runPromise(SqlClient.SqlClient)
   // The store, acquired the same way: one instance, one table build, handed to every lane below.
   const store = await runtime.runPromise(KeyValueStore.KeyValueStore)
+  const alarmScheduler = options.alarm ?? bunAlarmScheduler
   await runtime.runPromise(
     sql`CREATE TABLE IF NOT EXISTS events (
       lane  TEXT    NOT NULL,
@@ -328,6 +332,30 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return Layer.mergeAll(extra.pipe(Layer.provide(ports)), ports) as Layer.Layer<R | EventLog>
   }
 
+  const alarms = new Map<string, { readonly deadlineAt: number; readonly handle: BunAlarmHandle }>()
+
+  const cancelAlarm = (lane: string): void => {
+    alarms.get(lane)?.handle.cancel()
+    alarms.delete(lane)
+  }
+
+  const synchronizeAlarm = async (lane: string): Promise<void> => {
+    const deadlineAt = earliestDeadlineOf(await runtime.runPromise(readEffect(lane)))
+    const current = alarms.get(lane)
+    if (current?.deadlineAt === deadlineAt) return
+    cancelAlarm(lane)
+    if (deadlineAt === undefined) return
+    const handle = alarmScheduler.schedule(deadlineAt, async (at) => {
+      const armed = alarms.get(lane)
+      if (armed?.deadlineAt !== deadlineAt) return
+      alarms.delete(lane)
+      await runtime.runPromise(appendEffect(lane, [alarmFired({ scheduledFor: deadlineAt, at })]))
+      driver.mark(lane)
+      await drive()
+    })
+    alarms.set(lane, { deadlineAt, handle })
+  }
+
   const driver = createLaneDriver({
     ...(options.driver === undefined ? {} : { policy: options.driver }),
     ...(options.pick === undefined ? {} : { pick: options.pick }),
@@ -335,6 +363,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const actor = options.actorFor(lane)
       if (actor === undefined) return
       await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
+      await synchronizeAlarm(lane)
     }
   })
 
@@ -413,6 +442,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     resting,
     work: driver.work,
     self,
-    close: () => runtime.dispose()
+    close: async () => {
+      for (const lane of alarms.keys()) cancelAlarm(lane)
+      await runtime.dispose()
+    }
   }
 }

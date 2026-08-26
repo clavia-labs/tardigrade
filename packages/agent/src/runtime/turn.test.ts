@@ -909,7 +909,7 @@ describe("the mind on a native surface", () => {
             nativeOutput
     ], TEST_MODEL))
     expect(mind.components).toHaveLength(1)
-    expect(mind.reactors).toHaveLength(2)
+    expect(mind.reactors).toHaveLength(3)
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,

@@ -4,6 +4,7 @@ import type { Event } from "../log/event"
 import { actor, validateActor } from "./definition"
 import { actorRef } from "./reference"
 import { actorMethod, actorMethodsOf } from "./method/definition"
+import { alarmFired } from "./method/timeout"
 import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
 const component = { name: "inspect", derive: () => ({ view: undefined, transitions: [] }) }
@@ -22,11 +23,26 @@ describe("actor", () => {
     expect(definition.name).toBe("release-analyst")
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
-    expect(definition.reactors).toHaveLength(2)
+    expect(definition.reactors).toHaveLength(3)
     expect(actorRef(definition, "shared")).toEqual({
       address: { actor: "release-analyst", thread: "shared" },
       methods
     })
+  })
+
+  test("mounts durable method timeout behavior on every actor", () => {
+    const definition = actor({ name: "release-analyst", methods, components: [component] })
+    const transitions = definition.reactors.flatMap((reactor) => reactor([{
+      type: "CallDispatched",
+      id: "inspect-1",
+      method: "inspect",
+      target: "inspector:shared",
+      input: { value: "release" },
+      timeoutMs: 20,
+      deadlineAt: 21,
+      at: 1
+    }, alarmFired({ scheduledFor: 21, at: 21 })]))
+    expect(transitions.some((transition) => transition.key === "mterm:inspect-1")).toBe(true)
   })
 
   test("refuses an invalid actor name", () => {

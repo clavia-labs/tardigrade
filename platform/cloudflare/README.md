@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding mounts one actor definition into a named SQLite Durable Object. The object stores its event logs, workspace, and last valid model catalog snapshot. Every thread is a lane in the actor's event table. Each accepted event commits its log append and watchdog before reconciliation starts. One alarm recovers ready lanes after an interrupted drive. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts one actor definition into a named SQLite Durable Object. The object stores its event logs, workspace, and last valid model catalog snapshot. Every thread is a lane in the actor's event table. Each accepted event commits its log append and recovery alarm before reconciliation starts. One alarm covers interrupted drives and the earliest unresolved method deadline. When it fires, each due lane records `AlarmFired` before reconciliation resumes. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
@@ -98,7 +98,7 @@ The response has status `202` and identifies the accepted destination.
 | --- | --- | --- |
 | `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
 | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` | Limits lanes settled concurrently inside one actor object |
-| `TARDIGRADE_ALARM_DELAY_MILLIS` | `120000` | Sets the watchdog delay for an interrupted actor drive |
+| `TARDIGRADE_ALARM_DELAY_MILLIS` | `120000` | Sets the recovery wake delay for an interrupted actor drive |
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
 | `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |

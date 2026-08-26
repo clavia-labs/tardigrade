@@ -101,4 +101,36 @@ describe("cloudflare actor", () => {
     expect(await client.list()).toEqual([expect.objectContaining({ id: "root", status: "settled" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   })
+
+  test("a durable object alarm terminates an overdue method call", async () => {
+    const deadlineAt = Date.now() - 1
+    const stub = actorStub()
+    await stub.append("timeout", {
+      type: "CallDispatched",
+      id: "overdue-1",
+      method: "inspect",
+      target: "remote:shared",
+      input: {},
+      timeoutMs: 10,
+      deadlineAt,
+      at: deadlineAt - 10
+    })
+
+    let events = await stub.events("timeout")
+    for (let attempt = 0; attempt < 100 && !events.some((event) => event.type === "CallTimedOut"); attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 10))
+      events = await stub.events("timeout")
+    }
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "AlarmFired",
+      scheduledFor: deadlineAt
+    }))
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "CallTimedOut",
+      call: "overdue-1",
+      deadlineAt
+    }))
+    expect(await alarm()).toBeNull()
+  })
 })

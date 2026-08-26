@@ -1,6 +1,8 @@
 export {
   ACTOR_METHOD_NAME_PATTERN,
+  DEFAULT_ACTOR_METHOD_TIMEOUT_MS,
   actorMethod,
+  actorMethodTimeoutOf,
   actorMethodsOf,
   type ActorMethod,
   type ActorMethodDeclaration,
@@ -26,3 +28,13 @@ export {
   type ResponseDelivered,
   type ResponseReceived
 } from "./response"
+export {
+  alarmFired,
+  earliestDeadlineOf,
+  methodTimeoutComponent,
+  methodTimeoutKeys,
+  methodTimeoutReactor,
+  type AlarmFired,
+  type AlarmFiredFields,
+  type CallTimedOut
+} from "./timeout"
