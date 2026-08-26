@@ -5,10 +5,21 @@ import type { ActorMethodState } from "./state"
 
 export const ACTOR_METHOD_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,62}$/u
 
+export const DEFAULT_ACTOR_METHOD_TIMEOUT_MS = 300_000
+
+export const actorMethodTimeoutOf = (timeoutMs: number | undefined): number => {
+  const resolved = timeoutMs ?? DEFAULT_ACTOR_METHOD_TIMEOUT_MS
+  if (!Number.isSafeInteger(resolved) || resolved < 1) {
+    throw new Error("actor method timeoutMs must be a positive safe integer")
+  }
+  return resolved
+}
+
 // ActorMethodDeclaration is the erased shape a heterogeneous method table preserves. eventOf validates unknown input before constructing the durable event.
 export interface ActorMethodDeclaration {
   readonly input: Schema.ConstraintDecoder<unknown>
   readonly output: Schema.ConstraintDecoder<unknown>
+  readonly timeoutMs: number
   readonly eventOf: (call: ActorMethodCall<unknown>) => Event
   readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<unknown> | undefined
 }
@@ -20,6 +31,7 @@ export interface ActorMethodDefinition<
 > {
   readonly input: Input
   readonly output: Output
+  readonly timeoutMs?: number
   readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
   readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<Output["Type"]> | undefined
 }
@@ -31,6 +43,7 @@ export interface ActorMethod<
 > extends ActorMethodDefinition<Input, Output>, ActorMethodDeclaration {
   readonly input: Input
   readonly output: Output
+  readonly timeoutMs: number
   readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<Output["Type"]> | undefined
 }
 
@@ -45,6 +58,7 @@ export const actorMethod = <Input extends Schema.ConstraintDecoder<unknown>, Out
   definition: ActorMethodDefinition<Input, Output>
 ): ActorMethod<Input, Output> => ({
   ...definition,
+  timeoutMs: actorMethodTimeoutOf(definition.timeoutMs),
   eventOf: (call) => definition.event({
     ...call,
     input: Schema.decodeUnknownSync(definition.input)(call.input)
@@ -65,6 +79,7 @@ export const actorMethodsOf = <const Methods extends ActorMethods>(methods: Meth
     if (!Schema.isSchema(candidate.input) || !Schema.isSchema(candidate.output)) {
       throw new Error(`actor method ${JSON.stringify(name)} must declare input and output schemas`)
     }
+    actorMethodTimeoutOf(candidate.timeoutMs)
     if (typeof candidate.eventOf !== "function" || typeof candidate.state !== "function") {
       throw new Error(`actor method ${JSON.stringify(name)} must declare eventOf and state functions`)
     }

@@ -5,7 +5,8 @@ import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { actorFromReactors, effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { methodTimeoutKeys, methodTimeoutReactor } from "@clavia/tardigrade-core/actor/method"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -16,6 +17,7 @@ import { jsSandboxService, Sandbox } from "@clavia/tardigrade-code/sandbox/servi
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/package/workspace"
 
 import { createBunHost, type BunHost, type BunHostOptions } from "./host"
+import type { BunAlarmHandle, BunAlarmScheduler } from "./alarm"
 import { fileTelemetry } from "./file"
 import {
   bunWorkspace,
@@ -66,6 +68,32 @@ const signal = (): { readonly promise: Promise<void>; readonly send: () => void 
     send = resolve
   })
   return { promise, send }
+}
+
+class ManualAlarmScheduler implements BunAlarmScheduler {
+  readonly entries: Array<{
+    readonly deadlineAt: number
+    readonly fire: (at: number) => Promise<void>
+    cancelled: boolean
+  }> = []
+
+  schedule(deadlineAt: number, fire: (at: number) => Promise<void>): BunAlarmHandle {
+    const entry = { deadlineAt, fire, cancelled: false }
+    this.entries.push(entry)
+    return { cancel: () => { entry.cancelled = true } }
+  }
+
+  get pending(): ReadonlyArray<number> {
+    return this.entries.filter((entry) => !entry.cancelled).map((entry) => entry.deadlineAt)
+  }
+
+  async advanceTo(at: number): Promise<void> {
+    const due = this.entries.filter((entry) => !entry.cancelled && entry.deadlineAt <= at)
+    for (const entry of due) {
+      entry.cancelled = true
+      await entry.fire(at)
+    }
+  }
 }
 
 const options = (path: string): BunHostOptions<never> => ({
@@ -221,6 +249,64 @@ describe("the bun host", () => {
     expect((await second.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     expect(await second.resting()).toBe(true)
     await second.close()
+  })
+
+  test("recovery rearms a durable method deadline and records its observed alarm", async () => {
+    const path = freshPath()
+    const timeoutActor = actorFromReactors([methodTimeoutReactor], methodTimeoutKeys.keyOf)
+    const firstAlarm = new ManualAlarmScheduler()
+    const first = await createBunHost({
+      log: path,
+      actorFor: () => timeoutActor,
+      keyOf: methodTimeoutKeys.keyOf,
+      alarm: firstAlarm
+    })
+    await first.seed("caller", [
+      created("caller"),
+      {
+        type: "CallDispatched",
+        id: "inspect-1",
+        method: "inspect",
+        target: "inspector:shared",
+        input: {},
+        timeoutMs: 50,
+        deadlineAt: 50,
+        at: 0
+      }
+    ])
+    await first.recover()
+    expect(firstAlarm.pending).toEqual([50])
+    await first.close()
+    expect(firstAlarm.pending).toEqual([])
+
+    const recoveredAlarm = new ManualAlarmScheduler()
+    const recovered = await createBunHost({
+      log: path,
+      actorFor: () => timeoutActor,
+      keyOf: methodTimeoutKeys.keyOf,
+      alarm: recoveredAlarm
+    })
+    await recovered.recover()
+    expect(recoveredAlarm.pending).toEqual([50])
+    await recoveredAlarm.advanceTo(53)
+
+    expect(await recovered.read("caller")).toContainEqual({
+      type: "AlarmFired",
+      scheduledFor: 50,
+      at: 53
+    })
+    expect(await recovered.read("caller")).toContainEqual({
+      type: "CallTimedOut",
+      call: "inspect-1",
+      method: "inspect",
+      target: "inspector:shared",
+      timeoutMs: 50,
+      deadlineAt: 50,
+      at: 53
+    })
+    expect(recoveredAlarm.pending).toEqual([])
+    expect(await recovered.resting()).toBe(true)
+    await recovered.close()
   })
 
   test("lanes names every lane the log holds", async () => {

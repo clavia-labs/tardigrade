@@ -6,7 +6,9 @@ export {
 } from "./actor/artifact"
 export {
   ACTOR_METHOD_NAME_PATTERN,
+  DEFAULT_ACTOR_METHOD_TIMEOUT_MS,
   actorMethod,
+  actorMethodTimeoutOf,
   actorMethodsOf,
   type ActorMethod,
   type ActorMethodCall,

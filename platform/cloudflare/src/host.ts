@@ -9,7 +9,7 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { formatActorId, isActorId, parseActorId, type ActorId, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
+import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameActorId, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
@@ -45,6 +45,8 @@ export interface CloudflareHost {
   readonly stageRoot: (address: string, event: Event) => Promise<void>
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
+  readonly nextMethodDeadline: () => Promise<number | undefined>
+  readonly recordAlarm: (at: number) => Promise<void>
   readonly resting: () => Promise<boolean>
   readonly work: () => number
   readonly self: (lane: string) => string
@@ -171,6 +173,25 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     for (const lane of await lanes()) if (options.actorFor(lane) !== undefined) driver.mark(lane)
     await drive()
   }
+  const nextMethodDeadline = async (): Promise<number | undefined> => {
+    let earliest: number | undefined
+    for (const lane of await lanes()) {
+      if (options.actorFor(lane) === undefined) continue
+      const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect(lane)))
+      if (deadline !== undefined) earliest = earliest === undefined ? deadline : Math.min(earliest, deadline)
+    }
+    return earliest
+  }
+  const recordAlarm = async (at: number): Promise<void> => {
+    for (const lane of await lanes()) {
+      if (options.actorFor(lane) === undefined) continue
+      const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect(lane)))
+      if (deadline === undefined || deadline > at) continue
+      const appended = await Effect.runPromise(events.append(lane, [alarmFired({ scheduledFor: deadline, at })]))
+      if (appended > 0) driver.mark(lane)
+    }
+    await options.storage.sync()
+  }
   const resting = async (): Promise<boolean> => {
     for (const lane of await lanes()) {
       const actor = options.actorFor(lane)
@@ -187,6 +208,8 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     stageRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined, undefined, undefined, false)),
     drive,
     recover,
+    nextMethodDeadline,
+    recordAlarm,
     resting,
     work: driver.work,
     self,

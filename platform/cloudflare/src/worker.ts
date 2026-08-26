@@ -29,7 +29,7 @@ import {
   type WorkerLoaderSandboxLimits,
   type WorkerLoaderSandboxTransport
 } from "@clavia/tardigrade-worker-loader/sandbox"
-import { alarmPolicyOf, armAt, type AlarmPolicy } from "./alarm"
+import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import { createCloudflareHost, type CloudflareHost } from "./host"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
@@ -281,7 +281,7 @@ export class ActorHost extends DurableObject<Env> {
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS actor_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     this.alarmPolicy = alarmPolicyOf(env.TARDIGRADE_ALARM_DELAY_MILLIS === undefined
       ? {}
-      : { delayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
+      : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
   }
 
   async init(name: string): Promise<void> {
@@ -413,20 +413,42 @@ export class ActorHost extends DurableObject<Env> {
   }
 
   private async arm(): Promise<void> {
-    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.delayMillis)
+    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
     if (at !== null) await this.ctx.storage.setAlarm(at)
+  }
+
+  private async synchronizeAlarm(host: CloudflareHost): Promise<void> {
+    const current = await this.ctx.storage.getAlarm()
+    const at = scheduledAlarmAt(
+      current,
+      await host.resting(),
+      Date.now(),
+      this.alarmPolicy.recoveryDelayMillis,
+      await host.nextMethodDeadline()
+    )
+    if (at === null) {
+      if (current !== null) await this.ctx.storage.deleteAlarm()
+    } else if (current !== at) {
+      await this.ctx.storage.setAlarm(at)
+    }
   }
 
   private async commitTurn(): Promise<void> {
     await scheduler.wait(0)
   }
 
-  // accept stages the work and watchdog, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
+  // accept stages the work and recovery alarm, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
   private async accept(host: CloudflareHost, stage: () => Promise<void>): Promise<void> {
     const current = await this.ctx.storage.getAlarm()
     await stage()
-    const at = armAt(current, Date.now(), this.alarmPolicy.delayMillis)
-    if (at !== null) await this.ctx.storage.setAlarm(at)
+    const at = scheduledAlarmAt(
+      current,
+      false,
+      Date.now(),
+      this.alarmPolicy.recoveryDelayMillis,
+      await host.nextMethodDeadline()
+    )
+    if (at !== null && current !== at) await this.ctx.storage.setAlarm(at)
     await this.commitTurn()
     this.kick(host)
   }
@@ -438,9 +460,7 @@ export class ActorHost extends DurableObject<Env> {
     const driving = (async () => {
       try {
         await host.drive()
-        if (await host.resting() && (await this.ctx.storage.getAlarm()) !== null) {
-          await this.ctx.storage.deleteAlarm()
-        }
+        await this.synchronizeAlarm(host)
       } catch (cause) {
         failed = true
         console.error("actor drive failed; the alarm remains armed", cause)
@@ -485,12 +505,13 @@ export class ActorHost extends DurableObject<Env> {
   }
 
   async alarm(): Promise<void> {
+    const at = Date.now()
     const host = await this.host()
     await this.arm()
     await this.commitTurn()
+    await host.recordAlarm(at)
     await host.recover()
-    if (await host.resting()) await this.ctx.storage.deleteAlarm()
-    else await this.arm()
+    await this.synchronizeAlarm(host)
   }
 }
 

@@ -255,7 +255,7 @@ describe("infer component", () => {
     const agent = assembled(infer([echoTable, later, nativeOutput], TEST_MODEL))
 
     expect(agent.components).toHaveLength(1)
-    expect(agent.reactors).toHaveLength(2)
+    expect(agent.reactors).toHaveLength(3)
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 

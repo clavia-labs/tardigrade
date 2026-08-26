@@ -3,6 +3,7 @@ import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorIdOf } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { alarmFired } from "@clavia/tardigrade-core/actor/method"
 import type { Action } from "tardie/log/events"
 import {
   actor,
@@ -24,7 +25,7 @@ import { agentsPackage } from "tardie/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { actorScenario, ROOT_LANE, TEST_MODEL, type Mind } from "./harness"
 
-type Outcome = "grant" | "deny" | "fail"
+type Outcome = "grant" | "deny" | "fail" | "timeout"
 
 interface Mission {
   readonly key: string
@@ -43,7 +44,7 @@ interface Universe {
   readonly concurrency: number
 }
 
-const outcome = fc.constantFrom<Outcome>("grant", "deny", "fail")
+const outcome = fc.constantFrom<Outcome>("grant", "deny", "fail", "timeout")
 const randomMission = fc.record({
   background: fc.boolean(),
   firstPermission: outcome,
@@ -65,7 +66,9 @@ const universe = fc.record({
   required: fc.tuple(
     requiredMission("grant", "grant", "grant"),
     requiredMission("deny", "grant", "grant"),
-    requiredMission("grant", "fail", "grant")
+    requiredMission("grant", "fail", "grant"),
+    requiredMission("timeout", "grant", "grant"),
+    requiredMission("grant", "grant", "timeout")
   ),
   extra: fc.array(randomMission, { minLength: 0, maxLength: 5 }),
   schedule: fc.array(fc.nat(), { minLength: 32, maxLength: 96 }),
@@ -91,14 +94,15 @@ const responseFor = (
   trajectory: ReadonlyArray<Event>,
   turn: string,
   toolCall: string
-): { readonly status?: unknown; readonly output?: unknown } | undefined =>
+): { readonly type: string; readonly status?: unknown; readonly output?: unknown } | undefined =>
   trajectory.find((event) =>
-    event.type === "ResponseReceived" &&
+    (event.type === "ResponseReceived" || event.type === "CallTimedOut") &&
     field(event, "method") === "requestPermission" &&
     field(event, "call") === `permission/${turn}/${toolCall}`
-  ) as { readonly status?: unknown; readonly output?: unknown } | undefined
+  ) as { readonly type: string; readonly status?: unknown; readonly output?: unknown } | undefined
 
-const outcomeOf = (response: { readonly status?: unknown; readonly output?: unknown }): Outcome => {
+const outcomeOf = (response: { readonly type: string; readonly status?: unknown; readonly output?: unknown }): Outcome => {
+  if (response.type === "CallTimedOut") return "timeout"
   if (response.status === "failed") return "fail"
   return typeof response.output === "object" && response.output !== null && "denied" in response.output
     ? "deny"
@@ -250,13 +254,15 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
                   ? String(call.arguments.code)
                   : ""
                 const match = /portal-tool:([^:"]+):(\d+)/u.exec(code)
-                return match === null
-                  ? undefined
-                  : {
-                      action: "open-portal",
-                      resource: `dimension/${match[1]}/${match[2]}`,
-                      reason: `Morty ${match[1]} wants portal ${match[2]}`
-                    }
+                if (match === null) return undefined
+                const mission = byKey.get(match[1]!)
+                const permission = match[2] === "1" ? mission?.firstPermission : mission?.secondPermission
+                return {
+                  action: "open-portal",
+                  resource: `dimension/${match[1]}/${match[2]}`,
+                  reason: `Morty ${match[1]} wants portal ${match[2]}`,
+                  ...(permission === "timeout" ? { timeoutMs: 1 } : {})
+                }
               }
             })
           ], { authority: caller() }),
@@ -300,23 +306,63 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       const terminals = new Set(humanLog
         .filter((event) => event.type === "PermissionRequestDecided" || event.type === "PermissionRequestFailed")
         .map((event) => String(field(event, "callId"))))
-      const pending = humanLog.filter((event) =>
+      const pendingDecisions = humanLog.filter((event) =>
         event.type === "PermissionRequestReceived" && !terminals.has(String(field(event, "id")))
-      )
+      ).filter((request) => {
+        const match = /^dimension\/([^/]+)\/(\d+)$/u.exec(String(field(request, "resource")))
+        const mission = byKey.get(match?.[1] ?? "")
+        return (match?.[2] === "1" ? mission?.firstPermission : mission?.secondPermission) !== "timeout"
+      })
+      const timeoutCalls = scenario.host.read(ROOT_LANE)
+        .filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
+        .flatMap((run) => {
+          const lane = `ag.${String(field(run, "callId"))}`
+          const child = scenario.host.read(lane)
+          const terminal = new Set(child
+            .filter((event) => event.type === "ResponseReceived" || event.type === "CallTimedOut")
+            .map((event) => String(field(event, "call"))))
+          return child.flatMap((event) => {
+            if (event.type !== "CallDispatched" || field(event, "method") !== "requestPermission") return []
+            const input = field(event, "input")
+            const resource = typeof input === "object" && input !== null && "resource" in input
+              ? String(input.resource)
+              : ""
+            const match = /^dimension\/([^/]+)\/(\d+)$/u.exec(resource)
+            const mission = byKey.get(match?.[1] ?? "")
+            const permission = match?.[2] === "1" ? mission?.firstPermission : mission?.secondPermission
+            const call = String(field(event, "id"))
+            return permission === "timeout" && !terminal.has(call) ? [{ lane, dispatch: event }] : []
+          })
+        })
+      const pending = [
+        ...pendingDecisions.map((request) => ({ kind: "decision" as const, request })),
+        ...timeoutCalls.map((timeout) => ({ kind: "timeout" as const, ...timeout }))
+      ]
       if (pending.length === 0) {
         throw new Error(`universe rested without a terminal or a human request after decision round ${round}`)
       }
       expect(pending.length).toBeGreaterThan(0)
-      const ranked = pending.map((request) => ({
-        request,
+      const ranked = pending.map((operation) => ({
+        operation,
         rank: generated.schedule[decisionIndex++ % generated.schedule.length] ?? 0
       }))
       const ordered = ranked
-        .sort((left, right) => left.rank - right.rank || String(field(left.request, "id")).localeCompare(String(field(right.request, "id"))))
-        .map(({ request }) => request)
+        .sort((left, right) => left.rank - right.rank)
+        .map(({ operation }) => operation)
       const batchSeed = generated.schedule[decisionIndex++ % generated.schedule.length] ?? 0
       const batch = ordered.slice(0, 1 + batchSeed % ordered.length)
-      for (const request of batch) {
+      for (const operation of batch) {
+        if (operation.kind === "timeout") {
+          const deadlineAt = Number(field(operation.dispatch, "deadlineAt"))
+          const remaining = deadlineAt - Date.now()
+          if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining))
+          scenario.host.commitRoot(
+            scenario.host.self(operation.lane),
+            alarmFired({ scheduledFor: deadlineAt, at: Date.now() })
+          )
+          continue
+        }
+        const request = operation.request
         const resource = String(field(request, "resource"))
         const match = /^dimension\/([^/]+)\/(\d+)$/u.exec(resource)
         expect(match).not.toBeNull()
@@ -355,9 +401,17 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     expect(root.filter((event) => event.type === "ResponseReceived" && field(event, "method") === "message")).toHaveLength(missions.length)
     const expectedPermissions = missions.reduce((count, mission) =>
       count + 1 + (mission.firstPermission === "grant" && mission.budget === "grant" ? 1 : 0), 0)
+    const expectedPermissionResponses = missions.reduce((count, mission) =>
+      count + (mission.firstPermission === "timeout" ? 0 : 1) +
+      (mission.firstPermission === "grant" && mission.budget === "grant" && mission.secondPermission !== "timeout" ? 1 : 0), 0)
     const humanLog = scenario.host.read(humanLane)
     expect(humanLog.filter((event) => event.type === "PermissionRequestReceived")).toHaveLength(expectedPermissions)
-    expect(humanLog.filter((event) => event.type === "ResponseDelivered" && field(event, "method") === "requestPermission")).toHaveLength(expectedPermissions)
+    expect(humanLog.filter((event) => event.type === "ResponseDelivered" && field(event, "method") === "requestPermission")).toHaveLength(expectedPermissionResponses)
+
+    const expectedTimeouts = expectedPermissions - expectedPermissionResponses
+    const timedOut = runs.flatMap((run) => scenario.host.read(`ag.${String(field(run, "callId"))}`))
+      .filter((event) => event.type === "CallTimedOut" && field(event, "method") === "requestPermission")
+    expect(timedOut).toHaveLength(expectedTimeouts)
 
     for (const run of runs) {
       const child = scenario.host.read(`ag.${String(field(run, "callId"))}`)

@@ -13,6 +13,8 @@ import {
   methodCallKeys,
   methodResponseComponent,
   methodResponseKeys,
+  methodTimeoutComponent,
+  methodTimeoutKeys,
   type ActorMethods
 } from "./method/index"
 
@@ -55,8 +57,8 @@ const fromOptions = <
   const responses = methodResponseComponent(methods)
   const contract = actorContractOf(methods, options.components as ReadonlyArray<Component<unknown, unknown>>)
   const runtime = actorFromReactors<R>(
-    [...components.map(reactorOf), reactorOf(responses)],
-    composeKeys(...fragments, methodCallKeys, methodResponseKeys)
+    [...components.map(reactorOf), reactorOf(methodTimeoutComponent), reactorOf(responses)],
+    composeKeys(...fragments, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
   )
   return {
     ...runtime,

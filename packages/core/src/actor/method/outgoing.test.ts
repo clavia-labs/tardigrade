@@ -5,7 +5,7 @@ import { EventLog, withWatermark } from "../../log"
 import { actorIdOf } from "../../communication/endpoint"
 import { Router } from "../../communication/router"
 import { Self } from "../../reconciliation"
-import { actorMethod } from "./definition"
+import { DEFAULT_ACTOR_METHOD_TIMEOUT_MS, actorMethod } from "./definition"
 import { actorCall } from "./outgoing"
 
 const inspect = actorMethod({
@@ -54,6 +54,9 @@ describe("actorCall", () => {
       target: "inspector:shared",
       input: { value: "release" }
     })])
+    const dispatch = returned[0] as unknown as { readonly at: number; readonly deadlineAt: number; readonly timeoutMs: number }
+    expect(dispatch.timeoutMs).toBe(DEFAULT_ACTOR_METHOD_TIMEOUT_MS)
+    expect(dispatch.deadlineAt - dispatch.at).toBe(DEFAULT_ACTOR_METHOD_TIMEOUT_MS)
 
     const pending = actorCall(returned, {
       id: "inspect-1",
@@ -105,6 +108,42 @@ describe("actorCall", () => {
 
     expect(call.state).toEqual({ status: "failed", error: "unavailable" })
     expect(call.transitions).toEqual([])
+  })
+
+  test("a recorded timeout fails the durable future", () => {
+    const call = actorCall([{
+      type: "CallTimedOut",
+      call: "inspect-1",
+      method: "inspect",
+      target: "inspector:shared",
+      timeoutMs: 25,
+      deadlineAt: 26,
+      at: 27
+    }], {
+      id: "inspect-1",
+      target,
+      method: "inspect",
+      input: { value: "release" }
+    })
+    expect(call.state).toEqual({ status: "failed", error: "inspect timed out after 25ms" })
+    expect(call.transitions).toEqual([])
+  })
+
+  test("a caller may shorten a method deadline and cannot extend it", () => {
+    expect(actorCall([], {
+      id: "inspect-1",
+      target,
+      method: "inspect",
+      input: { value: "release" },
+      timeoutMs: 25
+    }).transitions).toHaveLength(1)
+    expect(() => actorCall([], {
+      id: "inspect-1",
+      target,
+      method: "inspect",
+      input: { value: "release" },
+      timeoutMs: DEFAULT_ACTOR_METHOD_TIMEOUT_MS + 1
+    })).toThrow("cannot exceed")
   })
 
   test("an invalid completed output fails the future at the caller boundary", () => {

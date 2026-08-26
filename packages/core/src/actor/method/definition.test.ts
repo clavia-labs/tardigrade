@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "../../log/event"
 import {
+  DEFAULT_ACTOR_METHOD_TIMEOUT_MS,
   actorMethod,
   actorMethodsOf,
   type ActorMethodInput,
@@ -18,6 +19,12 @@ const inspect = actorMethod({
 })
 
 describe("actorMethod", () => {
+  test("resolves an exported timeout and validates an override", () => {
+    expect(inspect.timeoutMs).toBe(DEFAULT_ACTOR_METHOD_TIMEOUT_MS)
+    expect(actorMethod({ ...inspect, timeoutMs: 12 }).timeoutMs).toBe(12)
+    expect(() => actorMethod({ ...inspect, timeoutMs: 0 })).toThrow("timeoutMs")
+  })
+
   test("preserves its decoded input and output types", () => {
     const call: ActorMethodCall<{ readonly value: string }> = {
       id: "call-1",
