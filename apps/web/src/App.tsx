@@ -289,11 +289,11 @@ const Durability = (): ReactElement => (
       </div>
       <figure className="durability-figure">
         <div className="durability-image-frame">
-          <img src="/images/tardigrade-microscope.jpg" alt="A scientific illustration of a tardigrade" />
+          <img src="/images/tardie.png" alt="A technical illustration of a tardigrade" />
         </div>
         <figcaption>
           <span>FIG. 02</span>
-          <a href="https://www.umontpellier.fr/en/articles/le-mystere-de-la-resistance-extreme-des-tardigrades-enfin-resolu" rel="noreferrer" target="_blank">Illustration: SciePro</a>
+          <span>Tardigrade in suspended activity</span>
         </figcaption>
       </figure>
     </div>
