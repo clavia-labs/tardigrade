@@ -40,7 +40,7 @@ export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayPro
       const componentRect = component.getBoundingClientRect()
       const globeRect = globe.getBoundingClientRect()
       const targetRect = target?.getBoundingClientRect()
-      const vertical = window.matchMedia("(max-width: 520px)").matches
+      const vertical = window.matchMedia("(max-width: 1140px)").matches
 
       setGeometry({
         vertical,
