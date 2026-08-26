@@ -285,7 +285,7 @@ const Durability = (): ReactElement => (
     <div className="durability-inner">
       <div className="durability-copy">
         <h2>Extremely durable.</h2>
-        <p>Tardigrades are among the most resilient animals on Earth. They survive hostile conditions by pausing until the world is safe again. Tardigrade agents do the same: processes can disappear, while the durable log lets new ones resume unfinished work.</p>
+        <p>Tardigrade agents keep state in a durable log, so new processes can resume unfinished work after a failure. The name comes from one of Earth&apos;s most resilient animals, which survives hostile conditions by pausing until the world is safe again.</p>
       </div>
       <figure className="durability-figure">
         <div className="durability-image-frame">
