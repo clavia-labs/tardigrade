@@ -41,6 +41,7 @@ import {
   type ThreadLineage
 } from "@clavia/tardigrade-core/thread"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
+import { bunSandboxFor, type BunSandboxPolicy } from "./sandbox"
 
 // The bun binding: packages/host's semantics with physics. The log lives in SQLite through
 // @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
@@ -82,6 +83,8 @@ export type BunHostOptions<R> = {
   // one built over the host's own client hands the model the log's database too, which is what
   // `bunWorkspaceSql({ doc: bunWorkspaceLogSqlDoc() })` tells the model it is holding.
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
+  // sandbox configures the process boundary that contains model-authored code outside the actor host (sandbox.test.ts, "contains a native process abort reached through a constructor escape").
+  readonly sandbox?: Partial<BunSandboxPolicy>
   readonly principal?: string
   readonly actorFor: (lane: string) => Actor<R> | undefined
   readonly providers?: ReadonlyArray<Provider>
@@ -315,12 +318,14 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       router,
       Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, parseActorId(self(lane)))
+      Layer.succeed(Self, parseActorId(self(lane))),
+      bunSandboxFor(options.sandbox ?? {})
     )
 
   const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
+    const ports = portsOf(lane)
     const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunLaneEnv<R>))(lane)
-    return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
+    return Layer.mergeAll(extra.pipe(Layer.provide(ports)), ports) as Layer.Layer<R | EventLog>
   }
 
   const driver = createLaneDriver({
