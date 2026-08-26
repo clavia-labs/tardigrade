@@ -36,6 +36,41 @@ import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events
 // never settles) or settled (the body's promise resolves with the result).
 type CallOutcome = { readonly parked: true } | { readonly parked: false; readonly result: unknown }
 
+// PackageCallPolicy bounds each live attempt and the retries performed before its failure is
+// committed as an answer (reactor.test.ts, "a hanging call exhausts its deadline and backoff as
+// one durable error").
+export interface PackageCallPolicy {
+  readonly attemptTimeoutMs: number
+  readonly retryDelaysMs: ReadonlyArray<number>
+}
+
+export interface PackageCallFailure {
+  readonly error: string
+  readonly attempts: number
+  readonly policy: PackageCallPolicy
+}
+
+export const DEFAULT_PACKAGE_CALL_POLICY: PackageCallPolicy = {
+  attemptTimeoutMs: 30_000,
+  retryDelaysMs: [250, 1_000, 4_000]
+}
+
+export const packageCallPolicyOf = (policy: Partial<PackageCallPolicy> = {}): PackageCallPolicy => {
+  const attemptTimeoutMs = policy.attemptTimeoutMs ?? DEFAULT_PACKAGE_CALL_POLICY.attemptTimeoutMs
+  if (!Number.isSafeInteger(attemptTimeoutMs) || attemptTimeoutMs < 1) {
+    throw new Error("package call attemptTimeoutMs must be a positive safe integer")
+  }
+  const retryDelaysMs = policy.retryDelaysMs ?? DEFAULT_PACKAGE_CALL_POLICY.retryDelaysMs
+  for (const [index, delay] of retryDelaysMs.entries()) {
+    if (!Number.isSafeInteger(delay) || delay < 0) {
+      throw new Error(`package call retryDelaysMs[${index}] must be a non-negative safe integer`)
+    }
+  }
+  return { attemptTimeoutMs, retryDelaysMs: [...retryDelaysMs] }
+}
+
+const failureOf = (failure: unknown): string => failure instanceof Error ? failure.message : String(failure)
+
 // canonicalJson sorts object members recursively and preserves array order
 // (execute.test.ts, "object member order survives replay").
 const canonicalJson = (value: unknown): string | undefined =>
@@ -53,6 +88,7 @@ const executeRecorded = <R = never>(
   execId: string,
   code: string,
   spill: SpillPolicy,
+  callPolicy: PackageCallPolicy,
   packages: ReadonlyArray<Package<R>>,
   turn?: string,
   dispatchedAt?: number
@@ -185,25 +221,42 @@ const executeRecorded = <R = never>(
                   return { parked: false, result }
                 }
               }
-              // A defect in the fn is TRANSIENCE (an RPC hiccup, a reset stub), and it takes the
-              // park branch: nothing recorded beyond the send, the body's promise never settles,
-              // the next attempt asks again. It must never become a rejection the body can catch:
-              // a rejection is an input that exists nowhere in the log, so replay would depend on
-              // infrastructure luck (execute.test.ts, "transience never reaches the body"; the
-              // 2026-08-16 run-d7b8b037-183 drift). A method's real failure is an {error} RESULT,
-              // and its declared error channel carries `Park` alone (packages.ts, Package), so a
-              // failure that is not a park cannot arrive here to be caught.
               const parkOut = (awaiting?: string): Effect.Effect<CallOutcome, never, never> =>
                 Effect.gen(function* () {
                   parked = true
                   blocked.push({ callId, ...(awaiting === undefined ? {} : { awaiting }) })
                   return { parked: true }
                 })
-              const attempt = yield* fn(args, { callId }).pipe(
-                Effect.map((result): CallOutcome => ({ parked: false, result })),
-                Effect.catchTag("Park", (p) => parkOut(p.awaiting)),
-                Effect.catchDefect(() => parkOut())
-              )
+              // A transient defect or timeout retries inside the recorded call. Exhaustion is a
+              // durable answer, so the body can react and replay sees the same value. Park keeps
+              // its actor-wait meaning and never consumes the infrastructure retry schedule
+              // (reactor.test.ts, "a transiently failing call retries before the body sees an
+              // answer"; "a hanging call exhausts its deadline and backoff as one durable error").
+              const invoke = (attemptIndex: number): Effect.Effect<CallOutcome, never, R> => {
+                const fail = (reason: string): Effect.Effect<CallOutcome, never, R> => {
+                  const delay = callPolicy.retryDelaysMs[attemptIndex]
+                  if (delay !== undefined) return Effect.sleep(delay).pipe(Effect.andThen(invoke(attemptIndex + 1)))
+                  const attempts = attemptIndex + 1
+                  return Effect.succeed({
+                    parked: false,
+                    result: {
+                      error: `${pkg.name}.${method} failed after ${attempts} attempts: ${reason}`,
+                      attempts,
+                      policy: callPolicy
+                    }
+                  })
+                }
+                return fn(args, { callId }).pipe(
+                  Effect.timeout(callPolicy.attemptTimeoutMs),
+                  Effect.map((result): CallOutcome => ({ parked: false, result })),
+                  Effect.catchTags({
+                    Park: (park) => parkOut(park.awaiting),
+                    TimeoutError: () => fail(`timed out after ${callPolicy.attemptTimeoutMs}ms`)
+                  }),
+                  Effect.catchDefect((defect) => fail(failureOf(defect)))
+                )
+              }
+              const attempt = yield* invoke(0)
               if (attempt.parked) return attempt
               // A large result goes to the spill store: the event keeps the pointer, the body still
               // receives the whole value, and replay hydrates the ref.
@@ -299,10 +352,11 @@ const executeRecorded = <R = never>(
     return [{ type: "CodeSettled", execId, error: outcome.error, ...logs, ...stamp, at }]
   })
 
-// CodePolicy is the lane's policy: where a result stops fitting in an agent's context and
-// spills to the store instead (spill.ts, SpillPolicy).
+// CodePolicy bounds live package calls and where a result stops fitting in an agent's context
+// (reactor.test.ts, "package call failure policy"; spill.ts, SpillPolicy).
 export interface CodePolicy {
   readonly spill: Partial<SpillPolicy>
+  readonly call: Partial<PackageCallPolicy>
 }
 
 // codeReactorFor derives the executable head as one transition: the settle is the record
@@ -351,6 +405,7 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     ...policy.spill,
     note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
   })
+  const callPolicy = packageCallPolicyOf(policy.call)
   return (events) => {
     const owed = workOwed(events)
     if (owed === undefined) return []
@@ -371,7 +426,7 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
           turn: turnOf(dispatch),
           at: typeof d.at === "number" ? d.at : undefined
         },
-        act: (input) => executeRecorded<R>(input.execId, input.code, spill, mounted, input.turn, input.at)
+        act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.at)
       })
     ]
   }
