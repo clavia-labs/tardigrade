@@ -1,5 +1,4 @@
 import { useEffect, useState, type ReactElement } from "react"
-import markUrl from "../../../docs/assets/logo-dark-geometric.svg"
 import { ComponentBridge } from "./ComponentBridge"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
@@ -18,7 +17,17 @@ const eventProjections: Readonly<Record<string, { readonly effect?: string; read
   "05": { result: "[]", target: undefined }
 }
 
-const Mark = (): ReactElement => <img className="mark" src={markUrl} alt="" />
+const Mark = (): ReactElement => (
+  <svg className="mark" viewBox="36 62 210 136" aria-hidden="true">
+    <g transform="translate(320 0) scale(-1 1)">
+      <path d="M78 117 112 99v77c0 6-3 10-8 13l-21-11c-3-2-5-5-5-9Z" />
+      <path d="M120 95 154 81v96c0 6-3 10-8 13l-21-11c-3-2-5-5-5-9Z" />
+      <path d="M162 78c10-4 21-7 34-8v106c0 5-3 9-8 12l-21-11c-3-2-5-5-5-9Z" />
+      <path d="M204 70c12 1 23 4 34 8v90c0 4-2 7-5 9l-21 11c-5-3-8-7-8-12Z" />
+      <path d="m246 81 34 14v47l-34 14Z" />
+    </g>
+  </svg>
+)
 
 const Github = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true">

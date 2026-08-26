@@ -68,7 +68,20 @@ svg { display: block; }
 
 .nav-brand-group { display: flex; align-items: center; gap: 24px; }
 .brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); font-family: var(--brand); font-size: 23px; font-weight: 600; letter-spacing: -0.03em; }
-.mark { width: 32px; height: 24px; object-fit: contain; filter: brightness(0) saturate(100%) invert(28%) sepia(95%) saturate(4706%) hue-rotate(230deg) brightness(100%) contrast(104%); }
+.mark { width: 32px; height: 24px; overflow: visible; fill: var(--moss); }
+.mark path { transform-box: fill-box; transform-origin: center; }
+.brand:hover .mark path { animation: mark-wave 440ms var(--ease-out) both; }
+.brand:hover .mark path:nth-child(5) { animation-delay: 0ms; }
+.brand:hover .mark path:nth-child(4) { animation-delay: 45ms; }
+.brand:hover .mark path:nth-child(3) { animation-delay: 90ms; }
+.brand:hover .mark path:nth-child(2) { animation-delay: 135ms; }
+.brand:hover .mark path:nth-child(1) { animation-delay: 180ms; }
+
+@keyframes mark-wave {
+  0%, 100% { transform: translateY(0); }
+  42% { transform: translateY(-4px); }
+  72% { transform: translateY(1px); }
+}
 .nav-links { display: none; }
 .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 24px; color: var(--ink-2); }
 .guide-link { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
@@ -681,4 +694,5 @@ h1 span { display: block; white-space: nowrap; }
 
 @media (prefers-reduced-motion: reduce) {
   .button, .harness-button { transition-duration: .01ms; }
+  .brand:hover .mark path { animation: none; }
 }
