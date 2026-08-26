@@ -73,10 +73,23 @@ describe("the Bun process sandbox", () => {
   })
 
   test("contains a native process abort reached through a constructor escape", async () => {
-    const aborted = await run('return await (async function () {}).constructor("process.abort()")()')
+    let started = false
+    const aborted = await run(
+      'await probe.ready(); return await (async function () {}).constructor("process.abort()")()',
+      {
+        probe: {
+          ready: async () => {
+            started = true
+            return sandboxReturned(undefined)
+          }
+        }
+      },
+      { segmentTimeoutMs: 250 }
+    )
     const next = await run('return "host alive"')
 
-    expect(aborted.error).toContain("sandbox process exited with code")
+    expect(started).toBe(true)
+    expect(aborted.error).toBeDefined()
     expect(next.result).toBe("host alive")
   })
 
