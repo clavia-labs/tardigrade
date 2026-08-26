@@ -27,6 +27,7 @@ export interface TelegramOptions {
   readonly token: string
   readonly secretToken: string
   readonly target: (source: TelegramEndpoint) => ActorId
+  readonly method?: string
   readonly apiBaseUrl?: string
   readonly fetch?: TelegramFetch
 }
@@ -148,11 +149,13 @@ const providerOf = (options: TelegramOptions): ChannelProvider<TelegramEndpoint>
 }
 
 // telegram constructs a bidirectional channel whose persisted source address is sufficient for later replies.
+export const DEFAULT_TELEGRAM_METHOD = "message"
+
 export const telegram = (options: TelegramOptions): Channel<TelegramEndpoint> => {
   if (options.name.length === 0) throw new Error("Telegram provider name cannot be empty")
   if (options.token.length === 0) throw new Error("Telegram bot token cannot be empty")
   if (!SECRET_TOKEN.test(options.secretToken)) {
     throw new Error("Telegram webhook secret token must contain 1 to 256 letters, digits, underscores, or hyphens")
   }
-  return channelOf(providerOf(options), options.target)
+  return channelOf(providerOf(options), options.target, { method: options.method ?? DEFAULT_TELEGRAM_METHOD })
 }

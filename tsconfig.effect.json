@@ -55,7 +55,7 @@
           // Determinism. A replayed body re-runs from the top and must take the same path to each
           // call, so a wall clock, a random draw, or a socket reached from inside Effect code is a
           // replay hazard rather than a style choice. Model-authored code already gets this
-          // guarantee by shimming the same ambients (packages/code/src/sandbox.ts, Ambient;
+          // guarantee by shimming the same ambients (packages/code/src/sandbox/service.ts, Ambient;
           // defaults.test.ts, "replay-stable ambients"), and the framework's own code holds itself
           // to it here. Most ambient rules outside Effect code are in the `off` block below because
           // a build script and a browser are not replayed. globalRandom stays on across helper calls.

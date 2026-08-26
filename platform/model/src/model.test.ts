@@ -37,8 +37,8 @@ import {
   outputModeOf,
   outputPreflight
 } from "./output"
-import type { Action } from "tardie/events"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Action } from "tardie/log/events"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
 const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(config: C) =>
   infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config })
@@ -64,7 +64,7 @@ describe("actionOf", () => {
 
   test("a final response completes and carries its text verbatim, JSON or prose", () => {
     // Nothing here judges a contract: the actor validates every completion before it records a
-    // terminal (tardie, runtime/infer.ts, completionOf).
+    // terminal (tardie, inference/reactor.ts, completionOf).
     const structured = JSON.stringify({ aspects: [{ name: "a" }] })
     expect(actionOf({ content: structured, toolCalls: [] } as never)).toEqual({ kind: "complete", output: structured })
   })
@@ -110,7 +110,7 @@ describe("the output mode one attempt runs in", () => {
 
   // A provider name is not evidence. Structured output belongs to the endpoint and the model
   // together, so a vendor string cannot let an unsupported model pass preflight and spend
-  // (src/output.ts, capabilityOf).
+  // (src/output/contract.ts, capabilityOf).
   test("no provider name grants a guarantee; only a declaration does", () => {
     expect(capabilityOf({})).toBeUndefined()
     expect(outputPreflight({ output: contract, tools: [] }, { provider: "openai", model: "gpt-3.5-turbo" }).join(" ")).toContain(
@@ -374,7 +374,7 @@ describe("infer end to end", () => {
   })
 
   // Native is preferred whenever the endpoint can serve the call, so a mounted fallback changes
-  // neither the transport nor a single word of the request (src/output.ts, outputModeOf).
+  // neither the transport nor a single word of the request (src/output/contract.ts, outputModeOf).
   test("a mounted fallback is dormant on a native endpoint", async () => {
     const bare = await wire({ capability: NATIVE_CAPABILITY })
     const mounted = await wire({ capability: NATIVE_CAPABILITY, fallback: outputRepairFor({ attempts: 2 }) })

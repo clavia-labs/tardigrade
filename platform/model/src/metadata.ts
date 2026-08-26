@@ -1,4 +1,4 @@
-import type { ModelPricing } from "tardie/usage"
+import type { ModelPricing } from "tardie/inference/usage"
 
 export const DEFAULT_MODEL_CATALOG_URL = "https://models.dev/api.json"
 

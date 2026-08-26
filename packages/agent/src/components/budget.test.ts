@@ -1,33 +1,38 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { actor } from "@clavia/tardigrade-core/component"
-import { Self, settleActor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
-import { Router } from "@clavia/tardigrade-core/router"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
-import { Infer } from "../turn"
-import { NativeOutputSupport } from "../runtime/infer"
-import { budget, budgetOf, budgetPhase, budgetSpent, canRequestBudget } from "./budget"
-import { infer, renderOf } from "../runtime/agent"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
+import { actor } from "@clavia/tardigrade-core/actor"
+import { Self, settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { Router } from "@clavia/tardigrade-core/communication/router"
+import { actorIdOf, parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { Infer } from "../runtime/turn"
+import { NativeOutputSupport } from "../inference/reactor"
+import { budget, budgetOf, budgetPhase, budgetSpent, caller, canRequestBudget } from "./budget"
+import { infer, renderOf } from "../runtime/composition"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
-import { reply } from "./reply"
+import { agentMethods } from "../actor/message"
 import { nativeOutput } from "./native-output"
 import { toolList } from "./tool-list"
-import { agentKeys } from "../events"
+import { agentKeys } from "../log/events"
 
 const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
 
-const rootActor = actor(infer([budget([codeMode()]), reply, compaction(), nativeOutput], TEST_MODEL))
+const assembled = <R>(component: import("../runtime/composition").AgentComponent<R>) => actor({
+  name: "test-agent",
+  methods: agentMethods,
+  components: [component]
+})
+
+const rootActor = assembled(infer([budget([codeMode()]), compaction(), nativeOutput], TEST_MODEL))
 const rootReactor = rootActor.reactors[0]!
 
 // rest supplies the environment required by effect transitions in this assembled agent.
 const rest = Layer.mergeAll(
   KeyValueStore.layerMemory,
-  Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
@@ -85,15 +90,22 @@ describe("budget admission reacts to BudgetExhausted", () => {
   })
 
   test("the exported default and a turn override decide the wall", () => {
-    const defaultTwo = actor(
-      infer([budget([codeMode()], { defaultToolBudget: 2 }), reply, nativeOutput], TEST_MODEL)
-    ).reactors[0]!
+    const defaultTwo = actor({
+      name: "default-two",
+      methods: agentMethods,
+      components: [infer([budget([codeMode()], { limit: 2 }), nativeOutput], TEST_MODEL)]
+    }).reactors[0]!
 
     expect(defaultTwo(turn(2)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
     expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain("bw:m1/2")
     expect(defaultTwo(turn(3, 9)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
-    expect(budgetOf(turn(1), { defaultToolBudget: 2 })).toBe(2)
-    expect(budgetOf(turn(1, 9), { defaultToolBudget: 2 })).toBe(9)
+    expect(budgetOf(turn(1), { limit: 2 })).toBe(2)
+    expect(budgetOf(turn(1, 9), { limit: 2 })).toBe(9)
+  })
+
+  test("the limit is a positive whole number", () => {
+    expect(() => budget([codeMode()], { limit: 0 })).toThrow("budget limit must be a positive integer")
+    expect(() => budget([codeMode()], { limit: 1.5 })).toThrow("budget limit must be a positive integer")
   })
 
   test("the first call past the limit derives the wall without deriving dispatch", () => {
@@ -113,7 +125,6 @@ describe("budget admission reacts to BudgetExhausted", () => {
     const environment = Layer.mergeAll(
       memory,
       KeyValueStore.layerMemory,
-      Layer.succeed(Facets, { read: () => Effect.succeed([]) }),
       Layer.succeed(Router, { send: () => Effect.void }),
       Layer.succeed(Self, parseActorId("test-agent")),
       Layer.succeed(NativeOutputSupport, { withTools: true }),
@@ -178,7 +189,7 @@ describe("the budget component boundary", () => {
   ])
 
   test("a non-code child is admitted by the same tool-call policy", () => {
-    const root = actor(infer([budget([readTool], { defaultToolBudget: 1 }), reply, nativeOutput], TEST_MODEL)).reactors[0]!
+    const root = assembled(infer([budget([readTool], { limit: 1 }), nativeOutput], TEST_MODEL)).reactors[0]!
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
       { type: "ToolCalled", callId: "r1", name: "read", arguments: {}, turn: "m1", at: 1 },
@@ -218,16 +229,8 @@ describe("the escalation lifecycle", () => {
     expect(agentKeys.keyOf(denial)).toBe("bdec:request-1")
   })
 
-  test("the budget component owns request and decision routing", () => {
+  test("a budget with no authority sends no manually recorded request", () => {
     const head: Event = { type: "MessageReceived", id: "m1", text: "go", budget: 2, escalatable: true, at: 0 }
-    const call: Event = {
-      type: "ToolCalled",
-      callId: "request-1",
-      name: "request_budget",
-      arguments: { reason: "one source remains", amount: 2 },
-      turn: "m1",
-      at: 2
-    }
     const requested: Event = {
       type: "BudgetRequested",
       callId: "request-1",
@@ -236,12 +239,10 @@ describe("the escalation lifecycle", () => {
       turn: "m1",
       at: 3
     }
-    const grant: Event = { type: "BudgetGranted", callId: "request-1", amount: 2, turn: "m1", at: 4 }
-    const atWall = [head, exhausted, call]
 
-    expect(rootReactor(atWall).map((transition) => transition.key)).toContain("br:request-1")
-    expect(rootReactor([...atWall, requested])).toEqual([])
-    expect(rootReactor([...atWall, requested, grant]).map((transition) => transition.key)).toContain("tr:request-1")
+    const keys = rootReactor([head, exhausted, requested]).map((transition) => transition.key)
+    expect(keys.some((key) => key.startsWith("mcall:"))).toBe(false)
+    expect(keys.some((key) => key.startsWith("bas:"))).toBe(false)
   })
 
   test("budgetPhase reads the most recent marker", () => {
@@ -268,5 +269,25 @@ describe("the escalation lifecycle", () => {
     expect(canRequestBudget(atWall(false))).toBe(false) // not escalatable: no ask
     const afterDenial = [head(true), ...turn(3, 2, [exhausted, denied]).slice(1)]
     expect(canRequestBudget(afterDenial)).toBe(false) // denied: answer, do not ask again
+  })
+
+  test("the authority option exposes the request tool through an accepted actor call", () => {
+    const source = actorIdOf("agent", "parent")
+    const target = actorIdOf("agent", "child")
+    const head: Event = {
+      type: "MessageReceived",
+      id: "m1",
+      text: "go",
+      budget: 2,
+      escalatable: true,
+      link: linkOf(source, target),
+      at: 0
+    }
+    const atWall = [head, ...turn(3, 2, [exhausted]).slice(1)]
+
+    expect(renderOf([budget([codeMode()]), nativeOutput], atWall).tools).toEqual([])
+    expect(renderOf([budget([codeMode()], { authority: caller() }), nativeOutput], atWall).tools.map((tool) => tool.name)).toEqual([
+      "request_budget"
+    ])
   })
 })

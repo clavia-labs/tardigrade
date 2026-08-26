@@ -14,9 +14,9 @@ import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
 import { Infer, NativeOutputSupport, type InferRequest } from "tardie"
-import type { Action, AttemptEndpoint } from "tardie/events"
-import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
-import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/request"
+import type { Action, AttemptEndpoint } from "tardie/log/events"
+import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
+import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/inference/request"
 import {
   capabilityOf,
   converseOutputConfig,
@@ -26,8 +26,8 @@ import {
   fallbackSystemFor,
   type OutputCapability
 } from "./output"
-import { NATIVE_MODE, type OutputMode } from "tardie/output"
-import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/usage"
+import { NATIVE_MODE, type OutputMode } from "tardie/output/contract"
+import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/inference/usage"
 import type { ModelProtocol } from "./directory"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
@@ -114,7 +114,7 @@ const toTool = (t: ToolSpec): Tool => ({
 // schema constrained it to; an empty response enters the provider failure path.
 //
 // Nothing here judges the response against a contract. The turn's contract is the actor's, and
-// the actor validates every completion before it records a terminal (tardie, runtime/infer.ts,
+// the actor validates every completion before it records a terminal (tardie, inference/reactor.ts,
 // completionOf), so a strict provider is checked once rather than trusted twice.
 export const actionOf = (result: ProcessorResult): Action => {
   const calls = result.toolCalls ?? []
@@ -152,7 +152,7 @@ class RefusedError extends Error {
 
 // ViolatedError marks a provider breaking a native strict guarantee on its own wire, which
 // Converse says outright (output.ts, converseStopClass). The compatible leg reports the same
-// class through local validation instead (tardie, runtime/infer.ts, completionOf).
+// class through local validation instead (tardie, inference/reactor.ts, completionOf).
 class ViolatedError extends Error {
   readonly violated = true
 }
@@ -188,10 +188,10 @@ export interface ModelConfig {
   readonly stream?: Partial<StreamBounds>
   // What this endpoint and model promise about a declared output contract. Absent means no
   // promise: a turn that declares a contract fails before spend unless its assembly provides a
-  // fallback. A provider name never supplies this value (src/output.ts, capabilityOf).
+  // fallback. A provider name never supplies this value (src/output/contract.ts, capabilityOf).
   readonly output?: OutputCapability
   // pricing projects an estimate beside any provider-reported bill. Reported cache buckets
-  // require their own stated rates (packages/agent/src/usage.ts, priced).
+  // require their own stated rates (packages/agent/src/inference/usage.ts, priced).
   readonly pricing?: ModelPricing
   // In-act backoff bases for throttle-shaped failures. Length is the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
@@ -451,7 +451,7 @@ interface Wire {
 
 // captureWire reads the last `usage` object (and provenance) off an SSE (or JSON) body. The
 // OpenAI-compat adapter normalizes tokens and drops extra keys; a gateway's billed dollar
-// lives on those keys (packages/agent/src/usage.ts, costNumber).
+// lives on those keys (packages/agent/src/inference/usage.ts, costNumber).
 const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
   const chunks: Uint8Array[] = []
   try {
@@ -656,7 +656,7 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
   ): Promise<Action> => {
     // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
     // recorded fact rather than re-deciding from a capability that may have changed since
-    // (tardie, runtime/infer.ts, completionOf).
+    // (tardie, inference/reactor.ts, completionOf).
     const stamped = (action: Action): Action => (req.output === undefined ? action : { ...action, mode })
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated
@@ -799,11 +799,11 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
         attempts: 0
       }
       // The actor decides the request, render included; the platform maps it to the wire and
-      // streams it, holding no opinion about tools (tardie, runtime/agent.ts).
+      // streams it, holding no opinion about tools (tardie, runtime/composition.ts).
       const req = modelRequest(request.trajectory, request, request.context ?? {})
       // The contract's preflight runs before the first socket: an endpoint that cannot promise
       // the declared schema, or a schema outside the profile both wires send unchanged, ends
-      // the turn having spent nothing (src/output.ts, outputPreflight).
+      // the turn having spent nothing (src/output/contract.ts, outputPreflight).
       const selected = outputModeOf(req, config)
       if ("errors" in selected) {
         const action: Action = {

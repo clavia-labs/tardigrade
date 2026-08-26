@@ -1,9 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "@clavia/tardigrade-core/router"
-import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { Router } from "@clavia/tardigrade-core/communication/router"
+import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { createHost } from "./host"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -199,34 +198,5 @@ describe("the router membrane", () => {
     )
     host.commitRoot("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("lane").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
-  })
-})
-
-describe("the observe privilege", () => {
-  // All lanes share one store here, so the host binds Facets beside Router and Self: a lane reads
-  // a sibling's committed events by name (packages/core/src/logs.ts, Facets).
-  test("a lane reads a seeded sibling lane through Facets", async () => {
-    const watcher: Reactor<Facets> = (events) =>
-      events.some((e) => e.type === "Saw")
-        ? []
-        : [
-            effect({
-              key: "saw:one",
-              input: null,
-              act: () =>
-                Effect.gen(function* () {
-                  const logs = yield* Facets
-                  const seen = yield* logs.read("other")
-                  return [{ type: "Saw", n: seen.length, at: 1 } as Event]
-                })
-            })
-          ]
-    const host = createHost<Facets>({
-      actorFor: (lane) => (lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined)
-    })
-    host.seed("other", [threadCreated({ actor: "mem", thread: "other" }, undefined, 0), { type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
-    host.seed("watch", [threadCreated({ actor: "mem", thread: "watch" }, undefined, 0)])
-    await host.wake("watch")
-    expect(host.read("watch").at(-1)).toEqual({ type: "Saw", n: 2, at: 1 })
   })
 })

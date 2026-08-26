@@ -1,5 +1,5 @@
-import type { Event } from "@clavia/tardigrade-core/event"
-import type { AgentComponent } from "../runtime/agent"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { AgentComponent } from "../runtime/composition"
 
 export type SystemText = string | ((log: ReadonlyArray<Event>) => string)
 

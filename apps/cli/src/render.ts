@@ -133,7 +133,6 @@ export const methodLines = (thread: string, call: string, state: MethodState): s
     return `${head}\n${output}`
   }
   if (state.status === "failed") return `${head}\n${state.error}`
-  if (state.status === "blocked") return `${head}\n${state.reason}`
   return head
 }
 

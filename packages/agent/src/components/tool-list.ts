@@ -1,9 +1,9 @@
 import { Clock, Effect } from "effect"
-import { effect } from "@clavia/tardigrade-core/actor"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { toolReturned } from "../events"
-import type { ToolSpec } from "../request"
-import type { AgentComponent, AgentTool } from "../runtime/agent"
+import { effect } from "@clavia/tardigrade-core/reconciliation"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { toolReturned } from "../log/events"
+import type { ToolSpec } from "../inference/request"
+import type { AgentComponent, AgentTool } from "../runtime/composition"
 
 // NativeTool is one named tool whose effect returns its model-visible result.
 export interface NativeTool<R = never> {

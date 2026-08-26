@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
-import { jsSandboxFor } from "@clavia/tardigrade-code/defaults"
-import { workspacePackage } from "@clavia/tardigrade-code/workspace"
+import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
+import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type LaneEnv } from "@clavia/tardigrade-host/host"
-import type { Action } from "./events"
-import { Infer, NativeOutputSupport, type InferRequest } from "./runtime/infer"
-import { boundaryOf } from "./boundary"
-import { resumeTurn } from "./resume"
-import { agentsPackage } from "./spawn"
+import type { Action } from "./log/events"
+import { Infer, NativeOutputSupport, type InferRequest } from "./inference/reactor"
+import { boundaryOf } from "./output/boundary"
+import { resumeTurn } from "./runtime/resume"
+import { agentsPackage } from "./packages/agents"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
-import { actor, budget, codeMode, compaction, infer, nativeOutput, reply, toolList, type AgentComponent } from "./index"
-import type { RlmR } from "./turn"
+import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput, toolList, type AgentComponent } from "./index"
+import type { AgentR } from "./runtime/turn"
 
 const ROOT_LANE = "ag.root"
 const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
@@ -27,7 +27,7 @@ type Mind = (request: InferRequest, key?: string) => Promise<Action>
 
 type Settled = { readonly turn: string; readonly output?: string; readonly error?: string }
 
-type TestR = RlmR | NativeOutputSupport
+type TestR = AgentR | NativeOutputSupport
 
 // work is the default work surface these tests assemble against: code mode with the spawn and
 // workspace packages in scope. The packages are values, so the same list mounts on any host.
@@ -74,11 +74,15 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
   return { run, resume, host }
 }
 
-// rlm is the default assembly: the work surface plus reply, budget, and compaction, over an
+// rlm is the default assembly: the work surface, budget, and compaction, over an
 // in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
-const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<RlmR>> = [work()], log: ReadonlyArray<Event> = []) =>
-  hosted(actor(infer([budget(components), reply, compaction(), nativeOutput], TEST_MODEL)), mind, log)
+const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<AgentR>> = [work()], log: ReadonlyArray<Event> = []) =>
+  hosted(actor({
+    name: "test-agent",
+    methods: agentMethods,
+    components: [infer([budget(components), compaction(), nativeOutput], TEST_MODEL)]
+  }), mind, log)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
@@ -138,7 +142,7 @@ describe("an assembled agent", () => {
         depth: 1
       })
       expect(log.some((e) => e.type === "TurnCompleted")).toBe(true)
-      expect(log.some((e) => e.type === "ReplyDelivered")).toBe(true)
+      expect(log.some((e) => e.type === "ResponseDelivered")).toBe(true)
     }
     // And it is quiet: nothing owed anywhere.
     expect(mind.host.resting()).toBe(true)
@@ -253,7 +257,7 @@ describe("an assembled agent", () => {
     expect(log.filter((event) => event.type === "TurnCompleted")).toEqual([
       expect.objectContaining({ turn: "run-0", epoch: 1, output: "contents" })
     ])
-    expect(log.filter((event) => event.type === "ReplyDelivered")).toHaveLength(1)
+    expect(log.filter((event) => event.type === "ResponseDelivered")).toHaveLength(0)
   })
 
   test("only a failed active epoch can resume", async () => {

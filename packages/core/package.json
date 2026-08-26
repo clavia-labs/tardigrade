@@ -26,7 +26,18 @@
   },
   "type": "module",
   "exports": {
-    "./*": "./src/*.ts"
+    "./actor": "./src/actor/index.ts",
+    "./actor/*": "./src/actor/*.ts",
+    "./actor/method": "./src/actor/method/index.ts",
+    "./actor/method/*": "./src/actor/method/*.ts",
+    "./communication": "./src/communication/index.ts",
+    "./communication/*": "./src/communication/*.ts",
+    "./log": "./src/log/index.ts",
+    "./log/*": "./src/log/*.ts",
+    "./reconciliation": "./src/reconciliation/index.ts",
+    "./reconciliation/*": "./src/reconciliation/*.ts",
+    "./thread": "./src/thread/index.ts",
+    "./thread/*": "./src/thread/*.ts"
   },
   "dependencies": {
     "effect": "4.0.0-rc.110"

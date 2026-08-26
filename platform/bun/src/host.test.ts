@@ -4,16 +4,15 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/actor"
-import { Facets } from "@clavia/tardigrade-core/facets"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
-import { hydrate, refs, spill } from "@clavia/tardigrade-code/store"
+import { hydrate, refs, spill } from "@clavia/tardigrade-code/storage/store"
 
-import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/workspace"
+import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/package/workspace"
 
 import { createBunHost, type BunHost, type BunHostOptions } from "./host"
 import { fileTelemetry } from "./file"
@@ -577,38 +576,6 @@ describe("the workspace sql surface", () => {
     expect(answered.methods).toEqual(["grep", "read"])
     expect(answered.doc).toBe(false)
     expect(answered.answers).toEqual([])
-    await h.close()
-  })
-})
-
-describe("the observe privilege", () => {
-  // Every lane's log lives in this one database, so the binding gives a lane the durable read
-  // over its siblings (packages/core/src/logs.ts, Facets).
-  test("a lane reads a seeded sibling lane through Facets", async () => {
-    const watcher: Reactor<Facets> = (events) =>
-      events.some((e) => e.type === "Saw")
-        ? []
-        : [
-            effect({
-              key: "saw:one",
-              input: null,
-              act: () =>
-                Effect.gen(function* () {
-                  const logs = yield* Facets
-                  const seen = yield* logs.read("other")
-                  return [{ type: "Saw", n: seen.length, at: 1 } as Event]
-                })
-            })
-          ]
-    const h = await createBunHost<Facets>({
-      log: freshPath(),
-      actorFor: (lane) =>
-        lane === "watch" ? { reactors: [watcher], keyOf: (e) => (e.type === "Saw" ? "saw:one" : undefined) } : undefined
-    })
-    await h.seed("other", [created("other"), { type: "MessageReceived", id: "m1", text: "hi", at: 1 } as Event])
-    await h.seed("watch", [created("watch")])
-    await h.wake("watch")
-    expect((await h.read("watch")).at(-1)).toEqual({ type: "Saw", n: 2, at: 1 })
     await h.close()
   })
 })

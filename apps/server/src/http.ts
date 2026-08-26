@@ -1,4 +1,4 @@
-import { Context, Effect, Layer } from "effect"
+import { Effect, Layer } from "effect"
 import { Headers, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
@@ -17,6 +17,7 @@ import {
 import { ServerConfig } from "./config"
 import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
+import { DriverGauge } from "./driver-gauge"
 
 // The HTTP surface. The JSON routes are one declaration (contract.ts) implemented through
 // HttpApiBuilder, and everything around them is a layer over effect's own HttpRouter, so the server
@@ -24,25 +25,6 @@ import { layerRequestProblems } from "./contract"
 // platform-specific piece (main.ts, http.test.ts). This module owns the conventions every route
 // inherits: the error body, the bearer gate, and the health probe that reads the driver rather than
 // the process.
-
-// The health probe's view of the host driver. The server never asks the driver to run; it asks what
-// the driver is doing, which is the whole of "the server drives continuously" from the client's
-// side (apps-server-spec.md, "Principles"). Two questions, because /healthz answers two: is the
-// driver resting, and how many lanes still owe work.
-export class DriverGauge extends Context.Service<
-  DriverGauge,
-  {
-    readonly resting: Effect.Effect<boolean>
-    readonly dirty: Effect.Effect<number>
-  }
->()("tardigrade/server/DriverGauge") {}
-
-// A gauge for a process with no host attached. It reports a resting driver with nothing owed, which
-// is true of a server that has not been given one (http.test.ts, "healthz reports the gauge").
-export const layerGaugeResting: Layer.Layer<DriverGauge> = Layer.succeed(DriverGauge)({
-  resting: Effect.succeed(true),
-  dirty: Effect.succeed(0)
-})
 
 import { problem } from "./problem"
 export { problem, type Problem, PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE } from "./problem"

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog, withWatermark } from "@clavia/tardigrade-core/event-log"
-import { actorFromReactors, send } from "@clavia/tardigrade-core/actor"
-import { Infer } from "../runtime/infer"
-import { composeKeys } from "@clavia/tardigrade-core/event-log"
-import { messageKeys } from "@clavia/tardigrade-core/message"
-import { agentKeys } from "../events"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
+import { actorFromReactors, send } from "@clavia/tardigrade-core/reconciliation"
+import { Infer } from "../inference/reactor"
+import { composeKeys } from "@clavia/tardigrade-core/log"
+import { messageKeys } from "@clavia/tardigrade-core/communication/message"
+import { agentKeys } from "../log/events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)
 import {
@@ -170,7 +170,7 @@ describe("the compaction pass", () => {
 
 // One projection serves the render, the measure, and the brief. A corrected exchange the model
 // no longer reads must not weigh on the guard that spends money, and must not leak its rejected
-// reply into a summary a later turn does read (src/output.ts, projectedOutput).
+// reply into a summary a later turn does read (src/output/contract.ts, projectedOutput).
 describe("a projected repair is invisible to compaction as well as to the render", () => {
   const REPAIR = { kind: "repair", name: "repair", attempts: 2, projectHistory: true }
   const rejected = (turn: string, at: number, implementation: unknown = REPAIR): Event => ({

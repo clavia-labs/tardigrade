@@ -1,7 +1,7 @@
 import { env } from "cloudflare:test"
 import { Effect } from "effect"
 import { describe, expect, test } from "vitest"
-import { sandboxReturned } from "@clavia/tardigrade-code/sandbox"
+import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
 import { workerLoaderSandboxServiceFor, type SandboxBridgeFactory } from "../src/sandbox"
 import type { Env } from "./fixture.worker"
 import { replaySequenceWith } from "./sandbox.cases"

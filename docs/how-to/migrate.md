@@ -23,7 +23,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `defineActor({ name, methods, actor: actor(infer([...], { provider, default_model })) })` |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...], { provider, default_model })] })` |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
 | `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
@@ -54,7 +54,7 @@ Move related tools to code packages only when the decision rule above applies. M
 
 ### Policies and output
 
-State every policy that affects behavior. `budget([codeMode(packages)], { defaultToolBudget })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
+State every policy that affects behavior. `budget([codeMode(packages)], { limit })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
 
 Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
 
@@ -130,19 +130,18 @@ const host = await createBunHost({
 const turn = "legacy:conversation-42:message-7"
 const events: Event[] = [
   { type: "MessageReceived", id: turn, text: "What changed?", at: 1_700_000_000_000 },
-  { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 },
-  { type: "ReplyDelivered", turn, at: 1_700_000_001_000 }
+  { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 }
 ]
 
 await host.seed(laneOf("legacy-conversation-42"), events)
 await host.close()
 ```
 
-Derive stable thread, turn, and call ids from legacy identifiers. Preserve event order and timestamps. Every imported `MessageReceived` must have one terminal in its active epoch and a matching `ReplyDelivered`.
+Derive stable thread, turn, and call ids from legacy identifiers. Preserve event order and timestamps. Every imported `MessageReceived` must have one terminal in its active epoch.
 
 Map a complete tool exchange between its message and terminal as `ToolCalled` followed by `ToolReturned`. Stamp both events with the turn id, keep call ids unique within the thread, and preserve the tool arguments and result. Map stored assistant working text to `TextReturned` with the same turn id.
 
-Map an incomplete legacy turn to `TurnFailed` with the same turn id, a clear import error, `cause: "inference_error"`, and a matching `ReplyDelivered`. Include any saved partial assistant text as `TextReturned` before the failure. This keeps every imported thread settled and makes the incomplete state visible.
+Map an incomplete legacy turn to `TurnFailed` with the same turn id, a clear import error, and `cause: "inference_error"`. Include any saved partial assistant text as `TextReturned` before the failure. This keeps every imported thread settled and makes the incomplete state visible.
 
 Refuse to write the import into an existing target database. A fresh target makes the script repeatable from the unchanged source and prevents duplicate unkeyed history events.
 

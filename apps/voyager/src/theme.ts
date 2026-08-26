@@ -8,6 +8,7 @@ export type Theme = "light" | "dark"
 
 // Where the choice is kept. It is the reader's, not the run's, so it lives in the browser and never
 // on the wire.
+/** @internal */
 export const THEME_KEY = "voyager.theme"
 
 const isTheme = (value: unknown): value is Theme => value === "light" || value === "dark"

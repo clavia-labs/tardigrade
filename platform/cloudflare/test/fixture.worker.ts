@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
-import { actorMethod, defineActor } from "tardie"
-import { effect } from "@clavia/tardigrade-core/actor"
+import { actor, actorMethod } from "tardie"
+import { effect } from "@clavia/tardigrade-core/reconciliation"
 import { ActorHost, cloudflareWorker } from "../src/worker"
 
 const echo = actorMethod({
@@ -18,11 +18,21 @@ const echo = actorMethod({
   }
 })
 
-const worker = cloudflareWorker(defineActor({
+const worker = cloudflareWorker(actor({
   name: "echo",
   methods: { echo },
-  actor: {
-    reactors: [(events) => events.flatMap((event) => {
+  components: [{
+    name: "echo",
+    keys: {
+      prefixes: ["echo-request:", "echo-complete:"],
+      keyOf: (event) => {
+        const id = String((event as { readonly id?: unknown }).id)
+        if (event.type === "EchoRequested") return `echo-request:${id}`
+        if (event.type === "EchoCompleted") return `echo-complete:${id}`
+        return undefined
+      }
+    },
+    derive: (events) => ({ view: undefined, transitions: events.flatMap((event) => {
       if (event.type !== "EchoRequested") return []
       const request = event as { readonly id?: unknown; readonly text?: unknown }
       const id = String(request.id)
@@ -37,14 +47,8 @@ const worker = cloudflareWorker(defineActor({
           return [{ type: "EchoCompleted", ...input }]
         })
       })]
-    })],
-    keyOf: (event) => {
-      const id = String((event as { readonly id?: unknown }).id)
-      if (event.type === "EchoRequested") return `echo-request:${id}`
-      if (event.type === "EchoCompleted") return `echo-complete:${id}`
-      return undefined
-    }
-  }
+    }) })
+  }]
 }))
 
 export { ActorHost }

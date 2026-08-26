@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { sandboxReturned } from "@clavia/tardigrade-code/sandbox"
+import { sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
 import { workerLoaderSandboxServiceFor } from "../src/sandbox"
 
 export interface ReplaySequenceResult {

@@ -7,8 +7,8 @@ import { Console, Effect, Exit, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { Command } from "effect/unstable/cli"
 import { BunServices } from "@effect/platform-bun"
-import { ACTOR_ARTIFACT_VERSION, Infer, type ActorDefinition } from "tardie"
-import type { Action } from "tardie/events"
+import { ACTOR_ARTIFACT_VERSION, Infer, type Actor } from "tardie"
+import type { Action } from "tardie/log/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
 
@@ -47,10 +47,12 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
   react: () => Effect.succeed({ kind: "complete", output: "the scripted answer" } satisfies Action)
 })
 
-const directActor: ActorDefinition<never> = {
+const directActor: Actor<never> = {
   name: "reviewer",
   methods: {},
-  actor: { reactors: [], keyOf: () => undefined }
+  components: [],
+  reactors: [],
+  keyOf: () => undefined
 }
 
 // booted starts the whole command on an ephemeral port and hands the body its base URL. ":memory:"
@@ -96,7 +98,7 @@ const booted = <A>(
 
 // installActor performs the final atomic directory swap of a local push.
 const installActor = (root: string, name: string, revision: string): string => {
-  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, methods: {}, actor: { reactors: [], keyOf: () => undefined } }\n`
+  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, methods: {}, components: [], reactors: [], keyOf: () => undefined }\n`
   const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
   const destination = join(root, name)
   const incoming = `${destination}.incoming`

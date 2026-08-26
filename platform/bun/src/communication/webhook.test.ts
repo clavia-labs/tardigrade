@@ -97,7 +97,8 @@ describe("Bun webhooks", () => {
         }),
         send: () => Effect.void
       },
-      () => ({ actor: "support", thread: "incident" })
+      () => ({ actor: "support", thread: "incident" }),
+      { method: "message" }
     )
     const handler = bunChannelHandler(channel, {
       commit: (envelopes) => Effect.sync(() => committed.push(...envelopes)),

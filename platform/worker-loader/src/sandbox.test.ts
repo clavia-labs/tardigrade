@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import { describe, expect, test } from "vitest"
-import { sandboxParked, sandboxReturned } from "@clavia/tardigrade-code/sandbox"
+import { sandboxParked, sandboxReturned } from "@clavia/tardigrade-code/sandbox/service"
 import {
   DEFAULT_WORKER_LOADER_SANDBOX_POLICY,
   workerLoaderSandboxServiceFor,

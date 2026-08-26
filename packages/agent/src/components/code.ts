@@ -1,19 +1,23 @@
 import type { KeyValueStore } from "effect/unstable/persistence"
-import { intent, type Transition } from "@clavia/tardigrade-core/actor"
-import { composeComponents, type ComponentRequirements } from "@clavia/tardigrade-core/component"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/event-log"
-import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/events"
-import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execute"
-import { renderShape, renderSignature } from "@clavia/tardigrade-code/contract"
+import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
+import {
+  composeComponents,
+  inheritComponentContract,
+  type ComponentRequirements
+} from "@clavia/tardigrade-core/actor"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
+import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/execution/events"
+import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
+import { renderShape, renderSignature } from "@clavia/tardigrade-code/execution/contract"
 import {
   CODE_VIEW_ALGEBRA,
   type CodeComponent,
   type Package
-} from "@clavia/tardigrade-code/packages"
-import type { AgentComponent } from "../runtime/agent"
+} from "@clavia/tardigrade-code/package/definition"
+import type { AgentComponent, AgentView } from "../runtime/composition"
 import type { Answer, PendingCall } from "../runtime/tools"
-import type { ToolSpec } from "../request"
+import type { ToolSpec } from "../inference/request"
 
 export const DEFAULT_CODE_SUMMARY_MAX_LENGTH = 240
 
@@ -43,7 +47,7 @@ export const CODE_SYSTEM = `${CODE_SYSTEM_LEAD}\nnone`
 
 // codeSystemFor names each package and renders every documented method's input and output schema.
 // The declaration shown to the model is the same MethodDoc the dispatch funnel validates, so code
-// generation and execution share one calling convention (packages/code/src/contract.ts).
+// generation and execution share one calling convention (packages/code/src/execution/contract.ts).
 export const codeSystemFor = (packages: ReadonlyArray<Package<unknown>>): string =>
   `${CODE_SYSTEM_LEAD}\n${packages.length === 0 ? "none" : packages.map((pkg) => {
     const methods = Object.entries(pkg.docs ?? {}).map(
@@ -122,7 +126,7 @@ export const codeMode = <
     combined.derive(log).view.packages as unknown as ReadonlyArray<Package<ComponentR>>
 
   codeReactorFor(options.policy ?? {}, packagesOf([]))
-  return {
+  return inheritComponentContract<AgentView, R>({
     name: "code",
     keys: rootKeys(combined.keys),
     derive: (log) => {
@@ -145,5 +149,5 @@ export const codeMode = <
         ]
       }
     }
-  }
+  }, combined)
 }

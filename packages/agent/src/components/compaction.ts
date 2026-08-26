@@ -1,12 +1,12 @@
 import { Clock, Effect } from "effect"
-import { effect, type Reactor } from "@clavia/tardigrade-core/actor"
-import { compactionCompleted } from "../events"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { turnOf, turnView } from "@clavia/tardigrade-code/turns"
-import { projectedOutput } from "../output"
-import { Infer } from "../runtime/infer"
-import { modelRefOf, type ModelRef } from "../model"
-import type { AgentComponent } from "../runtime/agent"
+import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { compactionCompleted } from "../log/events"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
+import { projectedOutput } from "../output/contract"
+import { Infer } from "../inference/reactor"
+import { modelRefOf, type ModelRef } from "../inference/reference"
+import type { AgentComponent } from "../runtime/composition"
 
 // The compaction reactor: a pure observer of the context size, with the hysteresis design. A
 // guard fires compaction at a resolved tool round, any moment the open turn awaits no call, when
@@ -183,7 +183,7 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
     case "OutputRejected":
       // A rejected response and its reasons render while the correction is owed. A projected one
       // never reaches this function: the measure reads the same projection the render does
-      // (src/output.ts, projectedOutput).
+      // (src/output/contract.ts, projectedOutput).
       return String(v.text ?? "").length + JSON.stringify(v.errors ?? []).length
     case "OutputRetryRequested":
       return String(v.feedback ?? "").length
@@ -351,7 +351,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
   const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
-  // its rejected reply into a summary (src/output.ts, projectedOutput).
+  // its rejected reply into a summary (src/output/contract.ts, projectedOutput).
   const view = projectedOutput(log)
   if (!(firedUncovered(view) || (overContext(view, resolved) && atRoundBoundary(view)))) return []
   const cut = cutOf(view, resolved)

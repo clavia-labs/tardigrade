@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
-import { Event } from "@clavia/tardigrade-core/event"
+import { Event } from "@clavia/tardigrade-core/log/event"
 
 // The API as a value. Every JSON route is an HttpApiEndpoint with its path params, query, success
 // schema, and error schemas, so the router, the OpenAPI document, and the derived client all read
@@ -158,7 +158,7 @@ export type TurnStatus = typeof TurnStatus.Type
 
 // `epoch` is the execution epoch the turn's active attempt belongs to, zero until an operator has
 // resumed it. It is on the wire because resuming stamps the next one, and a caller that cannot read
-// the current epoch cannot name the next (client.ts, resume; packages/code/src/turns.ts,
+// the current epoch cannot name the next (client.ts, resume; packages/code/src/execution/turns.ts,
 // turnEpochOf).
 export const TurnView = Schema.Struct({
   turn: Schema.String,
@@ -203,7 +203,6 @@ export type MethodAccepted = typeof MethodAccepted.Type
 // MethodState is the durable state any declared actor method can expose on the wire.
 export const MethodState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending") }),
-  Schema.Struct({ status: Schema.Literal("blocked"), reason: Schema.String }),
   Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Unknown }),
   Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
 ]).annotate({ identifier: "MethodState" })
@@ -339,7 +338,7 @@ export type ModelCatalogPage = typeof ModelCatalogPage.Type
 
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
-    schema: Schema.Literal(2),
+    schema: Schema.Literal(3),
     name: Schema.String,
     module: Schema.String,
     digest: Schema.String
@@ -355,7 +354,7 @@ export type ActorArtifact = typeof ActorArtifact.Type
 // when the caller states none and otherwise passes the fact through untouched.
 //
 // Duplicate suppression is the actor's too, keyed by its own `keyOf`: a MessageReceived dedups on
-// `id`, so a retried brief is absorbed rather than started twice (packages/core/src/message.ts,
+// `id`, so a retried brief is absorbed rather than started twice (packages/core/src/communication/message.ts,
 // messageKeys; docs/how-to/server.md, "Redelivery is absorbed").
 export const Append = Schema.StructWithRest(
   Schema.Struct({ type: Schema.NonEmptyString }),

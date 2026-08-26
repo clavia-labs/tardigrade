@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import type { Event } from "../event"
+import type { Event } from "../log/event"
 import { mappedDirectory } from "./directory"
 import { actorIdOf, type ActorId } from "./endpoint"
 import { envelopeOf, isActorEnvelope, type ActorEnvelope } from "./envelope"
@@ -21,7 +21,6 @@ interface ParticipantSpec {
 interface EdgeSpec {
   readonly source: number
   readonly target: number
-  readonly rounds: number
 }
 
 interface GraphSpec {
@@ -53,12 +52,10 @@ const graphArbitrary: fc.Arbitrary<GraphSpec> = fc.uniqueArray(
       .filter((target) => target.id !== source.id)
       .map((target) => ({ source: source.id, target: target.id }))
   )
-  return fc.subarray(pairs, { minLength: 1, maxLength: Math.min(18, pairs.length) }).chain((edges) =>
-    fc.array(fc.integer({ min: 0, max: 6 }), { minLength: edges.length, maxLength: edges.length }).map((rounds) => ({
-      participants,
-      edges: edges.map((edge, index) => ({ ...edge, rounds: rounds[index]! }))
-    }))
-  )
+  return fc.subarray(pairs, { minLength: 1, maxLength: Math.min(18, pairs.length) }).map((edges) => ({
+    participants,
+    edges
+  }))
 })
 
 const identityOf = (id: number): ActorId => actorIdOf("graph", `participant-${id}`)
@@ -121,34 +118,34 @@ describe("communication over participant graphs", () => {
     )
   })
 
-  test("arbitrary escalation rounds return through every graph edge", async () => {
+  test("a run and its reciprocal budget call each return one terminal", async () => {
     await fc.assert(
       fc.asyncProperty(graphArbitrary, async (graph) => {
         const reports: ActorEnvelope[] = []
         for (const [index, edge] of graph.edges.entries()) {
-          const turn = `turn-${index}`
-          const accepted = linkOf(identityOf(edge.source), identityOf(edge.target))
-          const returned = reverseLink(accepted)
+          const run = `run-${index}`
+          const budget = `budget-${index}`
+          const runLink = linkOf(identityOf(edge.source), identityOf(edge.target))
+          const budgetLink = reverseLink(runLink)
           const ids = new Set<string>()
-          for (let round = 0; round <= edge.rounds; round += 1) {
-            const requesting = round < edge.rounds
+          for (const [call, accepted] of [[run, runLink], [budget, budgetLink]] as const) {
+            const returned = reverseLink(accepted)
             const event: MessageReceived = boundaryEvent({
-              turn,
-              round,
-              text: requesting ? `request ${round}` : "done",
-              outcome: requesting ? "requesting" : "completed",
+              turn: call,
+              round: 0,
+              text: "done",
+              outcome: "completed",
               from: `${returned.source.actor}:${returned.source.thread}`,
-              ...(requesting ? { data: { request: `${turn}/request/${round}`, round } } : {}),
-              at: round
+              at: index
             })
-            expect(event.id).toBe(boundaryId(turn, round))
+            expect(event.id).toBe(boundaryId(call, 0))
             ids.add(event.id)
             const report = envelopeOf(returned, event)
             expect(reverseLink(report.link)).toEqual(accepted)
             expect(report.link.target).toEqual(accepted.source)
             reports.push(report)
           }
-          expect(ids.size).toBe(edge.rounds + 1)
+          expect(ids).toEqual(new Set([boundaryId(run, 0), boundaryId(budget, 0)]))
         }
         await assertRouted(graph.participants, reports)
       }),

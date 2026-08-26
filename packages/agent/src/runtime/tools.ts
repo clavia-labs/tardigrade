@@ -1,6 +1,6 @@
-import { intent, type Transition, type Intent, type Reactor } from "@clavia/tardigrade-core/actor"
-import { toolReturned } from "../events"
-import type { Event } from "@clavia/tardigrade-core/event"
+import { intent, type Transition, type Intent, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { toolReturned } from "../log/events"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
 // PendingCall identifies the head unanswered ToolCalled event.
 export interface PendingCall {

@@ -81,9 +81,6 @@ describe("methodLines", () => {
     expect(methodLines("root", "m1", { status: "pending" })).toBe("root m1 pending")
   })
 
-  test("a blocked call prints its reason", () => {
-    expect(methodLines("root", "m1", { status: "blocked", reason: "budget" })).toBe("root m1 blocked\nbudget")
-  })
 })
 
 describe("methodsLines", () => {

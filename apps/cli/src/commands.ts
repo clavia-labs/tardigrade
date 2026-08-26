@@ -3,14 +3,14 @@ import { existsSync } from "node:fs"
 import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
-import { ACTOR_NAME_PATTERN, type ActorDefinition } from "tardie"
+import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
 import { NO_ANSWER, ProblemError, type ActorClient, type MethodState } from "@clavia/tardigrade-client"
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
 
-import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, loadBuiltActor } from "./build"
+import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActor } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
@@ -430,6 +430,24 @@ export const buildCommand = Command.make("build", {
     ])
   )
 
+export const lintCommand = Command.make("lint", {
+  entry: Argument.string("entry").pipe(Argument.withDescription("The actor source file to validate")),
+  json
+}, (flags) =>
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const linted = yield* Effect.tryPromise({
+      try: () => lintActor(flags.entry, { cwd: cli.cwd }),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf(linted) : lintSummary(linted))
+  })).pipe(
+    Command.withDescription("Validate an actor's component and method seams without writing an artifact."),
+    Command.withExamples([
+      { command: "tdg lint actor.ts", description: "Check one actor before building or deploying it" }
+    ])
+  )
+
 export const devCommand = Command.make("dev", {
   port: Flag.integer("port").pipe(
     Flag.withDescription("The port to listen on. Defaults to PORT, then the server's own default."),
@@ -514,7 +532,7 @@ export const devCommand = Command.make("dev", {
     const layer = yield* Effect.try({
       try: () => dev({
         config: config2,
-        actor: definition as ActorDefinition<ServerR>,
+        actor: definition as Actor<ServerR>,
         assets: stated(flags.ui),
         ...(flags.open ? { onListen: openBrowser } : {})
       }),
@@ -695,7 +713,7 @@ export const eventsCommand = Command.make("events", {
 export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
-    { group: "CREATE", commands: [initCommand, setupCommand, buildCommand] },
+    { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
     { group: "RUN", commands: [devCommand, callCommand] },
     { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
     { group: "INSPECT", commands: [lsCommand, eventsCommand] }

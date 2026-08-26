@@ -3,7 +3,7 @@ import type { SqlClient } from "effect/unstable/sql"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
 import { mkdir } from "node:fs/promises"
 import { dirname } from "node:path"
-import type { ActorRegistration, ActorRegistry } from "@clavia/tardigrade-core/actor-registry"
+import type { ActorRegistration, ActorRegistry } from "@clavia/tardigrade-core/actor/registry"
 
 // DEFAULT_ACTOR_REGISTRY_TABLE is the table used when a Bun registry does not select another table.
 export const DEFAULT_ACTOR_REGISTRY_TABLE = "actor_registry"

@@ -1,9 +1,9 @@
-import type { Event } from "@clavia/tardigrade-core/event"
-import { turnView } from "@clavia/tardigrade-code/turns"
-import { correctionAttemptsErrors, declaredOutputOf, type OutputFallback } from "../output"
-import { defineOutputFallback, type OutputFallbackComponent } from "../runtime/agent"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { turnView } from "@clavia/tardigrade-code/execution/turns"
+import { correctionAttemptsErrors, declaredOutputOf, type OutputFallback } from "../output/contract"
+import { defineOutputFallback, type OutputFallbackComponent } from "../runtime/composition"
 
-// RepairPolicy sets the correction limit and completed-history projection. `attempts` counts correction requests after the initial request (src/output.ts, projectedOutput).
+// RepairPolicy sets the correction limit and completed-history projection. `attempts` counts correction requests after the initial request (src/output/contract.ts, projectedOutput).
 export interface RepairPolicy {
   readonly attempts: number
   readonly projectHistory: boolean
@@ -36,7 +36,7 @@ export const repairFallback = (policy: Partial<RepairPolicy> = {}): OutputFallba
   }
 }
 
-// outputSystemFor returns the schema instruction used only in fallback mode (runtime/agent.ts, OutputFragment).
+// outputSystemFor returns the schema instruction used only in fallback mode (runtime/composition.ts, OutputFragment).
 export const outputSystemFor = (name: string, schema: unknown): string =>
   `Your final reply for this turn must be JSON conforming to the schema "${name}":\n${JSON.stringify(schema)}\nReply with that JSON alone: no prose around it, no code fence.`
 

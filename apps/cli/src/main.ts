@@ -2,7 +2,7 @@
 import { Effect, Layer } from "effect"
 import { Command } from "effect/unstable/cli"
 import { BunRuntime, BunServices } from "@effect/platform-bun"
-import { assertSupportedBun } from "@clavia/tardigrade-core/runtime"
+import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 
 import { tdg } from "./commands"
 import { layerCli } from "./services"
@@ -13,7 +13,7 @@ import { versionIn } from "./version"
 // without a process (commands.test.ts).
 
 // The process refuses to run on a runtime the framework cannot keep its promises on, rather than
-// failing later inside a turn (packages/core/src/runtime.ts).
+// failing later inside a turn (platform/bun/src/runtime.ts).
 assertSupportedBun()
 
 const version = await versionIn(import.meta.url)

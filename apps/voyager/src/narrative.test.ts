@@ -29,6 +29,10 @@ describe("summaryOf", () => {
       { type: "MessageReceived", id: "survey.0.reply", text: "ok", outcome: "completed", from: "bun:ag.survey.0", at },
       "reply · outcome: completed · from bun:ag.survey.0"
     ],
+    [
+      { type: "ResponseReceived", id: "survey.0.reply", method: "message", call: "survey.0", status: "completed", output: "ok", from: "bun:ag.survey.0", at },
+      "response · status: completed · bun:ag.survey.0"
+    ],
     [{ type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", at }, "attempt 2 · m1"],
     [{ type: "TextReturned", text: "thinking it over", at }, "thinking it over"],
     [
@@ -46,8 +50,7 @@ describe("summaryOf", () => {
     [{ type: "TurnCompleted", output: "the answer", at }, "the answer"],
     [{ type: "TurnFailed", error: "no mind", cause: "inference_error", at }, "inference_error · no mind"],
     [{ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at }, "m1 · epoch 0 to 1"],
-    [{ type: "ReplyDelivered", turn: "m1", to: "bun:ag.root", at }, "to bun:ag.root"],
-    [{ type: "ReplyDelivered", turn: "m1", at }, "settled locally"],
+    [{ type: "ResponseDelivered", method: "message", call: "m1", revision: "completed", at }, "message · m1 · completed"],
     [{ type: "BudgetExhausted", budget: 40, used: 41, at }, "used 41 of 40"],
     [{ type: "BudgetRequested", callId: "b1", reason: "one more shard", amount: 10, at }, "asks 10 · one more shard"],
     [{ type: "BudgetGranted", amount: 10, at }, "granted 10"],
@@ -223,7 +226,7 @@ describe("fieldsOf", () => {
   })
 
   test("an absent optional is not a field, and the instant is the only clock", () => {
-    expect(keysOf({ type: "ReplyDelivered", turn: "m1", to: undefined, at: stamped })).toEqual(["turn", "at"])
+    expect(keysOf({ type: "ResponseDelivered", method: "message", call: "m1", revision: "completed", at: stamped })).toEqual(["method", "call", "revision", "at"])
     expect(TIME_FIELDS).toEqual(["at"])
   })
 

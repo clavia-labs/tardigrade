@@ -6,7 +6,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
@@ -19,9 +19,9 @@ import {
   type ActorMethods,
   type ModelRef,
   type ActorArtifactManifest,
-  type ActorDefinition
+  type Actor
 } from "tardie"
-import type { Action } from "tardie/events"
+import type { Action } from "tardie/log/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
@@ -35,7 +35,7 @@ import {
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ModelConfig, type ModelCredentials, type ServerConfigValue } from "./config"
 import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
-import { DriverGauge } from "./http"
+import { DriverGauge } from "./driver-gauge"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
 // routes speak thread ids; the lane a host knows lives here and nowhere else, so a route can never
@@ -44,7 +44,7 @@ import { DriverGauge } from "./http"
 // LANE_PREFIX is the id-to-lane map (apps-server-spec.md, "Resources"). A lane outside it belongs
 // to something other than a thread and never appears in a listing. The prefix stays `ag.` while the
 // API's noun is the thread, because the lane is where the agent assembly runs, and that assembly
-// mints its own child lanes under the same prefix (packages/agent/src/spawn.ts, `sibling`). Renaming
+// mints its own child lanes under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
 // it would rename addresses a spawn already wrote into a durable log.
 export const LANE_PREFIX = "ag."
 
@@ -71,7 +71,7 @@ export interface ActorThreads {
   readonly settled: Effect.Effect<void>
 }
 
-// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/agent/src/method.ts, ActorMethodDeclaration).
+// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/core/src/actor/method/definition.ts, ActorMethodDeclaration).
 export class Threads extends Context.Service<
   Threads,
   {
@@ -105,7 +105,7 @@ interface SelectedModel {
   readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
-  readonly pricing?: import("tardie/usage").ModelPricing
+  readonly pricing?: import("tardie/inference/usage").ModelPricing
   readonly catalogRevision: string
 }
 
@@ -292,21 +292,20 @@ interface ActorRuntime {
 const digestOf = (module: string): string =>
   `sha256:${createHash("sha256").update(module).digest("hex")}`
 
-const definitionOf = async (modulePath: string, expected: ActorArtifactManifest): Promise<ActorDefinition<ServerR>> => {
+const definitionOf = async (modulePath: string, expected: ActorArtifactManifest): Promise<Actor<ServerR>> => {
   const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?digest=${encodeURIComponent(expected.digest)}`)
   const definition = (loaded as { readonly default?: unknown }).default
   if (typeof definition !== "object" || definition === null) {
-    throw new Error("actor artifact must default export defineActor({ name, methods, actor })")
+    throw new Error("actor artifact must default export actor({ name, methods, components })")
   }
-  const candidate = definition as Partial<ActorDefinition<ServerR>>
+  const candidate = definition as Partial<Actor<ServerR>>
   if (candidate.name !== expected.name || !ACTOR_NAME_PATTERN.test(expected.name)) {
     throw new Error(`actor artifact name does not match ${JSON.stringify(expected.name)}`)
   }
   if (
-    typeof candidate.actor !== "object" ||
-    candidate.actor === null ||
-    !Array.isArray(candidate.actor.reactors) ||
-    typeof candidate.actor.keyOf !== "function"
+    !Array.isArray(candidate.reactors) ||
+    typeof candidate.keyOf !== "function" ||
+    !Array.isArray(candidate.components)
   ) {
     throw new Error("actor artifact does not contain an Actor")
   }
@@ -314,18 +313,18 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
     throw new Error("actor artifact does not declare its methods")
   }
   actorMethodsOf(candidate.methods as ActorMethods)
-  return candidate as ActorDefinition<ServerR>
+  return candidate as Actor<ServerR>
 }
 
 const runtimeOf = async (
   summary: ActorSummary,
-  definition: ActorDefinition<ServerR>,
+  definition: Actor<ServerR>,
   log: string,
   lane: ReturnType<typeof layerLane>,
   providers: ReadonlyArray<Provider>,
   maxConcurrentLanes: number
 ): Promise<ActorRuntime> => {
-  const actor = definition.actor
+  const actor = definition
   const host: BunHost = await createBunHost<ServerR>({
     log,
     principal: summary.name,
@@ -431,7 +430,7 @@ export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "providers">
 
 // layerActorThreads mounts one deployed definition as the runtime.
 export const layerActorThreads = (
-  definition: ActorDefinition<ServerR>,
+  definition: Actor<ServerR>,
   options: ActorThreadsOptions = {}
 ): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(Effect.gen(function*() {
@@ -512,7 +511,7 @@ const make = (options: ThreadsOptions) =>
       mutations = result.then(() => undefined, () => undefined)
       return result
     }
-    const open = async (summary: ActorSummary, definition: ActorDefinition<ServerR>, log: string): Promise<ActorRuntime> => {
+    const open = async (summary: ActorSummary, definition: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
       const runtime = await runtimeOf(
         summary,
         definition,
@@ -525,7 +524,7 @@ const make = (options: ThreadsOptions) =>
       await runRegistry(registry.put(summary))
       return runtime
     }
-    const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: ActorDefinition<ServerR> }> => {
+    const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: Actor<ServerR> }> => {
       const artifact = await manifestOf(directory)
       if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
       const definition = await definitionOf(join(directory, artifact.manifest.module), artifact.manifest)
@@ -534,7 +533,7 @@ const make = (options: ThreadsOptions) =>
         definition
       }
     }
-    const replace = async (summary: ActorSummary, definition: ActorDefinition<ServerR>): Promise<void> => {
+    const replace = async (summary: ActorSummary, definition: Actor<ServerR>): Promise<void> => {
       const current = runtimes.get(summary.name)
       if (current?.summary.digest === summary.digest) return
       if (current !== undefined) {

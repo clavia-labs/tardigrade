@@ -31,7 +31,7 @@ tdg setup provider openai '{"env":["OPENAI_API_KEY"]}'
 tdg setup default --provider openai --model gpt-5.2
 ```
 
-Edit `actor.ts`. Keep the name passed to `defineActor` stable because builds, calls, deployments, and stored traces use it as actor identity. Add or remove package components in `codeMode([...components])` when the task needs different capabilities.
+Edit `actor.ts`. Keep the name passed to `actor` stable because builds, calls, deployments, and stored traces use it as actor identity. Add or remove package components in `codeMode([...components])` when the task needs different capabilities.
 
 Build and serve from the actor directory:
 

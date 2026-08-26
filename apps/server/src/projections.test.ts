@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { replyId } from "@clavia/tardigrade-core/message"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { replyId } from "@clavia/tardigrade-core/communication/message"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 import { statusOf, summaryOf, treeOf } from "./projections"
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
 // below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
-// packages/code/src/events.ts), trimmed to the fields a projection reads.
+// packages/code/src/execution/events.ts), trimmed to the fields a projection reads.
 
 let clock = 0
 const at = () => ++clock

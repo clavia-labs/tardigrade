@@ -1,8 +1,8 @@
 import { DurableObject } from "cloudflare:workers"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { actor, agentMethods, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, reply, workspacePackage, type ActorDefinition, type ActorMethods, type ModelRef } from "tardie"
-import type { Action } from "tardie/events"
+import { actor, agentMethods, agentsPackage, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, outputValidateOnce, workspacePackage, type Actor, type ActorMethods, type ModelRef } from "tardie"
+import type { Action } from "tardie/log/events"
 import { infer } from "@clavia/tardigrade-model/model"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import {
@@ -13,15 +13,15 @@ import {
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
 import { treeOf, type ThreadNode, type ThreadSummary } from "@clavia/tardigrade-server/projections"
-import type { Event } from "@clavia/tardigrade-core/event"
-import { traceparentOf } from "@clavia/tardigrade-core/trace"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
 import { DEFAULT_MAX_CONCURRENT_LANES, driverPolicyOf } from "@clavia/tardigrade-host/driver"
-import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox"
+import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
   layerWorkerLoaderSandbox,
   type SandboxBridgeCall,
@@ -227,22 +227,25 @@ function defaultAssemblyOf(
   const selected = models?.default ?? { provider: "unconfigured", model_id: "unconfigured" }
   const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
   const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
-  return actor(inferAgent([
-    budget([codeMode([agentsPackage(), workspacePackage(), fetchPackage()])]),
-    reply,
-    compaction({
-      ...(models === undefined ? {} : {
-        contextWindowTokens: (model: ModelRef | undefined) =>
-          selectedModelFrom(models, catalog, model ?? models.default).contextWindowTokens
+  return actor({
+    name: DEFAULT_ACTOR_NAME,
+    methods: agentMethods,
+    components: [inferAgent([
+      budget([codeMode([agentsPackage(), workspacePackage(), fetchPackage()])]),
+      compaction({
+        ...(models === undefined ? {} : {
+          contextWindowTokens: (model: ModelRef | undefined) =>
+            selectedModelFrom(models, catalog, model ?? models.default).contextWindowTokens
+        }),
+        ...(fireRatio === undefined ? {} : { fireRatio }),
+        ...(keepRatio === undefined ? {} : { keepRatio })
       }),
-      ...(fireRatio === undefined ? {} : { fireRatio }),
-      ...(keepRatio === undefined ? {} : { keepRatio })
-    }),
-    outputValidateOnce
-  ], {
-    provider: selected.provider,
-    default_model: selected.model_id
-  }))
+      outputValidateOnce
+    ], {
+      provider: selected.provider,
+      default_model: selected.model_id
+    })]
+  })
 }
 
 const assemblyOf = (
@@ -719,11 +722,11 @@ const worker = {
 
 // cloudflareWorker mounts a defined actor into the Worker and its Durable Object host (test/actor.workers.ts, "a mounted actor exposes durable methods").
 export const cloudflareWorker = <R, const Methods extends ActorMethods>(
-  definition: ActorDefinition<R, Methods>
+  definition: Actor<R, Methods>
 ): ExportedHandler<Env> => {
   mountedActor = {
     name: definition.name,
-    actor: definition.actor as unknown as DefaultAssembly,
+    actor: definition as unknown as DefaultAssembly,
     methods: definition.methods
   }
   deployedActor = definition.name

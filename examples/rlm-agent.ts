@@ -4,22 +4,25 @@
 
 // The workspace names resolve in this repository. Against the published package the last two
 // are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
-import { actor, infer as inferAgent, agentsPackage, boundaryOf, budget, codeMode, compaction, outputValidateOnce, reply, workspacePackage } from "tardie"
+import { actor, agentMethods, infer as inferAgent, agentsPackage, boundaryOf, budget, codeMode, compaction, outputValidateOnce, workspacePackage } from "tardie"
 import { infer } from "@clavia/tardigrade-model/model"
 import { createBunHost } from "@clavia/tardigrade-bun/host"
 
 // The work surface: code mode with the spawn and workspace packages in scope. The packages are
 // values, so the model's system fragment lists them and the assembly's requirements carry their
-// needs (Router, Self, and Facets for spawn; the spill store for workspace). The Bun host binds
+// needs (Router and Self for spawn; the spill store for workspace). The Bun host binds
 // all of those per lane.
 const actorModel = { provider: "openai", default_model: "gpt-5.2" } as const
 
-const rlm = actor(inferAgent([
-  budget([codeMode([agentsPackage(), workspacePackage()])]), // the per-turn code budget, inherited by spawned children
-  reply, // reports each turn's terminal to whoever asked
-  compaction(), // bounded model context over long investigations
-  outputValidateOnce // handles structured results without adding a retry
-], actorModel))
+const rlm = actor({
+  name: "researcher",
+  methods: agentMethods,
+  components: [inferAgent([
+    budget([codeMode([agentsPackage(), workspacePackage()])]), // the per-turn code budget, inherited by spawned children
+    compaction(), // bounded model context over long investigations
+    outputValidateOnce // handles structured results without adding a retry
+  ], actorModel)]
+})
 
 const model = infer({
   baseUrl: "https://api.openai.com/v1",

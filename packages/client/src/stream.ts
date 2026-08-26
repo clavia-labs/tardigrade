@@ -1,4 +1,4 @@
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 
 import { V1_PREFIX, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"

@@ -16,7 +16,8 @@ import {
 } from "./config"
 import { Threads } from "./host"
 import { layerModelCatalogUnavailable } from "./catalog"
-import { ALLOWED_HEADERS, layerGaugeResting, serve, PROBLEM_CONTENT_TYPE, DriverGauge, type Health } from "./http"
+import { ALLOWED_HEADERS, serve, PROBLEM_CONTENT_TYPE, type Health } from "./http"
+import { DriverGauge, layerGaugeResting } from "./driver-gauge"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
 // a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out

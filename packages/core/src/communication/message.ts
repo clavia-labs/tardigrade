@@ -1,6 +1,6 @@
 import { Schema } from "effect"
-import type { Event } from "../event"
-import type { KeyFragment } from "../event-log"
+import type { Event } from "../log/event"
+import type { KeyFragment } from "../log"
 
 // MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's brief, and a reply coming home are all this event. id is the dedup key everywhere. source names the arriving connection; chat and sender are provider coordinates; from is the delivering actor's address; input is a run's instance input; data is the provider's structured record. sender and from are separate namespaces on purpose: sender authored the message in the world, from delivered it here, receivers route by from and criteria match sender, so neither can impersonate the other.
 export const MessageReceived = Schema.Struct({
@@ -13,7 +13,7 @@ export const MessageReceived = Schema.Struct({
   from: Schema.optional(Schema.String),
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
-  // outcome marks a terminal report whose reaction turn settles locally without sending a reply (packages/agent/src/components/reply.test.ts, "terminal reports cannot start reply chains").
+  // outcome marks a method response. Method responses are not method calls because no declared method projects state for their ids (actor/method/response.test.ts, "returns a terminal through the accepted call link").
   outcome: Schema.optional(Schema.Literals(["completed", "failed", "requesting"])),
   input: Schema.optional(Schema.Unknown),
   // model carries consumer-owned selection data. The receiving actor defines its shape and meaning.

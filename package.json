@@ -8,19 +8,21 @@
   "workspaces": [
     "packages/*",
     "platform/*",
-    "apps/*"
+    "apps/*",
+    "e2e"
   ],
   "scripts": {
     "tdg": "bun run apps/cli/src/main.ts",
     "cli:build": "bun run pack",
     "cli:check": "bun run gate --only=lint:effect:apps:cli,typecheck:app-cli,test:app-cli",
     "gate": "bun run tools/gate.ts",
+    "e2e": "bun test e2e",
     "lint": "oxlint",
     "lint:effect": "bun run gate --only=lint:effect",
     "tla": "bun run tools/tla.ts",
     "typecheck": "tsc --noEmit && bun run --filter './packages/*' typecheck",
     "test": "bun run --filter './packages/*' test",
-    "knip": "knip",
+    "knip": "knip --no-progress --treat-config-hints-as-errors --treat-tag-hints-as-errors",
     "setup": "git config core.hooksPath .githooks",
     "pack": "bun run tools/publish.ts --dry-run"
   },

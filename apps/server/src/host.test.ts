@@ -1,16 +1,16 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import type { Event } from "@clavia/tardigrade-core/event"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { Ingress } from "@clavia/tardigrade-host/ingress"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
 import { Infer, type InferRequest } from "tardie"
-import type { Action } from "tardie/events"
+import type { Action } from "tardie/log/events"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
 import { Threads, layerThreads, selectedModelFrom } from "./host"
-import { DriverGauge } from "./http"
+import { DriverGauge } from "./driver-gauge"
 import { layerModelCatalogUnavailable } from "./catalog"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
@@ -48,7 +48,7 @@ const config = layerConfig(readConfig({
 }))
 
 // The body runs with both services the layer provides: the threads it drives, and the gauge
-// /healthz reads over the same driver (http.ts, DriverGauge).
+// /healthz reads over the same driver (driver-gauge.ts, DriverGauge).
 const running = <A, E>(
   body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>,
   options: {
@@ -69,7 +69,7 @@ const running = <A, E>(
   ) as Promise<A>
 
 // One brief, as the event it is. The platform requires only `type`; `id` and `text` are the
-// assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/message.ts).
+// assembly's fields, and `id` is the key its own `keyOf` dedups on (packages/core/src/communication/message.ts).
 const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, text })
 
 describe("model selection", () => {
@@ -152,7 +152,7 @@ describe("model selection", () => {
 describe("the threads service", () => {
   test("retains the built-in actor methods", async () => {
     const methods = await running((threads) => Effect.succeed(Object.keys(threads.methods)))
-    expect(methods).toEqual(["message"])
+    expect(methods).toEqual(["message", "requestBudget"])
   })
 
   test("the configured lane capacity runs model calls concurrently", async () => {

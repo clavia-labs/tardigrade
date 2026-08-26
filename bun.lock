@@ -20,13 +20,15 @@
       "name": "@clavia/tardigrade-cli",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-server": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.110",
         "@effect/platform-node-shared": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
         "jsonc-parser": "3.3.1",
+        "tardie": "workspace:*",
       },
     },
     "apps/server": {
@@ -63,6 +65,17 @@
         "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
         "vite": "^8.0.16",
+      },
+    },
+    "e2e": {
+      "name": "@clavia/tardigrade-e2e",
+      "devDependencies": {
+        "@clavia/tardigrade-code": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
+        "effect": "4.0.0-rc.110",
+        "fast-check": "^4.9.0",
+        "tardie": "workspace:*",
       },
     },
     "packages/agent": {
@@ -165,6 +178,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+        "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@smithy/fetch-http-handler": "^5.6.3",
         "@smithy/node-http-handler": "^4.11.2",
@@ -258,6 +272,8 @@
     "@clavia/tardigrade-code": ["@clavia/tardigrade-code@workspace:packages/code"],
 
     "@clavia/tardigrade-core": ["@clavia/tardigrade-core@workspace:packages/core"],
+
+    "@clavia/tardigrade-e2e": ["@clavia/tardigrade-e2e@workspace:e2e"],
 
     "@clavia/tardigrade-host": ["@clavia/tardigrade-host@workspace:packages/host"],
 

@@ -1,0 +1,17 @@
+{
+  "name": "@clavia/tardigrade-e2e",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "@clavia/tardigrade-code": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-host": "workspace:*",
+    "effect": "4.0.0-rc.110",
+    "fast-check": "^4.9.0",
+    "tardie": "workspace:*"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  }
+}
