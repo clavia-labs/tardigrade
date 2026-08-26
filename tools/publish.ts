@@ -1,4 +1,4 @@
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises"
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -225,6 +225,8 @@ try {
       "./runtime/*": "./src/agent/runtime/*.ts",
       "./core/actor": "./src/core/actor/index.ts",
       "./core/actor/*": "./src/core/actor/*.ts",
+      "./core/actor/method": "./src/core/actor/method/index.ts",
+      "./core/actor/method/*": "./src/core/actor/method/*.ts",
       "./core/communication": "./src/core/communication/index.ts",
       "./core/communication/*": "./src/core/communication/*.ts",
       "./core/log": "./src/core/log/index.ts",
@@ -254,6 +256,15 @@ try {
     dependencies: dependencyUnion(packages.map((source) => source.pkg))
   }
   await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
+
+  // The staged package must resolve its rewritten self-imports through the public export map.
+  const stagedModules = join(stage, "node_modules")
+  await symlink(join(root, "node_modules"), stagedModules, "dir")
+  try {
+    await run([process.execPath, "-e", "await import('tardie')"], stage)
+  } finally {
+    await rm(stagedModules)
+  }
 
   const filename = await output(["bun", "pm", "pack", "--destination", destination, "--quiet", "--ignore-scripts"], stage)
   const tarball = isAbsolute(filename) ? filename : join(destination, filename)
