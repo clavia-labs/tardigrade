@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactElement } from "react"
+import { useEffect, useRef, useState, type ReactElement } from "react"
 import { ComponentBridge } from "./ComponentBridge"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
@@ -16,6 +16,8 @@ const eventProjections: Readonly<Record<string, { readonly effect?: string; read
   "04": { effect: "model.generate(log)", result: "TurnCompleted", target: "05" },
   "05": { result: "[]", target: undefined }
 }
+const HOW_TRACE_SEQUENCE = ["01", "02", "03", "04", "05"] as const
+const HOW_TRACE_STEP_MS = 760
 
 const Mark = (): ReactElement => (
   <svg className="mark" viewBox="36 62 210 136" aria-hidden="true">
@@ -374,14 +376,56 @@ const CodeExample = (): ReactElement => {
 
 const HowItWorks = (): ReactElement => {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null)
-  const selectEvent = (sequence: string): void => setSelectedEvent((current) => current === sequence ? null : sequence)
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const autoplayTimerRef = useRef<number | null>(null)
+  const hasAutoplayedRef = useRef(false)
+  const cancelAutoplay = (): void => {
+    if (autoplayTimerRef.current === null) return
+    window.clearTimeout(autoplayTimerRef.current)
+    autoplayTimerRef.current = null
+  }
+  const selectEvent = (sequence: string): void => {
+    cancelAutoplay()
+    setSelectedEvent((current) => current === sequence ? null : sequence)
+  }
   const projection = selectedEvent === null ? undefined : eventProjections[selectedEvent]
+
+  useEffect(() => {
+    const section = sectionRef.current
+    if (section === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting || hasAutoplayedRef.current) return
+      hasAutoplayedRef.current = true
+      observer.disconnect()
+      let index = 0
+      const advance = (): void => {
+        const sequence = HOW_TRACE_SEQUENCE[index]
+        if (sequence === undefined) {
+          setSelectedEvent(null)
+          autoplayTimerRef.current = null
+          return
+        }
+        setSelectedEvent(sequence)
+        index += 1
+        autoplayTimerRef.current = window.setTimeout(advance, HOW_TRACE_STEP_MS)
+      }
+      autoplayTimerRef.current = window.setTimeout(advance, 180)
+    }, { threshold: 0.35 })
+
+    observer.observe(section)
+    return () => {
+      observer.disconnect()
+      cancelAutoplay()
+    }
+  }, [])
 
   useEffect(() => {
     if (selectedEvent === null) return
     const clearSelection = (event: PointerEvent): void => {
       const target = event.target
       if (target instanceof Element && target.closest(".event-log-row") !== null) return
+      cancelAutoplay()
       setSelectedEvent(null)
     }
     document.addEventListener("pointerdown", clearSelection)
@@ -389,7 +433,7 @@ const HowItWorks = (): ReactElement => {
   }, [selectedEvent])
 
   return (
-    <section className="how-it-works">
+    <section className="how-it-works" ref={sectionRef}>
       <div className="how-inner">
         <div className="how-copy">
           <h2>How it works</h2>
@@ -397,7 +441,7 @@ const HowItWorks = (): ReactElement => {
         </div>
         <div className="event-table-card">
           <div className={`actor-world-grid${projection === undefined ? "" : " is-tracing"}`}>
-            {selectedEvent === null || projection === undefined ? null : <FlowOverlay selectedSequence={selectedEvent} targetSequence={projection.target} />}
+            {selectedEvent === null || projection === undefined ? null : <FlowOverlay selectedSequence={selectedEvent} targetSequence={projection.target} key={selectedEvent} />}
             <div className="actor-log-panel">
               <IsometricEventLog selectedSequence={selectedEvent} derivedSequence={projection?.target} onSelect={selectEvent} />
               <span className="diagram-column-label">Log</span>

@@ -92,9 +92,9 @@ export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayPro
           <path d="M0 0L8 4L0 8Z" />
         </marker>
       </defs>
-      <path d={outward} />
-      <path className="flow-world-path" d={effect} />
-      {derived === undefined ? null : <path d={derived} />}
+      <path d={outward} pathLength="1" />
+      <path className="flow-world-path" d={effect} pathLength="1" />
+      {derived === undefined ? null : <path d={derived} pathLength="1" />}
     </svg>
   )
 }
