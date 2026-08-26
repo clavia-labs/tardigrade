@@ -11,6 +11,7 @@ import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 import { hydrate, refs, spill } from "@clavia/tardigrade-code/storage/store"
+import { jsSandboxService, Sandbox } from "@clavia/tardigrade-code/sandbox/service"
 
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/package/workspace"
 
@@ -74,6 +75,43 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("runs actor code in its process sandbox", async () => {
+    const actor: Actor = {
+      keyOf,
+      reactors: [(events) => events
+        .filter((event) => event.type === "MessageReceived")
+        .map((event) => {
+          const id = String((event as { id?: unknown }).id)
+          return effect({
+            key: `dn:${id}`,
+            input: id,
+            act: (input: string) => Effect.gen(function* () {
+              const sandbox = yield* Sandbox
+              const outcome = yield* sandbox.run("return typeof process", {})
+              return [{ type: "Done", id: input, value: outcome.result, at: 1 } as Event]
+            })
+          })
+        })]
+    }
+    const h = await createBunHost({
+      log: freshPath(),
+      actorFor: () => actor,
+      keyOf,
+      layersFor: () => Layer.succeed(Sandbox, jsSandboxService)
+    })
+
+    await h.commitRoot("bun:isolated", { type: "MessageReceived", id: "isolated", at: 0 } as Event)
+    await h.drive()
+
+    expect(await h.read("isolated")).toContainEqual({
+      type: "Done",
+      id: "isolated",
+      value: "undefined",
+      at: 1
+    })
+    await h.close()
+  })
+
   test("settles distinct lanes up to the configured capacity", async () => {
     const release = signal()
     const twoStarted = signal()
