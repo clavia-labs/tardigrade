@@ -318,6 +318,19 @@ h1 span { display: block; white-space: nowrap; }
 .provider-icon-celld svg { width: 44px; height: 44px; fill: #dce9df; }
 .provider-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .provider:active { transform: scale(.98); }
+.site-footer { border-top: 1px dashed rgb(36 80 255 / 36%); background: var(--bg); }
+.footer-inner { width: min(100%, var(--container)); margin: 0 auto; padding: 54px var(--gutter) 60px; display: flex; align-items: center; justify-content: space-between; gap: 36px; }
+.footer-brand { display: inline-flex; align-items: center; gap: 13px; color: var(--ink); font-family: var(--brand); font-size: 30px; font-weight: 600; letter-spacing: -.035em; transform-origin: left center; }
+.footer-brand .mark { width: 44px; height: 33px; }
+.footer-links { display: flex; flex-wrap: wrap; gap: 26px; color: var(--ink-2); font-size: 14px; }
+.footer-links a { display: inline-flex; align-items: center; gap: 8px; transition: color 160ms ease; }
+.footer-links svg { width: 18px; height: 18px; color: var(--faint); }
+.site-footer.is-visible .footer-brand .mark path { animation: mark-wave 440ms var(--ease-out) both; }
+.site-footer.is-visible .footer-brand .mark path:nth-child(5) { animation-delay: 0ms; }
+.site-footer.is-visible .footer-brand .mark path:nth-child(4) { animation-delay: 45ms; }
+.site-footer.is-visible .footer-brand .mark path:nth-child(3) { animation-delay: 90ms; }
+.site-footer.is-visible .footer-brand .mark path:nth-child(2) { animation-delay: 135ms; }
+.site-footer.is-visible .footer-brand .mark path:nth-child(1) { animation-delay: 180ms; }
 .guide-page { min-height: calc(100vh - 64px); overflow: visible; background: var(--bg); }
 .guide-shell { width: min(100%, var(--container)); min-height: calc(100vh - 64px); margin: 0 auto; padding: 0 var(--gutter); display: grid; grid-template-columns: 240px minmax(0, 760px); gap: 80px; }
 .guide-sidebar { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 68px 36px 80px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: start; gap: 18px; border-right: 1px dashed rgb(36 80 255 / 36%); color: var(--ink-2); font-size: 15px; }
@@ -533,6 +546,7 @@ h1 span { display: block; white-space: nowrap; }
   .install-command button:hover { background: var(--moss-wash); }
   .harness-button:hover { color: var(--ink); }
   .rlm-reading a:hover { background: var(--moss-wash); }
+  .footer-links a:hover { color: var(--moss-ink); }
 }
 
 @media (max-width: 800px) {
@@ -687,6 +701,9 @@ h1 span { display: block; white-space: nowrap; }
   .provider-icon { border-radius: 12px; }
   .provider-icon img, .provider-icon svg { width: 32px; height: 32px; }
   .provider-icon-celld svg { width: 30px; height: 30px; }
+  .footer-inner { padding-top: 42px; padding-bottom: 46px; align-items: flex-start; flex-direction: column; gap: 24px; }
+  .footer-brand { font-size: 26px; }
+  .footer-brand .mark { width: 38px; height: 29px; }
 }
 
 @media (max-width: 390px) {
@@ -697,4 +714,5 @@ h1 span { display: block; white-space: nowrap; }
   .button, .harness-button { transition-duration: .01ms; }
   .brand:hover .mark path { animation: none; }
   .flow-overlay > path { stroke-dashoffset: 0; animation: none; }
+  .site-footer.is-visible .footer-brand .mark path { animation: none; }
 }

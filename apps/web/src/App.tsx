@@ -43,6 +43,18 @@ const Discord = (): ReactElement => (
   </svg>
 )
 
+const GuideIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="none" stroke="currentColor" strokeLinecap="square" strokeWidth="1.6" d="M4 5.5c2.7-.8 5.3-.3 8 1.5v12c-2.7-1.8-5.3-2.3-8-1.5Zm16 0c-2.7-.8-5.3-.3-8 1.5v12c2.7-1.8 5.3-2.3 8-1.5Z" />
+  </svg>
+)
+
+const ConsoleIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true">
+    <path fill="none" stroke="currentColor" strokeLinecap="square" strokeWidth="1.6" d="M3.5 5.5h17v13h-17zM7 10l2 2-2 2m5 0h4" />
+  </svg>
+)
+
 const CopyIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M9 8h9v11H9zM6 16H5V5h9v1" />
@@ -1015,6 +1027,37 @@ const ConsolePage = (): ReactElement => (
   </main>
 )
 
+const SiteFooter = (): ReactElement => {
+  const footerRef = useRef<HTMLElement | null>(null)
+  const [entered, setEntered] = useState(false)
+
+  useEffect(() => {
+    const footer = footerRef.current
+    if (footer === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry.isIntersecting) return
+      setEntered(true)
+      observer.disconnect()
+    }, { threshold: 0.55 })
+    observer.observe(footer)
+    return () => observer.disconnect()
+  }, [])
+
+  return (
+    <footer className={`site-footer${entered ? " is-visible" : ""}`} ref={footerRef}>
+      <div className="footer-inner">
+        <a className="footer-brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
+        <nav className="footer-links" aria-label="Footer navigation">
+          <a href="/guide"><GuideIcon />Guide</a>
+          <a href="/console"><ConsoleIcon />Console</a>
+          <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
+          <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
+        </nav>
+      </div>
+    </footer>
+  )
+}
+
 export const App = (): ReactElement => {
   const guide = window.location.pathname === "/guide" || window.location.pathname.startsWith("/guide/")
   const cli = window.location.pathname === "/cli" || window.location.pathname.startsWith("/cli/")
@@ -1068,6 +1111,7 @@ export const App = (): ReactElement => {
       <Durability />
       <Observability />
       <Deployments />
+      <SiteFooter />
     </main>}
   </>
 }
