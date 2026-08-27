@@ -411,7 +411,9 @@ const HowItWorks = (): ReactElement => {
 
   useEffect(() => {
     const section = sectionRef.current
-    if (section === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
+    const narrowScreen = window.matchMedia("(max-width: 1140px)")
+    if (section === null || reducedMotion.matches || narrowScreen.matches) return
 
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting || hasAutoplayedRef.current) return
@@ -432,10 +434,21 @@ const HowItWorks = (): ReactElement => {
       autoplayTimerRef.current = window.setTimeout(advance, 180)
     }, { threshold: 0.35 })
 
+    const stopAutoplay = (): void => {
+      if (!reducedMotion.matches && !narrowScreen.matches) return
+      observer.disconnect()
+      cancelAutoplay()
+      setSelectedEvent(null)
+    }
+
     observer.observe(section)
+    reducedMotion.addEventListener("change", stopAutoplay)
+    narrowScreen.addEventListener("change", stopAutoplay)
     return () => {
       observer.disconnect()
       cancelAutoplay()
+      reducedMotion.removeEventListener("change", stopAutoplay)
+      narrowScreen.removeEventListener("change", stopAutoplay)
     }
   }, [])
 
