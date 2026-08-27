@@ -27,8 +27,8 @@ export const ComponentBridge = (): ReactElement => (
       <path d="M160 248C150 268 170 298 160 316" />
     </g>
     <g className="bridge-labels bridge-labels-mobile">
-      <text x="198" y="54">events</text>
-      <text x="198" y="278">effects</text>
+      <text x="188" y="48">events</text>
+      <text x="188" y="282">effects</text>
     </g>
   </svg>
 )
