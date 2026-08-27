@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/clavia-labs/tardigrade/compare/v0.11.0...v0.12.0) (2026-08-27)
+
+
+### Features
+
+* **cloudflare:** expose application layers ([#285](https://github.com/clavia-labs/tardigrade/issues/285)) ([040564f](https://github.com/clavia-labs/tardigrade/commit/040564f7f9be0e2333a2c01f2680189068cdf906))
+
 ## [0.11.0](https://github.com/clavia-labs/tardigrade/compare/v0.10.1...v0.11.0) (2026-08-27)
 
 
