@@ -15,12 +15,21 @@ import {
   type ActorId
 } from "@clavia/tardigrade-core/communication/endpoint"
 import { decodeOutput, outputFrom, type OutputContract } from "../output/contract"
-import { modelRefOf, type ModelRef } from "../inference/reference"
+import { modelRefOf } from "../inference/reference"
+import {
+  applyModelPolicy,
+  DEFAULT_MODEL_POLICY,
+  modelAllowedBy,
+  modelPolicyOf,
+  modelPolicyOverrideOf,
+  type ModelPolicy,
+  type ModelPolicyOverride
+} from "../inference/access"
 
-// The agents package: ad-hoc agents, reachable from code like any other package. One verb with a
-// delivery mode: `agents.run({text})` runs a fresh agent to quiescence and returns its terminal;
-// `agents.run({text, background: true})` delivers the brief and returns a pending handle, and
-// `agents.result({id})` awaits that handle's reply later.
+// agentsPackage provides model catalog discovery and ad-hoc agents. `agents.providers` and
+// `agents.models` search the available providers and models. `agents.run({text})` runs a fresh agent to
+// quiescence and returns its terminal; `agents.run({text, background: true})` delivers the brief
+// and returns a pending handle, and `agents.result({id})` awaits that handle's reply later.
 //
 // Every call is its own agent: the child's identity is the call's id, so a Promise.all of five
 // runs is five agents by construction, and no name exists to collide on. A persistent named
@@ -57,8 +66,10 @@ export interface SpawnOptions {
   // that declared it. A raw schema stays reachable and is preflighted instead (spawn.test.ts,
   // "the output a spawn asks for").
   readonly outputs?: Readonly<Record<string, OutputContract>>
-  // model is the fixed reference used by every child this package starts. An absent value leaves selection to the child actor's default.
-  readonly model?: ModelRef
+  // catalog supplies provider and model discovery to the package.
+  readonly catalog?: AgentCatalog
+  // models narrows inherited authority and may select a default for children started by this package.
+  readonly models?: ModelPolicyOverride
   readonly actorNameOf?: () => string | undefined
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
@@ -69,6 +80,29 @@ export interface SpawnOptions {
   readonly budget?: Partial<BudgetPolicy>
 }
 
+// AgentCatalogQuery selects a page of providers from the model catalog.
+export interface AgentCatalogQuery {
+  readonly availability?: "available"
+  readonly models?: ModelPolicy
+  readonly cursor?: string
+  readonly search?: string
+  readonly limit?: number
+}
+
+// AgentModelCatalogQuery selects a page of models from the model catalog.
+export interface AgentModelCatalogQuery extends AgentCatalogQuery {
+  readonly provider?: string
+  readonly sort?: "promptUsdPerToken" | "completionUsdPerToken" | "cachedPromptUsdPerToken" | "cacheWritePromptUsdPerToken"
+  readonly order?: "asc" | "desc"
+  readonly unpriced?: "first" | "last"
+}
+
+// AgentCatalog serves provider and model discovery pages.
+export interface AgentCatalog {
+  readonly providers: (query: AgentCatalogQuery) => unknown
+  readonly models: (query: AgentModelCatalogQuery) => unknown
+}
+
 const foregroundBoundarySchema = {
   type: "object",
   properties: {
@@ -77,9 +111,149 @@ const foregroundBoundarySchema = {
   }
 }
 
+const catalogQueryProperties = {
+  cursor: { type: "string", description: "the next_cursor returned by the previous page" },
+  search: { type: "string", description: "case-insensitive text matched against IDs and names" },
+  limit: { type: "integer", minimum: 1, description: "maximum items returned on this page" }
+}
+
+const catalogPageProperties = {
+  revision: { type: "string" },
+  status: { type: "string", enum: ["fresh", "cached"] },
+  refreshed_at: { type: "number" },
+  policy: {
+    type: "object",
+    properties: {
+      default: {
+        type: "object",
+        properties: { provider: { type: "string" }, model_id: { type: "string" } },
+        required: ["provider", "model_id"],
+        additionalProperties: false
+      },
+      allow: {
+        oneOf: [
+          { const: "*" },
+          {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                provider: { type: "string" },
+                model_ids: { oneOf: [{ const: "*" }, { type: "array", items: { type: "string" } }] }
+              },
+              required: ["provider", "model_ids"],
+              additionalProperties: false
+            }
+          }
+        ]
+      }
+    },
+    required: ["allow"],
+    additionalProperties: false
+  },
+  total: { type: "integer" },
+  limit: { type: "integer" },
+  next_cursor: { type: "string" }
+}
+
+const providerPageSchema = {
+  type: "object",
+  properties: {
+    ...catalogPageProperties,
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          name: { type: "string" },
+          availability: {
+            oneOf: [
+              {
+                type: "object",
+                properties: { status: { const: "available" } },
+                required: ["status"]
+              },
+              {
+                type: "object",
+                properties: {
+                  status: { const: "unavailable" },
+                  reason: { type: "string", enum: ["not_configured", "credential_missing"] }
+                },
+                required: ["status", "reason"]
+              }
+            ]
+          },
+          protocol: { type: "string" },
+          baseUrl: { type: "string" },
+          env: { type: "array", items: { type: "string" } },
+          required: { type: "array", items: { type: "string" } },
+          optional: { type: "array", items: { type: "string" } }
+        },
+        required: ["id", "name", "availability", "env", "required", "optional"]
+      }
+    },
+    error: { type: "string" }
+  }
+}
+
+const modelPageSchema = {
+  type: "object",
+  properties: {
+    ...catalogPageProperties,
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          provider: { type: "string" },
+          id: { type: "string" },
+          name: { type: "string" },
+          metadata: {
+            type: "object",
+            properties: {
+              contextWindowTokens: { type: "integer" },
+              maxOutputTokens: { type: "integer" },
+              pricing: {
+                type: "object",
+                properties: {
+                  promptUsdPerToken: { type: "number" },
+                  completionUsdPerToken: { type: "number" },
+                  cachedPromptUsdPerToken: { type: "number" },
+                  cacheWritePromptUsdPerToken: { type: "number" }
+                }
+              },
+              toolCall: { type: "boolean" },
+              structuredOutput: { type: "boolean" },
+              inputModalities: { type: "array", items: { type: "string" } },
+              outputModalities: { type: "array", items: { type: "string" } }
+            }
+          }
+        },
+        required: ["provider", "id", "metadata"]
+      }
+    },
+    error: { type: "string" }
+  }
+}
+
+const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
+  const value = args as { readonly cursor?: unknown; readonly search?: unknown; readonly limit?: unknown } | undefined
+  return {
+    ...(typeof value?.cursor === "string" ? { cursor: value.cursor } : {}),
+    ...(typeof value?.search === "string" ? { search: value.search } : {}),
+    ...(typeof value?.limit === "number" ? { limit: value.limit } : {})
+  }
+}
+
 // sibling is the default placement: the child is a facet of the parent's own principal, named `ag.<callId>`. The address selects the target while ThreadCreated records its lineage (spawn.test.ts, "the default placement is the host's own sibling address"; tla/runtime/Thread.tla, CreationFirst).
 const sibling = (callId: string, self: ActorId): ActorId =>
   actorIdOf(self.actor, `ag.${callId}`)
+
+const inheritedModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy => {
+  const resolved = [...events].reverse().find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
+  return resolved?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(resolved.models)
+}
 
 export const agentsPackage = (
   options: SpawnOptions & { readonly place?: (callId: string, self: ActorId) => ActorId } = {}
@@ -91,27 +265,71 @@ export const agentsPackage = (
   const worldOf = options.worldOf ?? (() => undefined)
   const defaultBudget = budgetPolicyOf(options.budget).limit
   const outputs = options.outputs ?? {}
-  const model = options.model === undefined ? undefined : modelRefOf(options.model)
-  if (options.model !== undefined && model === undefined) {
-    throw new Error("agentsPackage model must be { provider, model_id }")
+  const catalog = options.catalog
+  const packageModels = modelPolicyOverrideOf(options.models)
+  const effectiveModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy =>
+    applyModelPolicy(inheritedModelsOf(events), packageModels)
+  const effectiveModelsResultOf = (events: ReadonlyArray<{ readonly type: string }>):
+    | { readonly models: ModelPolicy }
+    | { readonly error: string } => {
+    try {
+      return { models: effectiveModelsOf(events) }
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : String(error) }
+    }
   }
   const declared_ = Object.keys(outputs)
   return definePackage({
     name: "agents",
-    description: "Ad-hoc agents. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
+    description: "Search known providers and available models, and run ad-hoc agents. providers() lists provider configuration requirements and availability. models() lists models from available providers with metadata and pricing; use provider to limit the search and sort to order a pricing field. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
     annotations: {
+      providers: { readOnlyHint: true, openWorldHint: false },
+      models: { readOnlyHint: true, openWorldHint: false },
       run: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
       result: { readOnlyHint: true, openWorldHint: false }
     },
     docs: {
+      providers: {
+        description: "Search providers this agent may use. The page carries the effective model policy, including its default, plus connection requirements and no credential values.",
+        input: { type: "object", properties: catalogQueryProperties },
+        output: providerPageSchema
+      },
+      models: {
+        description: "Search models from available providers. The page carries the effective model policy, including its default. Set provider to search models within one provider. Each item carries metadata and pricing.",
+        input: {
+          type: "object",
+          properties: {
+            ...catalogQueryProperties,
+            provider: { type: "string", description: "exact provider ID" },
+            sort: {
+              type: "string",
+              enum: ["promptUsdPerToken", "completionUsdPerToken", "cachedPromptUsdPerToken", "cacheWritePromptUsdPerToken"],
+              description: "pricing field used to order models"
+            },
+            order: { type: "string", enum: ["asc", "desc"], description: "price order; defaults to asc" },
+            unpriced: { type: "string", enum: ["first", "last"], description: "placement of models without the selected price; defaults to last" }
+          }
+        },
+        output: modelPageSchema
+      },
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
+            model: {
+              type: "object",
+              description: "the configured provider and provider-specific model ID",
+              properties: {
+                provider: { type: "string" },
+                model_id: { type: "string" }
+              },
+              required: ["provider", "model_id"],
+              additionalProperties: false
+            },
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the child may ask its parent's budget authority for more before answering" }
           },
@@ -140,6 +358,40 @@ export const agentsPackage = (
       }
     },
     methods: {
+      providers: (args) => Effect.gen(function* () {
+        if (catalog === undefined) return { error: "model catalog is unavailable" }
+        const log = yield* EventLog
+        const resolved = effectiveModelsResultOf(yield* log.read)
+        return "error" in resolved
+          ? resolved
+          : catalog.providers({ ...catalogQueryOf(args), availability: "available", models: resolved.models })
+      }),
+      models: (args) => Effect.gen(function* () {
+        if (catalog === undefined) return { error: "model catalog is unavailable" }
+        const log = yield* EventLog
+        const resolved = effectiveModelsResultOf(yield* log.read)
+        if ("error" in resolved) return resolved
+        const models = resolved.models
+        const query = catalogQueryOf(args)
+        const value = args as {
+          readonly provider?: unknown
+          readonly sort?: unknown
+          readonly order?: unknown
+          readonly unpriced?: unknown
+        } | undefined
+        const sort = value?.sort
+        const order = value?.order
+        const unpriced = value?.unpriced
+        return catalog.models({
+          ...query,
+          availability: "available",
+          models,
+          ...(typeof value?.provider === "string" ? { provider: value.provider } : {}),
+          ...(typeof sort === "string" ? { sort: sort as Exclude<AgentModelCatalogQuery["sort"], undefined> } : {}),
+          ...(typeof order === "string" ? { order: order as Exclude<AgentModelCatalogQuery["order"], undefined> } : {}),
+          ...(typeof unpriced === "string" ? { unpriced: unpriced as Exclude<AgentModelCatalogQuery["unpriced"], undefined> } : {})
+        })
+      }),
       run: (args, ctx) =>
         Effect.gen(function* () {
           // The three cross-lane privileges, read where the work happens: send, identity,
@@ -147,7 +399,8 @@ export const agentsPackage = (
           const router = yield* Router
           const source = yield* Self
           const log = yield* EventLog
-          const created = threadCreatedOf(yield* log.read)
+          const events = yield* log.read
+          const created = threadCreatedOf(events)
           if (created === undefined) {
             return yield* Effect.die(new Error(`thread ${formatActorId(source)} cannot spawn without ThreadCreated`))
           }
@@ -164,8 +417,13 @@ export const agentsPackage = (
           if (a?.output === undefined && a?.outputSchema !== undefined) {
             return { error: "agents.run takes the contract as `output`, not `outputSchema`" }
           }
-          if (a?.model !== undefined) {
-            return { error: "agents.run does not take model; configure agentsPackage({ model })" }
+          const resolved = effectiveModelsResultOf(events)
+          if ("error" in resolved) return resolved
+          const models = resolved.models
+          const selectedModel = a?.model === undefined ? models.default : modelRefOf(a.model)
+          if (a?.model !== undefined && selectedModel === undefined) return { error: "agents.run model must be { provider, model_id }" }
+          if (selectedModel !== undefined && !modelAllowedBy(models, selectedModel)) {
+            return { error: `agents.run model ${selectedModel.provider}/${selectedModel.model_id} is excluded by the effective model policy` }
           }
           const declaredOutput = outputAsked(a?.output, outputs, declared_)
           if ("error" in declaredOutput) return declaredOutput
@@ -206,7 +464,8 @@ export const agentsPackage = (
               id: ctx.callId,
               text,
               ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-              ...(model === undefined ? {} : { model }),
+              ...(selectedModel === undefined ? {} : { model: selectedModel }),
+              models,
               budget,
               ...(a?.escalatable === true ? { escalatable: true } : {}),
               ...(actor === undefined ? {} : { actor }),
@@ -227,7 +486,8 @@ export const agentsPackage = (
             id: ctx.callId,
             text,
             ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-            ...(model === undefined ? {} : { model }),
+            ...(selectedModel === undefined ? {} : { model: selectedModel }),
+            models,
             budget,
             ...(a?.escalatable === true ? { escalatable: true } : {}),
             ...(actor === undefined ? {} : { actor }),

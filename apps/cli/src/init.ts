@@ -3,7 +3,7 @@ import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
-import { actorTemplate, type ActorTemplateModel } from "./template"
+import { actorTemplate } from "./template"
 import type { SetupAnswers, SetupFiles } from "./setup"
 import { versionIn } from "./version"
 import { callCommand, shellWord } from "./workflow"
@@ -14,7 +14,6 @@ export const DEFAULT_PACKAGE_MANIFEST = "package.json"
 export const DISCORD_INVITE_URL = "https://discord.gg/Z74jwRxz4k"
 
 export interface InitActorOptions {
-  readonly model: ActorTemplateModel
   readonly cwd?: string
   readonly directory?: string
   readonly now?: Date
@@ -79,7 +78,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
   const celldManifest = resolve(directory, CELLD_PROJECT_CONFIG_PATH)
   const packageManifest = resolve(directory, DEFAULT_PACKAGE_MANIFEST)
-  const source = await actorTemplate({ name, model: options.model })
+  const source = await actorTemplate({ name })
   const manifestSource = manifestTemplate(name, options.now ?? new Date())
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")

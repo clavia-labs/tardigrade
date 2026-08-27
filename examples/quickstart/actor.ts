@@ -6,7 +6,6 @@ import {
 
 // actorName is the stable name used by build, development, and deployment.
 const actorName = "researcher"
-const actorModel = { provider: "openai", default_model: "gpt-5.2" } as const
 
 // actorInstructions is the main place to describe the job and its expected answer.
 const actorInstructions = `
@@ -38,7 +37,7 @@ export default actor({
       compaction(),
       // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
       outputValidateOnce
-    ], actorModel),
+    ]),
     budgetAuthority()
   ]
 })

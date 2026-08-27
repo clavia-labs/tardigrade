@@ -19,6 +19,15 @@ import {
 } from "../output/contract"
 import type { ContextPolicy } from "../components/compaction"
 import { modelRefOf, type ModelRef } from "./reference"
+import {
+  applyModelPolicy,
+  DEFAULT_MODEL_POLICY,
+  DEFAULT_MODEL_POLICY_OVERRIDE,
+  modelAllowedBy,
+  modelPolicyOf,
+  type ModelPolicy,
+  type ModelPolicyOverride
+} from "./access"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -31,10 +40,10 @@ import { modelRefOf, type ModelRef } from "./reference"
 // output implementation the assembly mounts, not here (src/components/repair.ts, RepairPolicy).
 export interface InferPolicy {
   readonly giveUpAfter: number
-  readonly model?: ModelRef
+  readonly models: ModelPolicyOverride
 }
 
-export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3 }
+export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, models: DEFAULT_MODEL_POLICY_OVERRIDE }
 
 // InferRequest is one attempt's whole context: the trajectory, and the render the assembly
 // derived for it (the system text, the tools the model is offered, and the implementation that
@@ -55,30 +64,32 @@ export interface InferRequest {
 
 export interface ModelResolution {
   readonly model: ModelRef
+  readonly models?: ModelPolicy
   readonly contextWindowTokens?: number
   readonly maxOutputTokens?: number
   readonly catalogRevision?: string
 }
 
-// selectedModelOf applies the visible model-selection order for one turn. A public message may
-// replace the model id while the assembly keeps its provider connection. Internal deliveries may
-// carry a complete model reference. Either durable request wins over the assembly default.
+// selectedModelOf applies the visible model-selection order for one turn. Message and policy references carry both provider and model identity (runtime/composition.test.ts, "the actor owns model selection").
 export const selectedModelOf = (
   head: Event,
   policy?: ModelRef
 ): ModelRef | undefined => {
   const selected = (head as { readonly model?: unknown }).model
-  const reference = modelRefOf(selected)
-  const model = typeof selected === "string" && selected.trim().length > 0 && policy !== undefined
-    ? { provider: policy.provider, model_id: selected.trim() }
-    : undefined
-  return reference ?? model ?? policy
+  return selected === undefined ? policy : modelRefOf(selected)
 }
 
 const resolvedModelOf = (events: ReadonlyArray<Event>): ModelRef | undefined => {
   const resolved = events.find((event) => event.type === "ModelResolved") as { readonly model?: unknown } | undefined
   return modelRefOf(resolved?.model)
 }
+
+const resolvedPolicyOf = (events: ReadonlyArray<Event>): ModelPolicy | undefined => {
+  const resolved = events.find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
+  return resolved?.models === undefined ? undefined : modelPolicyOf(resolved.models)
+}
+
+class ModelSelectionError extends Error {}
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
   epoch === 0 ? {} : { epoch }
@@ -96,7 +107,7 @@ export class Infer extends Context.Service<
   Infer,
   {
     readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action>
-    readonly resolve?: (reference: ModelRef) => ModelResolution
+    readonly resolve?: (reference?: ModelRef) => ModelResolution
   }
 >()("agent/Infer") {}
 
@@ -313,30 +324,61 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
-  const trajectory = trajectoryOf(log)
   const resolvedModel = resolvedModelOf(slice)
-  const model = resolvedModel ?? selectedModelOf(head, policy.model)
-  if (model !== undefined && resolvedModel === undefined) {
+  const inheritedModels = modelPolicyOf((head as { readonly models?: unknown }).models)
+  const resolvedPolicy = resolvedPolicyOf(slice)
+  let policyError: string | undefined
+  let models = resolvedPolicy ?? inheritedModels
+  if (resolvedPolicy === undefined) {
+    try {
+      models = applyModelPolicy(inheritedModels, policy.models ?? DEFAULT_INFER_POLICY.models)
+    } catch (error) {
+      policyError = error instanceof Error ? error.message : String(error)
+    }
+  }
+  const trajectory = trajectoryOf(log)
+  const model = resolvedModel ?? selectedModelOf(head, models.default)
+  if (resolvedModel === undefined) {
     return [
       effect({
         key: `mr:${turn}`,
-        input: { turn, model },
+        input: { turn, model, models, policyError },
         act: (input) =>
           Effect.gen(function* () {
             const at = yield* Clock.currentTimeMillis
             const binding = yield* Infer
             return yield* Effect.try({
-              try: () => binding.resolve?.(input.model) ?? { model: input.model },
-              catch: (error) => error instanceof Error ? error.message : String(error)
+              try: () => {
+                if (input.policyError !== undefined) throw new ModelSelectionError(input.policyError)
+                if (input.model !== undefined && !modelAllowedBy(input.models, input.model)) {
+                  throw new ModelSelectionError(`model ${input.model.provider}/${input.model.model_id} is excluded by the effective model policy`)
+                }
+                const resolved = binding.resolve?.(input.model)
+                if (resolved === undefined) {
+                  if (input.model === undefined) {
+                    throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
+                  }
+                  return { model: input.model, models: input.models }
+                }
+                const models = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, input.models)
+                if (!modelAllowedBy(models, resolved.model)) {
+                  throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
+                }
+                return { ...resolved, models }
+              },
+              catch: (error) => ({
+                message: error instanceof Error ? error.message : String(error),
+                cause: error instanceof ModelSelectionError ? "model_selection" as const : "inference_error" as const
+              })
             }).pipe(Effect.match({
-              onSuccess: (resolved) => [modelResolved({ turn: input.turn, ...resolved, at })],
-              onFailure: (message) => [
+              onSuccess: (resolved) => [modelResolved({ turn: input.turn, ...resolved, models: resolved.models, at })],
+              onFailure: (failure) => [
                 turnFailed({
-                  error: message,
-                  cause: "inference_error",
+                  error: failure.message,
+                  cause: failure.cause,
                   attempts: 0,
                   attemptKey: `${input.turn}/model`,
-                  policy: { model: input.model },
+                  policy: { ...(input.model === undefined ? {} : { model: input.model }), models: input.models },
                   turn: input.turn,
                   at
                 })

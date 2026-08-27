@@ -41,6 +41,9 @@
     "effect": "4.0.0-rc.110",
     "@clavia/tardigrade-host": "workspace:*"
   },
+  "devDependencies": {
+    "fast-check": "^4.9.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"

@@ -23,7 +23,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 
 | Existing concern | Tardigrade home |
 | --- | --- |
-| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...], { provider, default_model })] })` |
+| `ToolLoopAgent`, `generateText`, `streamText`, or a manual model loop | `actor({ name, methods, components: [infer([...])] })`; pass `models: { allow?, default? }` to narrow or override the host policy |
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `toolList` |
 | `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
@@ -60,7 +60,7 @@ Convert each structured result to `output({ name, schema })`. Send that contract
 
 ### Model binding
 
-Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to add private provider connections and choose the default model. Use `tdg setup provider` or `tdg setup default` when the migration changes one concern. The server resolves model metadata from its catalog snapshot.
+Keep the baseline provider and model when the Tardigrade binding supports their transport. The built-in binding accepts OpenAI Responses, OpenAI-compatible chat completions, Anthropic Messages, and Bedrock Converse. Run `tdg setup` to write the first private provider connection and default model together. Once that baseline exists, use `tdg setup provider` or `tdg setup default` when the migration changes one concern. The server resolves model metadata from its catalog snapshot.
 
 List every existing model option and confirm that the selected binding represents it. A custom transport or required option belongs in an application-owned `Infer` layer and custom host. Do not silently drop a temperature, provider option, retry bound, output guarantee, or timeout that affects behavior.
 

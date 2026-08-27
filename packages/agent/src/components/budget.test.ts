@@ -19,7 +19,7 @@ import { nativeOutput } from "./native-output"
 import { toolList } from "./tool-list"
 import { agentKeys } from "../log/events"
 
-const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
 const assembled = <R>(component: import("../runtime/composition").AgentComponent<R>) => actor({
   name: "test-agent",

@@ -33,6 +33,7 @@ setDefaultTimeout(BOOT_MS)
 const INDEX = "<!doctype html><title>voyager</title>"
 
 const SCRIPT = "console.log(\"voyager\")"
+const testModel = { provider: "test", model_id: "scripted" } as const
 
 // A directory shaped like the build vite writes: one index and one hashed asset beside it.
 const buildDirectory = (): string => {
@@ -44,6 +45,7 @@ const buildDirectory = (): string => {
 }
 
 const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+  resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: () => Effect.succeed({ kind: "complete", output: "the scripted answer" } satisfies Action)
 })
 

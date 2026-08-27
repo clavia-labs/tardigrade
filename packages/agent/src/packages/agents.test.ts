@@ -67,7 +67,84 @@ describe("agentsPackage", () => {
   test("the code contract keeps run terminal while escalation stays internal", () => {
     const system = codeSystemFor([agentsPackage()])
     expect(system).not.toContain("agents.continue")
-    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
+    expect(system).toContain("agents.providers({cursor?: string, search?: string, limit?: number})")
+    expect(system).toContain("agents.models({cursor?: string, search?: string, limit?: number, provider?: string, sort?: \"promptUsdPerToken\" | \"completionUsdPerToken\" | \"cachedPromptUsdPerToken\" | \"cacheWritePromptUsdPerToken\", order?: \"asc\" | \"desc\", unpriced?: \"first\" | \"last\"})")
+    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
+  })
+
+  test("catalog searches return the host API pages", async () => {
+    const providerQueries: unknown[] = []
+    const modelQueries: unknown[] = []
+    const providerPage = {
+      revision: "catalog-1",
+      status: "fresh",
+      refreshed_at: 1,
+      policy: { allow: "*" },
+      total: 1,
+      limit: 10,
+      items: [{ id: "openrouter", name: "OpenRouter", availability: { status: "available" }, env: ["OPENROUTER_API_KEY"], required: ["env"], optional: [] }]
+    }
+    const modelPage = {
+      revision: "catalog-1",
+      status: "fresh",
+      refreshed_at: 1,
+      policy: { allow: "*" },
+      total: 1,
+      limit: 10,
+      items: [{
+        provider: "openrouter",
+        id: "anthropic/claude-sonnet-4-6",
+        name: "Claude Sonnet",
+        metadata: {
+          contextWindowTokens: 200_000,
+          pricing: { promptUsdPerToken: 0.000_003, completionUsdPerToken: 0.000_015 }
+        }
+      }]
+    }
+    const pkg = agentsPackage({
+      catalog: {
+        providers: (query) => {
+          providerQueries.push(query)
+          return providerPage
+        },
+        models: (query) => {
+          modelQueries.push(query)
+          return modelPage
+        }
+      }
+    })
+    const sent: Array<Sent> = []
+    const providers = await Effect.runPromise(
+      pkg.methods.providers!({ search: "router", limit: 10 }, { callId: "providers" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    const models = await Effect.runPromise(
+      pkg.methods.models!({
+        provider: "openrouter",
+        search: "claude",
+        limit: 10,
+        sort: "completionUsdPerToken",
+        order: "asc",
+        unpriced: "last"
+      }, { callId: "models" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    )
+    expect(providerQueries).toEqual([{
+      search: "router",
+      limit: 10,
+      availability: "available",
+      models: { allow: "*" }
+    }])
+    expect(modelQueries).toEqual([{
+      search: "claude",
+      limit: 10,
+      provider: "openrouter",
+      availability: "available",
+      sort: "completionUsdPerToken",
+      order: "asc",
+      unpriced: "last",
+      models: { allow: "*" }
+    }])
+    expect(providers).toEqual(providerPage)
+    expect(models).toEqual(modelPage)
   })
 
   test("the default placement is the host's own sibling address", async () => {
@@ -112,11 +189,12 @@ describe("agentsPackage", () => {
     })
   })
 
-  test("the package fixes a child model outside the tool input", async () => {
+  test("a run selects a complete child model reference", async () => {
     const selected = { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" } as const
+    const overridden = { provider: "openai", model_id: "gpt-5.6" } as const
     const sent: Array<Sent> = []
     const inherited = agentsPackage()
-    const fixed = agentsPackage({ model: selected })
+    const fixed = agentsPackage({ models: { default: selected, allow: "*" } })
     await Effect.runPromise(
       inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:ag.root", sent)))
     )
@@ -125,12 +203,71 @@ describe("agentsPackage", () => {
     )
     expect(sent[0]!.event).not.toHaveProperty("model")
     expect(sent[1]!.event).toMatchObject({ model: selected })
-    const refused = await Effect.runPromise(
-      fixed.methods.run!({ text: "other", background: true, model: selected }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+    await Effect.runPromise(
+      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
     )
-    expect(refused).toEqual({ error: "agents.run does not take model; configure agentsPackage({ model })" })
-    expect(sent).toHaveLength(2)
-    expect(codeSystemFor([fixed])).not.toContain("model:")
+    expect(sent[2]!.event).toMatchObject({ model: overridden })
+    expect(sent).toHaveLength(3)
+    expect(codeSystemFor([fixed])).toContain("model?: {provider: string, model_id: string}")
+  })
+
+  test("a child receives the parent and package model intersection", async () => {
+    const selected = { provider: "openai", model_id: "small" } as const
+    const parent: Event = {
+      type: "ModelResolved",
+      turn: "parent",
+      model: selected,
+      models: {
+        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+      },
+      at: 1
+    }
+    const pkg = agentsPackage({
+      models: {
+        default: selected,
+        allow: [
+          { provider: "openai", model_ids: ["small"] },
+          { provider: "anthropic", model_ids: "*" }
+        ]
+      }
+    })
+    const sent: Array<Sent> = []
+    await Effect.runPromise(
+      pkg.methods.run!({ text: "scout", background: true }, { callId: "narrow" }).pipe(
+        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+      )
+    )
+    expect(sent[0]!.event).toMatchObject({
+      model: selected,
+      models: { allow: [{ provider: "openai", model_ids: ["small"] }] }
+    })
+  })
+
+  test("a package with no model override inherits the parent default", async () => {
+    const selected = { provider: "openai", model_id: "small" } as const
+    const parent: Event = {
+      type: "ModelResolved",
+      turn: "parent",
+      model: selected,
+      models: {
+        default: selected,
+        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+      },
+      at: 1
+    }
+    const sent: Array<Sent> = []
+    await Effect.runPromise(
+      agentsPackage().methods.run!({ text: "scout", background: true }, { callId: "inherit" }).pipe(
+        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+      )
+    )
+    expect(sent[0]!.event).toMatchObject({
+      model: selected,
+      models: {
+        default: selected,
+        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+      }
+    })
   })
 
   test("a reply already on the lane answers without parking", async () => {

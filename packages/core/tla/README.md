@@ -17,6 +17,7 @@ The specifications describe the runtime and communication contracts independentl
 | `runtime/Driver` | Wake accounting, service, isolation, and bounded failure | `Driver.cfg`, `DriverLive.cfg`, `DriverIsolate.cfg`, `DriverPoisoned.cfg` | `DriverDrop.cfg` |
 | `runtime/Execution` | Mixed package completion and parked fiber release | `Execution.cfg` | `ExecutionReadyLeak.cfg` |
 | `runtime/Guard` | Terminal outcome remains singular across attempts | `Guard.cfg` | `GuardRace.cfg` |
+| `runtime/ModelPolicy` | Coordinate authority, complete host defaults, recursive attenuation, and selection | `ModelPolicy.cfg` | `ModelPolicyWiden.cfg` |
 | `runtime/Projection` | Prefix interpretation remains faithful | `Projection.cfg` | `ProjectionView.cfg` |
 | `runtime/Reconcile` | Derived keyed work commits, blocks, or settles | `Reconcile.cfg` | None |
 | `runtime/Replay` | Recorded answers remain bound to their questions | `Replay.cfg` | `ReplayTrust.cfg` |

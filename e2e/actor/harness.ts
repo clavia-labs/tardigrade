@@ -14,7 +14,12 @@ import {
 import type { Action } from "tardie/log/events"
 
 export const ROOT_LANE = "ag.root"
-export const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+export const TEST_MODEL = {
+  models: {
+    default: { provider: "test", model_id: "test-model" },
+    allow: "*"
+  }
+} as const
 
 export type Mind = (request: InferRequest, key?: string) => Promise<Action>
 

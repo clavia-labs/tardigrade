@@ -15,11 +15,27 @@ export const actorMethodTimeoutOf = (timeoutMs: number | undefined): number => {
   return resolved
 }
 
+export interface InvalidDurableMethodInput {
+  readonly event: Event
+  readonly index: number
+  readonly log: ReadonlyArray<Event>
+  readonly error: string
+}
+
+// DurableMethodInput declares how a method recognizes and rejects an invocation already present in a log.
+export interface DurableMethodInput {
+  readonly schema: Schema.ConstraintDecoder<unknown>
+  readonly matches: (event: Event) => boolean
+  readonly keyOf: (input: InvalidDurableMethodInput) => string
+  readonly reject: (input: InvalidDurableMethodInput, at: number) => Event
+}
+
 // ActorMethodDeclaration is the erased shape a heterogeneous method table preserves. eventOf validates unknown input before constructing the durable event.
 export interface ActorMethodDeclaration {
   readonly input: Schema.ConstraintDecoder<unknown>
   readonly output: Schema.ConstraintDecoder<unknown>
   readonly timeoutMs: number
+  readonly durableInput?: DurableMethodInput
   readonly eventOf: (call: ActorMethodCall<unknown>) => Event
   readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<unknown> | undefined
 }
@@ -32,6 +48,7 @@ export interface ActorMethodDefinition<
   readonly input: Input
   readonly output: Output
   readonly timeoutMs?: number
+  readonly durableInput?: DurableMethodInput
   readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
   readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<Output["Type"]> | undefined
 }

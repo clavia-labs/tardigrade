@@ -3,7 +3,13 @@ import {
   DEFAULT_MAX_CONCURRENT_LANES,
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
-import { modelRefOf, type ModelRef } from "tardie"
+import {
+  DEFAULT_MODEL_POLICY,
+  modelAllowedBy,
+  modelPolicyOf,
+  modelRefOf,
+  type ModelPolicy
+} from "tardie"
 import { modelProtocolOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
@@ -53,8 +59,7 @@ export interface ModelProviderConfig {
 }
 
 // ModelConfig holds private provider connections and the reference used by the built-in actor.
-export interface ModelConfig {
-  readonly default: ModelRef | undefined
+export interface ModelConfig extends ModelPolicy {
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
 
@@ -133,6 +138,7 @@ const legacyModelError = (env: Env): Error | undefined => {
       [TARDIGRADE_CONFIG_VAR]: {
         models: {
           default: { provider, model_id },
+          allow: "*",
           providers: {
             [provider]: {
               baseUrl: text(env, "MODEL_BASE_URL") ?? "<base-url>",
@@ -155,7 +161,7 @@ const legacyModelError = (env: Env): Error | undefined => {
 export const modelConfigOf = (value: unknown): ModelConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("provider connection configuration must be a JSON object")
-  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "providers")
+  const unknownModelFields = Object.keys(source).filter((name) => name !== "default" && name !== "allow" && name !== "providers")
   if (unknownModelFields.length > 0) throw new Error(`models contains unknown fields: ${unknownModelFields.join(", ")}`)
   const providersSource = recordOf(source["providers"]) ?? {}
   const providers: Record<string, ModelProviderConfig> = {}
@@ -195,16 +201,26 @@ export const modelConfigOf = (value: unknown): ModelConfig => {
   const selectedValue = source["default"]
   const selected = modelRefOf(selectedValue)
   if (selectedValue !== undefined && selected === undefined) throw new Error("models.default must be { provider, model_id }")
+  const configured = Object.keys(providers).length > 0
+  if (configured && !("allow" in source)) throw new Error('models with providers must declare allow as "*" or an array')
+  if (configured && selected === undefined) throw new Error("models with providers must declare default { provider, model_id }")
+  const policy = modelPolicyOf({
+    ...(selected === undefined ? {} : { default: selected }),
+    allow: source["allow"] ?? "*"
+  })
   if (selected !== undefined && providers[selected.provider] === undefined) {
     throw new Error(`models.default names unconfigured provider ${JSON.stringify(selected.provider)}`)
   }
+  if (selected !== undefined && !modelAllowedBy(policy, selected)) {
+    throw new Error(`models.default ${selected.provider}/${selected.model_id} is excluded by models.allow`)
+  }
   return {
-    default: selected,
+    ...policy,
     providers
   }
 }
 
-// projectConfigOf reads Tardigrade settings from a Wrangler manifest.
+// projectConfigOf reads runnable Tardigrade settings from a Wrangler manifest.
 export const projectConfigOf = (value: unknown): ProjectConfig => {
   const source = recordOf(value)
   if (source === undefined) throw new Error("project configuration must be a JSON object")
@@ -212,14 +228,14 @@ export const projectConfigOf = (value: unknown): ProjectConfig => {
     throw new Error(`models must be nested under vars.${TARDIGRADE_CONFIG_VAR}`)
   }
   const varsValue = source["vars"]
-  if (varsValue === undefined) return { models: modelConfigOf({}) }
+  if (varsValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
   const vars = recordOf(varsValue)
   if (vars === undefined) throw new Error("vars must be a JSON object")
   const configValue = vars[TARDIGRADE_CONFIG_VAR]
-  if (configValue === undefined) return { models: modelConfigOf({}) }
+  if (configValue === undefined) return { models: modelConfigOf(DEFAULT_MODEL_POLICY) }
   const config = recordOf(configValue)
   if (config === undefined) throw new Error(`${TARDIGRADE_CONFIG_VAR} must be a JSON object`)
-  return { models: modelConfigOf(config["models"] ?? {}) }
+  return { models: modelConfigOf(config["models"] ?? DEFAULT_MODEL_POLICY) }
 }
 
 const modelCredentialsFrom = (model: ModelConfig, env: Env): ModelCredentials => {
@@ -286,7 +302,7 @@ export const modelCatalogConfigOf = (env: Env): ModelCatalogConfig => ({
 // readConfig resolves project configuration and the environment into the value the process runs on.
 export const readConfig = (
   env: Env,
-  project: ProjectConfig = { models: { default: undefined, providers: {} } }
+  project: ProjectConfig = { models: { allow: "*", providers: {} } }
 ): ServerConfigValue => {
   const model = modelFrom(env, project)
   return {

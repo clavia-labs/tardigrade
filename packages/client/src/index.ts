@@ -24,7 +24,13 @@ export { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 // The vocabulary's top level, and where the versioned routes live. A consumer that builds a URL by
 // hand reads them from here rather than spelling them again
 // (contract.ts).
-export { V1_PREFIX } from "./contract"
+export {
+  CATALOG_AVAILABILITY_FILTERS,
+  MODEL_CATALOG_PRICE_SORTS,
+  MODEL_CATALOG_SORT_ORDERS,
+  MODEL_CATALOG_UNPRICED_ORDERS,
+  V1_PREFIX
+} from "./contract"
 export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenEventSource, type StreamOptions } from "./stream"
 
 export type {
@@ -33,6 +39,7 @@ export type {
   ActorMetadata,
   ActorSummary,
   Append,
+  CatalogAvailabilityFilter,
   EventRow,
   Health,
   MethodAccepted,
@@ -40,6 +47,11 @@ export type {
   MethodState,
   ModelCatalog,
   ModelCatalogPage,
+  ModelCatalogPriceSort,
+  ModelCatalogSortOrder,
+  ModelCatalogUnpricedOrder,
+  ModelPolicySummary,
+  ProviderAvailability,
   ProviderCatalogPage,
   Problem,
   ThreadNode,

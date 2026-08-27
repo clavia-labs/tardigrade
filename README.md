@@ -139,8 +139,6 @@ const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."
 )
 
-const model = { provider: "openai", default_model: "gpt-5.2" } as const
-
 const releaseAnalyst = actor({
   // name supplies the actor's stable identity.
   name: "release-analyst",
@@ -163,13 +161,13 @@ const releaseAnalyst = actor({
       ], { authority: caller() }),
       compaction(), // bounded model context
       outputValidateOnce // validates structured result once without correction
-    ], model),
+    ]),
     budgetAuthority() // budgetAuthority handles requestBudget for this actor.
   ]
 })
 ```
 
-`infer` composes the components into an agent loop. Its trailing options select a private provider connection and the default model used through it. `actor` binds those components to a stable name and callable interface. `agentMethods` provides `message` and `requestBudget`. Every actor method call is a durable future that remains pending until it receives one completed or failed terminal response. `model` is a model ID for that turn; it cannot change the actor's provider connection.
+`infer` composes the components into an agent loop. With no model override it inherits the host's allowed coordinates and default. An actor can pass `models: { allow?, default? }` to narrow that set, change its default, or do both. Every effective default must belong to the effective set. `actor` binds those components to a stable name and callable interface. `agentMethods` provides `message` and `requestBudget`. Every actor method call is a durable future that remains pending until it receives one completed or failed terminal response. A message may select another allowed model with a complete `{ provider, model_id }` reference.
 
 `compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
 
@@ -213,8 +211,8 @@ import { createBunHost } from "tardie/bun/host"
 const model = infer({
   baseUrl: "https://api.openai.com/v1",
   apiKey: process.env.OPENAI_API_KEY!,
-  provider: releaseModel.provider,
-  model: releaseModel.default_model,
+  provider: "openai",
+  model: "gpt-5.2",
   protocol: "openai-responses",
   contextWindowTokens: 400_000
 })

@@ -290,7 +290,6 @@ const plain = (text: string): CodeLine => ({ tokens: [token(text)] })
 const highlight = (capability: Capability, ...tokens: ReadonlyArray<CodeToken>): CodeLine => ({ tokens, capability })
 
 const start = (name: string): ReadonlyArray<CodeLine> => [
-  { tokens: [token("const", "red"), token(" model = { provider: "), token("\"openai\"", "blue"), token(", default_model: "), token("\"gpt-5.2\"", "blue"), token(" }")] },
   plain(""),
   { tokens: [token("export const", "red"), token(" " + name + " = "), token("actor", "purple"), token("({")] },
   { tokens: [token("  name: "), token("\"" + name + "\"", "blue"), token(",")] },
@@ -299,7 +298,7 @@ const start = (name: string): ReadonlyArray<CodeLine> => [
   { tokens: [token("    system", "purple"), token("("), token("\"Follow the evidence.\"", "blue"), token("),")] }
 ]
 
-const end: ReadonlyArray<CodeLine> = [plain("  ], model)]"), plain("})")]
+const end: ReadonlyArray<CodeLine> = [plain("  ])]"), plain("})")]
 
 const capabilityOptions: ReadonlyArray<CapabilityOption> = [
   { id: "memory", label: "Compaction" },
@@ -702,7 +701,7 @@ import { actor, agentMessageMethod, infer,
     system("Answer questions about the weather."),
     weather,
     nativeOutput
-  ], { provider: "openai", default_model: "gpt-5.2" })]
+  ])]
 })`}</code></pre>
             <aside><strong>components</strong><p>Pure functions over the log that compose instructions, tools, output, and policy.</p></aside>
           </div>
@@ -786,11 +785,6 @@ const instructions = system(
   "Investigate with code and delegate independent work."
 )
 
-const model = {
-  provider: "openrouter",
-  default_model: "anthropic/claude-sonnet-4.6"
-} as const
-
 const rlm = actor({
   name: "researcher",
   methods: agentMethods,
@@ -807,7 +801,7 @@ const rlm = actor({
       ], { authority: caller() }),
       compaction(),
       outputValidateOnce
-    ], model),
+    ]),
     budgetAuthority()
   ]
 })

@@ -36,7 +36,7 @@ import {
   toolList
 } from "../index"
 
-const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
 const assembled = <R>(component: AgentComponent<R>) => actor({
   name: "test-agent",
@@ -909,7 +909,7 @@ describe("the mind on a native surface", () => {
             nativeOutput
     ], TEST_MODEL))
     expect(mind.components).toHaveLength(1)
-    expect(mind.reactors).toHaveLength(3)
+    expect(mind.reactors).toHaveLength(4)
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,

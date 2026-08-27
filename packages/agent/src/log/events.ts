@@ -4,6 +4,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
+import { ModelPolicy, type ModelPolicy as ModelPolicyType } from "../inference/access"
 
 // The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
 // sees only the open envelope. The model responds by acting: its recorded decision is the
@@ -91,6 +92,7 @@ export const ModelResolved = Schema.Struct({
   type: Schema.Literal("ModelResolved"),
   turn: Schema.String,
   model: ModelRef,
+  models: Schema.optional(ModelPolicy),
   contextWindowTokens: Schema.optional(Schema.Finite),
   maxOutputTokens: Schema.optional(Schema.Finite),
   catalogRevision: Schema.optional(Schema.String),
@@ -121,8 +123,10 @@ export const TurnCompleted = Schema.Struct({
 })
 
 // TURN_FAILURE_CAUSES are the failure classes a turn ends in, each distinct because each has a
-// different remedy. `model` is a binding that reported nothing more specific; `inference_error`
-// and `inference_attempts_exhausted` are transport; `refused` is a provider that declined to
+// different remedy. `message_invalid` is an inbound event the agent cannot interpret;
+// `model_selection` needs a model reference or authority; `model` is a binding that reported
+// nothing more specific; `inference_error` and
+// `inference_attempts_exhausted` are transport; `refused` is a provider that declined to
 // answer and `truncated` is one cut at its output ceiling, neither of which a retry of the same
 // request fixes; `output_unsupported` is a contract the configured provider cannot obtain, found
 // before anything is spent; `output_contract_violation` is an endpoint that promised a native
@@ -130,6 +134,8 @@ export const TurnCompleted = Schema.Struct({
 // validate locally and fail on rather than correct; `output_repairs_exhausted` is the framework
 // correction loop spending its bound (src/output/contract.ts, OutputMode).
 export const TURN_FAILURE_CAUSES = [
+  "message_invalid",
+  "model_selection",
   "model",
   "inference_error",
   "inference_attempts_exhausted",
@@ -457,6 +463,7 @@ export const modelCalled = (
 export const modelResolved = (fields: {
   readonly turn: string
   readonly model: ModelRefType
+  readonly models: ModelPolicyType
   readonly contextWindowTokens?: number
   readonly maxOutputTokens?: number
   readonly catalogRevision?: string

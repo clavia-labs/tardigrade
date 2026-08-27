@@ -10,6 +10,7 @@ import type { BudgetPolicy } from "../components/budget"
 import type { CompactionPolicy } from "../components/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
+import type { ModelRef } from "../inference/reference"
 
 export { Infer } from "../inference/reactor"
 
@@ -43,7 +44,7 @@ export const receive = <R, T = unknown>(
     readonly id: string
     readonly text: string
     readonly input?: unknown
-    readonly model?: string
+    readonly model?: ModelRef
     readonly output?: OutputContract<T>
   }
 ): Effect.Effect<void, never, EventLog | R> =>

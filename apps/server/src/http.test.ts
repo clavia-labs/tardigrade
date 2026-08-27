@@ -81,7 +81,7 @@ describe("config", () => {
     expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
-      default: undefined,
+      allow: "*",
       providers: {}
     })
     expect(config.modelCredentials).toEqual({})
@@ -107,7 +107,7 @@ describe("config", () => {
     expect(config.actorData).toBe("/var/lib/actor-data")
     expect(config.maxConcurrentLanes).toBe(7)
     expect(config.token).toBe("secret")
-    expect(config.model).toEqual({ default: undefined, providers: {} })
+    expect(config.model).toEqual({ allow: "*", providers: {} })
     expect(config.modelCredentials).toEqual({})
     expect(config.catalog).toEqual({
       sourceUrl: "https://models.dev/api.json",
@@ -134,6 +134,7 @@ describe("config", () => {
     const project = projectConfigOf({
       vars: { TARDIGRADE_CONFIG: { models: {
         default: { provider: "openai", model_id: "gpt" },
+        allow: [{ provider: "openai", model_ids: ["gpt"] }],
         providers: {
           openai: {
             baseUrl: "https://api.openai.com/v1",
@@ -146,17 +147,18 @@ describe("config", () => {
     const config = readConfig({ OPENAI_API_KEY: "secret" }, project)
     expect(config.model).toMatchObject({
       default: { provider: "openai", model_id: "gpt" },
+      allow: [{ provider: "openai", model_ids: ["gpt"] }],
       providers: { openai: { protocol: "openai-responses" } }
     })
     expect(config.modelCredentials).toEqual({ OPENAI_API_KEY: "secret" })
     expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } } } }
+      vars: { TARDIGRADE_CONFIG: { models: { allow: "*", providers: { openai: { apiKey: "must-not-live-here", env: ["OPENAI_API_KEY"] } } } } }
     })).toThrow("cannot contain apiKey")
     expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } } } }
+      vars: { TARDIGRADE_CONFIG: { models: { allow: "*", providers: { openai: { baseUrl: "https://api.openai.com/v1", protocol: "openai-responses", env: ["bad-name"] } } } } }
     })).toThrow("invalid name")
     expect(() => projectConfigOf({
-      vars: { TARDIGRADE_CONFIG: { models: { default: { provider: "missing", model_id: "gpt" }, providers: {} } } }
+      vars: { TARDIGRADE_CONFIG: { models: { default: { provider: "missing", model_id: "gpt" }, allow: "*", providers: {} } } }
     })).toThrow("unconfigured provider")
     expect(() => projectConfigOf({ models: {} })).toThrow("vars.TARDIGRADE_CONFIG")
   })
