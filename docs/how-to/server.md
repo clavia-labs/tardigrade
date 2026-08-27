@@ -16,8 +16,8 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 
 | | |
 | --- | --- |
-| `GET /v1/providers` | Search and page provider setup requirements. `search`, `cursor`, `limit` |
-| `GET /v1/models` | Search and page public model metadata. `provider`, `search`, `cursor`, `limit` |
+| `GET /v1/providers` | Search and page provider setup requirements. The page reports the host model policy and default. `availability`, `search`, `cursor`, `limit` |
+| `GET /v1/models` | Search and page public model metadata. The page reports the host model policy and default. `availability`, `provider`, `search`, `sort`, `order`, `unpriced`, `cursor`, `limit` |
 | `GET /v1/metadata` | Read the mounted actor name and storage metadata |
 | `GET /v1/methods` | List methods with standalone input and output schemas |
 | `GET /v1/threads` | List threads |
@@ -74,7 +74,7 @@ Declared request failures are `application/problem+json`.
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000`. Startup refresh timeout |
 | Provider credentials | Set each variable named by a provider's `env` list. Use deployment secrets on a hosted server |
 
-The server boots without a provider connection and serves every read; turns fail naming what is missing. An actor selects a configured provider and any model that provider exposes in the catalog. The built-in actor uses the configured default. Interactive `tdg setup` writes provider configuration under `vars.TARDIGRADE_CONFIG` in the generated platform manifests and local credentials to `.dev.vars`. The declarative `tdg setup provider <provider> <config>` command writes the connection and leaves secret values in the deployment environment. The `provider` and `default` subcommands change those concerns independently.
+The server boots without a provider connection and serves every read; turns fail naming what is missing. A `models` block with provider connections requires `allow` and `default`. The default must name a configured provider and belong to the allowed set. `allow` accepts `"*"` or provider selectors. Actors inherit this complete policy and may narrow its coordinates or select another allowed default. Interactive `tdg setup` writes provider configuration under `vars.TARDIGRADE_CONFIG` in the generated platform manifests and local credentials to `.dev.vars`. Its declarative form accepts `--provider`, `--provider-config`, and `--default-model` together. The CLI writes the first provider and default atomically. Once the host has a valid baseline, the `provider` and `default` subcommands update either concern while preserving runnable configuration.
 
 ```jsonc
 {
@@ -82,6 +82,7 @@ The server boots without a provider connection and serves every read; turns fail
     "TARDIGRADE_CONFIG": {
       "models": {
         "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.6" },
+        "allow": "*",
         "providers": {
           "openrouter": {
             "baseUrl": "https://openrouter.ai/api/v1",

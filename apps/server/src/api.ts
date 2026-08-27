@@ -21,7 +21,9 @@ import {
 } from "@clavia/tardigrade-client/contract"
 import { agentProjections } from "./actor"
 import { ModelCatalogStore } from "./catalog"
+import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
+import { ServerConfig } from "./config"
 import { Threads, type ActorThreads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -394,16 +396,24 @@ const catalogSnapshot = Effect.flatMap(ModelCatalogStore, (catalog) =>
     ))
     : Effect.succeed(catalog.snapshot))
 
-// layerModelsGroup pages the process snapshot and never reads the private provider directory.
+const catalogDiscovery = Effect.all([catalogSnapshot, ServerConfig]).pipe(
+  Effect.map(([catalog, config]) => ({
+    catalog,
+    availability: providerAvailabilitiesOf(config.model, config.modelCredentials),
+    policy: { ...(config.model.default === undefined ? {} : { default: config.model.default }), allow: config.model.allow }
+  }))
+)
+
+// layerModelsGroup pages the process snapshot using provider readiness derived without credential values.
 export const layerModelsGroup = HttpApiBuilder.group(ServerApi, "models", (handlers) =>
   handlers
-    .handle("providers", ({ query }) => Effect.flatMap(catalogSnapshot, (catalog) =>
+    .handle("providers", ({ query }) => Effect.flatMap(catalogDiscovery, ({ catalog, availability, policy }) =>
       Effect.try({
-        try: () => providersPageOf(catalog, query),
+        try: () => providersPageOf(catalog, availability, { ...query, policy }),
         catch: (error) => InvalidRequest.of(failureMessage(error))
       })))
-    .handle("models", ({ query }) => Effect.flatMap(catalogSnapshot, (catalog) =>
+    .handle("models", ({ query }) => Effect.flatMap(catalogDiscovery, ({ catalog, availability, policy }) =>
       Effect.try({
-        try: () => modelsPageOf(catalog, query),
+        try: () => modelsPageOf(catalog, availability, { ...query, policy }),
         catch: (error) => InvalidRequest.of(failureMessage(error))
       }))))

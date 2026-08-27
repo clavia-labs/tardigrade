@@ -74,7 +74,7 @@ describe("resolveServer", () => {
     expect(config.port).toBe(8080)
     expect(config.db).toBe("runs.sqlite")
     expect(config.maxConcurrentLanes).toBe(6)
-    expect(config.model).toEqual({ default: undefined, providers: {} })
+    expect(config.model).toEqual({ allow: "*", providers: {} })
   })
 
   test("a flag beats the environment", () => {
@@ -161,6 +161,7 @@ describe("the config file", () => {
         "TARDIGRADE_CONFIG": {
           "models": {
             "default": { "provider": "openai", "model_id": "file-model" },
+            "allow": "*",
             "providers": {
               "openai": {
                 "baseUrl": "https://file.example.com",
@@ -175,6 +176,7 @@ describe("the config file", () => {
     const resolved = resolveServer({}, { OPENAI_API_KEY: "environment-key" }, project)
     expect(resolved.model).toEqual({
       default: { provider: "openai", model_id: "file-model" },
+      allow: "*",
       providers: {
         openai: {
           baseUrl: "https://file.example.com",
@@ -189,12 +191,12 @@ describe("the config file", () => {
   test("the project path is configurable and JSONC comments are accepted", async () => {
     const path = projectConfigPathIn(home, { TARDIGRADE_CONFIG_PATH: "config/custom.jsonc" })
     await mkdir(join(home, "config"), { recursive: true })
-    await writeFile(path, '{ // visible\n "vars": { "TARDIGRADE_CONFIG": { "models": {} } }\n}')
+    await writeFile(path, '{ // visible\n "vars": { "TARDIGRADE_CONFIG": { "models": { "allow": "*" } } }\n}')
     const project = await Effect.runPromise(Effect.provide(
       readProjectConfig(home, { TARDIGRADE_CONFIG_PATH: "config/custom.jsonc" }),
       BunFileSystem.layer
     ))
-    expect(project.models).toEqual({ default: undefined, providers: {} })
+    expect(project.models).toEqual({ allow: "*", providers: {} })
   })
 
   test("the file is the third source for the remote, and a flag beats both", async () => {

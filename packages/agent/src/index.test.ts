@@ -16,7 +16,7 @@ import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput,
 import type { AgentR } from "./runtime/turn"
 
 const ROOT_LANE = "ag.root"
-const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
 // The headline: one ask, an emergent graph, one answer, library only.
 // The root's code spawns two children; the host births their lanes,

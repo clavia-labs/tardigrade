@@ -36,6 +36,20 @@ export {
   type Render
 } from "./inference/reactor"
 export { ModelRef, modelRefOf } from "./inference/reference"
+export {
+  applyModelPolicy,
+  DEFAULT_MODEL_POLICY,
+  DEFAULT_MODEL_POLICY_OVERRIDE,
+  intersectModelPolicies,
+  modelAllowedBy,
+  ModelAllow,
+  ModelPolicy,
+  ModelPolicyOverride,
+  modelPolicyOf,
+  modelPolicyOverrideOf,
+  modelPolicyScopeOf,
+  ModelSelector
+} from "./inference/access"
 
 // The turn's declared final response: the contract a caller states, the profile a binding can
 // send unchanged, and the implementation that obtains it. `output` is the whole declarative
@@ -121,7 +135,14 @@ export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 
 // The spawn package: a value with no lane in it, so the assembly that mounts it and the host
 // that binds Router and Self per lane cannot disagree about placement (packages/agents.ts).
-export { agentsPackage, INLINE_OUTPUT_NAME, type SpawnOptions } from "./packages/agents"
+export {
+  agentsPackage,
+  INLINE_OUTPUT_NAME,
+  type AgentCatalog,
+  type AgentCatalogQuery,
+  type AgentModelCatalogQuery,
+  type SpawnOptions
+} from "./packages/agents"
 
 // The workspace the model reads its spilled values back through, and the optional SQL binding a
 // platform lights its third verb up with.

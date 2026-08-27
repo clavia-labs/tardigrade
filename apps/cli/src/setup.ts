@@ -2,7 +2,7 @@ import { Console, Data, Effect, Layer, Redacted } from "effect"
 import type { PlatformError } from "effect/PlatformError"
 import { FileSystem, type FileSystem as FileSystemService } from "effect/FileSystem"
 import { Prompt } from "effect/unstable/cli"
-import { applyEdits, modify } from "jsonc-parser"
+import { applyEdits, modify, parse } from "jsonc-parser"
 import { BunFileSystem } from "@effect/platform-bun"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import {
@@ -673,6 +673,11 @@ const updatedProject = (
 ): string => {
   const formattingOptions = { insertSpaces: true, tabSize: 2, eol: "\n" }
   let next = raw.trim().length === 0 ? "{}\n" : raw
+  const document = parse(next) as { readonly vars?: Readonly<Record<string, unknown>> }
+  const config = document.vars?.[TARDIGRADE_CONFIG_VAR] as { readonly models?: { readonly allow?: unknown } } | undefined
+  if (config?.models?.allow === undefined) {
+    next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "allow"], "*", { formattingOptions }))
+  }
   for (const provider of providers) {
     next = applyEdits(next, modify(next, ["vars", TARDIGRADE_CONFIG_VAR, "models", "providers", provider.provider], {
       baseUrl: provider.baseUrl,
@@ -712,6 +717,13 @@ const writeSetupChanges = (
     })
     const secretsPath = envPathIn(root)
     const updatedConfig = updatedProject(configRaw, selected, providers)
+    yield* Effect.try({
+      try: () => parseProjectConfig(updatedConfig, configPath),
+      catch: (cause) => new SetupConfigError({
+        message: cause instanceof Error ? cause.message : String(cause),
+        cause
+      })
+    })
     const celldConfigPath = `${root.replace(/\/$/, "")}/${CELLD_PROJECT_CONFIG_PATH}`
     const celldConfigRaw = yield* readOrEmpty(fs, celldConfigPath)
     const updatedCelldConfig = celldConfigRaw.trim().length === 0

@@ -36,8 +36,12 @@ const briefOf = (trajectory: ReadonlyArray<Event>): string => {
 }
 
 const scripted = (request: InferRequest): Action => ({ kind: "complete", output: `ok: ${briefOf(request.trajectory)}` })
+const testModel = { provider: "test", model_id: "scripted" } as const
+const resolveTestModel = (model: { readonly provider: string; readonly model_id: string } = testModel) =>
+  ({ model, models: { default: model, allow: "*" as const } })
 
 const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+  resolve: resolveTestModel,
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
 
@@ -75,6 +79,7 @@ const brief = (id: string, text = "hello") => ({ type: "MessageReceived", id, te
 describe("model selection", () => {
   const model = {
     default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
+    allow: "*" as const,
     providers: {
       openrouter: {
         baseUrl: "https://openrouter.ai/api/v1",
@@ -168,6 +173,7 @@ describe("the threads service", () => {
     let peak = 0
     let calls = 0
     const concurrent = Layer.succeed(Infer)({
+      resolve: resolveTestModel,
       react: () => Effect.promise(async () => {
         active += 1
         peak = Math.max(peak, active)

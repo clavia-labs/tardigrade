@@ -296,18 +296,49 @@ export const ModelCatalog = Schema.Struct({
 
 export type ModelCatalog = typeof ModelCatalog.Type
 
+export const ModelPolicySummary = Schema.Struct({
+  default: Schema.optionalKey(Schema.Struct({
+    provider: Schema.NonEmptyString,
+    model_id: Schema.NonEmptyString
+  })),
+  allow: Schema.Union([
+    Schema.Literal("*"),
+    Schema.Array(Schema.Struct({
+      provider: Schema.NonEmptyString,
+      model_ids: Schema.Union([Schema.Literal("*"), Schema.Array(Schema.NonEmptyString)])
+    }))
+  ])
+}).annotate({ identifier: "ModelPolicySummary" })
+
+export type ModelPolicySummary = typeof ModelPolicySummary.Type
+
 const CatalogPageFields = {
   revision: Schema.NonEmptyString,
   status: Schema.Literals(["fresh", "cached"]),
   refreshed_at: Schema.Finite,
+  policy: ModelPolicySummary,
   total: Schema.Int,
   limit: Schema.Int,
   next_cursor: Schema.optionalKey(Schema.String)
 }
 
+export const ProviderAvailability = Schema.Union([
+  Schema.Struct({ status: Schema.Literal("available") }),
+  Schema.Struct({
+    status: Schema.Literal("unavailable"),
+    reason: Schema.Literals(["not_configured", "credential_missing"])
+  })
+]).annotate({ identifier: "ProviderAvailability" })
+
+export type ProviderAvailability = typeof ProviderAvailability.Type
+
+export const CATALOG_AVAILABILITY_FILTERS = ["all", "available"] as const
+export type CatalogAvailabilityFilter = typeof CATALOG_AVAILABILITY_FILTERS[number]
+
 export const ProviderCatalogItem = Schema.Struct({
   id: Schema.NonEmptyString,
   name: Schema.NonEmptyString,
+  availability: ProviderAvailability,
   protocol: Schema.optionalKey(Schema.String),
   baseUrl: Schema.optionalKey(Schema.String),
   env: Schema.Array(Schema.String),
@@ -335,6 +366,21 @@ export const ModelCatalogPage = Schema.Struct({
 }).annotate({ identifier: "ModelCatalogPage" })
 
 export type ModelCatalogPage = typeof ModelCatalogPage.Type
+
+export const MODEL_CATALOG_PRICE_SORTS = [
+  "promptUsdPerToken",
+  "completionUsdPerToken",
+  "cachedPromptUsdPerToken",
+  "cacheWritePromptUsdPerToken"
+] as const
+
+export type ModelCatalogPriceSort = typeof MODEL_CATALOG_PRICE_SORTS[number]
+
+export const MODEL_CATALOG_SORT_ORDERS = ["asc", "desc"] as const
+export type ModelCatalogSortOrder = typeof MODEL_CATALOG_SORT_ORDERS[number]
+
+export const MODEL_CATALOG_UNPRICED_ORDERS = ["first", "last"] as const
+export type ModelCatalogUnpricedOrder = typeof MODEL_CATALOG_UNPRICED_ORDERS[number]
 
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
@@ -442,7 +488,8 @@ export const actorsGroup = HttpApiGroup.make("actors").add(
 const CatalogQuery = {
   search: Schema.optionalKey(Schema.String),
   cursor: Schema.optionalKey(Schema.String),
-  limit: Schema.optionalKey(Schema.Int)
+  limit: Schema.optionalKey(Schema.Int),
+  availability: Schema.optionalKey(Schema.Literals(CATALOG_AVAILABILITY_FILTERS))
 }
 
 // modelsGroup exposes paginated public provider and model discovery independently of private routes and credentials.
@@ -453,7 +500,13 @@ export const modelsGroup = HttpApiGroup.make("models").add(
     error: [ModelCatalogUnavailable.schema, InvalidRequest.schema]
   }),
   HttpApiEndpoint.get("models", "/v1/models", {
-    query: { ...CatalogQuery, provider: Schema.optionalKey(Schema.String) },
+    query: {
+      ...CatalogQuery,
+      provider: Schema.optionalKey(Schema.String),
+      sort: Schema.optionalKey(Schema.Literals(MODEL_CATALOG_PRICE_SORTS)),
+      order: Schema.optionalKey(Schema.Literals(MODEL_CATALOG_SORT_ORDERS)),
+      unpriced: Schema.optionalKey(Schema.Literals(MODEL_CATALOG_UNPRICED_ORDERS))
+    },
     success: ModelCatalogPage,
     error: [ModelCatalogUnavailable.schema, InvalidRequest.schema]
   })

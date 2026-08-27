@@ -12,12 +12,16 @@ import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
 import type { Provider } from "@clavia/tardigrade-host/communication/provider"
 import {
+  applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
   Infer,
   actorMethodsOf,
+  intersectModelPolicies,
+  modelAllowedBy,
   type ActorMethods,
   type ModelRef,
+  type ModelPolicy,
   type ActorArtifactManifest,
   type Actor
 } from "tardie"
@@ -35,6 +39,8 @@ import {
 import { builtInActor, type ServerR } from "./actor"
 import { ServerConfig, type ModelConfig, type ModelCredentials, type ServerConfigValue } from "./config"
 import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
+import { providerAvailabilitiesOf } from "./catalog-availability"
+import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
@@ -172,6 +178,9 @@ export const selectedModelFrom = (
 ): SelectedModel => {
   const selected = reference ?? config.default
   if (selected === undefined) throw new Error("the built-in actor has no model reference; run `tdg setup`")
+  if (!modelAllowedBy(config, selected)) {
+    throw new Error(`model ${selected.provider}/${selected.model_id} is excluded by the host model policy`)
+  }
   const provider = connectionFrom(config, credentials, selected)
   if (catalog.snapshot === undefined) {
     throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
@@ -200,6 +209,7 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
   (() => {
     try {
       if (config.model.default === undefined) return false
+      if (!modelAllowedBy(config.model, config.model.default)) return false
       connectionFrom(config.model, config.modelCredentials, config.model.default)
       return true
     } catch {
@@ -215,11 +225,26 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
       react: () => Effect.succeed(failed)
     })
   }
+  const availableModels = (): ModelPolicy => {
+    const snapshot = catalog.snapshot
+    if (snapshot === undefined) return { allow: [] }
+    const availability = providerAvailabilitiesOf(config.model, config.modelCredentials)
+    const configured: ModelPolicy = {
+      allow: snapshot.providers.flatMap((provider) =>
+        availability[provider.id]?.status === "available" && provider.models.length > 0
+          ? [{ provider: provider.id, model_ids: provider.models.map((model) => model.id) }]
+          : []
+      )
+    }
+    const authority = intersectModelPolicies([config.model, configured])
+    return { ...authority, ...(config.model.default === undefined ? {} : { default: config.model.default }) }
+  }
   return Layer.succeed(Infer, {
     resolve: (reference) => {
       const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
       return {
-        model: reference,
+        model: { provider: selected.provider, model_id: selected.model_id },
+        models: availableModels(),
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
         catalogRevision: selected.catalogRevision
@@ -497,13 +522,26 @@ const make = (options: ThreadsOptions) =>
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
+    const snapshot = catalog.snapshot
+    const availability = providerAvailabilitiesOf(config.model, config.modelCredentials)
+    const agentCatalog = snapshot === undefined
+      ? undefined
+      : {
+          providers: (query: Parameters<typeof providersPageOf>[2]) => {
+            const models = applyModelPolicy(config.model, query?.models ?? {})
+            return providersPageOf(snapshot, availability, { ...query, models, policy: models })
+          },
+          models: (query: Parameters<typeof modelsPageOf>[2]) => {
+            const models = applyModelPolicy(config.model, query?.models ?? {})
+            return modelsPageOf(snapshot, availability, { ...query, models, policy: models })
+          }
+        }
     const builtIn = modelIsConfigured(config)
       ? builtInActor({
-          provider: config.model.default!.provider,
-          default_model: config.model.default!.model_id,
-          contextWindowTokens: (model) => selectedModelFrom(config.model, config.modelCredentials, catalog, model).contextWindowTokens
+          contextWindowTokens: (model) => selectedModelFrom(config.model, config.modelCredentials, catalog, model).contextWindowTokens,
+          ...(agentCatalog === undefined ? {} : { catalog: agentCatalog })
         })
-      : builtInActor()
+      : builtInActor(agentCatalog === undefined ? {} : { catalog: agentCatalog })
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
     const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {

@@ -4,7 +4,16 @@ import { rm } from "node:fs/promises"
 import { resolve } from "node:path"
 import { Argument, CliError, Command, Flag, Prompt } from "effect/unstable/cli"
 import { ACTOR_NAME_PATTERN, type Actor } from "tardie"
-import { NO_ANSWER, ProblemError, type ActorClient, type MethodState } from "@clavia/tardigrade-client"
+import {
+  CATALOG_AVAILABILITY_FILTERS,
+  MODEL_CATALOG_PRICE_SORTS,
+  MODEL_CATALOG_SORT_ORDERS,
+  MODEL_CATALOG_UNPRICED_ORDERS,
+  NO_ANSWER,
+  ProblemError,
+  type ActorClient,
+  type MethodState
+} from "@clavia/tardigrade-client"
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
@@ -159,6 +168,11 @@ const catalogLimit = Flag.integer("limit").pipe(
   Flag.optional
 )
 
+const catalogAvailability = Flag.choice("availability", CATALOG_AVAILABILITY_FILTERS).pipe(
+  Flag.withDescription("Include every catalog provider or only providers this host can use."),
+  Flag.optional
+)
+
 // clientOf resolves where to call and opens the client, which is the one place the two sources meet
 // (config.ts, resolveRemote).
 const clientOf = (flags: {
@@ -228,7 +242,7 @@ const setupPromptIn = (root: string, env: Readonly<Record<string, string | undef
   setupPrompt(setupPromptOptionsIn(root, env))
 
 export const NON_INTERACTIVE_SETUP =
-  "tdg setup needs an interactive terminal; use `tdg setup provider` and `tdg setup default` in scripts"
+  "tdg setup needs --provider, --provider-config, and --default-model when stdin is not interactive; see `tdg setup --help`"
 export const NON_INTERACTIVE_PROVIDER_SETUP =
   "tdg setup provider needs <provider> and <config> when stdin is not interactive; see `tdg setup provider --help`"
 export const NON_INTERACTIVE_DEFAULT_SETUP =
@@ -251,6 +265,10 @@ export const setupProviderCommand = Command.make("provider", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
+    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+    if (project.models.default === undefined) {
+      return yield* userErrorOf("the first provider and default must be configured together; run `tdg setup`")
+    }
     const declared = yield* Effect.try({
       try: () => providerAnswersFrom({
         provider: stated(flags.provider),
@@ -267,7 +285,7 @@ export const setupProviderCommand = Command.make("provider", {
       : providerSetupSummary(files, [answers]))
   })).pipe(
     Command.withDescription(
-      "Add or update one provider connection in the platform manifests."
+      "Add or update one provider connection after the host default is configured."
     ),
     Command.withExamples([
       { command: "tdg setup provider", description: "Prompt for a provider connection" },
@@ -308,7 +326,26 @@ export const setupDefaultCommand = Command.make("default", {
   ])
 )
 
-export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*() {
+export const setupCommand = Command.make("setup", {
+  provider: setupProvider,
+  providerConfig: setupProviderConfig,
+  defaultModel: setupDefaultModel,
+  json
+}, (flags) => Effect.gen(function*() {
+  const declared = yield* Effect.try({
+    try: () => setupAnswersFrom({
+      provider: stated(flags.provider),
+      providerConfig: stated(flags.providerConfig),
+      defaultModel: stated(flags.defaultModel)
+    }),
+    catch: userErrorOf
+  })
+  if (declared !== undefined) {
+    const cli = yield* Cli
+    const files = yield* Effect.mapError(writeSetup(cli.cwd, declared, cli.env), userErrorOf)
+    yield* Console.log(flags.json ? jsonOf(setupJson(files, declared)) : setupSummary(files, declared))
+    return
+  }
   if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
   const cli = yield* Cli
   const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
@@ -324,6 +361,10 @@ export const setupCommand = Command.make("setup", {}, () => Effect.gen(function*
   yield* Console.log(setupPlanSummary(files, plan))
 })).pipe(
   Command.withDescription("Configure project providers and a default model in the platform manifests. Entered credentials are stored in .dev.vars at 0600."),
+  Command.withExamples([{
+    command: "tdg setup --provider openrouter --provider-config '{\"env\":[\"OPENROUTER_API_KEY\"]}' --default-model anthropic/claude-sonnet-4.6",
+    description: "Configure the first provider and default atomically"
+  }]),
   Command.withSubcommands([setupProviderCommand, setupDefaultCommand])
 )
 
@@ -374,8 +415,7 @@ export const initCommand = Command.make("init", {
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(name, {
         cwd: cli.cwd,
-        ...(directory === undefined ? {} : { directory }),
-        model: { provider: answers.provider, defaultModel: answers.model_id }
+        ...(directory === undefined ? {} : { directory })
       }),
       catch: userErrorOf
     })
@@ -626,6 +666,7 @@ export const lsCommand = Command.make("ls", remote, (flags) =>
 
 export const providersCommand = Command.make("providers", {
   search: catalogSearch,
+  availability: catalogAvailability,
   cursor: catalogCursor,
   limit: catalogLimit,
   ...catalogRemote
@@ -633,6 +674,7 @@ export const providersCommand = Command.make("providers", {
   Effect.gen(function*() {
     const client = yield* clientOf(flags)
     const page = yield* call(() => client.providers({
+      availability: Option.getOrUndefined(flags.availability),
       cursor: stated(flags.cursor),
       limit: Option.getOrUndefined(flags.limit),
       search: stated(flags.search)
@@ -652,6 +694,19 @@ export const modelsCommand = Command.make("models", {
     Flag.optional
   ),
   search: catalogSearch,
+  availability: catalogAvailability,
+  sort: Flag.choice("sort", MODEL_CATALOG_PRICE_SORTS).pipe(
+    Flag.withDescription("Order models by this token price."),
+    Flag.optional
+  ),
+  order: Flag.choice("order", MODEL_CATALOG_SORT_ORDERS).pipe(
+    Flag.withDescription("Order selected prices from low to high or high to low."),
+    Flag.optional
+  ),
+  unpriced: Flag.choice("unpriced", MODEL_CATALOG_UNPRICED_ORDERS).pipe(
+    Flag.withDescription("Place models without the selected price first or last."),
+    Flag.optional
+  ),
   cursor: catalogCursor,
   limit: catalogLimit,
   ...catalogRemote
@@ -659,16 +714,21 @@ export const modelsCommand = Command.make("models", {
   Effect.gen(function*() {
     const client = yield* clientOf(flags)
     const page = yield* call(() => client.models({
+      availability: Option.getOrUndefined(flags.availability),
       cursor: stated(flags.cursor),
       limit: Option.getOrUndefined(flags.limit),
       provider: stated(flags.provider),
-      search: stated(flags.search)
+      search: stated(flags.search),
+      sort: Option.getOrUndefined(flags.sort),
+      order: Option.getOrUndefined(flags.order),
+      unpriced: Option.getOrUndefined(flags.unpriced)
     }))
     yield* Console.log(flags.json ? jsonOf(page) : modelsTable(page))
   })).pipe(
     Command.withDescription("Search and page the public model catalog."),
     Command.withExamples([
       { command: "tdg models --provider openrouter --search claude", description: "Search OpenRouter models" },
+      { command: "tdg models --sort completionUsdPerToken --order asc", description: "List the cheapest completion prices first" },
       { command: "tdg models --cursor <cursor> --json", description: "Read the next page as JSON" }
     ])
   )

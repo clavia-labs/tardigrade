@@ -7,8 +7,6 @@ import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import { DEFAULT_ACTOR_ENTRY, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
-const model = { provider: "openrouter", defaultModel: "anthropic/claude-sonnet-4-6" }
-
 afterEach(async () => {
   if (root.length > 0) await rm(root, { recursive: true, force: true })
 })
@@ -21,7 +19,7 @@ const temporaryRoot = async (): Promise<string> => {
 describe("initActor", () => {
   test("creates a buildable named quickstart", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, model, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })
+    const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })
     const source = await readFile(initialized.entry, "utf8")
     const worker = await readFile(initialized.worker, "utf8")
     const manifestSource = await readFile(initialized.manifest, "utf8")
@@ -36,7 +34,7 @@ describe("initActor", () => {
     expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
     expect(initialized.packageManifest).toBe(join(cwd, "reviewer", DEFAULT_PACKAGE_MANIFEST))
     expect(source).toContain('const actorName = "reviewer"')
-    expect(source).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
+    expect(source).toContain("infer([")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/cloudflare"')
     expect(worker).toContain("cloudflareWorker(definition)")
@@ -72,13 +70,13 @@ describe("initActor", () => {
     await mkdir(directory)
     await writeFile(held, "keep me", "utf8")
 
-    await expect(initActor("reviewer", { cwd, model })).rejects.toThrow("target already exists")
+    await expect(initActor("reviewer", { cwd })).rejects.toThrow("target already exists")
     expect(await readFile(held, "utf8")).toBe("keep me")
   })
 
   test("writes into a stated directory", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, directory: "actors/custom", model })
+    const initialized = await initActor("reviewer", { cwd, directory: "actors/custom" })
 
     expect(initialized.entry).toBe(join(cwd, "actors", "custom", DEFAULT_ACTOR_ENTRY))
   })
@@ -88,7 +86,7 @@ describe("initActor", () => {
 describe("initSummary", () => {
   test("prints the complete local path", async () => {
     const cwd = await temporaryRoot()
-    const initialized = await initActor("reviewer", { cwd, model })
+    const initialized = await initActor("reviewer", { cwd })
     const summary = initSummary(initialized, {
       configPath: initialized.manifest,
       celldConfigPath: initialized.celldManifest,

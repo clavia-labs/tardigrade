@@ -15,6 +15,7 @@ import {
   infer,
   outputValidateOnce,
   workspacePackage,
+  type AgentCatalog,
   type ModelRef
 } from "tardie"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
@@ -40,15 +41,11 @@ import { inboundOf } from "./projections"
 // requests to any host. There is no shell: a shell cannot be scoped the way a root or an origin can,
 // and this build has no place to ask an operator whether one command is allowed.
 export interface AssemblyModelPolicy {
-  readonly provider: string
-  readonly default_model: string
   readonly contextWindowTokens?: number | ((model: ModelRef | undefined) => number)
+  readonly catalog?: AgentCatalog
 }
 
-export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {
-  provider: "unconfigured",
-  default_model: "unconfigured"
-}
+export const UNCONFIGURED_MODEL: AssemblyModelPolicy = {}
 
 const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
   actor({
@@ -56,13 +53,15 @@ const assemblyOf = (models: AssemblyModelPolicy = UNCONFIGURED_MODEL) =>
     methods: agentMethods,
     components: [
       infer([
-        budget([codeMode([agentsPackage(), workspacePackage(), filesPackage(), fetchPackage()])], { authority: caller() }),
+        budget([codeMode([
+          agentsPackage(models.catalog === undefined ? {} : { catalog: models.catalog }),
+          workspacePackage(),
+          filesPackage(),
+          fetchPackage()
+        ])], { authority: caller() }),
         compaction(models.contextWindowTokens === undefined ? {} : { contextWindowTokens: models.contextWindowTokens }),
         outputValidateOnce
-      ], {
-        provider: models.provider,
-        default_model: models.default_model
-      }),
+      ]),
       budgetAuthority()
     ]
   })

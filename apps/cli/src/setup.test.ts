@@ -224,6 +224,7 @@ describe("writeSetup", () => {
     const project = parseProjectConfig(await readFile(projectConfigPathIn(root), "utf8"))
     expect(project.models).toEqual({
       default: { provider: "openai", model_id: "a-model" },
+      allow: "*",
       providers: {
         openai: {
           baseUrl: "https://api.example.com/v1",
@@ -268,6 +269,7 @@ describe("writeSetup", () => {
     expect(JSON.parse(config.vars["TARDIGRADE_CONFIG"]!)).toEqual({
       models: {
         default: { provider: "openai", model_id: "a-model" },
+        allow: "*",
         providers: {
           openai: {
             baseUrl: "https://api.example.com/v1",
@@ -305,7 +307,7 @@ describe("writeSetup", () => {
     expect(held.OPENROUTER_API_KEY).toBe("secondary-key")
   })
 
-  test("provider and default writes remain independent", async () => {
+  test("later provider and default writes preserve runnable configuration", async () => {
     await write()
     const anthropic: ProviderAnswers = {
       provider: "anthropic",

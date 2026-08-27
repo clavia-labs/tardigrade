@@ -6,7 +6,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
-import { Self, effect } from "@clavia/tardigrade-core/reconciliation"
+import { Self, effect, settleActor } from "@clavia/tardigrade-core/reconciliation"
 import { actor, composeComponents } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
@@ -26,7 +26,7 @@ import { system } from "../components/system"
 import { receive } from "./turn"
 import { Infer, NativeOutputSupport, selectedModelOf, type InferRequest } from "../inference/reactor"
 
-const TEST_MODEL = { provider: "test", default_model: "test-model" } as const
+const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
 const assembled = <R>(component: AgentComponent<R>) => actor({
   name: "test-agent",
@@ -94,14 +94,110 @@ describe("infer component", () => {
       provider: "vercel",
       model_id: "anthropic/claude-sonnet-4-6"
     })
-    expect(selectedModelOf({ ...message, model: "openai/gpt-5.2" } as Event, fallback)).toEqual({
-      provider: "cloudflare",
-      model_id: "openai/gpt-5.2"
-    })
     expect(selectedModelOf({ ...message, model: undefined } as Event, fallback)).toEqual(fallback)
   })
 
-  test("the selected model reaches the model binding", async () => {
+  test("a turn without any applicable default durably asks for a model reference", async () => {
+    let calls = 0
+    const mind = Layer.succeed(Infer, {
+      react: () => {
+        calls += 1
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([nativeOutput], {
+      models: {
+        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+      }
+    }))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "choose" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
+      turn: "m1",
+      cause: "model_selection",
+      attempts: 0
+    })
+    expect(calls).toBe(0)
+  })
+
+  test("an actor with no model override inherits the host default", async () => {
+    const selected = { provider: "openai", model_id: "small" } as const
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      resolve: (model) => ({
+        model: model ?? selected,
+        models: {
+          default: selected,
+          allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+        }
+      }),
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([nativeOutput]))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* receive(agent, { id: "m1", text: "inherit" })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(seen.map((request) => request.model)).toEqual([selected])
+    expect(events.find((event) => event.type === "ModelResolved")).toMatchObject({
+      model: selected,
+      models: {
+        default: selected,
+        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+      }
+    })
+  })
+
+  test("a historical model string durably fails its turn", async () => {
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
+      }
+    })
+    const agent = assembled(infer([nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* settleActor(agent)
+        yield* receive(agent, {
+          id: "m2",
+          text: "continue",
+          model: { provider: "openai", model_id: "gpt-5.6" }
+        })
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog([{
+        type: "MessageReceived",
+        id: "m1",
+        text: "old",
+        model: "gpt-4o",
+        at: 1
+      }]), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(events.find((event) => event.type === "TurnFailed")).toMatchObject({
+      turn: "m1",
+      cause: "message_invalid",
+      attempts: 0
+    })
+    expect(seen.map((request) => request.model)).toEqual([
+      { provider: "openai", model_id: "gpt-5.6" }
+    ])
+    expect(events.at(-1)?.type).toBe("TurnCompleted")
+  })
+
+  test("each turn can select a provider without losing its conversation", async () => {
     const seen: InferRequest[] = []
     const mind = Layer.succeed(Infer, {
       react: (request: InferRequest) => {
@@ -116,27 +212,45 @@ describe("infer component", () => {
           model?.provider === "vercel" ? 200_000 : 100_000
       }),
       nativeOutput
-    ], { provider: "vercel", default_model: "anthropic/claude-sonnet-4-6" }))
+    ], {
+      models: {
+        default: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" },
+        allow: "*"
+      }
+    }))
     const events = await run(
       Effect.gen(function* () {
         yield* receive(agent, {
           id: "m1",
-          text: "go",
-          model: "openai/gpt-5.2"
+          text: "first",
+          model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" }
+        })
+        yield* receive(agent, {
+          id: "m2",
+          text: "second",
+          model: { provider: "openai", model_id: "gpt-5.6" }
         })
         return yield* readLog
       }),
       Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
     )
-    expect(seen[0]?.model).toEqual({ provider: "vercel", model_id: "openai/gpt-5.2" })
+    expect(seen.map((request) => request.model)).toEqual([
+      { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" },
+      { provider: "openai", model_id: "gpt-5.6" }
+    ])
     expect(seen[0]?.context?.contextWindowTokens).toBe(200_000)
-    expect(events.find((event) => event.type === "ModelResolved")).toMatchObject({
-      turn: "m1",
-      model: { provider: "vercel", model_id: "openai/gpt-5.2" }
-    })
-    expect(events.find((event) => event.type === "ModelCalled")).toMatchObject({
-      model: { provider: "vercel", model_id: "openai/gpt-5.2" }
-    })
+    expect(seen[1]?.context?.contextWindowTokens).toBe(100_000)
+    expect(seen[1]?.trajectory.filter((event) => event.type === "MessageReceived").map((event) =>
+      (event as { readonly id?: unknown }).id
+    )).toEqual(["m1", "m2"])
+    expect(events.filter((event) => event.type === "ModelResolved")).toMatchObject([
+      { turn: "m1", model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" } },
+      { turn: "m2", model: { provider: "openai", model_id: "gpt-5.6" } }
+    ])
+    expect(events.filter((event) => event.type === "ModelCalled")).toMatchObject([
+      { turn: "m1", model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" } },
+      { turn: "m2", model: { provider: "openai", model_id: "gpt-5.6" } }
+    ])
   })
 
   test("an assembly must declare one output strategy", () => {
@@ -255,7 +369,7 @@ describe("infer component", () => {
     const agent = assembled(infer([echoTable, later, nativeOutput], TEST_MODEL))
 
     expect(agent.components).toHaveLength(1)
-    expect(agent.reactors).toHaveLength(3)
+    expect(agent.reactors).toHaveLength(4)
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 

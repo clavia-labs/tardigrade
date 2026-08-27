@@ -62,23 +62,32 @@ describe("the address a call goes to", () => {
       revision: "catalog-1",
       refreshed_at: 1,
       status: "fresh",
+      policy: { allow: "*" },
       total: 0,
       limit: 50,
       items: []
     })
     await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub }).models({
+      availability: "available",
       provider: "openrouter",
       search: "claude",
       cursor: "next",
-      limit: 25
+      limit: 25,
+      sort: "completionUsdPerToken",
+      order: "desc",
+      unpriced: "last"
     })
     const url = lastUrl()
     expect(url.pathname).toBe("/v1/models")
     expect(Object.fromEntries(url.searchParams)).toEqual({
+      availability: "available",
       provider: "openrouter",
       search: "claude",
       cursor: "next",
-      limit: "25"
+      limit: "25",
+      sort: "completionUsdPerToken",
+      order: "desc",
+      unpriced: "last"
     })
   })
 
@@ -87,6 +96,7 @@ describe("the address a call goes to", () => {
       revision: "catalog-1",
       refreshed_at: 1,
       status: "fresh",
+      policy: { allow: "*" },
       total: 0,
       limit: 50,
       items: []

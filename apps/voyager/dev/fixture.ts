@@ -86,7 +86,10 @@ const scripted = ({ trajectory }: InferRequest): Action => {
   }
 }
 
+const testModel = { provider: "test", model_id: "scripted" } as const
+
 const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+  resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
 

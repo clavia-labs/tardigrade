@@ -103,6 +103,9 @@
         "@clavia/tardigrade-host": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
+      "devDependencies": {
+        "fast-check": "^4.9.0",
+      },
     },
     "packages/channels": {
       "name": "@clavia/tardigrade-channels",

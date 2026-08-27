@@ -13,6 +13,8 @@ import {
   methodCallKeys,
   methodResponseComponent,
   methodResponseKeys,
+  methodInputValidationComponents,
+  methodInputValidationTransitions,
   methodTimeoutComponent,
   methodTimeoutKeys,
   type ActorMethods
@@ -53,12 +55,25 @@ const fromOptions = <
   const methods = actorMethodsOf(options.methods)
   type R = ComponentRequirements<Components[number]> | Router | Self
   const components = options.components as ReadonlyArray<Component<unknown, R>>
-  const fragments = components.flatMap((component) => component.keys === undefined ? [] : [component.keys])
+  const inputValidation = methodInputValidationComponents(methods)
+  const fragments = [...inputValidation, ...components].flatMap((component) => component.keys === undefined ? [] : [component.keys])
   const responses = methodResponseComponent(methods)
   const contract = actorContractOf(methods, options.components as ReadonlyArray<Component<unknown, unknown>>)
+  const keyOf = composeKeys(...fragments, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+  const guarded = components.map((component) => {
+    const derive = reactorOf(component)
+    return (log: Parameters<typeof derive>[0]) => {
+      const recorded = new Set(log.flatMap((event) => {
+        const key = keyOf(event)
+        return key === undefined ? [] : [key]
+      }))
+      const invalid = methodInputValidationTransitions(methods, log).some((transition) => !recorded.has(transition.key))
+      return invalid ? [] : derive(log)
+    }
+  })
   const runtime = actorFromReactors<R>(
-    [...components.map(reactorOf), reactorOf(methodTimeoutComponent), reactorOf(responses)],
-    composeKeys(...fragments, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+    [...guarded, ...inputValidation.map(reactorOf), reactorOf(methodTimeoutComponent), reactorOf(responses)],
+    keyOf
   )
   return {
     ...runtime,

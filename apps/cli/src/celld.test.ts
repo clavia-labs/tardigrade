@@ -17,7 +17,7 @@ const wrangler = `{
   "limits": { "cpu_ms": 300000 },
   "vars": {
     "TARDIGRADE_ALARM_DELAY_MILLIS": "120000",
-    "TARDIGRADE_CONFIG": { "models": { "default": { "provider": "openai", "model_id": "gpt-5.2" } } }
+    "TARDIGRADE_CONFIG": { "models": { "default": { "provider": "openai", "model_id": "gpt-5.2" }, "allow": "*" } }
   }
 }`
 
@@ -31,7 +31,7 @@ describe("Celld configuration", () => {
     expect(config).not.toHaveProperty("observability")
     expect(config).not.toHaveProperty("limits")
     expect((config["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe(
-      '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"}}}'
+      '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"},"allow":"*"}}'
     )
     expect((config["vars"] as Record<string, string>)[CELLD_SANDBOX_TRANSPORT_VAR]).toBe(CELLD_SANDBOX_TRANSPORT)
   })
@@ -51,7 +51,7 @@ describe("Celld configuration", () => {
     expect(updated).toContain('"CELLD_ONLY": "kept"')
     const config = parse(updated) as { readonly vars: Readonly<Record<string, string>> }
     expect(config.vars["TARDIGRADE_CONFIG"]).toBe(
-      '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"}}}'
+      '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"},"allow":"*"}}'
     )
   })
 })

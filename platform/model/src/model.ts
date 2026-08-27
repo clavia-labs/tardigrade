@@ -768,13 +768,18 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
   }
   const layer = Layer.succeed(Infer, {
     resolve: (reference) => {
-      if (reference.provider !== config.provider || reference.model_id !== config.model) {
+      const selected = reference ?? { provider: config.provider, model_id: config.model }
+      if (selected.provider !== config.provider || selected.model_id !== config.model) {
         throw new Error(
-          `model ${reference.provider}/${reference.model_id} is not bound; this host binds ${config.provider}/${config.model}`
+          `model ${selected.provider}/${selected.model_id} is not bound; this host binds ${config.provider}/${config.model}`
         )
       }
       return {
-        model: reference,
+        model: selected,
+        models: {
+          default: selected,
+          allow: [{ provider: selected.provider, model_ids: [selected.model_id] }]
+        },
         contextWindowTokens: config.contextWindowTokens,
         ...(config.maxOutputTokens === undefined ? {} : { maxOutputTokens: config.maxOutputTokens })
       }

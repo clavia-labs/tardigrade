@@ -14,7 +14,7 @@ import type { ToolSpec } from "../inference/request"
 import { fallbackOf, type OutputFallback } from "../output/contract"
 import { agentKeys } from "../log/events"
 import { inferReactorFor, type InferPolicy } from "../inference/reactor"
-import type { ModelRef } from "../inference/reference"
+import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
 import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "./turn"
@@ -211,11 +211,9 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
   }
 }
 
-// InferOptions selects the provider connection and default model for an infer root. A message may
-// replace default_model for its turn, while provider remains assembly policy.
-export interface InferOptions extends Partial<Omit<InferPolicy, "model">> {
-  readonly provider: string
-  readonly default_model: string
+// InferOptions declares model authority and retry policy for an infer root.
+export interface InferOptions extends Partial<Omit<InferPolicy, "models">> {
+  readonly models?: ModelPolicyOverride
 }
 
 // infer composes an agent's child components and adds the model loop over their final view.
@@ -225,7 +223,7 @@ export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
   components: Cs,
-  options: InferOptions
+  options: InferOptions = {}
 ): AgentComponent<AgentR | ComponentRequirements<Cs[number]>> => {
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
@@ -241,11 +239,9 @@ export const infer = <
   }
 
   renderView(viewOf([]))
-  if (options.provider.trim().length === 0) throw new Error("infer provider cannot be empty")
-  if (options.default_model.trim().length === 0) throw new Error("infer default_model cannot be empty")
-  const { provider, default_model, ...policy } = options
-  const model: ModelRef = { provider, model_id: default_model }
-  const inference = inferReactorFor({ ...policy, model }, (log) => renderView(viewOf(log))) as Reactor<R>
+  const { models: rawModels, ...policy } = options
+  const models = modelPolicyOverrideOf(rawModels)
+  const inference = inferReactorFor({ ...policy, models }, (log) => renderView(viewOf(log))) as Reactor<R>
   const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
 
   return handles(agentMessageMethod, inheritComponentContract({

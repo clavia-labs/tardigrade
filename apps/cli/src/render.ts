@@ -77,9 +77,10 @@ export const providersTable = (page: ProviderCatalogPage): string => {
   const body = page.items.length === 0
     ? "no providers"
     : table(
-      ["PROVIDER", "PROTOCOL", "ENDPOINT", "REQUIRED", "ENV"],
+      ["PROVIDER", "STATUS", "PROTOCOL", "ENDPOINT", "REQUIRED", "ENV"],
       page.items.map((provider) => [
         provider.id,
+        provider.availability.status === "available" ? "available" : provider.availability.reason,
         provider.protocol ?? ABSENT,
         provider.baseUrl ?? ABSENT,
         provider.required.join(",") || ABSENT,

@@ -83,8 +83,10 @@ describe("lintActor", () => {
         methods: agentMethods,
         components: [
           infer([budget([codeMode()], { authority: caller() }), nativeOutput], {
-            provider: "test",
-            default_model: "test"
+            models: {
+              default: { provider: "test", model_id: "test" },
+              allow: "*"
+            }
           }),
           budgetAuthority()
         ]

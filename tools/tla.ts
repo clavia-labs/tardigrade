@@ -70,6 +70,8 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("runtime", "Execution", "ExecutionReadyLeak.cfg", "Invariant ParkedAttemptReleases is violated"),
   pass("runtime", "Guard", "Guard.cfg"),
   counterexample("runtime", "Guard", "GuardRace.cfg", "Invariant NoDoubleOutcome is violated"),
+  pass("runtime", "ModelPolicy", "ModelPolicy.cfg"),
+  counterexample("runtime", "ModelPolicy", "ModelPolicyWiden.cfg", "Invariant ChildCannotWiden is violated"),
   pass("runtime", "Projection", "Projection.cfg"),
   counterexample("runtime", "Projection", "ProjectionView.cfg", "Invariant ViewFaithful is violated"),
   pass("runtime", "Reconcile", "Reconcile.cfg"),

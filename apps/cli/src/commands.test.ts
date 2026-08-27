@@ -67,6 +67,7 @@ const clientOf = (
         revision: "catalog-1",
         status: "fresh",
         refreshed_at: 1,
+        policy: { allow: "*" },
         total: 0,
         limit: 50,
         items: []
@@ -78,6 +79,7 @@ const clientOf = (
         revision: "catalog-1",
         status: "fresh",
         refreshed_at: 1,
+        policy: { allow: "*" },
         total: 0,
         limit: 50,
         items: []
@@ -235,32 +237,25 @@ describe("parsing", () => {
   test("setup gives agents a declarative path instead of prompting", async () => {
     const ran = await drive(["setup"])
     expect(ran.failed).toBe(true)
-    expect(failureText(ran)).toContain("setup provider")
-    expect(failureText(ran)).toContain("setup default")
+    expect(failureText(ran)).toContain("--provider")
+    expect(failureText(ran)).toContain("--provider-config")
+    expect(failureText(ran)).toContain("--default-model")
   })
 
-  test("setup provider and default are independent declarative operations", async () => {
+  test("setup writes the first provider and default atomically", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "tdg-setup-command-"))
     try {
-      const provider = await drive([
+      const configured = await drive([
         "setup",
-        "provider",
-        "openrouter",
-        '{"env":["OPENROUTER_API_KEY"]}'
-      ], { cwd })
-      expect(provider.failed).toBe(false)
-      expect(await readFile(join(cwd, "wrangler.jsonc"), "utf8")).not.toContain('"default"')
-      await expect(readFile(join(cwd, ".dev.vars"), "utf8")).rejects.toThrow()
-
-      const selected = await drive([
-        "setup",
-        "default",
         "--provider",
         "openrouter",
-        "--model",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model",
         "anthropic/claude-sonnet-4-6"
       ], { cwd })
-      expect(selected.failed).toBe(false)
+      expect(configured.failed).toBe(false)
+      await expect(readFile(join(cwd, ".dev.vars"), "utf8")).rejects.toThrow()
       const config = await readFile(join(cwd, "wrangler.jsonc"), "utf8")
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
@@ -300,7 +295,7 @@ describe("parsing", () => {
       const config = await readFile(join(directory, "wrangler.jsonc"), "utf8")
 
       expect(ran.failed).toBe(false)
-      expect(actor).toContain('provider: "openrouter", default_model: "anthropic/claude-sonnet-4-6"')
+      expect(actor).toContain("infer([")
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
       expect(ran.recorded.installed).toEqual([directory])
@@ -430,18 +425,23 @@ describe("ls", () => {
 
 describe("catalog discovery", () => {
   test("providers forwards search and pagination and prints requirements", async () => {
-    const ran = await drive(["providers", "--search", "open", "--limit", "1", "--cursor", "next"], {
+    const ran = await drive(["providers", "--availability", "available", "--search", "open", "--limit", "1", "--cursor", "next"], {
       answers: {
         providers: {
           revision: "catalog-2",
           status: "cached",
           refreshed_at: 2,
+          policy: {
+            default: { provider: "openrouter", model_id: "anthropic/claude-sonnet-4-6" },
+            allow: "*"
+          },
           total: 2,
           limit: 1,
           next_cursor: "last",
           items: [{
             id: "openrouter",
             name: "OpenRouter",
+            availability: { status: "available" },
             protocol: "openai-chat-completions",
             baseUrl: "https://openrouter.ai/api/v1",
             env: ["OPENROUTER_API_KEY"],
@@ -454,18 +454,42 @@ describe("catalog discovery", () => {
     expect(ran.failed).toBe(false)
     expect(ran.recorded.catalog).toEqual([{
       kind: "providers",
-      options: { cursor: "next", limit: 1, search: "open" }
+      options: { availability: "available", cursor: "next", limit: 1, search: "open" }
     }])
     expect(ran.lines.join("\n")).toContain("openrouter")
     expect(ran.lines.join("\n")).toContain("next cursor last")
   })
 
   test("models forwards its provider filter and prints the page as JSON", async () => {
-    const ran = await drive(["models", "--provider", "openrouter", "--search", "claude", "--json"])
+    const ran = await drive([
+      "models",
+      "--provider",
+      "openrouter",
+      "--search",
+      "claude",
+      "--availability",
+      "available",
+      "--sort",
+      "completionUsdPerToken",
+      "--order",
+      "asc",
+      "--unpriced",
+      "last",
+      "--json"
+    ])
     expect(ran.failed).toBe(false)
     expect(ran.recorded.catalog).toEqual([{
       kind: "models",
-      options: { cursor: undefined, limit: undefined, provider: "openrouter", search: "claude" }
+      options: {
+        cursor: undefined,
+        availability: "available",
+        limit: undefined,
+        provider: "openrouter",
+        search: "claude",
+        sort: "completionUsdPerToken",
+        order: "asc",
+        unpriced: "last"
+      }
     }])
     expect(JSON.parse(ran.lines[0]!)).toMatchObject({ revision: "catalog-1", items: [] })
   })

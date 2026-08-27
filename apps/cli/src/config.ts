@@ -53,7 +53,7 @@ export class ProjectFileError extends Data.TaggedError("ProjectFileError")<{
   readonly cause?: unknown
 }> {}
 
-// parseProjectConfig validates JSONC syntax and the project configuration shape.
+// parseProjectConfig validates JSONC syntax and configuration that can start a host.
 export const parseProjectConfig = (raw: string, path = "wrangler.jsonc"): ProjectConfig => {
   const errors: Array<ParseError> = []
   const value = parse(raw, errors, { allowTrailingComma: true }) as unknown
@@ -95,6 +95,7 @@ export const readProjectConfig = (
         : new ProjectFileError({ message: String(cause), cause })
     })
   })
+
 
 // FileConfig is the user-level file's whole shape. It holds remote client settings that apply
 // across projects. Model connections belong to each project's JSONC file (setup.ts).

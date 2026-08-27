@@ -60,13 +60,29 @@ const scripted = ({ trajectory }: InferRequest): Action => {
   }
 }
 
+const testModel = { provider: "openai", model_id: "gpt-mini" } as const
+
 const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
+  resolve: (model = testModel) => ({ model, models: { default: model, allow: "*" } }),
   react: (request: InferRequest) => Effect.succeed(scripted(request))
 })
 
 const config = layerConfig(readConfig({
   TARDIGRADE_DB: ":memory:",
-  TARDIGRADE_ACTORS: `/tmp/tardigrade-api-test-${process.pid}`
+  TARDIGRADE_ACTORS: `/tmp/tardigrade-api-test-${process.pid}`,
+  OPENAI_API_KEY: "test-key"
+}, {
+  models: {
+    default: { provider: "openai", model_id: "gpt-mini" },
+    allow: "*",
+    providers: {
+      openai: {
+        baseUrl: "https://api.openai.com/v1",
+        protocol: "openai-responses",
+        env: ["OPENAI_API_KEY"]
+      }
+    }
+  }
 }))
 
 const catalog: ModelCatalog = {
@@ -74,15 +90,23 @@ const catalog: ModelCatalog = {
   revision: "catalog-1",
   refreshedAt: 1_700_000_000_000,
   status: "fresh",
-  providers: [{
-    id: "openai",
-    name: "OpenAI",
-    env: ["OPENAI_API_KEY"],
-    models: [
-      { id: "gpt-mini", metadata: { contextWindowTokens: 64_000 } },
-      { id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }
-    ]
-  }]
+  providers: [
+    {
+      id: "openai",
+      name: "OpenAI",
+      env: ["OPENAI_API_KEY"],
+      models: [
+        { id: "gpt-mini", metadata: { contextWindowTokens: 64_000, pricing: { promptUsdPerToken: 0.000_001, completionUsdPerToken: 0.000_004 } } },
+        { id: "gpt-test", metadata: { contextWindowTokens: 128_000, pricing: { promptUsdPerToken: 0.000_002, completionUsdPerToken: 0.000_003 } } }
+      ]
+    },
+    {
+      id: "anthropic",
+      name: "Anthropic",
+      env: ["ANTHROPIC_API_KEY"],
+      models: [{ id: "claude-test", metadata: { contextWindowTokens: 200_000 } }]
+    }
+  ]
 }
 const catalogLayer = layerModelCatalogValue(catalog)
 
@@ -180,11 +204,16 @@ describe("models", () => {
   test("the public catalog pages model metadata without credentials", async () => {
     const first = await serving(async (base) => await (await get(base, "/v1/models?provider=openai&limit=1")).json()) as {
       readonly items: ReadonlyArray<{ readonly id: string }>
+      readonly policy: unknown
       readonly next_cursor?: string
       readonly limit: number
       readonly total: number
     }
     expect(first).toMatchObject({ limit: 1, total: 2, items: [{ id: "gpt-mini" }] })
+    expect(first.policy).toEqual({
+      default: { provider: "openai", model_id: "gpt-mini" },
+      allow: "*"
+    })
     expect(typeof first.next_cursor).toBe("string")
     const second = await serving(async (base) => await (await get(
       base,
@@ -200,12 +229,45 @@ describe("models", () => {
       revision: "catalog-1",
       items: [{
         id: "openai",
+        availability: { status: "available" },
         protocol: "openai-responses",
         baseUrl: "https://api.openai.com/v1",
         env: ["OPENAI_API_KEY"],
         required: ["env"]
       }]
     })
+  })
+
+  test("provider discovery reports configuration availability", async () => {
+    const response = await serving(async (base) => await (await get(base, "/v1/providers?search=anthropic")).json())
+    expect(response).toMatchObject({
+      items: [{
+        id: "anthropic",
+        availability: { status: "unavailable", reason: "not_configured" }
+      }]
+    })
+  })
+
+  test("the model route sorts by the selected price", async () => {
+    const page = await serving(async (base) => await (await get(
+      base,
+      "/v1/models?sort=completionUsdPerToken&order=asc"
+    )).json()) as { readonly items: ReadonlyArray<{ readonly id: string }> }
+    expect(page.items.map((model) => model.id)).toEqual(["gpt-test", "gpt-mini", "claude-test"])
+  })
+
+  test("the host model route includes unconfigured catalog providers", async () => {
+    const page = await serving(async (base) => await (await get(base, "/v1/models?search=claude-test")).json()) as {
+      readonly items: ReadonlyArray<{ readonly provider: string; readonly id: string; readonly metadata: unknown }>
+    }
+    expect(page.items).toEqual([{ provider: "anthropic", id: "claude-test", metadata: { contextWindowTokens: 200_000 } }])
+  })
+
+  test("the host model route exposes its available view", async () => {
+    const page = await serving(async (base) => await (await get(base, "/v1/models?availability=available")).json()) as {
+      readonly items: ReadonlyArray<{ readonly provider: string }>
+    }
+    expect(page.items.map((model) => model.provider)).toEqual(["openai", "openai"])
   })
 
   test("a cursor cannot change its query", async () => {
@@ -234,15 +296,40 @@ describe("actor methods", () => {
     expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
       required: ["text"],
-      properties: { model: { type: "string" } }
+      properties: {
+        model: {
+          type: "object",
+          required: ["provider", "model_id"],
+          properties: {
+            provider: { type: "string" },
+            model_id: { type: "string" }
+          }
+        }
+      }
     })
     expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
     expect(methods[1]?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
   })
 
   test("an invocation births a thread and exposes its completed state", async () => {
-    const state = await serving((base) => callMessage(base, "alpha", "m1", "hello"))
-    expect(state).toEqual({ status: "completed", output: "ok: hello" })
+    const result = await serving(async (base) => {
+      const response = await put(base, "/v1/threads/alpha/methods/message/calls/m1", {
+        text: "hello",
+        model: { provider: "openai", model_id: "gpt-test" }
+      })
+      expect(response.status).toBe(202)
+      const state = await until("method call m1 of alpha", async () => {
+        const current = await get(base, "/v1/threads/alpha/methods/message/calls/m1")
+        const body = await current.json() as Record<string, unknown>
+        return body["status"] === "pending" ? undefined : body
+      })
+      const events = await (await get(base, "/v1/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      return { state, events }
+    })
+    expect(result.state).toEqual({ status: "completed", output: "ok: hello" })
+    expect(result.events.find((row) => row.event.type === "MessageReceived")?.event).toMatchObject({
+      model: { provider: "openai", model_id: "gpt-test" }
+    })
   })
 
   test("putting the same call URL is absorbed", async () => {

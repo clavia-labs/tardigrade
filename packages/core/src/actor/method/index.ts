@@ -9,8 +9,11 @@ export {
   type ActorMethodDefinition,
   type ActorMethodInput,
   type ActorMethodOutput,
-  type ActorMethods
+  type ActorMethods,
+  type DurableMethodInput,
+  type InvalidDurableMethodInput
 } from "./definition"
+export { methodInputValidationComponents, methodInputValidationTransitions } from "./validation"
 export type { ActorMethodCall, ActorMethodInvocation } from "./call"
 export {
   actorCall,

@@ -4,7 +4,7 @@ import { structuredWorkerConfigOf } from "./config"
 
 describe("Worker configuration", () => {
   test("reads object and string bindings", () => {
-    const config = { models: { default: { provider: "openai", model_id: "gpt-5.2" } } }
+    const config = { models: { default: { provider: "openai", model_id: "gpt-5.2" }, allow: "*" } }
     expect(structuredWorkerConfigOf(config)).toEqual(config)
     expect(structuredWorkerConfigOf(JSON.stringify(config))).toEqual(config)
   })

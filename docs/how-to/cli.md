@@ -26,7 +26,7 @@ tdg call message '{"text":"read this repo and tell me what it does"}'
 | --- | --- |
 | `tdg init <name>` | Create an actor and configure its first provider connection |
 | `tdg setup` | Add provider connections, then choose the default model |
-| `tdg setup provider` | Add or update one provider connection |
+| `tdg setup provider` | Add or update one provider after initial setup |
 | `tdg setup default` | Choose the default model from configured providers |
 | `tdg lint <entry>` | Validate an actor's component and method seams |
 | `tdg build <entry>` | Build and validate an actor artifact |
@@ -67,7 +67,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.dev.vars` |
 
-`tdg init` asks for the actor name when omitted, a provider connection, and a default model. Its target directory must be new. It creates an actor whose `infer` options match that selection, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and `celld.jsonc`, and stores the credential in `.dev.vars` at mode 0600. A failed initialization removes the new target directory. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. `tdg setup provider` changes connections without changing the default. Its declarative form accepts a provider name and a JSON connection object. The object names secret environment variables and does not contain or write their values. `tdg setup default` changes the default without writing credentials. Setup preserves unrelated platform settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. It stores the actor's threads in `.tardigrade/actor.sqlite` under that directory, so keep the actor directory present while the server runs. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
+`tdg init` asks for the actor name when omitted, a provider connection, and a default model. Its target directory must be new. It creates an actor that inherits the host model policy, writes the public connection under `vars.TARDIGRADE_CONFIG` in `wrangler.jsonc` and `celld.jsonc`, and stores the credential in `.dev.vars` at mode 0600. A failed initialization removes the new target directory. Setup adds `.dev.vars*` to `.gitignore` when it stores a credential. It never prints the credential back. Run `tdg setup` inside the actor directory to add one or more provider connections, choose the default provider and model once, review the plan, and confirm the write. Existing providers remain available when the flow asks for the default. The first provider and default are written together, so every configuration produced by the CLI can start a host. After that baseline exists, `tdg setup provider` changes connections without changing the default, and `tdg setup default` changes the default without writing credentials. Setup preserves unrelated platform settings, JSONC comments, local secret entries, and provider connections. `tdg dev` loads `.dev.vars`, then lets process environment values override it. It stores the actor's threads in `.tardigrade/actor.sqlite` under that directory, so keep the actor directory present while the server runs. A deployment uses its platform secret store. With no provider configured the server still boots and serves every read; it says so at boot and turns fail naming what is missing.
 
 An agent or CI job can avoid prompts by supplying the provider connection as JSON during initialization. The JSON names the credential environment variable and never contains its value:
 
@@ -78,15 +78,16 @@ tdg init researcher \
   --default-model anthropic/claude-sonnet-4.6
 ```
 
-Partial declarative initialization fails and lists the missing options. Declarative initialization does not read or write `OPENROUTER_API_KEY`; set it in the environment that runs the server. Agents and CI can add a connection and select it as the default in two focused commands:
+Partial declarative initialization fails and lists the missing options. Declarative initialization does not read or write `OPENROUTER_API_KEY`; set it in the environment that runs the server. Agents and CI can configure the first connection and default atomically:
 
 ```bash
-tdg setup provider openrouter '{"env":["OPENROUTER_API_KEY"]}'
-
-tdg setup default \
+tdg setup \
   --provider openrouter \
-  --model anthropic/claude-sonnet-4.6
+  --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
+  --default-model anthropic/claude-sonnet-4.6
 ```
+
+Once a valid baseline exists, `tdg setup provider` adds or updates another connection and `tdg setup default` selects an allowed model from a configured provider.
 
 Known providers supply their standard protocol and endpoint. A provider whose connection needs more fields states them in the same object. Amazon Bedrock requires its gateway endpoint and AWS region:
 
@@ -106,6 +107,7 @@ tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","
     "TARDIGRADE_CONFIG": {
       "models": {
         "default": { "provider": "openrouter", "model_id": "anthropic/claude-sonnet-4.6" },
+        "allow": "*",
         "providers": {
           "openrouter": {
             "baseUrl": "https://openrouter.ai/api/v1",

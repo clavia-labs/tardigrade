@@ -12,6 +12,7 @@ import {
   type ActorMetadata,
   type ActorSummary,
   type Append,
+  type CatalogAvailabilityFilter,
   type ThreadNode,
   type ThreadSummary,
   type EventRow,
@@ -19,6 +20,9 @@ import {
   type MethodAccepted,
   type MethodSummary,
   type ModelCatalogPage,
+  type ModelCatalogPriceSort,
+  type ModelCatalogSortOrder,
+  type ModelCatalogUnpricedOrder,
   type ProviderCatalogPage,
   type Projections,
   type TurnView
@@ -100,10 +104,14 @@ export interface CatalogPageOptions {
   readonly cursor?: string | undefined
   readonly limit?: number | undefined
   readonly search?: string | undefined
+  readonly availability?: CatalogAvailabilityFilter | undefined
 }
 
 export interface ModelPageOptions extends CatalogPageOptions {
   readonly provider?: string | undefined
+  readonly sort?: ModelCatalogPriceSort | undefined
+  readonly order?: ModelCatalogSortOrder | undefined
+  readonly unpriced?: ModelCatalogUnpricedOrder | undefined
 }
 
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
@@ -232,11 +240,15 @@ const eventsQuery = (options: EventsOptions) => {
 }
 
 const catalogQuery = (options: ModelPageOptions) => {
-  const query: { cursor?: string; limit?: number; provider?: string; search?: string } = {}
+  const query: { availability?: CatalogAvailabilityFilter; cursor?: string; limit?: number; provider?: string; search?: string; sort?: ModelCatalogPriceSort; order?: ModelCatalogSortOrder; unpriced?: ModelCatalogUnpricedOrder } = {}
+  if (options.availability !== undefined) query.availability = options.availability
   if (options.cursor !== undefined) query.cursor = options.cursor
   if (options.limit !== undefined) query.limit = options.limit
   if (options.provider !== undefined) query.provider = options.provider
   if (options.search !== undefined) query.search = options.search
+  if (options.sort !== undefined) query.sort = options.sort
+  if (options.order !== undefined) query.order = options.order
+  if (options.unpriced !== undefined) query.unpriced = options.unpriced
   return query
 }
 
