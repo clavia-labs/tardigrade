@@ -37,6 +37,13 @@ const Github = (): ReactElement => (
   </svg>
 )
 
+const MenuIcon = (): ReactElement => (
+  <span className="mobile-menu-icon" aria-hidden="true">
+    <span />
+    <span />
+  </span>
+)
+
 const Discord = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="currentColor" d="M19.5 5.3A17.2 17.2 0 0 0 15.3 4l-.5 1a16 16 0 0 0-5.6 0l-.5-1a17.1 17.1 0 0 0-4.2 1.3C1.8 9.3 1 13.2 1.4 17a17 17 0 0 0 5.2 2.6l1.3-1.8-1.8-.9.4-.3a12.2 12.2 0 0 0 11 0l.4.3-1.8.9 1.3 1.8a17 17 0 0 0 5.2-2.6c.5-4.4-.8-8.2-3.1-11.7ZM8.5 15.1c-1.3 0-2.3-1.2-2.3-2.6 0-1.5 1-2.6 2.3-2.6 1.3 0 2.3 1.2 2.3 2.6 0 1.5-1 2.6-2.3 2.6Zm7 0c-1.3 0-2.3-1.2-2.3-2.6 0-1.5 1-2.6 2.3-2.6 1.3 0 2.3 1.2 2.3 2.6 0 1.5-1 2.6-2.3 2.6Z" />
@@ -1059,14 +1066,42 @@ const SiteFooter = (): ReactElement => {
 }
 
 export const App = (): ReactElement => {
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
+  const headerRef = useRef<HTMLElement>(null)
+  const menuButtonRef = useRef<HTMLButtonElement>(null)
   const guide = window.location.pathname === "/guide" || window.location.pathname.startsWith("/guide/")
   const cli = window.location.pathname === "/cli" || window.location.pathname.startsWith("/cli/")
   const concepts = window.location.pathname === "/concepts" || window.location.pathname.startsWith("/concepts/")
   const examples = window.location.pathname === "/examples" || window.location.pathname.startsWith("/examples/")
   const consolePage = window.location.pathname === "/console" || window.location.pathname.startsWith("/console/")
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return
+
+    const closeOutside = (event: PointerEvent): void => {
+      if (event.target instanceof Node && !headerRef.current?.contains(event.target)) setMobileMenuOpen(false)
+    }
+    const closeOnEscape = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return
+      setMobileMenuOpen(false)
+      menuButtonRef.current?.focus()
+    }
+    const closeAtDesktop = (): void => {
+      if (window.innerWidth > 800) setMobileMenuOpen(false)
+    }
+
+    document.addEventListener("pointerdown", closeOutside)
+    document.addEventListener("keydown", closeOnEscape)
+    window.addEventListener("resize", closeAtDesktop)
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside)
+      document.removeEventListener("keydown", closeOnEscape)
+      window.removeEventListener("resize", closeAtDesktop)
+    }
+  }, [mobileMenuOpen])
+
   return <>
-    <header className="site-header">
+    <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
           <a className="brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
@@ -1085,8 +1120,31 @@ export const App = (): ReactElement => {
           <a className="docs-link" href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
           <a className="console-link" href="/console" aria-current={consolePage ? "page" : undefined}>Console</a>
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
+          <button className="mobile-menu-trigger" type="button" aria-controls="mobile-navigation" aria-expanded={mobileMenuOpen} ref={menuButtonRef} onClick={() => setMobileMenuOpen((open) => !open)}>
+            <MenuIcon />
+            <span>Menu</span>
+          </button>
         </div>
       </nav>
+      <div className="mobile-nav-panel" data-open={mobileMenuOpen} id="mobile-navigation" aria-hidden={!mobileMenuOpen} inert={!mobileMenuOpen ? true : undefined}>
+        <nav className="mobile-nav-panel-inner" aria-label="Mobile navigation">
+          <div className="mobile-nav-primary">
+            <a className="mobile-nav-console" href="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</a>
+            <div className="mobile-nav-sections">
+              <a href="/guide" aria-current={guide ? "page" : undefined}>Guide</a>
+              <a href="/concepts" aria-current={concepts ? "page" : undefined}>Concepts</a>
+              <a href="/cli" aria-current={cli ? "page" : undefined}>CLI</a>
+              <a href="/examples/rlm" aria-current={examples ? "page" : undefined}>Examples</a>
+            </div>
+          </div>
+          <div className="mobile-nav-resources">
+            <span>Resources</span>
+            <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
+            <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
+            <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
+          </div>
+        </nav>
+      </div>
     </header>
 
     {guide ? <GuidePage /> : concepts ? <ConceptsPage /> : cli ? <CliPage /> : examples ? <RlmExamplePage /> : consolePage ? <ConsolePage /> : <main>
