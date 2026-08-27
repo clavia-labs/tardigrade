@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState, type ReactElement } from "react"
+import { ActorDiagram } from "./ActorDiagram"
 import { ComponentBridge } from "./ComponentBridge"
+import { ComponentDiagram } from "./ComponentDiagram"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
+import { MethodDiagram } from "./MethodDiagram"
+import { TransitionLoop } from "./TransitionLoop"
 import { WorldGlobe } from "./WorldGlobe"
 
 const REPOSITORY = "https://github.com/clavia-labs/tardigrade"
@@ -71,13 +75,6 @@ const CopyIcon = (): ReactElement => (
 const CheckIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true">
     <path fill="none" stroke="currentColor" strokeLinecap="square" strokeLinejoin="miter" strokeWidth="1.8" d="m5 12.5 4.2 4.2L19 7" />
-  </svg>
-)
-
-const ConceptArrow = (): ReactElement => (
-  <svg className="concept-arrow" viewBox="0 0 96 24" aria-hidden="true">
-    <path d="M2 12H92" />
-    <path d="M84 5 92 12 84 19" />
   </svg>
 )
 
@@ -874,8 +871,9 @@ const ConceptsPage = (): ReactElement => (
 
         <section className="concept-section concept-section-actor">
           <div className="concept-copy">
-            <h2>Actor</h2>
-            <p>An actor is one durable event log and the components that interpret it. Methods append facts to the log. Components read those facts and decide what happens next.</p>
+            <h2>Actors</h2>
+            <p>The core primitive of Tardigrade is an actor. At a high level, an actor is an addressable entity with state and behavior. Its history is recorded as an append-only log of events, and its current state is derived from that log.</p>
+            <p>Methods let the world call an actor. Components read the log and derive transitions, the units of work that define how the actor responds.</p>
           </div>
           <div className="concept-interface">
             <span>interface</span>
@@ -885,81 +883,36 @@ const ConceptsPage = (): ReactElement => (
   components: Component[]
 })`}</pre>
           </div>
-          <div className="actor-concept-illustration" aria-label="An actor definition mounted beside its durable event log">
-            <div className="actor-concept-source">
-              <span>actor.ts</span>
-              <CodeSnippet label="actor example" code={`actor({
-  name: "researcher",
-  methods: { message },
-  components: [infer]
-})`} />
-            </div>
-            <div className="actor-concept-link" aria-hidden="true">
-              <svg viewBox="0 0 80 48">
-                <defs><marker id="actor-link-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0 0 7 3.5 0 7Z" /></marker></defs>
-                <path d="M3 24H76" markerEnd="url(#actor-link-arrow)" />
-              </svg>
-              <span>mounts</span>
-            </div>
-            <div className="actor-concept-store-wrap">
-              <span>event store</span>
-              <div className="actor-concept-store">
-                <header><code>thread / audit-42</code></header>
-                <ol>
-                  <li data-tone="message"><span>01</span><code>MessageReceived</code></li>
-                  <li data-tone="tool"><span>02</span><code>ToolCalled</code></li>
-                  <li data-tone="return"><span>03</span><code>ToolReturned</code></li>
-                  <li data-tone="done"><span>04</span><code>TurnCompleted</code></li>
-                </ol>
-              </div>
-            </div>
-          </div>
+          <ActorDiagram />
         </section>
 
-        <section className="concept-section concept-section-methods">
+        <section className="concept-section concept-section-transitions">
           <div className="concept-copy">
-            <h2>Methods</h2>
-            <p>Methods are the actor's typed public API. A method defines the input event and how callers read pending, completed, or failed state from the log.</p>
+            <h2>Transitions</h2>
+            <p>A transition describes one unit of work enabled by the actor's log. The runtime executes enabled transitions and records their outcomes as new events.</p>
+            <p>Transitions come in two types. An intent proposes events without external work. An external effect interacts with the world and returns events that record its outcome. Each transition has a key, which lets the runtime determine whether its result is already in the log.</p>
           </div>
           <div className="concept-interface">
             <span>interface</span>
-            <pre>{`actorMethod({
-  input, output, timeoutMs?,
-  event(call): Event,
-  state(log, id): MethodState
-})`}</pre>
+            <pre>{`type Transition =
+  | { kind: "intent", key, events }
+  | { kind: "effect", key, act }`}</pre>
           </div>
-          <div className="methods-concept-illustration" aria-label="The world makes a typed method call that appends an event to the actor log">
-            <div className="methods-world">
-              <span>world</span>
-              <WorldGlobe />
-            </div>
-            <div className="methods-arrow"><ConceptArrow /></div>
-            <div className="typed-method-call">
-              <span>typed method</span>
-              <code>{`message({
-  text: "Find the evidence"
-})`}</code>
-            </div>
-            <div className="methods-arrow"><ConceptArrow /></div>
-            <div className="actor-concept-store-wrap methods-event-store">
-              <span>event log</span>
-              <div className="actor-concept-store">
-                <header><code>thread / audit-42</code></header>
-                <ol>
-                  <li data-tone="message"><span>01</span><code>MessageReceived</code><small>Find the evidence</small></li>
-                </ol>
-              </div>
-            </div>
+          <div className="transition-example-copy">
+            <h3>Example: a tool-calling agent</h3>
+            <p>A message starts inference. A tool call starts service work. Its result enables inference again. A final response completes the method call.</p>
           </div>
+          <div className="transition-loop-frame">
+            <TransitionLoop />
+          </div>
+          <p className="concept-bridge-copy">The actor runs enabled transitions until none remain, at which point it has settled. A component packages the logic that derives those transitions from the log.</p>
         </section>
 
         <section className="concept-section concept-section-components">
           <div className="concept-copy">
             <h2>Components</h2>
-            <p>A component is a pure function over the complete event log. It returns the view its parent consumes and the transitions that are due.</p>
-            <p>The log is the input. Components do not own hidden mutable state, so the same log always produces the same plan.</p>
-            <div className="concept-formula"><code>f(log)</code><span>→</span><code>{`{ view, transitions }`}</code></div>
+            <p>A component packages part of an actor's behavior as a named, pure function over the log. It derives two things. Its view is the value its parent component consumes. Its transitions describe the work currently enabled.</p>
+            <p>Given the same log, a component returns the same view and transitions without performing external work. External work stays inside effect transitions, which the runtime executes. Components can compose other components, so an actor's behavior can be assembled from smaller parts.</p>
           </div>
           <div className="concept-interface">
             <span>interface</span>
@@ -969,42 +922,30 @@ const ConceptsPage = (): ReactElement => (
   derive(log): { view, transitions }
 })`}</pre>
           </div>
+          <p className="concept-bridge-copy">In the tool-calling agent, an inference component derives the language model transition, while a tool component derives the service transition. Events in the shared log connect them: a model response enables the tool component, and a tool result enables the inference component again.</p>
           <div className="compaction-example-copy">
             <h3>Example: compaction</h3>
-            <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction keeps a 64k tail in the view and derives a summarization transition. When that work completes, it appends <code>CompactionCompleted</code> to the same log.</p>
+            <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction derives a transition that summarizes the older span. The transition appends <code>CompactionCompleted</code> to the log, and later model requests use its summary with a 64k-token tail. The full log remains unchanged.</p>
           </div>
-          <div className="compaction-flow" aria-label="Compaction derives a context view and a transition from the event log">
-            <div className="compaction-log">
-              <span>event log</span>
-              <div className="compaction-log-stack" aria-hidden="true">
-                <i /><i /><i /><i /><i />
-              </div>
-              <strong>104k tokens</strong>
-            </div>
-            <div className="compaction-flow-arrow" aria-hidden="true">→</div>
-            <div className="compaction-derive">
-              <span>component</span>
-              <code>compaction.derive(log)</code>
-              <dl>
-                <div><dt>window</dt><dd>128k</dd></div>
-                <div><dt>fire</dt><dd>80% · 102k</dd></div>
-                <div><dt>keep</dt><dd>50% · 64k</dd></div>
-              </dl>
-            </div>
-            <div className="compaction-flow-arrow" aria-hidden="true">→</div>
-            <div className="compaction-results">
-              <div>
-                <span>view</span>
-                <strong>Context policy</strong>
-                <p>Render a 64k-token tail after the latest checkpoint.</p>
-              </div>
-              <div>
-                <span>transition</span>
-                <strong>Summarization due</strong>
-                <p>Summarize the older history and append <code>CompactionCompleted</code>.</p>
-              </div>
-            </div>
+          <div className="component-diagram-frame"><ComponentDiagram /></div>
+          <p className="concept-bridge-copy">Components define this internal behavior. Methods expose it to callers.</p>
+        </section>
+
+        <section className="concept-section concept-section-methods">
+          <div className="concept-copy">
+            <h2>Methods</h2>
+            <p>Methods define the actor's callable interface. Each method declares input and output schemas, turns a valid call into an event, and derives the call's pending, completed, or failed state from the log.</p>
           </div>
+          <div className="concept-interface">
+            <span>interface</span>
+            <pre>{`actorMethod({
+  input, output, timeoutMs?,
+  event(call): Event,
+  state(log, id): MethodState
+})`}</pre>
+          </div>
+          <div className="method-diagram-frame"><MethodDiagram /></div>
+          <p className="concept-bridge-copy">For the tool-calling agent, the <code>message</code> method records the user's message. That event starts the transition loop. When the log contains a final response, the method returns its typed output. Each call has an identifier that links its input to its result and lets the log absorb duplicate deliveries.</p>
         </section>
 
       </article>
