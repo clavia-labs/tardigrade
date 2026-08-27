@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.11.0](https://github.com/clavia-labs/tardigrade/compare/v0.10.1...v0.11.0) (2026-08-27)
+
+
+### Features
+
+* add durable method alarms ([#274](https://github.com/clavia-labs/tardigrade/issues/274)) ([de49c5f](https://github.com/clavia-labs/tardigrade/commit/de49c5f4cd9b332ddbf902fac8570d49305087a2))
+* **models:** add catalog policy ([#283](https://github.com/clavia-labs/tardigrade/issues/283)) ([e0a47bb](https://github.com/clavia-labs/tardigrade/commit/e0a47bbf49736d1c7a33836266cfb633ef85ab80))
+* **web:** add landing page ([#275](https://github.com/clavia-labs/tardigrade/issues/275)) ([6c8445d](https://github.com/clavia-labs/tardigrade/commit/6c8445dd5d11479dcc61353871f97690b5e25c39))
+* **web:** add mobile navigation ([#281](https://github.com/clavia-labs/tardigrade/issues/281)) ([dc2468c](https://github.com/clavia-labs/tardigrade/commit/dc2468c325219f7fa2bea19eb8c0b926848d73ae))
+* **web:** add site favicon ([#284](https://github.com/clavia-labs/tardigrade/issues/284)) ([fbee8fd](https://github.com/clavia-labs/tardigrade/commit/fbee8fd048eaa14eb4d4d1cc16eda9089c2791ca))
+
+
+### Bug Fixes
+
+* **bun:** isolate model code ([#271](https://github.com/clavia-labs/tardigrade/issues/271)) ([805aa17](https://github.com/clavia-labs/tardigrade/commit/805aa179639d218646d70d9021196b2656f33809))
+* **code:** bound package calls ([#273](https://github.com/clavia-labs/tardigrade/issues/273)) ([91f875e](https://github.com/clavia-labs/tardigrade/commit/91f875ea05a775c04dd990f9d8ca60602e519dcc))
+* **web:** stop mobile autoplay ([#282](https://github.com/clavia-labs/tardigrade/issues/282)) ([8244533](https://github.com/clavia-labs/tardigrade/commit/8244533725eaef8fa3738be2ba2c97fd60e3aab8))
+
 ## [0.10.1](https://github.com/clavia-labs/tardigrade/compare/v0.10.0...v0.10.1) (2026-08-26)
 
 
