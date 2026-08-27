@@ -4,6 +4,33 @@ This binding mounts one actor definition into a named SQLite Durable Object. The
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
+## Application services
+
+An actor can require an application Effect service. Pass `layersFor` to `cloudflareWorker` to build that service from the Worker environment and current lane. Tardigrade merges the returned layer with its model, HTTP, sandbox, event-log, and workspace layers. It constructs the application layer separately for each lane settlement, so mutable service state is shared only when the supplied Layer explicitly shares it.
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { ActorHost, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
+
+interface Env extends TardigradeEnv {
+  readonly CUSTOMERS: D1Database
+}
+
+class CustomerStore extends Context.Service<
+  CustomerStore,
+  { readonly find: (id: string) => Effect.Effect<unknown> }
+>()("application/CustomerStore") {}
+
+export { ActorHost }
+export default cloudflareWorker(definition, {
+  layersFor: ({ env, lane }: CloudflareWorkerLayerContext<Env>) => Layer.succeed(CustomerStore, {
+    find: id => Effect.promise(() => env.CUSTOMERS.prepare("SELECT * FROM customers WHERE lane = ? AND id = ?").bind(lane, id).first())
+  })
+})
+```
+
+The callback may require Tardigrade's lane ports while constructing its layer. The returned Layer has a `never` error channel.
+
 ## Verify and deploy
 
 ```bash
