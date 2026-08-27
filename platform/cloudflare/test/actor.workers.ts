@@ -11,9 +11,9 @@ const authorization = { authorization: "Bearer workers-test-token" }
 const actorStub = () => (env as Env).ACTORS.getByName("echo")
 const alarm = () => runInDurableObject(actorStub(), (_instance, state) => state.storage.getAlarm())
 
-const methodState = async (): Promise<unknown> => {
+const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const response = await SELF.fetch("http://test/v1/threads/root/methods/echo/calls/workers-smoke", {
+    const response = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
       headers: authorization
     })
     const state = await response.json() as { readonly status?: unknown }
@@ -76,7 +76,7 @@ describe("cloudflare actor", () => {
     expect(accepted.status).toBe(202)
     expect(await accepted.json()).toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
     expect(await alarm()).not.toBeNull()
-    expect(await methodState()).toEqual({ status: "completed", output: "Run in workerd." })
+    expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     expect(await alarm()).toBeNull()
     const client = makeActorClient({
       baseUrl: "http://test",
@@ -86,7 +86,7 @@ describe("cloudflare actor", () => {
     expect(await client.invoke("root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
       .toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
     expect(await client.methodState("root", "echo", "workers-smoke"))
-      .toEqual({ status: "completed", output: "Run in workerd." })
+      .toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     const events = await SELF.fetch("http://test/v1/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",
@@ -100,6 +100,24 @@ describe("cloudflare actor", () => {
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.list()).toEqual([expect.objectContaining({ id: "root", status: "settled" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
+  })
+
+  test("a mounted actor receives lane application services", async () => {
+    const invoke = async (thread: string, call: string, text: string) => {
+      const accepted = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
+        method: "PUT",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ text })
+      })
+      expect(accepted.status).toBe(202)
+      return methodState(thread, call)
+    }
+    const [first, second] = await Promise.all([
+      invoke("application-a", "application-a", "first"),
+      invoke("application-b", "application-b", "second")
+    ])
+    expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
+    expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {

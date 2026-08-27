@@ -1,6 +1,6 @@
 import { DurableObject } from "cloudflare:workers"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
-import { FetchHttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { actor, agentMethods, agentsPackage, applyModelPolicy, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, intersectModelPolicies, modelAllowedBy, outputValidateOnce, workspacePackage, type Actor, type ActorMethods, type ModelPolicy, type ModelRef } from "tardie"
 import type { Action } from "tardie/log/events"
 import {
@@ -37,7 +37,12 @@ import {
   type WorkerLoaderSandboxTransport
 } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
-import { createCloudflareHost, type CloudflareHost } from "./host"
+import {
+  createCloudflareHost,
+  type CloudflareHost,
+  type CloudflareLaneEnv,
+  type CloudflarePorts
+} from "./host"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 
@@ -74,6 +79,7 @@ interface MountedActor {
   readonly name: string
   readonly actor: DefaultAssembly
   readonly methods: ActorMethods
+  readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
 }
 
 let mountedActor: MountedActor | undefined
@@ -455,7 +461,11 @@ export class ActorHost extends DurableObject<Env> {
       storage: this.ctx.storage,
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
-      layersFor: () => Layer.mergeAll(modelLayer(models, catalog), FetchHttpClient.layer, sandboxLayer),
+      layersFor: (lane) => {
+        const framework = Layer.mergeAll(modelLayer(models, catalog), FetchHttpClient.layer, sandboxLayer)
+        const application = mountedActor?.layersFor?.({ env: this.env, lane })
+        return application === undefined ? framework : Layer.mergeAll(framework, application)
+      },
       routes: [remoteRoute],
       driver: driverPolicyOf({
         maxConcurrentLanes: positiveInteger(
@@ -820,17 +830,49 @@ const worker = {
   }
 } satisfies ExportedHandler<Env>
 
-// cloudflareWorker mounts a defined actor into the Worker and its Durable Object host (test/actor.workers.ts, "a mounted actor exposes durable methods").
-export const cloudflareWorker = <R, const Methods extends ActorMethods>(
-  definition: Actor<R, Methods>
-): ExportedHandler<Env> => {
+type CloudflareWorkerProvided = CloudflarePorts | Infer | HttpClient.HttpClient
+type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
+
+// CloudflareWorkerLayerContext exposes the Worker bindings and lane identity used to construct application services.
+export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
+  readonly env: WorkerEnv
+  readonly lane: string
+}
+
+type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
+  context: CloudflareWorkerLayerContext<WorkerEnv>
+) => CloudflareLaneEnv<CloudflareApplicationRequirements<R>>
+
+// CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
+export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
+  [CloudflareApplicationRequirements<R>] extends [never]
+    ? { readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv> }
+    : { readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv> }
+
+type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
+  [CloudflareApplicationRequirements<R>] extends [never]
+    ? [options?: CloudflareWorkerOptions<R, WorkerEnv>]
+    : [options: CloudflareWorkerOptions<R, WorkerEnv>]
+
+// cloudflareWorker mounts a defined actor and its application layers into the Worker host (test/actor.workers.ts, "a mounted actor receives lane application services").
+export const cloudflareWorker = <
+  R,
+  const Methods extends ActorMethods,
+  WorkerEnv extends Env = Env
+>(
+  definition: Actor<R, Methods>,
+  ...[options]: CloudflareWorkerArguments<R, WorkerEnv>
+): ExportedHandler<WorkerEnv> => {
   mountedActor = {
     name: definition.name,
     actor: definition as unknown as DefaultAssembly,
-    methods: definition.methods
+    methods: definition.methods,
+    ...(options?.layersFor === undefined ? {} : {
+      layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
+    })
   }
   deployedActor = definition.name
-  return worker
+  return worker as ExportedHandler<WorkerEnv>
 }
 
 export default worker

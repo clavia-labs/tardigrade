@@ -6,6 +6,7 @@ export default defineConfig({
     wrangler: { configPath: "./test/wrangler.jsonc" },
     miniflare: {
       bindings: {
+        APPLICATION_PREFIX: "workers",
         TARDIGRADE_TOKEN: "workers-test-token",
         TARDIGRADE_ALARM_DELAY_MILLIS: "60000",
         TARDIGRADE_MODEL_CATALOG_URL: "https://models.test/catalog.json",

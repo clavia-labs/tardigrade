@@ -18,8 +18,8 @@ import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/dri
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { CloudflareEventStore, layerWorkspace } from "./storage"
 
-type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
-type CloudflareLaneEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
+export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
+export type CloudflareLaneEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
 
 type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
   ? { readonly layersFor?: (lane: string) => CloudflareLaneEnv<R> }
