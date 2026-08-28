@@ -8,8 +8,11 @@ import type { Env } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
-const actorStub = () => (env as Env).ACTORS.getByName("echo")
-const alarm = () => runInDurableObject(actorStub(), (_instance, state) => state.storage.getAlarm())
+const objectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
+const controlStub = () => (env as Env).ACTORS.getByName("echo")
+const actorStub = (thread: string) => (env as Env).ACTORS.getByName(objectNameOf(thread))
+const alarm = (thread: string) =>
+  runInDurableObject(actorStub(thread), (_instance, state) => state.storage.getAlarm())
 
 const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -37,7 +40,7 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    await runInDurableObject(actorStub(), async (_instance, state) => {
+    await runInDurableObject(controlStub(), async (_instance, state) => {
       const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(state.storage))
       try {
         const repository = await runtime.runPromise(ModelCatalogRepository)
@@ -75,9 +78,9 @@ describe("cloudflare actor", () => {
     })
     expect(accepted.status).toBe(202)
     expect(await accepted.json()).toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
-    expect(await alarm()).not.toBeNull()
+    expect(await alarm("root")).not.toBeNull()
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
-    expect(await alarm()).toBeNull()
+    expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
       baseUrl: "http://test",
       token: "workers-test-token",
@@ -94,11 +97,11 @@ describe("cloudflare actor", () => {
       "EchoCompleted"
     ])
     const health = await SELF.fetch("http://test/healthz")
-    expect(await health.json()).toEqual({ status: "resting", dirty: 0 })
+    expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
     const threads = await SELF.fetch("http://test/v1/threads", { headers: authorization })
-    expect(await threads.json()).toEqual([expect.objectContaining({ id: "root", depth: 0, events: 3, status: "settled" })])
+    expect(threads.status).toBe(400)
+    expect(await threads.json()).toEqual({ error: "thread-scoped workers do not support actor-wide thread listing" })
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
-    expect(await client.list()).toEqual([expect.objectContaining({ id: "root", status: "settled" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   })
 
@@ -118,11 +121,21 @@ describe("cloudflare actor", () => {
     ])
     expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
     expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
+    expect(actorStub("application-a").id.equals(actorStub("application-b").id)).toBe(false)
+    const firstLanes = await runInDurableObject(actorStub("application-a"), (_instance, state) =>
+      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    )
+    const secondLanes = await runInDurableObject(actorStub("application-b"), (_instance, state) =>
+      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    )
+    expect(firstLanes).toEqual([{ lane: "ag.application-a" }])
+    expect(secondLanes).toEqual([{ lane: "ag.application-b" }])
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {
     const deadlineAt = Date.now() - 1
-    const stub = actorStub()
+    const stub = actorStub("timeout")
+    await stub.init("echo", "ag.timeout")
     await stub.append("timeout", {
       type: "CallDispatched",
       id: "overdue-1",
@@ -149,6 +162,6 @@ describe("cloudflare actor", () => {
       call: "overdue-1",
       deadlineAt
     }))
-    expect(await alarm()).toBeNull()
+    expect(await alarm("timeout")).toBeNull()
   })
 })

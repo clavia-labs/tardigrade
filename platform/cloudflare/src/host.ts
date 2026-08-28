@@ -35,6 +35,10 @@ export type CloudflareHostOptions<R> = {
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (event: Event) => string | undefined
 } & LayersFor<R>
+export interface CloudflareHostRouting {
+  readonly localThread: string | undefined
+}
+
 
 export interface CloudflareHost {
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
@@ -59,7 +63,10 @@ const laneOf = (address: string): string => {
 }
 
 // createCloudflareHost binds one actor graph to Effect SQL over its Durable Object storage.
-export const createCloudflareHost = async <R = never>(options: CloudflareHostOptions<R>): Promise<CloudflareHost> => {
+export const createCloudflareHost = async <R = never>(
+  routing: CloudflareHostRouting,
+  options: CloudflareHostOptions<R>
+): Promise<CloudflareHost> => {
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
@@ -133,7 +140,16 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     send: (_destination, envelope) => commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
   }
   const routes = [
-    directoryRoute(localTransport, mappedDirectory((id: ActorId) => id.actor === options.principal ? id : undefined), isActorEnvelope, (envelope) => envelope.link.target),
+    directoryRoute(
+      localTransport,
+      mappedDirectory((id: ActorId) =>
+        id.actor === options.principal && (routing.localThread === undefined || id.thread === routing.localThread)
+          ? id
+          : undefined
+      ),
+      isActorEnvelope,
+      (envelope) => envelope.link.target
+    ),
     directoryRoute(providerTransport, mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint), isProviderEnvelope, (envelope) => envelope.link.target),
     ...(options.routes ?? [])
   ]

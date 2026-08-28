@@ -70,10 +70,15 @@ export interface Env {
 
 const LANE_PREFIX = "ag."
 const laneOf = (thread: string): string => `${LANE_PREFIX}${thread}`
+const actorThreadOf = (thread: string): string => thread.startsWith(LANE_PREFIX) ? thread : laneOf(thread)
 const threadOf = (lane: string): string | undefined => lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
 
 const flattenThreads = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
   nodes.flatMap(({ children, ...summary }) => [summary, ...flattenThreads(children)])
+export type CloudflarePlacement = "actor" | "thread"
+
+const objectNameOf = (actor: string, thread: string | undefined, placement: CloudflarePlacement): string =>
+  placement === "thread" && thread !== undefined ? JSON.stringify([actor, thread]) : actor
 
 const DEFAULT_ACTOR_NAME = "default"
 
@@ -86,6 +91,7 @@ interface MountedActor {
   readonly modelAdapters: ModelAdapterRegistry
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
+  readonly placement: CloudflarePlacement
 }
 
 let mountedActor: MountedActor | undefined
@@ -348,6 +354,7 @@ export class ActorHost extends DurableObject<Env> {
   private catalogState: Promise<ModelCatalogState> | undefined
   private driving: Promise<void> | undefined
   private principal: string | undefined
+  private threadId: string | undefined
   private readonly alarmPolicy: AlarmPolicy
   private readonly sandboxCalls = new Map<
     string,
@@ -362,19 +369,35 @@ export class ActorHost extends DurableObject<Env> {
       : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
   }
 
-  async init(name: string): Promise<void> {
+  async init(name: string, thread?: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
     this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('principal', ?)", name)
-    const principal = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'principal'").one().value
-    if (principal !== name) throw new Error("actor host name does not match its durable identity")
+    if (thread !== undefined) {
+      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('thread', ?)", thread)
+    }
+    const principal = this.meta("principal")
+    const storedThread = this.meta("thread", false)
+    if (principal !== name) throw new Error("actor definition does not match the durable host identity")
+    if (storedThread !== thread) throw new Error("actor thread does not match the durable host identity")
     this.principal ??= principal
+    this.threadId ??= storedThread
+  }
+
+  private meta(key: string, required = true): string | undefined {
+    const row = this.ctx.storage.sql.exec<{ value: string }>(
+      "SELECT value FROM actor_meta WHERE key = ?",
+      key
+    ).toArray()[0]
+    if (row === undefined && required) throw new Error("actor host has not been initialized")
+    return row?.value
   }
 
   private name(): string {
-    if (this.principal !== undefined) return this.principal
-    const row = this.ctx.storage.sql.exec<{ value: string }>("SELECT value FROM actor_meta WHERE key = 'principal'").toArray()[0]
-    if (row === undefined) throw new Error("actor host has not been initialized")
-    return this.principal = row.value
+    return this.principal ??= this.meta("principal")!
+  }
+
+  private thread(): string | undefined {
+    return this.threadId ??= this.meta("thread", false)
   }
 
   async catalog(): Promise<ModelCatalogState> {
@@ -415,6 +438,11 @@ export class ActorHost extends DurableObject<Env> {
     const principal = this.name()
     const selectedAssembly = assemblyOf(principal, this.env, models, catalog)
     if (selectedAssembly === undefined) throw new Error(`actor ${JSON.stringify(principal)} is not deployed`)
+    const placement = mountedActor?.placement ?? "actor"
+    const currentThread = this.thread()
+    if (placement === "thread" && currentThread === undefined) {
+      throw new Error("thread-scoped actor host requires a thread identity")
+    }
     const sandboxCpuMs = optionalNonNegativeInteger(this.env.TARDIGRADE_SANDBOX_CPU_MILLIS, "TARDIGRADE_SANDBOX_CPU_MILLIS")
     const sandboxSubRequests = optionalNonNegativeInteger(
       this.env.TARDIGRADE_SANDBOX_SUBREQUESTS,
@@ -457,8 +485,9 @@ export class ActorHost extends DurableObject<Env> {
             : envelope.event
           return Effect.promise(async () => {
             if (!deployed(destination.actor)) throw new Error(`actor ${JSON.stringify(destination.actor)} is not deployed`)
-            const stub = this.env.ACTORS.getByName(destination.actor)
-            await stub.init(destination.actor)
+            const targetThread = placement === "thread" ? destination.thread : undefined
+            const stub = this.env.ACTORS.getByName(objectNameOf(destination.actor, targetThread, placement))
+            await stub.init(destination.actor, targetThread)
             await stub.deliver({ ...envelope, event })
           })
         })
@@ -466,11 +495,16 @@ export class ActorHost extends DurableObject<Env> {
     }
     const remoteRoute = directoryRoute(
       remoteTransport,
-      mappedDirectory((id: ActorId) => id.actor === principal ? undefined : id),
+      mappedDirectory((id: ActorId) => {
+        if (placement === "actor") return id.actor === principal ? undefined : id
+        return id.actor === principal && id.thread === currentThread ? undefined : id
+      }),
       isActorEnvelope,
       (envelope) => envelope.link.target
     )
-    return createCloudflareHost({
+    return createCloudflareHost(
+      { localThread: placement === "thread" ? currentThread : undefined },
+      {
       storage: this.ctx.storage,
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
@@ -489,7 +523,8 @@ export class ActorHost extends DurableObject<Env> {
         )
       }),
       keyOf: selectedAssembly.keyOf
-    })
+      }
+    )
   }
 
   private host(): Promise<CloudflareHost> {
@@ -559,19 +594,33 @@ export class ActorHost extends DurableObject<Env> {
   }
 
   async append(thread: string, event: Event): Promise<void> {
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== undefined && ownedThread !== actorThread) {
+      throw new Error("request thread does not match actor host identity")
+    }
     const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
     const host = await this.host()
-    await this.accept(host, () => host.stageRoot(host.self(laneOf(thread)), stamped))
+    await this.accept(host, () => host.stageRoot(host.self(actorThread), stamped))
   }
 
   async deliver(envelope: ActorEnvelope): Promise<void> {
-    if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor host")
+    if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
+    const ownedThread = this.thread()
+    if (ownedThread !== undefined && envelope.link.target.thread !== ownedThread) {
+      throw new Error("delivery target does not match actor thread")
+    }
     const host = await this.host()
     await this.accept(host, () => host.stage(envelope))
   }
 
   async events(thread: string): Promise<ReadonlyArray<Event>> {
-    return (await this.host()).read(laneOf(thread))
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== undefined && ownedThread !== actorThread) {
+      throw new Error("request thread does not match actor host identity")
+    }
+    return (await this.host()).read(actorThread)
   }
 
   async threads(): Promise<ReadonlyArray<ThreadSummary>> {
@@ -602,11 +651,14 @@ export class ActorHost extends DurableObject<Env> {
 
 const actorStub = async (
   env: Env,
-  name: string
+  name: string,
+  thread?: string
 ): Promise<DurableObjectStub<ActorHost> | undefined> => {
   if (!deployed(name)) return undefined
-  const stub = env.ACTORS.getByName(name)
-  await stub.init(name)
+  const placement = mountedActor?.placement ?? "actor"
+  const targetThread = placement === "thread" && thread !== undefined ? actorThreadOf(thread) : undefined
+  const stub = env.ACTORS.getByName(objectNameOf(name, targetThread, placement))
+  await stub.init(name, targetThread)
   return stub
 }
 
@@ -677,6 +729,9 @@ const protectedRoute = <E, R>(
 
 const routes = [
   HttpRouter.route("GET", "/healthz", Effect.gen(function* () {
+    if ((mountedActor?.placement ?? "actor") === "thread") {
+      return json({ status: "ready", actor: deployedActor })
+    }
     const env = yield* WorkerEnv
     return json(yield* Effect.promise(async () => (await actorStub(env, deployedActor))!.status()))
   })),
@@ -756,7 +811,7 @@ const routes = [
       const at = yield* Clock.currentTimeMillis
       const decoded = methodEventOf(method, { id: call, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const stub = yield* Effect.promise(() => actorStub(env, actor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       yield* Effect.promise(() => stub.append(thread, decoded.event))
       return json({ thread, method: methodName, call }, 202)
@@ -771,7 +826,7 @@ const routes = [
       const call = decodeURIComponent(params.call ?? "")
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
-      const stub = yield* Effect.promise(() => actorStub(env, actor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
@@ -782,6 +837,9 @@ const routes = [
   )),
   HttpRouter.route("GET", "/v1/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
+      if ((mountedActor?.placement ?? "actor") === "thread") {
+        return json({ error: "thread-scoped workers do not support actor-wide thread listing" }, 400)
+      }
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       return json(yield* Effect.promise(() => stub.threads()))
@@ -792,7 +850,7 @@ const routes = [
       const params = yield* HttpRouter.params
       const actor = deployedActor
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, actor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
@@ -807,7 +865,7 @@ const routes = [
       const params = yield* HttpRouter.params
       const actor = deployedActor
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, actor))
+      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
@@ -856,10 +914,14 @@ export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
 type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
   context: CloudflareWorkerLayerContext<WorkerEnv>
 ) => CloudflareLaneEnv<CloudflareApplicationRequirements<R>>
+interface CloudflareWorkerPlacementOptions {
+  readonly placement?: CloudflarePlacement
+}
+
 
 // CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
 export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
-  [CloudflareApplicationRequirements<R>] extends [never]
+  ([CloudflareApplicationRequirements<R>] extends [never]
     ? {
         readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv>
         readonly modelAdapters?: ModelAdapterRegistry
@@ -869,7 +931,8 @@ export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
         readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
         readonly modelAdapters?: ModelAdapterRegistry
         readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
-      }
+      }) &
+  CloudflareWorkerPlacementOptions
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
   [CloudflareApplicationRequirements<R>] extends [never]
@@ -890,6 +953,7 @@ export const cloudflareWorker = <
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
+    placement: options?.placement ?? "actor",
     ...(options?.inferenceObserverFor === undefined ? {} : {
       inferenceObserverFor: options.inferenceObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
     }),
