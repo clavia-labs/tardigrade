@@ -63,10 +63,22 @@ const laneOf = (address: string): string => {
 }
 
 // createCloudflareHost binds one actor graph to Effect SQL over its Durable Object storage.
-export const createCloudflareHost = async <R = never>(
+export function createCloudflareHost<R = never>(
+  options: CloudflareHostOptions<R>
+): Promise<CloudflareHost>
+export function createCloudflareHost<R = never>(
   routing: CloudflareHostRouting,
   options: CloudflareHostOptions<R>
-): Promise<CloudflareHost> => {
+): Promise<CloudflareHost>
+export async function createCloudflareHost<R = never>(
+  routingOrOptions: CloudflareHostRouting | CloudflareHostOptions<R>,
+  providedOptions?: CloudflareHostOptions<R>
+): Promise<CloudflareHost> {
+  const options = "storage" in routingOrOptions ? routingOrOptions : providedOptions
+  if (options === undefined) throw new Error("Cloudflare host options are required")
+  const routing = "storage" in routingOrOptions
+    ? { localThread: undefined }
+    : routingOrOptions
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
