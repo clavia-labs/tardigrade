@@ -172,7 +172,7 @@ if (releaseTag !== undefined && releaseTag !== version) {
   throw new Error(`tag v${releaseTag} does not match package version ${version}`)
 }
 
-if (process.env.GITHUB_ACTIONS === "true" && !dryRun) {
+if (process.env.GITHUB_ACTIONS === "true" && !dryRun && !packOnly) {
   const npmVersion = await output(["npm", "--version"], root)
   if (!npmAtLeast(npmVersion, npmMin)) {
     throw new Error(`trusted publishing needs npm >= ${npmMin.maj}.${npmMin.min}.${npmMin.patch}; this runner has ${npmVersion}`)
