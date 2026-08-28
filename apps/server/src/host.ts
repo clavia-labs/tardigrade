@@ -29,9 +29,7 @@ import type { Action } from "tardie/log/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
-import { modelAdapters, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
-import { anthropicAdapter } from "@clavia/tardigrade-model/anthropic"
-import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
+import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,
@@ -48,11 +46,17 @@ import { DriverGauge } from "./driver-gauge"
 
 const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelAdapterRegistry> => {
   const protocols = new Set(Object.values(config.model.providers).map((provider) => provider.protocol))
-  let bedrock: ReadonlyArray<Awaited<ReturnType<typeof import("@clavia/tardigrade-model/bedrock")["bedrockAdapterForBun"]>>> = []
+  const selected: Array<ModelAdapter> = []
+  if (protocols.has("openai-responses") || protocols.has("openai-chat-completions")) {
+    selected.push(await import("@clavia/tardigrade-model/openai").then((module) => module.openAICompatibleAdapter))
+  }
+  if (protocols.has("anthropic-messages")) {
+    selected.push(await import("@clavia/tardigrade-model/anthropic").then((module) => module.anthropicAdapter))
+  }
   if (protocols.has("bedrock-converse")) {
     try {
       const module = await import("@clavia/tardigrade-model/bedrock")
-      bedrock = [await module.bedrockAdapterForBun()]
+      selected.push(await module.bedrockAdapterForBun())
     } catch (cause) {
       throw new Error(
         "model protocol \"bedrock-converse\" requires the optional Bedrock provider dependencies; install @aws-sdk/client-bedrock-runtime, @smithy/fetch-http-handler, @smithy/node-http-handler, and @tanstack/ai-bedrock",
@@ -60,7 +64,7 @@ const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelA
       )
     }
   }
-  const adapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, ...bedrock)
+  const adapters = modelAdapters(...selected)
   for (const protocol of protocols) adapters.resolve(protocol)
   return adapters
 }
