@@ -1,6 +1,6 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import { intent, effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { intent, effect, Self, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { modelCalled, modelResolved, outputRejected, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Action } from "../log/events"
@@ -28,6 +28,7 @@ import {
   type ModelPolicy,
   type ModelPolicyOverride
 } from "./access"
+import type { InferenceIdentity } from "./observer"
 
 // The infer reactor: the model loop, and nothing else. A think is owed when the current turn
 // has no unanswered tool call and no terminal; serving marks the attempt, does inference, then
@@ -51,6 +52,7 @@ export const DEFAULT_INFER_POLICY: InferPolicy = { giveUpAfter: 3, models: DEFAU
 // about tools; the actor is the render's one owner.
 export interface InferRequest {
   readonly trajectory: ReadonlyArray<Event>
+  readonly identity: InferenceIdentity
   readonly model?: ModelRef
   readonly system: string
   readonly tools: ReadonlyArray<import("./request").ToolSpec>
@@ -318,7 +320,7 @@ export type Render = (log: ReadonlyArray<Event>) => {
   readonly output?: { readonly fallback: OutputFallback; readonly system?: string }
 }
 
-export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): Reactor<Infer | EventLog> => (log) => {
+export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): Reactor<Infer | EventLog | Self> => (log) => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = turnView(log)
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
@@ -514,6 +516,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
       act: (input) =>
         Effect.gen(function* () {
           const events = yield* EventLog
+          const self = yield* Self
           const at = yield* Clock.currentTimeMillis
           // The mark records the attempt BEFORE the inference, appended by the act itself: a
           // died attempt leaves its mark, the next derivation counts it, the bound holds.
@@ -531,7 +534,12 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
             })
           ])
           const action = yield* (yield* Infer)
-            .react({ trajectory: input.trajectory, ...(input.model === undefined ? {} : { model: input.model }), ...input.render }, input.attempt)
+            .react({
+              trajectory: input.trajectory,
+              identity: { ...self, turn: input.turn },
+              ...(input.model === undefined ? {} : { model: input.model }),
+              ...input.render
+            }, input.attempt)
             .pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)

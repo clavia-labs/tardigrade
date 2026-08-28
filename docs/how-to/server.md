@@ -106,6 +106,24 @@ The server refreshes the public model catalog when it starts, validates the comp
 
 Catalog responses use cursor pagination. They include `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and optional `next_cursor`. The default limit is `50` and callers can state another positive integer. Search is a case-insensitive substring over IDs and names. `GET /v1/models` also accepts an exact provider filter. Pass `next_cursor` with the same filters to continue. A cursor records the catalog revision and query, so a changed revision or filter returns 400 and the caller starts again without a cursor.
 
+## Live inference output
+
+An embedded Bun host can pass `inferenceObserver` to `layerThreads`. The observer receives normalized text after the provider adapter and before the final action is accumulated. Each delta names the actor, thread, turn, logical attempt, physical provider request, model, text block, and sequence. The host chooses its WebSocket, SSE, Redis, or pub/sub transport.
+
+```ts
+import { Effect } from "effect"
+import { layerThreads } from "tardie/server/host"
+
+const threads = layerThreads({
+  inferenceObserver: {
+    policy: { bufferCapacity: 128, deliveryTimeoutMs: 250 },
+    onDelta: (delta) => Effect.promise(() => liveOutput.publish(delta))
+  }
+})
+```
+
+The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the queue and timeout defaults.
+
 ## Clients
 
 `tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.

@@ -1,7 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
 import { Clock, Context, Effect, Layer, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { actor, agentMethods, agentsPackage, applyModelPolicy, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, intersectModelPolicies, modelAllowedBy, outputValidateOnce, workspacePackage, type Actor, type ActorMethods, type ModelPolicy, type ModelRef } from "tardie"
+import { actor, agentMethods, agentsPackage, applyModelPolicy, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, intersectModelPolicies, modelAllowedBy, outputValidateOnce, workspacePackage, type Actor, type ActorMethods, type InferenceObserver, type ModelPolicy, type ModelRef } from "tardie"
 import type { Action } from "tardie/log/events"
 import {
   CATALOG_AVAILABILITY_FILTERS,
@@ -84,6 +84,7 @@ interface MountedActor {
   readonly actor: DefaultAssembly
   readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
+  readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
 }
 
@@ -190,7 +191,8 @@ const selectedModelFrom = (
 const modelLayer = (
   models: CloudflareModels | undefined,
   catalog: ModelCatalogState,
-  adapters: ModelAdapterRegistry
+  adapters: ModelAdapterRegistry,
+  observer?: InferenceObserver
 ) => {
   if (models === undefined) {
     const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
@@ -235,7 +237,7 @@ const modelLayer = (
         contextWindowTokens: selectedModel.contextWindowTokens,
         ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
         ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
-      }, adapters)
+      }, adapters, observer === undefined ? {} : { observer })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
     }
   })
@@ -473,7 +475,8 @@ export class ActorHost extends DurableObject<Env> {
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
       layersFor: (lane) => {
-        const framework = Layer.mergeAll(modelLayer(models, catalog, adapters), FetchHttpClient.layer, sandboxLayer)
+        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, lane })
+        const framework = Layer.mergeAll(modelLayer(models, catalog, adapters, observer), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.({ env: this.env, lane })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       },
@@ -860,10 +863,12 @@ export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
     ? {
         readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv>
         readonly modelAdapters?: ModelAdapterRegistry
+        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
       }
     : {
         readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
         readonly modelAdapters?: ModelAdapterRegistry
+        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
       }
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
@@ -885,6 +890,9 @@ export const cloudflareWorker = <
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
+    ...(options?.inferenceObserverFor === undefined ? {} : {
+      inferenceObserverFor: options.inferenceObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
+    }),
     ...(options?.layersFor === undefined ? {} : {
       layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
     })

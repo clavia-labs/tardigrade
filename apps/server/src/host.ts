@@ -22,6 +22,7 @@ import {
   type ActorMethods,
   type ModelRef,
   type ModelPolicy,
+  type InferenceObserver,
   type ActorArtifactManifest,
   type Actor
 } from "tardie"
@@ -246,7 +247,8 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
 const layerInferFrom = (
   config: ServerConfigValue,
   catalog: ModelCatalogState,
-  adapters: ModelAdapterRegistry
+  adapters: ModelAdapterRegistry,
+  observer?: InferenceObserver
 ): Layer.Layer<Infer> => {
   if (Object.keys(config.model.providers).length === 0) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
@@ -301,7 +303,7 @@ const layerInferFrom = (
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
         ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
-      }, adapters)
+      }, adapters, observer === undefined ? {} : { observer })
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(binding))
     })
   })
@@ -318,7 +320,7 @@ const layerLane = (
   adapters: ModelAdapterRegistry
 ) =>
   Layer.mergeAll(
-    options.infer ?? layerInferFrom(config, catalog, adapters),
+    options.infer ?? layerInferFrom(config, catalog, adapters, options.inferenceObserver),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -331,6 +333,8 @@ export interface ThreadsOptions {
   readonly infer?: Layer.Layer<Infer>
   // modelAdapters replaces the host's protocol implementations and must cover every configured provider.
   readonly modelAdapters?: ModelAdapterRegistry
+  // inferenceObserver receives ephemeral normalized text outside the durable event log.
+  readonly inferenceObserver?: InferenceObserver
   // providers interpret replies whose durable inbound link targets an external provider instance.
   readonly providers?: ReadonlyArray<Provider>
   // actorRefresh watches the actor root and reconciles its artifacts after the stated debounce.
@@ -488,7 +492,7 @@ const runtimeOf = async (
   }
 }
 
-export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "modelAdapters" | "providers">
+export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers">
 
 // layerActorThreads mounts one deployed definition as the runtime.
 export const layerActorThreads = (

@@ -148,6 +148,28 @@ describe("an assembled agent", () => {
     expect(mind.host.resting()).toBe(true)
   })
 
+  test("root and child inference requests carry their actor identity", async () => {
+    const seen: Array<{ readonly request: InferRequest; readonly key?: string }> = []
+    const mind = rlm(async (request, key) => {
+      seen.push({ request, ...(key === undefined ? {} : { key }) })
+      return scripted(request)
+    })
+    await mind.run("fan out and add")
+    expect(seen.some(({ request }) =>
+      request.identity.actor === "mem" &&
+      request.identity.thread === ROOT_LANE &&
+      request.identity.turn === "run-0"
+    )).toBe(true)
+    expect(new Set(seen.map(({ request }) => request.identity.thread))).toEqual(new Set([
+      ROOT_LANE,
+      "ag.t1.0",
+      "ag.t1.1"
+    ]))
+    for (const { request, key } of seen) {
+      expect(key?.startsWith(`${request.identity.turn}/infer/`)).toBe(true)
+    }
+  })
+
   test("an agent initialises from a log: history carries, new runs continue past it", async () => {
     // Run one agent to a settled state, carry its log into a fresh one: the seeded agent reads
     // the same history, and a new run serves without colliding with a recorded id.
@@ -162,6 +184,20 @@ describe("an assembled agent", () => {
     // Both turns live on one log: the carried terminal and the new one.
     expect(resumed.host.read(ROOT_LANE).filter((e) => e.type === "TurnCompleted")).toHaveLength(2)
     expect(resumed.host.resting()).toBe(true)
+  })
+
+  test("replay emits no inference", async () => {
+    const first = rlm(scripted)
+    await first.run("sum 1+2")
+    const carried = first.host.read(ROOT_LANE)
+    let calls = 0
+    const resumed = rlm(async (request) => {
+      calls += 1
+      return scripted(request)
+    }, [work()], carried)
+    await resumed.host.drive()
+    expect(calls).toBe(0)
+    expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
   })
 
   test("a second run reuses the root lane as a genuinely fresh turn", async () => {

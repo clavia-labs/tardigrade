@@ -5,13 +5,15 @@ import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelo
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { Ingress } from "@clavia/tardigrade-host/ingress"
 import { RESERVED_ACTOR } from "@clavia/tardigrade-client/contract"
-import { Infer, type InferRequest } from "tardie"
+import { Infer, type InferDelta, type InferRequest, type InferenceObserver } from "tardie"
 import type { Action } from "tardie/log/events"
+import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
+import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 
 import { layerConfig, readConfig, ServerConfig } from "./config"
 import { Threads, layerThreads, selectedModelFrom } from "./host"
 import { DriverGauge } from "./driver-gauge"
-import { layerModelCatalogUnavailable } from "./catalog"
+import { layerModelCatalogUnavailable, layerModelCatalogValue, type ModelCatalogStore } from "./catalog"
 
 // Every case here opens a real store on disk and drives a real host, so it competes with every
 // other task in a parallel gate run. Bun's default per-test budget is tuned for a pure function and
@@ -56,8 +58,11 @@ const config = layerConfig(readConfig({
 const running = <A, E>(
   body: (threads: Context.Service.Shape<typeof Threads>) => Effect.Effect<A, E, DriverGauge | Ingress>,
   options: {
-    readonly infer?: Layer.Layer<Infer>
+    readonly infer?: Layer.Layer<Infer> | false
     readonly config?: Layer.Layer<ServerConfig>
+    readonly catalog?: Layer.Layer<ModelCatalogStore>
+    readonly inferenceObserver?: InferenceObserver
+    readonly modelAdapters?: ModelAdapterRegistry
   } = {}
 ): Promise<A> =>
   Effect.gen(function*() {
@@ -65,9 +70,11 @@ const running = <A, E>(
     return yield* body(threads)
   }).pipe(
     Effect.provide(Layer.provide(layerThreads({
-      infer: options.infer ?? layerScripted,
+      ...(options.infer === false ? {} : { infer: options.infer ?? layerScripted }),
+      ...(options.inferenceObserver === undefined ? {} : { inferenceObserver: options.inferenceObserver }),
+      ...(options.modelAdapters === undefined ? {} : { modelAdapters: options.modelAdapters }),
       providers: [{ name: "test", send: () => Effect.void }]
-    }), [options.config ?? config, layerModelCatalogUnavailable])),
+    }), [options.config ?? config, options.catalog ?? layerModelCatalogUnavailable])),
     Effect.scoped,
     Effect.runPromise
   ) as Promise<A>
@@ -273,6 +280,90 @@ describe("the threads service", () => {
       })
     )
     expect(types).toContain("TurnCompleted")
+  })
+
+  test("a Bun host observes text while its provider stream is active", async () => {
+    let release!: () => void
+    const released = new Promise<void>((resolve) => { release = resolve })
+    let observedFirst!: () => void
+    const first = new Promise<void>((resolve) => { observedFirst = resolve })
+    const deltas: InferDelta[] = []
+    const adapter: ModelAdapter = {
+      id: "test/streaming",
+      protocols: ["openai-chat-completions"],
+      start: () => ({
+        stream: {
+          async *[Symbol.asyncIterator]() {
+            yield { type: "TEXT_MESSAGE_START", messageId: "stream-1", role: "assistant", timestamp: 1 } as never
+            yield { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-1", delta: "hel", timestamp: 2 } as never
+            await released
+            yield { type: "TEXT_MESSAGE_CONTENT", messageId: "stream-1", delta: "lo", timestamp: 3 } as never
+            yield { type: "TEXT_MESSAGE_END", messageId: "stream-1", timestamp: 4 } as never
+          }
+        }
+      })
+    }
+    const streamedModel = { provider: "test", model_id: "streamed" } as const
+    const streamedConfig = layerConfig(readConfig({
+      TARDIGRADE_DB: ":memory:",
+      TARDIGRADE_ACTORS: `/tmp/tardigrade-host-stream-${process.pid}`,
+      TEST_MODEL_KEY: "secret"
+    }, {
+      models: {
+        default: streamedModel,
+        allow: "*",
+        providers: {
+          test: {
+            baseUrl: "https://model.test/v1",
+            protocol: "openai-chat-completions",
+            env: ["TEST_MODEL_KEY"]
+          }
+        }
+      }
+    }))
+    const streamedCatalog: ModelCatalog = {
+      source: "models.dev",
+      revision: "stream-test",
+      refreshedAt: 1,
+      status: "fresh",
+      providers: [{
+        id: "test",
+        name: "Test",
+        env: ["TEST_MODEL_KEY"],
+        models: [{ id: "streamed", metadata: { contextWindowTokens: 8_192 } }]
+      }]
+    }
+
+    await running(
+      (threads) => Effect.gen(function*() {
+        yield* threads.append("stream", brief("stream-message"))
+        yield* Effect.promise(() => first)
+        const open = yield* threads.events("stream")
+        expect(open.some((event) => event.type === "TurnCompleted")).toBe(false)
+        expect(deltas.map((delta) => delta.text)).toEqual(["hel"])
+        release()
+        yield* threads.settled
+        const settled = yield* threads.events("stream")
+        expect(settled).toContainEqual(expect.objectContaining({ type: "TurnCompleted", output: "hello" }))
+      }),
+      {
+        infer: false,
+        config: streamedConfig,
+        catalog: layerModelCatalogValue(streamedCatalog),
+        modelAdapters: modelAdapters(adapter),
+        inferenceObserver: {
+          onDelta: (delta) => Effect.sync(() => {
+            deltas.push(delta)
+            if (delta.sequence === 0) observedFirst()
+          })
+        }
+      }
+    )
+
+    expect(deltas.map(({ thread, model, blockIndex, sequence, text }) => ({ thread, model, blockIndex, sequence, text }))).toEqual([
+      { thread: "ag.stream", model: streamedModel, blockIndex: 0, sequence: 0, text: "hel" },
+      { thread: "ag.stream", model: streamedModel, blockIndex: 0, sequence: 1, text: "lo" }
+    ])
   })
 
   test("list names every thread lane with its log", async () => {

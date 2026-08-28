@@ -10,12 +10,17 @@ import {
   renderOf,
   repairFallback,
   VALIDATE_ONCE_FALLBACK,
-  NATIVE_MODE
+  NATIVE_MODE,
+  type InferDelta
 } from "tardie"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
 const surfaceRender = renderOf([codeMode(), nativeOutput], [])
-const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, ...surfaceRender })
+const reqOf = (trajectory: ReadonlyArray<Event>) => ({
+  trajectory,
+  identity: { actor: "test", thread: "root", turn: "m1" },
+  ...surfaceRender
+})
 import { Infer } from "tardie"
 import {
   actionOf,
@@ -23,7 +28,8 @@ import {
   ladderOf,
   infer,
   retryAfterMsOf,
-  throttleDelayMs
+  throttleDelayMs,
+  type ModelInferOptions
 } from "./model"
 import {
   bedrockConverseTextAdapter as bedrockAdapter,
@@ -35,7 +41,7 @@ import {
 } from "./bedrock"
 import { anthropicAdapter } from "./anthropic"
 import { openAICompatibleAdapter } from "./openai"
-import { modelAdapters } from "./adapter"
+import { modelAdapters, type ModelAdapter } from "./adapter"
 import type { ModelConfig } from "./model"
 import type { ModelProtocol } from "./directory"
 import {
@@ -47,8 +53,10 @@ import type { Action } from "tardie/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
 const testAdapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, registeredBedrockAdapter)
-const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(config: C) =>
-  infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config }, testAdapters)
+const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(
+  config: C,
+  options: ModelInferOptions = {}
+) => infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config }, testAdapters, options)
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE
@@ -352,7 +360,11 @@ describe("infer end to end", () => {
       declared()
     )
     const action = (await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react({ trajectory: declared(), ...render })).pipe(
+      Effect.flatMap(Infer, (model) => model.react({
+        trajectory: declared(),
+        identity: { actor: "test", thread: "root", turn: "m1" },
+        ...render
+      })).pipe(
         Effect.provide(layer)
       ) as Effect.Effect<unknown>
     )) as Action
@@ -541,6 +553,132 @@ describe("infer end to end", () => {
       Effect.flatMap(Infer, (model) => model.react(reqOf(trajectory))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(seen).toEqual(["m1/infer/0", null])
+  })
+})
+
+describe("ephemeral inference deltas", () => {
+  test("observes normalized text without changing the terminal action", async () => {
+    const deltas: InferDelta[] = []
+    const fetchImpl = (async () => sse([
+      { id: "stream-1", choices: [{ index: 0, delta: { role: "assistant", content: "hel" } }] },
+      { id: "stream-1", choices: [{ index: 0, delta: { content: "lo" } }] },
+      { id: "stream-1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    ])) as unknown as typeof globalThis.fetch
+    const layer = testInfer(
+      { baseUrl: "https://model.test/v1", apiKey: "k", model: "gpt-test", provider: "openai", fetch: fetchImpl },
+      {
+        observer: { onDelta: (delta) => Effect.sync(() => { deltas.push(delta) }) },
+        physicalAttemptId: () => "physical-1"
+      }
+    )
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([
+        { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+      ]), "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "hello" })
+    expect(deltas).toEqual([
+      {
+        actor: "test",
+        thread: "root",
+        turn: "m1",
+        logicalAttempt: "m1/infer/0",
+        physicalAttempt: "physical-1",
+        model: { provider: "openai", model_id: "gpt-test" },
+        blockIndex: 0,
+        sequence: 0,
+        text: "hel"
+      },
+      {
+        actor: "test",
+        thread: "root",
+        turn: "m1",
+        logicalAttempt: "m1/infer/0",
+        physicalAttempt: "physical-1",
+        model: { provider: "openai", model_id: "gpt-test" },
+        blockIndex: 0,
+        sequence: 1,
+        text: "lo"
+      }
+    ])
+  })
+
+  test("a retried Bedrock attempt keeps the logical identity and changes the physical identity", async () => {
+    let starts = 0
+    let physical = 0
+    const deltas: InferDelta[] = []
+    const adapter: ModelAdapter = {
+      id: "test/bedrock",
+      protocols: ["bedrock-converse"],
+      start: () => {
+        const current = starts++
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "TEXT_MESSAGE_START", messageId: `b${current}`, role: "assistant", timestamp: 1 } as never
+              yield {
+                type: "TEXT_MESSAGE_CONTENT",
+                messageId: `b${current}`,
+                delta: current === 0 ? "discarded" : "winner",
+                timestamp: 2
+              } as never
+              if (current === 0) throw Object.assign(new Error("429 from Bedrock"), { status: 429 })
+              yield { type: "TEXT_MESSAGE_END", messageId: `b${current}`, timestamp: 3 } as never
+            }
+          }
+        }
+      }
+    }
+    const layer = infer({
+      baseUrl: "https://bedrock.test/us-east-1",
+      apiKey: "k",
+      model: "anthropic.claude-test",
+      protocol: "bedrock-converse",
+      provider: "bedrock",
+      contextWindowTokens: 128_000,
+      throttleRetryDelaysMs: [1],
+      sleep: async () => {}
+    }, modelAdapters(adapter), {
+      observer: { onDelta: (delta) => Effect.sync(() => { deltas.push(delta) }) },
+      physicalAttemptId: () => `physical-${physical++}`
+    })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([
+        { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+      ]), "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "winner" })
+    expect(deltas.map(({ logicalAttempt, physicalAttempt, text }) => ({ logicalAttempt, physicalAttempt, text }))).toEqual([
+      { logicalAttempt: "m1/infer/0", physicalAttempt: "physical-0", text: "discarded" },
+      { logicalAttempt: "m1/infer/0", physicalAttempt: "physical-1", text: "winner" }
+    ])
+  })
+
+  test("observer failure and saturation leave inference unchanged", async () => {
+    let deliveries = 0
+    const fetchImpl = (async () => sse([
+      ...Array.from({ length: 10 }, (_, index) => ({
+        id: "stream-2",
+        choices: [{ index: 0, delta: { content: String(index) } }]
+      })),
+      { id: "stream-2", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    ])) as unknown as typeof globalThis.fetch
+    const layer = testInfer(
+      { baseUrl: "https://model.test/v1", apiKey: "k", model: "gpt-test", provider: "openai", fetch: fetchImpl },
+      {
+        observer: {
+          policy: { bufferCapacity: 1, deliveryTimeoutMs: 1 },
+          onDelta: () => deliveries++ === 0 ? Effect.die(new Error("observer offline")) : Effect.never
+        },
+        physicalAttemptId: () => "physical-saturated"
+      }
+    )
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([
+        { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+      ]), "m1/infer/0")).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "0123456789" })
   })
 })
 

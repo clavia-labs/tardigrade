@@ -57,6 +57,29 @@ modelAdapters(anthropicAdapter, openAICompatibleAdapter)
 
 Amazon Bedrock is an optional peer dependency. Install its provider packages and register `bedrockAdapter` from `tardie/model/bedrock` when the host uses `bedrock-converse`.
 
+## Live inference output
+
+Pass `inferenceObserverFor` to observe normalized text while a provider stream is active. The factory receives the Worker environment and lane, so delivery can use a deployment binding. Deltas are ephemeral and carry actor, thread, turn, logical attempt, physical attempt, model, block, sequence, and text identity.
+
+```ts
+import { Effect } from "effect"
+import { ActorHost, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
+
+interface Env extends TardigradeEnv {
+  readonly LIVE_OUTPUT: Queue
+}
+
+export { ActorHost }
+export default cloudflareWorker(definition, {
+  modelAdapters: modelAdapters(anthropicAdapter),
+  inferenceObserverFor: ({ env }: CloudflareWorkerLayerContext<Env>) => ({
+    onDelta: (delta) => Effect.promise(() => env.LIVE_OUTPUT.send(delta))
+  })
+})
+```
+
+Observer delivery uses the exported `DEFAULT_INFERENCE_OBSERVER_POLICY`. Supply `policy.bufferCapacity` and `policy.deliveryTimeoutMs` on the returned observer to override it. A full queue drops new deltas. Observer failure and timeout leave inference unchanged. The durable terminal event remains authoritative, and replaying settled history emits no deltas.
+
 ## Verify and deploy
 
 ```bash
