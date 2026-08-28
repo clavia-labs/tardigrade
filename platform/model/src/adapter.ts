@@ -68,6 +68,7 @@ export interface ModelAdapterAttempt {
 
 export interface ModelAdapter {
   readonly id: string
+  // ModelAdapter protocols select wire implementations independently of provider and model identity (adapter.test.ts, "resolves each protocol to its registered implementation").
   readonly protocols: ReadonlyArray<ModelProtocol>
   readonly start: (context: ModelAdapterContext) => ModelAdapterAttempt
 }
