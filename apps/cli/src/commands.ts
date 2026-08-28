@@ -415,7 +415,8 @@ export const initCommand = Command.make("init", {
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(name, {
         cwd: cli.cwd,
-        ...(directory === undefined ? {} : { directory })
+        ...(directory === undefined ? {} : { directory }),
+        modelProtocol: answers.protocol
       }),
       catch: userErrorOf
     })

@@ -19,29 +19,36 @@ const reqOf = (trajectory: ReadonlyArray<Event>) => ({ trajectory, ...surfaceRen
 import { Infer } from "tardie"
 import {
   actionOf,
-  bedrockAdapter,
   DEFAULT_STREAM_BOUNDS,
   ladderOf,
   infer,
   retryAfterMsOf,
-  tapConverseUsage,
-  tapStopReason,
   throttleDelayMs
 } from "./model"
+import {
+  bedrockConverseTextAdapter as bedrockAdapter,
+  converseOutputConfig,
+  converseStopClass,
+  tapConverseUsage,
+  tapStopReason,
+  bedrockAdapter as registeredBedrockAdapter
+} from "./bedrock"
+import { anthropicAdapter } from "./anthropic"
+import { openAICompatibleAdapter } from "./openai"
+import { modelAdapters } from "./adapter"
 import type { ModelConfig } from "./model"
 import type { ModelProtocol } from "./directory"
 import {
   capabilityOf,
-  converseOutputConfig,
-  converseStopClass,
   outputModeOf,
   outputPreflight
 } from "./output"
 import type { Action } from "tardie/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
+const testAdapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, registeredBedrockAdapter)
 const testInfer = <const C extends Omit<ModelConfig, "protocol" | "provider" | "contextWindowTokens"> & { readonly protocol?: ModelProtocol }>(config: C) =>
-  infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config })
+  infer({ protocol: "openai-chat-completions", provider: "test", contextWindowTokens: 128_000, ...config }, testAdapters)
 
 // The model binding: the trajectory renders into the provider conversation, the streamed reply
 // decodes into one Action, and the whole loop round-trips through a fake OpenAI-compatible SSE

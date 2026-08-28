@@ -29,17 +29,31 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
-    "@smithy/fetch-http-handler": "^5.6.3",
-    "@smithy/node-http-handler": "^4.11.2",
     "@tanstack/ai": "0.46.0",
     "@tanstack/ai-anthropic": "0.16.6",
-    "@tanstack/ai-bedrock": "0.2.3",
     "@tanstack/ai-openai": "0.20.0",
     "effect": "4.0.0-rc.110",
     "tardie": "workspace:*"
+  },
+  "peerDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@smithy/fetch-http-handler": "^5.6.3",
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tanstack/ai-bedrock": "0.2.3"
+  },
+  "peerDependenciesMeta": {
+    "@aws-sdk/client-bedrock-runtime": { "optional": true },
+    "@smithy/fetch-http-handler": { "optional": true },
+    "@smithy/node-http-handler": { "optional": true },
+    "@tanstack/ai-bedrock": { "optional": true }
+  },
+  "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+    "@smithy/fetch-http-handler": "^5.6.3",
+    "@smithy/node-http-handler": "^4.11.2",
+    "@tanstack/ai-bedrock": "0.2.3"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

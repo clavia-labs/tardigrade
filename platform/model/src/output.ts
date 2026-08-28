@@ -1,4 +1,3 @@
-import type * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "tardie/output/contract"
 import type { OutputRequest } from "tardie/inference/request"
 
@@ -127,40 +126,4 @@ export const compatibleResponseFormat = (
   const name = outputNameFor(output, mode)
   if (schema === undefined || name === undefined) return undefined
   return { type: "json_schema", json_schema: { name, schema, strict: true } }
-}
-
-// converseOutputConfig maps a contract onto the Converse structured output surface. The schema
-// travels as a JSON string there, which is the shape `ConverseStreamCommandInput` declares
-// (@aws-sdk/client-bedrock-runtime, OutputFormat).
-export const converseOutputConfig = (
-  output: OutputRequest,
-  mode: OutputMode
-): BedrockRuntime.OutputConfig | undefined => {
-  const schema = outputSchemaFor(output, mode)
-  const name = outputNameFor(output, mode)
-  if (schema === undefined || name === undefined) return undefined
-  return { textFormat: { type: "json_schema", structure: { jsonSchema: { name, schema: JSON.stringify(schema) } } } }
-}
-
-// ConverseStop is what one raw Converse stop reason means to this binding. The adapter's stream
-// processor folds several of them into "stop" before the shared processor ever sees them, so the
-// raw reason is tapped off the SDK stream and read here instead
-// (@aws-sdk/client-bedrock-runtime, StopReason; model.ts, tapStopReason).
-export type ConverseStop = "refused" | "truncated" | "violation" | "ok"
-
-export const converseStopClass = (stopReason: string | undefined): ConverseStop => {
-  switch (stopReason) {
-    case "guardrail_intervened":
-    case "content_filtered":
-      return "refused"
-    case "max_tokens":
-    case "model_context_window_exceeded":
-      return "truncated"
-    // Converse reports a model that could not produce its constrained output this way, which is
-    // exactly the promise a native structured response breaks.
-    case "malformed_model_output":
-      return "violation"
-    default:
-      return "ok"
-  }
 }

@@ -10,6 +10,10 @@ import {
   MODEL_CATALOG_UNPRICED_ORDERS
 } from "@clavia/tardigrade-client/contract"
 import { infer } from "@clavia/tardigrade-model/model"
+import {
+  modelAdapters,
+  type ModelAdapterRegistry
+} from "@clavia/tardigrade-model/adapter"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import {
   loadModelCatalog,
@@ -79,6 +83,7 @@ interface MountedActor {
   readonly name: string
   readonly actor: DefaultAssembly
   readonly methods: ActorMethods
+  readonly modelAdapters: ModelAdapterRegistry
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
 }
 
@@ -182,7 +187,11 @@ const selectedModelFrom = (
   return { reference: selected, provider, metadata: model.metadata, contextWindowTokens, catalogRevision: catalog.snapshot.revision }
 }
 
-const modelLayer = (models: CloudflareModels | undefined, catalog: ModelCatalogState) => {
+const modelLayer = (
+  models: CloudflareModels | undefined,
+  catalog: ModelCatalogState,
+  adapters: ModelAdapterRegistry
+) => {
   if (models === undefined) {
     const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({
@@ -226,7 +235,7 @@ const modelLayer = (models: CloudflareModels | undefined, catalog: ModelCatalogS
         contextWindowTokens: selectedModel.contextWindowTokens,
         ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
         ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
-      })
+      }, adapters)
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
     }
   })
@@ -396,6 +405,8 @@ export class ActorHost extends DurableObject<Env> {
 
   private async openHost(): Promise<CloudflareHost> {
     const models = modelsFrom(this.env)
+    const adapters = mountedActor?.modelAdapters ?? modelAdapters()
+    for (const provider of Object.values(models?.providers ?? {})) adapters.resolve(provider.protocol)
     const catalog: ModelCatalogState = models === undefined
       ? { refreshError: "no model is configured" }
       : await this.catalog()
@@ -462,7 +473,7 @@ export class ActorHost extends DurableObject<Env> {
       principal,
       actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
       layersFor: (lane) => {
-        const framework = Layer.mergeAll(modelLayer(models, catalog), FetchHttpClient.layer, sandboxLayer)
+        const framework = Layer.mergeAll(modelLayer(models, catalog, adapters), FetchHttpClient.layer, sandboxLayer)
         const application = mountedActor?.layersFor?.({ env: this.env, lane })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       },
@@ -846,8 +857,14 @@ type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
 // CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
 export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
   [CloudflareApplicationRequirements<R>] extends [never]
-    ? { readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv> }
-    : { readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv> }
+    ? {
+        readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv>
+        readonly modelAdapters?: ModelAdapterRegistry
+      }
+    : {
+        readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
+        readonly modelAdapters?: ModelAdapterRegistry
+      }
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
   [CloudflareApplicationRequirements<R>] extends [never]
@@ -867,6 +884,7 @@ export const cloudflareWorker = <
     name: definition.name,
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,
+    modelAdapters: options?.modelAdapters ?? modelAdapters(),
     ...(options?.layersFor === undefined ? {} : {
       layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
     })
