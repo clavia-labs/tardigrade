@@ -292,7 +292,7 @@ const start = (name: string): ReadonlyArray<CodeLine> => [
   { tokens: [token("  name: "), token("\"" + name + "\"", "blue"), token(",")] },
   plain("  methods: agentMethods,"),
   { tokens: [token("  components: ["), token("infer", "purple"), token("([")] },
-  { tokens: [token("    system", "purple"), token("("), token("\"Follow the evidence.\"", "blue"), token("),")] }
+  { tokens: [token("    system", "purple"), token("("), token("\"You are a friendly research assistant.\"", "blue"), token("),")] }
 ]
 
 const end: ReadonlyArray<CodeLine> = [plain("  ])]"), plain("})")]
