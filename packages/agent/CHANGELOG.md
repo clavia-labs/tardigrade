@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.0](https://github.com/clavia-labs/tardigrade/compare/v0.12.0...v0.13.0) (2026-08-28)
+
+
+### Features
+
+* **models:** observe inference deltas ([#290](https://github.com/clavia-labs/tardigrade/issues/290)) ([353f5ef](https://github.com/clavia-labs/tardigrade/commit/353f5ef2299c8179192dc704f31e921ded9c7797))
+
 ## [0.12.0](https://github.com/clavia-labs/tardigrade/compare/v0.11.0...v0.12.0) (2026-08-27)
 
 
