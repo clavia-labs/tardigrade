@@ -66,6 +66,7 @@ const worker = cloudflareWorker(actor({
     }) })
   }]
 }), {
+  placement: "thread",
   layersFor: ({ env, lane }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(LaneApplication, { prefix: env.APPLICATION_PREFIX, lane, calls: 0 })
 })

@@ -35,6 +35,10 @@ export type CloudflareHostOptions<R> = {
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (event: Event) => string | undefined
 } & LayersFor<R>
+export interface CloudflareHostRouting {
+  readonly localThread: string | undefined
+}
+
 
 export interface CloudflareHost {
   readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
@@ -59,7 +63,22 @@ const laneOf = (address: string): string => {
 }
 
 // createCloudflareHost binds one actor graph to Effect SQL over its Durable Object storage.
-export const createCloudflareHost = async <R = never>(options: CloudflareHostOptions<R>): Promise<CloudflareHost> => {
+export function createCloudflareHost<R = never>(
+  options: CloudflareHostOptions<R>
+): Promise<CloudflareHost>
+export function createCloudflareHost<R = never>(
+  routing: CloudflareHostRouting,
+  options: CloudflareHostOptions<R>
+): Promise<CloudflareHost>
+export async function createCloudflareHost<R = never>(
+  routingOrOptions: CloudflareHostRouting | CloudflareHostOptions<R>,
+  providedOptions?: CloudflareHostOptions<R>
+): Promise<CloudflareHost> {
+  const options = "storage" in routingOrOptions ? routingOrOptions : providedOptions
+  if (options === undefined) throw new Error("Cloudflare host options are required")
+  const routing = "storage" in routingOrOptions
+    ? { localThread: undefined }
+    : routingOrOptions
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
@@ -133,7 +152,16 @@ export const createCloudflareHost = async <R = never>(options: CloudflareHostOpt
     send: (_destination, envelope) => commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
   }
   const routes = [
-    directoryRoute(localTransport, mappedDirectory((id: ActorId) => id.actor === options.principal ? id : undefined), isActorEnvelope, (envelope) => envelope.link.target),
+    directoryRoute(
+      localTransport,
+      mappedDirectory((id: ActorId) =>
+        id.actor === options.principal && (routing.localThread === undefined || id.thread === routing.localThread)
+          ? id
+          : undefined
+      ),
+      isActorEnvelope,
+      (envelope) => envelope.link.target
+    ),
     directoryRoute(providerTransport, mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint), isProviderEnvelope, (envelope) => envelope.link.target),
     ...(options.routes ?? [])
   ]

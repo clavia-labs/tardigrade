@@ -4,6 +4,20 @@ This binding mounts one actor definition into a named SQLite Durable Object. The
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
+## Thread isolation
+
+Set `placement: "thread"` to give each actor thread a separate Durable Object, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ActorId`, so a child thread routes to its own object even when it uses the same actor definition.
+
+```ts
+export { ActorHost }
+export default cloudflareWorker(definition, {
+  placement: "thread"
+})
+```
+
+The default `placement: "actor"` keeps all threads for one actor definition in one Durable Object. Actor-scoped placement supports `GET /v1/threads`. Thread-scoped placement returns status `400` for that actor-wide listing because Durable Object namespaces do not support object enumeration. Thread-specific method and event routes select the matching thread object.
+
+
 ## Application services
 
 An actor can require an application Effect service. Pass `layersFor` to `cloudflareWorker` to build that service from the Worker environment and current lane. Tardigrade merges the returned layer with its model, HTTP, sandbox, event-log, and workspace layers. It constructs the application layer separately for each lane settlement, so mutable service state is shared only when the supplied Layer explicitly shares it.
