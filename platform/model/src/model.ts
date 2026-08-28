@@ -1,4 +1,4 @@
-import { Clock, Effect, Layer, Random } from "effect"
+import { Cause, Clock, Effect, Fiber, Layer, Queue, Random, Stream } from "effect"
 import {
   StreamProcessor,
   type ModelMessage,
@@ -8,7 +8,15 @@ import {
   type Tool,
   type ToolCall
 } from "@tanstack/ai"
-import { Infer, NativeOutputSupport, type InferRequest } from "tardie"
+import {
+  DEFAULT_INFERENCE_OBSERVER_POLICY,
+  Infer,
+  NativeOutputSupport,
+  type InferDelta,
+  type InferRequest,
+  type InferenceObserver,
+  type InferenceObserverPolicy
+} from "tardie"
 import type { Action, AttemptEndpoint } from "tardie/log/events"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
 import { modelRequest, type AgentMessage, type ModelRequest, type ToolSpec } from "tardie/inference/request"
@@ -27,6 +35,15 @@ import type {
 } from "./adapter"
 
 export type { ModelConfig, StreamBounds } from "./adapter"
+
+// ModelInferOptions supplies ephemeral observation and the physical identity seam used by deterministic tests.
+export interface ModelInferOptions {
+  readonly observer?: InferenceObserver
+  readonly physicalAttemptId?: (logicalAttempt: string) => string
+}
+
+const randomPhysicalAttemptId = (logicalAttempt: string): string =>
+  `${logicalAttempt}/physical/${crypto.randomUUID()}`
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -406,6 +423,84 @@ const tapTokens = (
   }
 })
 
+interface DeltaDelivery {
+  readonly offer: (delta: InferDelta) => Effect.Effect<boolean>
+  readonly finish: Effect.Effect<void>
+}
+
+const observerPolicyOf = (observer: InferenceObserver): InferenceObserverPolicy => {
+  const policy = { ...DEFAULT_INFERENCE_OBSERVER_POLICY, ...observer.policy }
+  for (const [name, value] of Object.entries(policy)) {
+    if (!Number.isSafeInteger(value) || value <= 0) {
+      throw new Error(`inference observer ${name} must be a positive integer, got ${value}`)
+    }
+  }
+  return policy
+}
+
+// deltaDelivery decouples provider reads from host delivery with a dropping queue. Ending drains accepted deltas before the terminal action returns (model.test.ts, "observer failure and saturation leave inference unchanged").
+const deltaDelivery = (
+  observer: InferenceObserver,
+  policy: InferenceObserverPolicy
+): Effect.Effect<DeltaDelivery> =>
+  Effect.gen(function*() {
+    const queue = yield* Queue.dropping<InferDelta, Cause.Done>(policy.bufferCapacity)
+    const worker = yield* Stream.fromQueue(queue).pipe(
+      Stream.runForEach((delta) =>
+        Effect.suspend(() => observer.onDelta(delta)).pipe(
+          Effect.timeout(policy.deliveryTimeoutMs),
+          Effect.ignoreCause
+        )
+      ),
+      Effect.forkChild
+    )
+    return {
+      offer: (delta) => Queue.offer(queue, delta),
+      finish: Queue.end(queue).pipe(
+        Effect.andThen(Fiber.join(worker)),
+        Effect.ignoreCause
+      )
+    }
+  })
+
+// observed taps normalized text while preserving the stream consumed by the terminal accumulator.
+const observed = (
+  stream: AsyncIterable<StreamChunk>,
+  delivery: DeltaDelivery | undefined,
+  identity: InferRequest["identity"],
+  logicalAttempt: string | undefined,
+  physicalAttempt: string,
+  model: { readonly provider: string; readonly model_id: string }
+): AsyncIterable<StreamChunk> => {
+  if (delivery === undefined) return stream
+  if (logicalAttempt === undefined) throw new Error("an observed inference requires a logical attempt identity")
+  let blockIndex = -1
+  let sequence = 0
+  return Stream.fromAsyncIterable(stream, (cause) => cause).pipe(
+    Stream.tap((chunk) => {
+      if (chunk.type === "TEXT_MESSAGE_START") {
+        blockIndex += 1
+        return Effect.void
+      }
+      if (chunk.type !== "TEXT_MESSAGE_CONTENT" || typeof chunk.delta !== "string" || chunk.delta === "") {
+        return Effect.void
+      }
+      if (blockIndex < 0) blockIndex = 0
+      const delta: InferDelta = {
+        ...identity,
+        logicalAttempt,
+        physicalAttempt,
+        model,
+        blockIndex,
+        sequence: sequence++,
+        text: chunk.delta
+      }
+      return delivery.offer(delta).pipe(Effect.asVoid)
+    }),
+    Stream.toAsyncIterable
+  )
+}
+
 const withSpend = (action: Action, usage: Usage | undefined): Action =>
   usage === undefined ? action : { ...action, usage }
 
@@ -461,13 +556,15 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
 // infer provides NativeOutputSupport in its layer type only for a statically known native capability that accepts tools.
 export const infer = <const C extends ModelConfig>(
   config: C,
-  adapters: ModelAdapterRegistry
+  adapters: ModelAdapterRegistry,
+  options: ModelInferOptions = {}
 ): Layer.Layer<Infer | NativeOutputProvided<C>> => {
   assertSupportedBun()
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }
   const selectedAdapter = adapters.resolve(config.protocol)
+  const observerPolicy = options.observer === undefined ? undefined : observerPolicyOf(options.observer)
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
     firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
@@ -490,7 +587,10 @@ export const infer = <const C extends ModelConfig>(
     key: string | undefined,
     maxTokens: number,
     rung: number,
-    stats: { finish?: string }
+    stats: { finish?: string },
+    delivery: DeltaDelivery | undefined,
+    identity: InferRequest["identity"],
+    physicalAttempt: string
   ): Promise<Action> => {
     // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
     // recorded fact rather than re-deciding from a capability that may have changed since
@@ -544,7 +644,15 @@ export const infer = <const C extends ModelConfig>(
       return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
-      const result = await new StreamProcessor().process(tapTokens(bounded(attempt.stream, bounds), held))
+      const normalized = observed(
+        tapTokens(bounded(attempt.stream, bounds), held),
+        delivery,
+        identity,
+        key,
+        physicalAttempt,
+        { provider: config.provider, model_id: config.model }
+      )
+      const result = await new StreamProcessor().process(normalized)
       const { usage, endpoint, wire } = await settle()
       stats.finish = attempt.finishReason?.() ?? result.finishReason ?? "stop"
       const stopClass = attempt.stopClass?.() ?? "ok"
@@ -632,6 +740,9 @@ export const infer = <const C extends ModelConfig>(
         yield* Effect.annotateCurrentSpan("gen_ai.output.mode", mode.name)
         yield* Effect.annotateCurrentSpan("gen_ai.output.native", mode.kind === "native")
       }
+      const delivery = options.observer === undefined || observerPolicy === undefined
+        ? undefined
+        : yield* deltaDelivery(options.observer, observerPolicy)
       const action = yield* Effect.promise<Action>(async () => {
         let rung = 0
         const parts: Usage[] = []
@@ -644,7 +755,11 @@ export const infer = <const C extends ModelConfig>(
           try {
             stats.rung = rung
             stats.attempts += 1
-            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats)
+            const logicalAttempt = key ?? request.identity.turn
+            const physicalAttempt = delivery === undefined
+              ? ""
+              : options.physicalAttemptId?.(logicalAttempt) ?? randomPhysicalAttemptId(logicalAttempt)
+            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, request.identity, physicalAttempt)
             remember(action.usage, true)
             return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
           } catch (e) {
@@ -718,7 +833,7 @@ export const infer = <const C extends ModelConfig>(
             await sleep(delay)
           }
         }
-      })
+      }).pipe(delivery === undefined ? (effect) => effect : Effect.ensuring(delivery.finish))
       // The wide-span discipline: everything a failure query filters by rides the one span.
       // Names follow the GenAI semantic conventions where they exist (registry, 2026).
       yield* Effect.annotateCurrentSpan("gen_ai.response.finish_reasons", [stats.finish ?? "unknown"])

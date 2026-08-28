@@ -37,6 +37,13 @@ export {
 } from "./inference/reactor"
 export { ModelRef, modelRefOf } from "./inference/reference"
 export {
+  DEFAULT_INFERENCE_OBSERVER_POLICY,
+  type InferDelta,
+  type InferenceIdentity,
+  type InferenceObserver,
+  type InferenceObserverPolicy
+} from "./inference/observer"
+export {
   applyModelPolicy,
   DEFAULT_MODEL_POLICY,
   DEFAULT_MODEL_POLICY_OVERRIDE,

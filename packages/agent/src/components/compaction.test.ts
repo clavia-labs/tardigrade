@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { actorFromReactors, send } from "@clavia/tardigrade-core/reconciliation"
+import { actorFromReactors, Self, send } from "@clavia/tardigrade-core/reconciliation"
 import { Infer } from "../inference/reactor"
 import { composeKeys } from "@clavia/tardigrade-core/log"
 import { messageKeys } from "@clavia/tardigrade-core/communication/message"
@@ -101,7 +101,7 @@ describe("the compaction measure and guard", () => {
   })
 })
 
-const mailbox = actorFromReactors<Infer | EventLog>([reactor], agentActorKeys)
+const mailbox = actorFromReactors<Infer | EventLog | Self>([reactor], agentActorKeys)
 
 describe("the compaction pass", () => {
   const run = async (initial: ReadonlyArray<Event>) => {
@@ -120,7 +120,8 @@ describe("the compaction pass", () => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
           return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
         }
-      })
+      }),
+      Layer.succeed(Self, { actor: "test", thread: "compaction" })
     )
     await Effect.runPromise(
       send(mailbox, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
@@ -215,12 +216,15 @@ describe("a projected repair is invisible to compaction as well as to the render
         return transition.act(transition.input as never)
       })).pipe(
         Effect.provide(
-          Layer.succeed(Infer, {
-            react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
-              briefs.push(String((trajectory[0] as { text?: unknown }).text))
-              return Effect.succeed({ kind: "complete" as const, output: "summarized" })
-            }
-          })
+          Layer.mergeAll(
+            Layer.succeed(Infer, {
+              react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
+                briefs.push(String((trajectory[0] as { text?: unknown }).text))
+                return Effect.succeed({ kind: "complete" as const, output: "summarized" })
+              }
+            }),
+            Layer.succeed(Self, { actor: "test", thread: "compaction" })
+          )
         )
       ) as unknown as Effect.Effect<ReadonlyArray<ReadonlyArray<Event>>>
     )

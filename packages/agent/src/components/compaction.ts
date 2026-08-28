@@ -1,5 +1,5 @@
 import { Clock, Effect } from "effect"
-import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { effect, Self, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { compactionCompleted } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -346,7 +346,7 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 //
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
-export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer> => (log) => {
+export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer | Self> => (log) => {
   const model = modelResolutionOf(log).model
   const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
@@ -371,6 +371,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
       },
       act: (input) =>
         Effect.gen(function* () {
+          const self = yield* Self
           const at = yield* Clock.currentTimeMillis
           const lines = input.span.map((e) => lineOf(e, resolved)).filter((l): l is string => l !== null)
           if (lines.length === 0) {
@@ -392,6 +393,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
           const action = yield* (yield* Infer).react(
             {
               trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
+              identity: { ...self, turn: `compact-${input.keepFrom}` },
               ...(model === undefined ? {} : { model }),
               system: "",
               tools: []
@@ -414,7 +416,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
 
 // compaction derives one resolved context contribution and the transitions governed by the same
 // model-relative policy.
-export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<Infer> => {
+export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentComponent<Infer | Self> => {
   const reactor = compactionReactor(policy)
   return {
     name: "compaction",
