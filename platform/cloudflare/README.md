@@ -31,6 +31,32 @@ export default cloudflareWorker(definition, {
 
 The callback may require Tardigrade's lane ports while constructing its layer. The returned Layer has a `never` error channel.
 
+## Model adapters
+
+The Worker registers the protocol implementations its configured providers use. Each adapter is a separate import, so a bundle includes its provider library only when the Worker selects it. Host startup fails with the missing protocol and a registration instruction when configuration names an unregistered protocol.
+
+```ts
+import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+import { modelAdapters } from "tardie/model/adapter"
+import { anthropicAdapter } from "tardie/model/anthropic"
+
+export { ActorHost }
+export default cloudflareWorker(definition, {
+  modelAdapters: modelAdapters(anthropicAdapter)
+})
+```
+
+Register several adapters when the host configures providers with several protocols:
+
+```ts
+import { anthropicAdapter } from "tardie/model/anthropic"
+import { openAICompatibleAdapter } from "tardie/model/openai"
+
+modelAdapters(anthropicAdapter, openAICompatibleAdapter)
+```
+
+Amazon Bedrock is an optional peer dependency. Install its provider packages and register `bedrockAdapter` from `tardie/model/bedrock` when the host uses `bedrock-converse`.
+
 ## Verify and deploy
 
 ```bash

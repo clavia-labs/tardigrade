@@ -37,7 +37,9 @@ describe("initActor", () => {
     expect(source).toContain("infer([")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/cloudflare"')
-    expect(worker).toContain("cloudflareWorker(definition)")
+    expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
+    expect(worker).toContain('import { openAICompatibleAdapter } from "tardie/model/openai"')
+    expect(worker).toContain("modelAdapters: modelAdapters(openAICompatibleAdapter)")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",

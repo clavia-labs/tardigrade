@@ -7,11 +7,14 @@ type PkgJson = {
   readonly name: string
   readonly version: string
   readonly dependencies?: Readonly<Record<string, string>>
+  readonly peerDependencies?: Readonly<Record<string, string>>
+  readonly peerDependenciesMeta?: Readonly<Record<string, { readonly optional?: boolean }>>
   readonly [key: string]: unknown
 }
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const dryRun = process.argv.includes("--dry-run")
+const packOnly = process.argv.includes("--pack-only")
 export const DEFAULT_STABLE_NPM_TAG = "latest"
 export const DEFAULT_PRERELEASE_NPM_TAG = "next"
 
@@ -120,6 +123,23 @@ const dependencyUnion = (packages: ReadonlyArray<PkgJson>) => {
   return Object.fromEntries([...dependencies].sort(([left], [right]) => left.localeCompare(right)))
 }
 
+const optionalPeerUnion = (packages: ReadonlyArray<PkgJson>) => {
+  const versions = new Map<string, string>()
+  for (const pkg of packages) {
+    for (const [name, version] of Object.entries(pkg.peerDependencies ?? {})) {
+      if (pkg.peerDependenciesMeta?.[name]?.optional !== true) continue
+      const previous = versions.get(name)
+      if (previous !== undefined && previous !== version) {
+        throw new Error(`optional peer ${name} has versions ${previous} and ${version}`)
+      }
+      versions.set(name, version)
+    }
+  }
+  const peerDependencies = Object.fromEntries([...versions].sort(([left], [right]) => left.localeCompare(right)))
+  const peerDependenciesMeta = Object.fromEntries(Object.keys(peerDependencies).map((name) => [name, { optional: true }]))
+  return { peerDependencies, peerDependenciesMeta }
+}
+
 const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>): Promise<void> => {
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const path = join(dir, entry.name)
@@ -138,6 +158,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
 
 const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
 const publicSource = packages.find((source) => source.namespace === "agent")!
+const optionalPeers = optionalPeerUnion(packages.map((source) => source.pkg))
 const version = option("--version") ?? (await readPkg(".")).version
 const sourceTree = option("--source-tree")
 const prerelease = version.includes("-")
@@ -158,8 +179,8 @@ if (process.env.GITHUB_ACTIONS === "true" && !dryRun) {
   }
 }
 
-const alreadyPublished = await published(publicSource.pkg.name, version)
-if (!dryRun && alreadyPublished) {
+const alreadyPublished = packOnly ? false : await published(publicSource.pkg.name, version)
+if (!packOnly && !dryRun && alreadyPublished) {
   console.log(`skip ${publicSource.pkg.name}@${version} (already on the registry)`)
   process.exit(0)
 }
@@ -253,7 +274,9 @@ try {
       "./model": "./src/model/model.ts",
       "./model/*": "./src/model/*.ts"
     },
-    dependencies: dependencyUnion(packages.map((source) => source.pkg))
+    dependencies: dependencyUnion(packages.map((source) => source.pkg)),
+    peerDependencies: optionalPeers.peerDependencies,
+    peerDependenciesMeta: optionalPeers.peerDependenciesMeta
   }
   await writeFile(join(stage, "package.json"), `${JSON.stringify(publishManifest, null, 2)}\n`)
 
@@ -268,12 +291,16 @@ try {
 
   const filename = await output(["bun", "pm", "pack", "--destination", destination, "--quiet", "--ignore-scripts"], stage)
   const tarball = isAbsolute(filename) ? filename : join(destination, filename)
-  const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
-  console.log(`${dryRun ? "dry-run" : "publish"} ${publicSource.pkg.name}@${version} with npm tag ${distTag}`)
-  if (dryRun && alreadyPublished) {
-    console.log(`skip npm dry-run validation (version already on the registry)`)
+  if (packOnly) {
+    console.log(`pack ${publicSource.pkg.name}@${version}`)
   } else {
-    await run(publish, root)
+    const publish = ["npm", "publish", tarball, "--access", "public", "--tag", distTag, ...(dryRun ? ["--dry-run"] : [])]
+    console.log(`${dryRun ? "dry-run" : "publish"} ${publicSource.pkg.name}@${version} with npm tag ${distTag}`)
+    if (dryRun && alreadyPublished) {
+      console.log(`skip npm dry-run validation (version already on the registry)`)
+    } else {
+      await run(publish, root)
+    }
   }
   if (requestedOutput !== undefined) console.log(`tarball ${tarball}`)
 } finally {

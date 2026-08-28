@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
+import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate } from "./template"
@@ -18,6 +19,7 @@ export interface InitActorOptions {
   readonly directory?: string
   readonly now?: Date
   readonly packageVersion?: string
+  readonly modelProtocol?: ModelProtocol
 }
 
 export interface InitializedActor {
@@ -57,12 +59,31 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   }
 }, undefined, 2)}\n`
 
-const workerTemplate = `import definition from "./actor"
+const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly source: string } => {
+  switch (protocol) {
+    case "anthropic-messages":
+      return { name: "anthropicAdapter", source: "tardie/model/anthropic" }
+    case "bedrock-converse":
+      return { name: "bedrockAdapter", source: "tardie/model/bedrock" }
+    case "openai-responses":
+    case "openai-chat-completions":
+      return { name: "openAICompatibleAdapter", source: "tardie/model/openai" }
+  }
+}
+
+const workerTemplate = (protocol: ModelProtocol): string => {
+  const adapter = adapterFor(protocol)
+  return `import definition from "./actor"
 import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+import { modelAdapters } from "tardie/model/adapter"
+import { ${adapter.name} } from "${adapter.source}"
 
 export { ActorHost }
-export default cloudflareWorker(definition)
+export default cloudflareWorker(definition, {
+  modelAdapters: modelAdapters(${adapter.name})
+})
 `
+}
 
 const packageTemplate = (version: string): string => `${JSON.stringify({
   private: true,
@@ -88,7 +109,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
 
   try {
     await writeFile(entry, source, "utf8")
-    await writeFile(worker, workerTemplate, "utf8")
+    await writeFile(worker, workerTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
     await writeFile(packageManifest, packageTemplate(packageVersion), "utf8")

@@ -6,6 +6,8 @@
 // are "tardie/model" and "tardie/bun/host" (tools/publish.ts).
 import { actor, agentMethods, infer as inferAgent, agentsPackage, boundaryOf, budget, codeMode, compaction, outputValidateOnce, workspacePackage } from "tardie"
 import { infer } from "@clavia/tardigrade-model/model"
+import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import { createBunHost } from "@clavia/tardigrade-bun/host"
 
 // The work surface: code mode with the spawn and workspace packages in scope. The packages are
@@ -29,7 +31,7 @@ const model = infer({
   model: "gpt-5.2",
   protocol: "openai-responses",
   contextWindowTokens: 400_000
-})
+}, modelAdapters(openAICompatibleAdapter))
 
 // Every ag. lane runs the same assembly: the root, and every child a spawn births. The lane
 // arrives as Self at run time, so one actor value serves the whole family.

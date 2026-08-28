@@ -8,27 +8,25 @@ import {
   type Tool,
   type ToolCall
 } from "@tanstack/ai"
-import { openaiCompatibleText } from "@tanstack/ai-openai/compatible"
-import { createAnthropicChat } from "@tanstack/ai-anthropic"
-import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
-import { FetchHttpHandler } from "@smithy/fetch-http-handler"
-import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
 import { Infer, NativeOutputSupport, type InferRequest } from "tardie"
 import type { Action, AttemptEndpoint } from "tardie/log/events"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
-import { modelRequest, type AgentMessage, type ModelRequest, type OutputRequest, type ToolSpec } from "tardie/inference/request"
+import { modelRequest, type AgentMessage, type ModelRequest, type ToolSpec } from "tardie/inference/request"
 import {
   capabilityOf,
-  converseOutputConfig,
-  converseStopClass,
-  compatibleResponseFormat,
   outputModeOf,
-  fallbackSystemFor,
-  type OutputCapability
+  fallbackSystemFor
 } from "./output"
-import { NATIVE_MODE, type OutputMode } from "tardie/output/contract"
-import { sumUsage, usageFrom, type ModelPricing, type Usage } from "tardie/inference/usage"
-import type { ModelProtocol } from "./directory"
+import type { OutputMode } from "tardie/output/contract"
+import { sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
+import type {
+  ModelAdapterRegistry,
+  ModelConfig,
+  ModelFetch,
+  StreamBounds
+} from "./adapter"
+
+export type { ModelConfig, StreamBounds } from "./adapter"
 
 // The real model binding: one inference per react, streamed through a TanStack adapter and
 // decoded by their StreamProcessor. The reactors never learn this layer exists. Resilience is
@@ -38,12 +36,6 @@ import type { ModelProtocol } from "./directory"
 
 // StreamBounds is time to first chunk, idle between chunks, and the whole stream. Each timeout
 // enters the bounded provider retry policy (model.test.ts, "throttle-shaped retry").
-export interface StreamBounds {
-  readonly firstChunkMs: number
-  readonly idleMs: number
-  readonly totalMs: number
-}
-
 export const DEFAULT_STREAM_BOUNDS: StreamBounds = {
   firstChunkMs: 90_000,
   idleMs: 90_000,
@@ -163,44 +155,6 @@ const isRefused = (e: unknown): boolean =>
 const isViolation = (e: unknown): boolean =>
   typeof e === "object" && e !== null && (e as { violated?: unknown }).violated === true
 
-const noopLogger = new Proxy({}, { get: () => () => {} }) as never
-
-export interface ModelConfig {
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly model: string
-  readonly protocol: ModelProtocol
-  readonly provider: string
-  // region selects the AWS region for a Bedrock Converse connection.
-  readonly region?: string
-  readonly contextWindowTokens: number
-  // The model's output ceiling, DECLARED by the operator rather than guessed: no wire this
-  // binding speaks publishes limits, so the number that bounds the truncation ladder is stated
-  // configuration. Absent, the ladder falls back to its built-in guesses and the compatible leg
-  // sends its rung explicitly rather than trusting a provider default.
-  readonly maxOutputTokens?: number
-  // The rungs the truncation ladder climbs, smallest first. Absent, MAX_TOKENS_LADDER. A model
-  // whose useful answers start above the first rung wastes an attempt on every turn, so the
-  // rungs are the operator's to state, bounded by `maxOutputTokens` either way (ladderOf).
-  readonly maxTokensLadder?: ReadonlyArray<number>
-  // Stream wall times. Absent fields take DEFAULT_STREAM_BOUNDS. A long healthy generation
-  // that outlives totalMs dies the same way a hung stream does, so set this for the work you run.
-  readonly stream?: Partial<StreamBounds>
-  // What this endpoint and model promise about a declared output contract. Absent means no
-  // promise: a turn that declares a contract fails before spend unless its assembly provides a
-  // fallback. A provider name never supplies this value (src/output/contract.ts, capabilityOf).
-  readonly output?: OutputCapability
-  // pricing projects an estimate beside any provider-reported bill. Reported cache buckets
-  // require their own stated rates (packages/agent/src/inference/usage.ts, priced).
-  readonly pricing?: ModelPricing
-  // In-act backoff bases for throttle-shaped failures. Length is the retry count.
-  readonly throttleRetryDelaysMs?: ReadonlyArray<number>
-  // retryAfterJitterMs adds a random wait to a provider's Retry-After value. Absent, DEFAULT_RETRY_AFTER_JITTER_MS.
-  readonly retryAfterJitterMs?: number
-  readonly fetch?: FetchImpl // test seam
-  readonly sleep?: (ms: number) => Promise<void> // test seam: swap the backoff wait for an instant one
-}
-
 type NativeOutputProvided<C extends ModelConfig> = [C] extends [
   { readonly output: { readonly guarantee: "native"; readonly withTools: true } }
 ]
@@ -310,99 +264,10 @@ class TruncatedError extends Error {
 const isTruncated = (e: unknown): e is TruncatedError =>
   typeof e === "object" && e !== null && (e as { truncated?: unknown }).truncated === true
 
-// The Converse leg, v5's shape cut to its core: the SDK authenticates to the GATEWAY (its own
-// authorization header is stripped; `cf-aig-authorization` carries our token, the gateway holds
-// the AWS credential), and the dynamic SDK import is resolved statically because wrangler's
-// esbuild cannot follow the adapter's indirection on workerd.
-type SmithyHandler = Pick<FetchHttpHandler, "handle" | "destroy">
-
-// bedrockHandler selects a transport that can enforce the configured stream bounds. Bun's
-// fetch transport cannot carry a numeric deadline through Smithy's Request object, while
-// workerd cannot use the Node transport.
-const bedrockHandler = (config: ModelConfig, bounds: StreamBounds): SmithyHandler => {
-  const transport: Promise<SmithyHandler> =
-    (globalThis as { Bun?: unknown }).Bun === undefined
-      ? Promise.resolve(new FetchHttpHandler({ requestTimeout: bounds.totalMs }))
-      : (() => {
-          const moduleName = "@smithy/node-http-handler"
-          return (import(/* @vite-ignore */ moduleName) as Promise<typeof import("@smithy/node-http-handler")>).then(
-            ({ NodeHttpHandler: Handler }) =>
-              new Handler({
-                connectionTimeout: bounds.firstChunkMs,
-                socketTimeout: bounds.idleMs,
-                requestTimeout: bounds.totalMs,
-                throwOnRequestTimeout: true
-              })
-          )
-        })()
-
-  return {
-    handle: async (request, handlerOptions) => {
-      request.headers = Object.fromEntries(
-        Object.entries(request.headers).filter(([key]) => key.toLowerCase() !== "authorization")
-      )
-      request.headers["cf-aig-authorization"] = `Bearer ${config.apiKey}`
-      return (await transport).handle(request, handlerOptions)
-    },
-    destroy: () => {
-      void transport.then((handler) => handler.destroy()).catch(() => undefined)
-    }
-  }
-}
-
-// bedrockAdapter subclasses the Converse adapter for the two things the wire needs and the
-// adapter does not do on its own: the gateway's own authorization, and the output ceiling.
-//
-// `output` is the third. The adapter's own structured-output path forces a tool and reads its
-// arguments back, which is the protocol this framework removed; Converse has a native surface
-// (`outputConfig.textFormat`, @aws-sdk/client-bedrock-runtime), so the schema goes there and the
-// response arrives as ordinary text content the stream processor already accumulates.
-export const bedrockAdapter = (
-  config: ModelConfig,
-  maxTokens: number,
-  bounds: StreamBounds,
-  output?: OutputRequest,
-  mode: OutputMode = NATIVE_MODE,
-  stops: { stopReason?: string } = {},
-  reported: { usage?: unknown } = {}
-) => {
-  const handler = bedrockHandler(config, bounds)
-  const region = config.region ?? config.baseUrl.split("/").filter((s) => s !== "").at(-1)
-  if (region === undefined) throw new Error("a Bedrock connection must declare its AWS region")
-  return new (class extends BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]> {
-    protected override importBedrockRuntime(): Promise<typeof BedrockRuntime> {
-      return Promise.resolve(BedrockRuntime)
-    }
-    protected override buildClientConfig(
-      resolved: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildClientConfig"]>[0],
-      resolvedRegion: string,
-      endpoint: string | undefined
-    ) {
-      // maxAttempts: 1 turns off the AWS SDK's own retry (it counts the first try as attempt
-      // one), so a throttle-shaped failure surfaces to `infer`'s own retry loop instead of
-      // being retried twice, once inside the SDK on its own schedule and once outside on ours.
-      return { ...super.buildClientConfig(resolved, resolvedRegion, endpoint), requestHandler: handler, maxAttempts: 1 }
-    }
-    public override buildInput(options: Parameters<BedrockConverseTextAdapter<(typeof BEDROCK_CONVERSE_MODELS)[number]>["buildInput"]>[0]) {
-      const input = super.buildInput(options) as BedrockRuntime.ConverseStreamCommandInput
-      // Converse truncates at its own small default otherwise, and a truncated stream ends a
-      // tool call with EMPTY arguments: a whole generated code body silently gone.
-      input.inferenceConfig = { ...input.inferenceConfig, maxTokens }
-      const outputConfig = output === undefined ? undefined : converseOutputConfig(output, mode)
-      if (outputConfig !== undefined) input.outputConfig = { ...input.outputConfig, ...outputConfig }
-      return input
-    }
-    protected override async sendStream(input: BedrockRuntime.ConverseStreamCommandInput) {
-      const stream = await super.sendStream(input)
-      return tapStopReason(tapConverseUsage(stream, reported), stops)
-    }
-  })({ apiKey: "byok", region, baseURL: config.baseUrl }, config.model as (typeof BEDROCK_CONVERSE_MODELS)[number])
-}
-
 // FetchImpl is the callable half of fetch, spelled via Parameters so the same file
 // typechecks under workers, bun, and dom globals (their fetch types differ in extras like
 // preconnect, never in the call shape).
-type FetchImpl = (input: Parameters<typeof globalThis.fetch>[0], init?: Parameters<typeof globalThis.fetch>[1]) => Promise<Response>
+type FetchImpl = ModelFetch
 
 // The attempt's idempotency key rides as the standard header on the OpenAI-compat wire, so a
 // provider (or gateway) that dedups collapses a crashed attempt's retry into the first call.
@@ -561,37 +426,6 @@ const endpointOf = (config: ModelConfig, wire: Wire | undefined): AttemptEndpoin
 
 const served = (action: Action, endpoint: AttemptEndpoint): Action => ({ ...action, endpoint })
 
-// tapStopReason keeps the raw Converse stop reason the adapter's processor folds away, so a
-// guardrail refusal and a malformed structured response are told apart from an ordinary stop
-// (output.ts, converseStopClass).
-export const tapStopReason = <T>(
-  stream: AsyncIterable<T>,
-  into: { stopReason?: string }
-): AsyncIterable<T> => ({
-  async *[Symbol.asyncIterator]() {
-    for await (const event of stream) {
-      const stop = (event as { messageStop?: { stopReason?: unknown } }).messageStop?.stopReason
-      if (typeof stop === "string") into.stopReason = stop
-      yield event
-    }
-  }
-})
-
-// tapConverseUsage preserves the SDK's provider metrics before the shared adapter drops cache
-// details (model.test.ts, "the Converse usage tap keeps the raw provider metrics").
-export const tapConverseUsage = <T>(
-  stream: AsyncIterable<T>,
-  into: { usage?: unknown }
-): AsyncIterable<T> => ({
-  async *[Symbol.asyncIterator]() {
-    for await (const event of stream) {
-      const usage = (event as { metadata?: { usage?: unknown } }).metadata?.usage
-      if (usage !== undefined) into.usage = usage
-      yield event
-    }
-  }
-})
-
 const usageOn = (e: unknown): Usage | undefined =>
   e !== null && typeof e === "object" && "usage" in e ? (e as { usage?: Usage }).usage : undefined
 
@@ -625,11 +459,15 @@ const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefine
 }
 
 // infer provides NativeOutputSupport in its layer type only for a statically known native capability that accepts tools.
-export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer | NativeOutputProvided<C>> => {
+export const infer = <const C extends ModelConfig>(
+  config: C,
+  adapters: ModelAdapterRegistry
+): Layer.Layer<Infer | NativeOutputProvided<C>> => {
   assertSupportedBun()
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }
+  const selectedAdapter = adapters.resolve(config.protocol)
   const sleep = config.sleep ?? realSleep
   const bounds: StreamBounds = {
     firstChunkMs: config.stream?.firstChunkMs ?? DEFAULT_STREAM_BOUNDS.firstChunkMs,
@@ -666,57 +504,20 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
     const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
       promise: Promise.resolve(undefined)
     }
-    const reported: { usage?: unknown } = {}
     const held: { tokens?: TokenUsage } = {}
     const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
-    const stops: { stopReason?: string } = {}
-    const adapter = config.protocol === "bedrock-converse"
-      ? bedrockAdapter(config, maxTokens, bounds, req.output, mode, stops, reported)
-      : config.protocol === "anthropic-messages"
-        ? createAnthropicChat(config.model as never, config.apiKey, {
-            baseURL: config.baseUrl,
-            maxRetries: 0,
-            fetch: fetcher
-          })
-        : openaiCompatibleText(config.model, {
-            name: "tardigrade",
-            baseURL: config.baseUrl,
-            apiKey: config.apiKey,
-            api: config.protocol === "openai-responses" ? "responses" : "chat-completions",
-            // The OpenAI client retries a throttle-shaped failure on its own schedule by
-            // default (`maxRetries: 2`, real waits it does not expose to us). Turned off here so
-            // a 429 or a 5xx surfaces to `react`'s own retry loop once, on our own backoff.
-            maxRetries: 0,
-            fetch: fetcher
-          })
-    // The declared contract rides each wire's own surface: `response_format` through the
-    // compatible leg's provider-options seam, and `outputConfig` through the Converse leg's
-    // buildInput above. Both are absent under an implementation that asked for no guarantee, so
-    // no endpoint is handed a schema it never promised to keep.
-    const responseFormat = config.protocol === "openai-responses" || config.protocol === "openai-chat-completions"
-      ? compatibleResponseFormat(req.output, mode)
-      : undefined
-    const outputSchema = config.protocol === "anthropic-messages" && req.output?.kind === "contract" && mode.kind === "native"
-      ? req.output.contract.schema
-      : undefined
-    // The fallback's own instruction rides the request and reaches the model only on an attempt
-    // running as that fallback, so a native attempt sends exactly the base prompt.
     const fallbackSystem = fallbackSystemFor(req.output, mode)
-    const stream = adapter.chatStream({
-      model: config.model,
-      messages: req.messages.map(toMessage) as never,
-      tools: req.tools.map(toTool) as never,
-      systemPrompts: fallbackSystem === undefined ? [req.system] : [req.system, fallbackSystem],
-      modelOptions: {
-        // The ceiling rides the wire explicitly on the compatible leg (provider-native sampling
-        // key), the same number the Bedrock leg pins through inferenceConfig: an unstated ceiling
-        // is a provider default nobody chose.
-        max_tokens: maxTokens,
-        ...(responseFormat === undefined ? {} : { response_format: responseFormat })
-      } as never,
-      ...(outputSchema === undefined ? {} : { outputSchema }),
-      logger: noopLogger
-    } as never)
+    const attempt = selectedAdapter.start({
+      config,
+      request: req,
+      mode,
+      maxTokens,
+      bounds,
+      fetch: fetcher,
+      messages: req.messages.map(toMessage),
+      tools: req.tools.map(toTool),
+      systemPrompts: fallbackSystem === undefined ? [req.system] : [req.system, fallbackSystem]
+    })
     // The wire is read once and answers two questions: what the attempt spent, and who served
     // it. The endpoint stands whether or not any spend was reported, so an endpoint that bills
     // nothing is still named in the log (tardie, src/events.ts, Endpoint).
@@ -724,7 +525,8 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
       const wire = await sink.promise
       // Wire-reported provenance wins: a router that names the upstream it served from records
       // the true split; the configured stamp covers a wire that stays silent.
-      const providerMetrics = wire?.usageReports ?? (reported.usage === undefined ? [] : [reported.usage])
+      const reportedUsage = attempt.reportedUsage?.()
+      const providerMetrics = wire?.usageReports ?? (reportedUsage === undefined ? [] : [reportedUsage])
       const usage = usageFrom(
         [...providerMetrics, held.tokens],
         config.pricing,
@@ -742,17 +544,17 @@ export const infer = <const C extends ModelConfig>(config: C): Layer.Layer<Infer
       return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
-      const result = await new StreamProcessor().process(tapTokens(bounded(stream, bounds), held))
+      const result = await new StreamProcessor().process(tapTokens(bounded(attempt.stream, bounds), held))
       const { usage, endpoint, wire } = await settle()
-      stats.finish = stops.stopReason ?? result.finishReason ?? "stop"
-      const converse = converseStopClass(stops.stopReason)
-      if (result.finishReason === "length" || converse === "truncated") throw new TruncatedError(maxTokens, usage)
+      stats.finish = attempt.finishReason?.() ?? result.finishReason ?? "stop"
+      const stopClass = attempt.stopClass?.() ?? "ok"
+      if (result.finishReason === "length" || stopClass === "truncated") throw new TruncatedError(maxTokens, usage)
       // A structured-output refusal reaches the compatible wire as a `refusal` delta under an
       // ordinary stop, and the Converse wire as its own stop reason. Neither survives the shared
       // processor, so both are read here rather than from the decoded result.
       if (wire?.refusal !== undefined) throw failed(new RefusedError(`the provider refused to answer this request: ${wire.refusal}`), usage, endpoint)
-      if (converse === "refused") throw failed(new RefusedError("the provider refused to answer this request"), usage, endpoint)
-      if (converse === "violation") {
+      if (stopClass === "refused") throw failed(new RefusedError("the provider refused to answer this request"), usage, endpoint)
+      if (stopClass === "violation") {
         throw failed(new ViolatedError("the provider could not produce output matching the schema it was given"), usage, endpoint)
       }
       return stamped(served(withSpend(actionOf(result), usage), endpoint))

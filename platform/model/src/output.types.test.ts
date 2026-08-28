@@ -2,6 +2,8 @@ import { expect, test } from "bun:test"
 import type { Layer } from "effect"
 import type { NativeOutputSupport } from "tardie"
 import { infer } from "./model"
+import { modelAdapters } from "./adapter"
+import { openAICompatibleAdapter } from "./openai"
 import type { OutputCapability } from "./output"
 
 // The compile-time half of the capability. `bun run typecheck` fails on an unsatisfied
@@ -9,6 +11,7 @@ import type { OutputCapability } from "./output"
 // breaks the gate. The runtime half is model.test.ts.
 
 const accepts = <T>(_value: T): void => {}
+const adapters = modelAdapters(openAICompatibleAdapter)
 
 // A capability is a closed union: an endpoint that promises nothing has no tool-combination
 // question to answer, and a native one must answer it. Neither half can be left to a default,
@@ -33,7 +36,7 @@ const native = infer({
   contextWindowTokens: 128_000,
   protocol: "openai-responses",
   output: { guarantee: "native", withTools: true }
-})
+}, adapters)
 
 const toolLimited = infer({
   baseUrl: "https://model.test",
@@ -43,7 +46,7 @@ const toolLimited = infer({
   contextWindowTokens: 128_000,
   protocol: "openai-responses",
   output: { guarantee: "native", withTools: false }
-})
+}, adapters)
 
 const unproven = infer({
   baseUrl: "https://model.test",
@@ -53,7 +56,7 @@ const unproven = infer({
   contextWindowTokens: 128_000,
   protocol: "openai-responses",
   output: { guarantee: "none" }
-})
+}, adapters)
 
 type Provided<L> = L extends Layer.Layer<infer A, unknown, unknown> ? A : never
 type ProvidesNative<L> = NativeOutputSupport extends Provided<L> ? true : false

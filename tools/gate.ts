@@ -74,6 +74,7 @@ const tasks: ReadonlyArray<Task> = [
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
+  { id: "bundle:model-adapters", cmd: ["bun", "run", "tools/model-adapter-bundles.ts"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
   // Knip checks the complete graph, the shipped graph, cycles, and tsconfig discovery as separate views.
   { id: "knip", cmd: ["bun", "run", "knip"] },

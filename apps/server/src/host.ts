@@ -29,6 +29,9 @@ import type { Action } from "tardie/log/events"
 import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
+import { modelAdapters, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
+import { anthropicAdapter } from "@clavia/tardigrade-model/anthropic"
+import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,
@@ -42,6 +45,25 @@ import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
+
+const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelAdapterRegistry> => {
+  const protocols = new Set(Object.values(config.model.providers).map((provider) => provider.protocol))
+  let bedrock: ReadonlyArray<Awaited<ReturnType<typeof import("@clavia/tardigrade-model/bedrock")["bedrockAdapterForBun"]>>> = []
+  if (protocols.has("bedrock-converse")) {
+    try {
+      const module = await import("@clavia/tardigrade-model/bedrock")
+      bedrock = [await module.bedrockAdapterForBun()]
+    } catch (cause) {
+      throw new Error(
+        "model protocol \"bedrock-converse\" requires the optional Bedrock provider dependencies; install @aws-sdk/client-bedrock-runtime, @smithy/fetch-http-handler, @smithy/node-http-handler, and @tanstack/ai-bedrock",
+        { cause }
+      )
+    }
+  }
+  const adapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, ...bedrock)
+  for (const protocol of protocols) adapters.resolve(protocol)
+  return adapters
+}
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
 // routes speak thread ids; the lane a host knows lives here and nowhere else, so a route can never
@@ -217,7 +239,11 @@ export const modelIsConfigured = (config: ServerConfigValue): boolean =>
     }
   })()
 
-const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): Layer.Layer<Infer> => {
+const layerInferFrom = (
+  config: ServerConfigValue,
+  catalog: ModelCatalogState,
+  adapters: ModelAdapterRegistry
+): Layer.Layer<Infer> => {
   if (Object.keys(config.model.providers).length === 0) {
     const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
     return Layer.succeed(Infer)({
@@ -271,7 +297,7 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
         contextWindowTokens: selected.contextWindowTokens,
         ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
         ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
-      })
+      }, adapters)
       return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(binding))
     })
   })
@@ -281,9 +307,14 @@ const layerInferFrom = (config: ServerConfigValue, catalog: ModelCatalogState): 
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
-const layerLane = (config: ServerConfigValue, catalog: ModelCatalogState, options: ThreadsOptions) =>
+const layerLane = (
+  config: ServerConfigValue,
+  catalog: ModelCatalogState,
+  options: ThreadsOptions,
+  adapters: ModelAdapterRegistry
+) =>
   Layer.mergeAll(
-    options.infer ?? layerInferFrom(config, catalog),
+    options.infer ?? layerInferFrom(config, catalog, adapters),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -294,6 +325,8 @@ export interface ThreadsOptions {
   // derivation whole, which is how a test runs a scripted mind with no credentials
   // (host.test.ts). It is the one seam because Infer is the one place a turn leaves the process.
   readonly infer?: Layer.Layer<Infer>
+  // modelAdapters replaces the host's protocol implementations and must cover every configured provider.
+  readonly modelAdapters?: ModelAdapterRegistry
   // providers interpret replies whose durable inbound link targets an external provider instance.
   readonly providers?: ReadonlyArray<Provider>
   // actorRefresh watches the actor root and reconciles its artifacts after the stated debounce.
@@ -451,7 +484,7 @@ const runtimeOf = async (
   }
 }
 
-export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "providers">
+export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "modelAdapters" | "providers">
 
 // layerActorThreads mounts one deployed definition as the runtime.
 export const layerActorThreads = (
@@ -461,13 +494,15 @@ export const layerActorThreads = (
   Layer.effectContext(Effect.gen(function*() {
     const config = yield* ServerConfig
     const catalog = yield* ModelCatalogStore
+    const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
+    for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const summary: ActorSummary = { name: definition.name, builtIn: false }
     const runtime = yield* Effect.acquireRelease(
       Effect.promise(() => runtimeOf(
         summary,
         definition,
         config.db,
-        layerLane(config, catalog, options),
+        layerLane(config, catalog, options, adapters),
         options.providers ?? [],
         config.maxConcurrentLanes
       )),
@@ -518,7 +553,9 @@ const make = (options: ThreadsOptions) =>
   Effect.gen(function*() {
     const config = yield* ServerConfig
     const catalog = yield* ModelCatalogStore
-    const lane = layerLane(config, catalog, options)
+    const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
+    for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
+    const lane = layerLane(config, catalog, options, adapters)
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
