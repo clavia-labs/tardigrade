@@ -43,23 +43,20 @@ export const hmacSha256EventKeyIndex = (
 })
 
 const actorMigrations = SqliteMigrator.fromRecord({
-  "0001_actor_directory": Effect.gen(function* () {
+  "0001_actor_runtime": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql.unsafe(`CREATE TABLE actor_identity (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
       actor TEXT NOT NULL,
       instance TEXT NOT NULL
     )`)
-    yield* sql.unsafe(`CREATE TABLE thread_directory (
-      thread TEXT PRIMARY KEY,
-      parent_thread TEXT,
-      depth INTEGER NOT NULL,
-      placement TEXT
+    yield* sql.unsafe(`CREATE TABLE events (
+      seq INTEGER NOT NULL,
+      key TEXT,
+      event TEXT NOT NULL,
+      PRIMARY KEY (seq)
     ) WITHOUT ROWID`)
-  }),
-  "0002_thread_creation_state": Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient
-    yield* sql.unsafe("ALTER TABLE thread_directory ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
+    yield* sql.unsafe("CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL")
   })
 })
 

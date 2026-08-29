@@ -270,7 +270,7 @@ describe("cloudflare actor", () => {
       .toEqual(["first-secret", "second-secret"])
   })
 
-  test("actor directory publishes a child after durable acceptance", async () => {
+  test("actor supervisor creates a child after durable acceptance", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
     await directory.createThread("ag.directory-parent")
@@ -281,33 +281,28 @@ describe("cloudflare actor", () => {
       depth: 1,
       placement: "independent" as const
     }
-    const pending = await runInDurableObject(directory, (_instance, state) => {
+    const requested = await runInDurableObject(directory, (_instance, state) => {
       state.storage.sql.exec(
-        `INSERT INTO thread_directory (thread, parent_thread, depth, placement, status)
-         VALUES ('ag.directory-child', 'ag.directory-parent', 1, 'independent', 'pending')`
+        `INSERT INTO events (seq, key, event)
+         VALUES (
+           (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
+           'thread:requested:ag.directory-child',
+           '{"type":"ThreadRequested","thread":"ag.directory-child","parentThread":"ag.directory-parent","depth":1,"placement":"independent","at":1}'
+         )`
       )
       return state.storage.sql.exec<{
-        thread: string
-        parent_thread: string | null
-        depth: number
-        placement: string | null
-        status: string
-      }>("SELECT thread, parent_thread, depth, placement, status FROM thread_directory WHERE thread = 'ag.directory-child'").toArray()
+        key: string
+        event: string
+      }>("SELECT key, event FROM events WHERE key = 'thread:requested:ag.directory-child'").toArray()
     })
-    expect(pending).toEqual([{
-      thread: "ag.directory-child",
-      parent_thread: "ag.directory-parent",
-      depth: 1,
-      placement: "independent",
-      status: "pending"
-    }])
-    const pendingTree = await directory.threadTree()
-    expect(pendingTree.find((node) => node.id === "directory-parent")).toEqual({
+    expect(requested).toEqual([{ key: "thread:requested:ag.directory-child", event: expect.stringContaining('"type":"ThreadRequested"') }])
+    const requestedTree = await directory.threadTree()
+    expect(requestedTree.find((node) => node.id === "directory-parent")).toEqual({
       id: "directory-parent",
       depth: 0,
       children: []
     })
-    expect(pendingTree.some((node) => node.id === "directory-child")).toBe(false)
+    expect(requestedTree.some((node) => node.id === "directory-child")).toBe(false)
     await directory.deliverChild({
       link: { source: parent, target },
       event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
@@ -339,6 +334,59 @@ describe("cloudflare actor", () => {
     })
     const childEvents = await threadStub("directory-child").events("directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
+    const lifecycle = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(lifecycle
+      .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
+      .filter((event) => event.thread.startsWith("ag.directory-"))
+      .map((event) => event.type)).toEqual([
+      "ThreadRequested",
+      "ThreadCreated",
+      "ThreadRequested",
+      "ThreadCreated",
+      "ThreadRequested",
+      "ThreadCreated"
+    ])
+  })
+
+  test("actor supervisor alarm completes a staged child", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.recovery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.recovery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.recovery-child" }
+    const lineage = { parent, depth: 1, placement: "independent" as const }
+    const child = threadStub("recovery-child")
+    await child.init("echo", "main", "ag.recovery-child")
+    await child.stageCreation({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "recovery-message", text: "hello", at: 4 },
+      lineage
+    })
+    await runInDurableObject(directory, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO events (seq, key, event)
+         VALUES (
+           (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
+           'thread:requested:ag.recovery-child',
+           '{"type":"ThreadRequested","thread":"ag.recovery-child","parentThread":"ag.recovery-parent","depth":1,"placement":"independent","at":4}'
+         )`
+      )
+    })
+    expect((await directory.threadTree()).some((node) => node.id === "recovery-child")).toBe(false)
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect((await directory.threadTree()).find((node) => node.id === "recovery-parent")).toEqual({
+      id: "recovery-parent",
+      depth: 0,
+      children: [{
+        id: "recovery-child",
+        parent: "recovery-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {

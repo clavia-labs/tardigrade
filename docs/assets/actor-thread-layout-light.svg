@@ -27,21 +27,21 @@
   </marker>
 </defs>
 <polyline class="edge" data-from="definition" data-to="instance" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="create instance" points="370.3505,69.80000000000001 370.3505,186.1" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="instance" data-to="root" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="312.0685,239.9 312.0685,251.9 124.7835,251.9 124.78349999999999,332.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="instance" data-to="another" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="370.3505,239.9 370.3505,376.50000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="instance" data-to="root" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ThreadCreated" points="312.0685,239.9 312.0685,251.9 124.7835,251.9 124.78349999999999,332.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="instance" data-to="another" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ThreadCreated" points="370.3505,239.9 370.3505,376.50000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="instance" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="parent · depth · placement" points="428.63250000000005,239.9 428.63250000000005,364.50000000000006 574.134,364.50000000000006 574.134,466.30000000000007 385.7199166666667,466.30000000000007 385.7199166666667,478.30000000000007" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <polyline class="edge" data-from="root" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ChildCreated, then first delivery" points="124.78349999999999,386.00000000000006 124.7835,466.30000000000007 313.19758333333334,466.30000000000007 313.19758333333334,478.30000000000007" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
 <g class="edge-label" data-from="definition" data-to="instance" data-label="create instance">
   <rect x="324.8505" y="112.80000000000001" width="90.71200000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
   <text x="370.2065" y="127.95000000000002" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">create instance</text>
 </g>
-<g class="edge-label" data-from="instance" data-to="root" data-label="directory entry">
+<g class="edge-label" data-from="instance" data-to="root" data-label="ThreadCreated">
   <rect x="80.2835" y="258.90000000000003" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="124.45150000000001" y="274.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
+  <text x="124.45150000000001" y="274.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ThreadCreated</text>
 </g>
-<g class="edge-label" data-from="instance" data-to="another" data-label="directory entry">
+<g class="edge-label" data-from="instance" data-to="another" data-label="ThreadCreated">
   <rect x="325.8505" y="303.20000000000005" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="370.0185" y="318.35" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
+  <text x="370.0185" y="318.35" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ThreadCreated</text>
 </g>
 <g class="edge-label" data-from="instance" data-to="child" data-label="parent · depth · placement">
   <rect x="503.134" y="429.00000000000006" width="141.20200000000003" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
@@ -57,9 +57,9 @@ methods · reactors · model catalog" data-shape="rectangle">
   <text x="370.35049999999995" y="42.900000000000006" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.35049999999995" dy="-3.9000000000000012">Actor definition · support-agent</tspan><tspan x="370.35049999999995" dy="16.900000000000002">methods · reactors · model catalog</tspan></text>
 </g>
 <g class="node" data-id="instance" data-label="Actor DO · user-42
-actor instance · thread directory" data-shape="rectangle">
+actor instance · supervisor log" data-shape="rectangle">
   <rect x="253.7865" y="186.1" width="233.128" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="370.3505" y="213" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Actor DO · user-42</tspan><tspan x="370.3505" dy="16.900000000000002">actor instance · thread directory</tspan></text>
+  <text x="370.3505" y="213" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Actor DO · user-42</tspan><tspan x="370.3505" dy="16.900000000000002">actor instance · supervisor log</tspan></text>
 </g>
 <g class="node" data-id="root" data-label="Thread DO · root
 event log · workspace · alarm" data-shape="rectangle">

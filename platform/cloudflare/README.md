@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding mounts each actor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, model catalog, and thread directory. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, model catalog, lifecycle log, and thread tree. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
@@ -17,7 +17,7 @@ export default cloudflareWorker(definition)
 
 The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
 
-The Actor DO keeps a routing and query directory with each thread's parent, depth, and placement. `GET /v1/threads` reads that directory, then reads each Thread DO log to build the tree. Thread-specific method and event routes select the matching Thread DO.
+The Actor DO projects each thread's parent, depth, and placement from its lifecycle log. `GET /v1/threads` reads this projection without fetching Thread DO logs. Thread-specific method and event routes select the matching Thread DO.
 
 
 ## Application services
@@ -49,9 +49,9 @@ The callback may require Tardigrade's thread ports while constructing its layer.
 
 ## Thread creation
 
-Create an actor instance, then create each root thread through its Actor DO before writing events to the Thread DO. Creation is idempotent. It records the thread in the actor directory and initializes the Thread DO identity. Later event appends and method calls address the Thread DO directly. An unknown thread returns `404`.
+Create an actor instance, then create each root thread through its Actor DO before writing events to the Thread DO. Creation is idempotent. The actor supervisor records `ThreadRequested` and `ThreadCreated`, and it initializes the Thread DO identity. Later event appends and method calls address the Thread DO directly. An unknown thread returns `404`.
 
-A child starts as a pending Actor DO directory entry. The Actor DO asks its Thread DO to record `ThreadCreated` and the initial message, then marks the child ready. Thread listings omit pending children. A retry resumes the pending entry and duplicate child delivery is absorbed.
+A child Thread DO stages `ThreadCreated` and its initial message before the Actor DO records `ThreadRequested`. The actor supervisor then transfers recovery ownership to the child and records `ThreadCreated`. Thread listings project created threads from the actor log. The Actor DO alarm retries unfinished requests, and duplicate child delivery is absorbed.
 
 ```ts
 await fetch("/v1/actors/customer-42", { method: "PUT", headers })

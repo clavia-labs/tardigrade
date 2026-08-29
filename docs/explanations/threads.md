@@ -6,17 +6,17 @@ An actor is a behavior definition. A thread is one durable run of that actor. Ev
 
 `ThreadEventStore` is the storage contract for one thread. Its operations do not accept a thread identifier because the store already has that identity. Host ingress, host reads, and reactors use the same store object, so append policy and read behavior cannot diverge between paths.
 
-An actor directory indexes the threads created from one actor definition. It stores routing and query metadata. Event data remains in each thread's store.
+An actor instance is a durable supervisor. Its event log records `ThreadRequested` and `ThreadCreated`, and its thread tree is a projection of those events. Event data remains in each thread's store.
 
 The parent thread records `ChildCreated` before sending the child's first delivery. The child records `ThreadCreated` as the first event in its own log. The parent record owns discovery and carries the requested placement. The child record confirms its identity, parent, depth, and placement after the host applies its default.
 
 ## Durable Object layout
 
-An actor definition gives the actor its name, methods, reactors, and model catalog. Each actor instance gets an Actor DO that owns its identity and thread tree as directory metadata. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
+An actor definition gives the actor its name, methods, reactors, and model catalog. Each actor instance gets an Actor DO that runs the actor supervisor and owns its identity and thread tree. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/actor-thread-layout-dark.svg">
-  <img alt="The support-agent definition creates the user-42 actor instance, whose Actor DO indexes two root Thread DOs and one child Thread DO" src="../assets/actor-thread-layout-light.svg">
+  <img alt="The support-agent definition creates the user-42 actor instance, whose Actor DO supervises two root Thread DOs and one child Thread DO" src="../assets/actor-thread-layout-light.svg">
 </picture>
 
 ## Child placement
@@ -31,9 +31,9 @@ A spawn may request `placement: "colocated" | "independent"`. The host uses `def
 
 The Bun actor database is a directory and routing index. Thread databases live beside it under `<actor>.sqlite.threads/`. Each thread database contains that thread's event log and workspace. The model-facing workspace SQL surface remains separate from the event log. Effect SQL records migrations in `effect_sql_migrations` inside each physical database.
 
-Cloudflare uses one Actor DO for the actor directory and one Thread DO per thread. Each Thread DO has its own SQLite database, heap, driver, and alarm lifecycle. The Actor DO builds the actor-wide thread tree from its directory without reading any thread event log. Each tree node contains its id, parent, depth, placement, and children. Effect SQL applies each DO's pending schema migrations before the DO records its identity or opens its event store.
+Cloudflare uses one Actor DO for the actor supervisor and one Thread DO per thread. Each Thread DO has its own SQLite database, heap, driver, and alarm lifecycle. The Actor DO builds the actor-wide thread tree from its lifecycle log without reading any thread event log. Each tree node contains its id, parent, depth, placement, and children. Effect SQL applies each DO's schema migrations before the DO records its identity or opens its event store.
 
-Root creation passes through the Actor DO once. Child creation reserves a pending directory entry, asks the Thread DO to record `ThreadCreated` and its initial message, then marks the entry ready. The actor tree omits pending entries. A retry resumes the same reservation and duplicate child delivery is absorbed. Later appends and deliveries address the ready Thread DO directly.
+Root creation passes through the Actor DO once. For a child, the Thread DO first stages `ThreadCreated` and the initial message without running them. The Actor DO then records `ThreadRequested`. Its reactor gives recovery ownership to the Thread DO and records `ThreadCreated`, which adds the child to the actor tree. The Actor DO alarm retries an unfinished request. Later appends and deliveries address the created Thread DO directly.
 
 ## Encrypted event stores
 

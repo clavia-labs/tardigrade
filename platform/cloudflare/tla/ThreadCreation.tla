@@ -1,5 +1,5 @@
 ------------------------- MODULE ThreadCreation -------------------------
-(* ThreadCreation models one child crossing the Actor DO directory and Thread DO log boundary. A ready directory entry is visible in the actor tree and therefore requires durable acceptance by its child. *)
+(* ThreadCreation models one child crossing the Actor DO supervisor log and Thread DO log boundary. The Actor DO projects its tree from ThreadCreated, which requires durable acceptance by the child. *)
 
 EXTENDS FiniteSets, TLC
 
@@ -15,140 +15,100 @@ ModelTarget == [call \in ModelCalls |->
   CASE call = "first" -> "left"
     [] OTHER -> "right"]
 
-States == {"absent", "pending", "ready"}
+VARIABLES staged, requested, accepted, created, owner
 
-VARIABLES requested, directory, initialized, accepted, owner
-
-vars == <<requested, directory, initialized, accepted, owner>>
+vars == <<staged, requested, accepted, created, owner>>
 
 TypeOK ==
+  /\ staged \subseteq Calls
   /\ requested \subseteq Calls
-  /\ directory \in [Threads -> States]
-  /\ initialized \subseteq Threads
   /\ accepted \subseteq Calls
+  /\ created \subseteq Threads
   /\ owner \in [Threads -> Calls \cup {None}]
 
 Init ==
+  /\ staged = {}
   /\ requested = {}
-  /\ directory = [thread \in Threads |-> "absent"]
-  /\ initialized = {}
   /\ accepted = {}
+  /\ created = {}
   /\ owner = [thread \in Threads |-> None]
 
-Start(call) ==
-  /\ call \notin requested
-  /\ requested' = requested \cup {call}
-  /\ UNCHANGED <<directory, initialized, accepted, owner>>
+(* Stage durably stores ThreadCreated and the initial delivery in the child log without starting it. *)
+Stage(call) ==
+  /\ call \notin staged
+  /\ staged' = staged \cup {call}
+  /\ UNCHANGED <<requested, accepted, created, owner>>
 
-(* CurrentInitialize creates the Thread DO identity before the Actor DO publishes its directory entry. *)
-CurrentInitialize(call) ==
+(* Request records ThreadRequested in the Actor DO after the child payload is durable. *)
+Request(call) ==
   LET thread == Target[call]
   IN
-    /\ call \in requested
-    /\ thread \notin initialized
-    /\ initialized' = initialized \cup {thread}
-    /\ UNCHANGED <<requested, directory, accepted, owner>>
-
-(* CurrentPublish exposes a ready directory entry before the child accepts its creation event and initial message. *)
-CurrentPublish(call) ==
-  LET thread == Target[call]
-  IN
-    /\ thread \in initialized
-    /\ directory[thread] = "absent"
-    /\ directory' = [directory EXCEPT ![thread] = "ready"]
+    /\ call \in staged
+    /\ call \notin requested
+    /\ requested' = requested \cup {call}
     /\ owner' = [owner EXCEPT ![thread] = call]
-    /\ UNCHANGED <<requested, initialized, accepted>>
+    /\ UNCHANGED <<staged, accepted, created>>
 
-CurrentAccept(call) ==
-  LET thread == Target[call]
-  IN
-    /\ directory[thread] = "ready"
-    /\ call \notin accepted
-    /\ accepted' = accepted \cup {call}
-    /\ UNCHANGED <<requested, directory, initialized, owner>>
-
-CurrentNext ==
-  \/ \E call \in Calls: Start(call)
-  \/ \E call \in Calls: CurrentInitialize(call)
-  \/ \E call \in Calls: CurrentPublish(call)
-  \/ \E call \in Calls: CurrentAccept(call)
-
-CurrentSpec == Init /\ [][CurrentNext]_vars
-
-(* Reserve records the actor-owned intent without exposing the child in the ready tree. *)
-Reserve(call) ==
-  LET thread == Target[call]
-  IN
-    /\ call \in requested
-    /\ directory[thread] = "absent"
-    /\ directory' = [directory EXCEPT ![thread] = "pending"]
-    /\ owner' = [owner EXCEPT ![thread] = call]
-    /\ UNCHANGED <<requested, initialized, accepted>>
-
-(* Initialize creates the Thread DO identity while its directory reservation remains pending. *)
-Initialize(call) ==
-  LET thread == Target[call]
-  IN
-    /\ directory[thread] = "pending"
-    /\ owner[thread] = call
-    /\ thread \notin initialized
-    /\ initialized' = initialized \cup {thread}
-    /\ UNCHANGED <<requested, directory, accepted, owner>>
-
-(* Accept durably lands ThreadCreated and the initial message before the actor publishes the child. *)
+(* Accept arms child recovery before the supervisor records creation. *)
 Accept(call) ==
-  LET thread == Target[call]
-  IN
-    /\ directory[thread] = "pending"
-    /\ owner[thread] = call
-    /\ thread \in initialized
-    /\ call \notin accepted
-    /\ accepted' = accepted \cup {call}
-    /\ UNCHANGED <<requested, directory, initialized, owner>>
+  /\ call \in requested
+  /\ call \notin accepted
+  /\ accepted' = accepted \cup {call}
+  /\ UNCHANGED <<staged, requested, created, owner>>
 
-(* Complete publishes only a child whose Thread DO has acknowledged durable acceptance. *)
-Complete(call) ==
+(* Create records ThreadCreated in the Actor DO and exposes the child in its tree. *)
+Create(call) ==
   LET thread == Target[call]
   IN
-    /\ directory[thread] = "pending"
-    /\ owner[thread] = call
     /\ call \in accepted
-    /\ directory' = [directory EXCEPT ![thread] = "ready"]
-    /\ UNCHANGED <<requested, initialized, accepted, owner>>
+    /\ thread \notin created
+    /\ created' = created \cup {thread}
+    /\ UNCHANGED <<staged, requested, accepted, owner>>
 
 Next ==
-  \/ \E call \in Calls: Start(call)
-  \/ \E call \in Calls: Reserve(call)
-  \/ \E call \in Calls: Initialize(call)
+  \/ \E call \in Calls: Stage(call)
+  \/ \E call \in Calls: Request(call)
   \/ \E call \in Calls: Accept(call)
-  \/ \E call \in Calls: Complete(call)
+  \/ \E call \in Calls: Create(call)
 
 Spec == Init /\ [][Next]_vars
 
 LiveSpec ==
   /\ Spec
-  /\ \A call \in Calls: WF_vars(Reserve(call))
-  /\ \A call \in Calls: WF_vars(Initialize(call))
   /\ \A call \in Calls: WF_vars(Accept(call))
-  /\ \A call \in Calls: WF_vars(Complete(call))
+  /\ \A call \in Calls: WF_vars(Create(call))
 
-(* ReadyHasAccepted states that every actor-visible child has durably accepted its creation. *)
-ReadyHasAccepted ==
-  \A thread \in Threads:
-    directory[thread] = "ready" => owner[thread] \in accepted /\ Target[owner[thread]] = thread
+(* CurrentCreate exposes a child from ThreadCreated before the Thread DO accepts recovery ownership. *)
+CurrentCreate(call) ==
+  LET thread == Target[call]
+  IN
+    /\ call \in requested
+    /\ thread \notin created
+    /\ created' = created \cup {thread}
+    /\ UNCHANGED <<staged, requested, accepted, owner>>
 
-(* AcceptedHasReservation states that every accepted child remains owned by its actor directory. *)
-AcceptedHasReservation ==
-  \A call \in accepted:
-    directory[Target[call]] \in {"pending", "ready"} /\ owner[Target[call]] = call
+CurrentNext ==
+  \/ \E call \in Calls: Stage(call)
+  \/ \E call \in Calls: Request(call)
+  \/ \E call \in Calls: CurrentCreate(call)
+  \/ \E call \in Calls: Accept(call)
 
-(* PendingOwnsRequest states that every directory reservation belongs to a requested call. *)
-PendingOwnsRequest ==
-  \A thread \in Threads:
-    directory[thread] = "pending" => owner[thread] \in requested
+CurrentSpec == Init /\ [][CurrentNext]_vars
 
-(* AllRequestsReady states that every requested child eventually becomes visible. *)
-AllRequestsReady ==
-  \A call \in Calls: call \in requested ~> directory[Target[call]] = "ready"
+(* CreatedHasAccepted states that every actor-visible child has durable recovery ownership. *)
+CreatedHasAccepted ==
+  \A thread \in created:
+    owner[thread] \in accepted /\ Target[owner[thread]] = thread
+
+(* AcceptedHasRequest states that every accepted child belongs to a durable actor request. *)
+AcceptedHasRequest ==
+  \A call \in accepted: call \in requested /\ owner[Target[call]] = call
+
+(* RequestedHasStage states that the child payload is durable before the actor owns the request. *)
+RequestedHasStage == requested \subseteq staged
+
+(* AllRequestsCreated states that the Actor DO alarm eventually completes every durable request. *)
+AllRequestsCreated ==
+  \A call \in Calls: call \in requested ~> Target[call] \in created
 
 =============================================================================

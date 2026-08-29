@@ -100,7 +100,7 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated"),
   pass("cloudflare", "ThreadCreation", "ThreadCreation.cfg"),
   pass("cloudflare", "ThreadCreation", "ThreadCreationLive.cfg"),
-  counterexample("cloudflare", "ThreadCreation", "ThreadCreationCurrent.cfg", "Invariant ReadyHasAccepted is violated")
+  counterexample("cloudflare", "ThreadCreation", "ThreadCreationCurrent.cfg", "Invariant CreatedHasAccepted is violated")
 ]
 
 const jar = process.env["TLA2TOOLS_JAR"]
