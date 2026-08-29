@@ -45,6 +45,20 @@ export default cloudflareWorker(definition, {
 
 The callback may require Tardigrade's thread ports while constructing its layer. The returned Layer has a `never` error channel.
 
+## Thread creation
+
+Create an actor instance, then create each root thread through its Actor DO before writing events to the Thread DO. Creation is idempotent. It records the thread in the actor directory and initializes the Thread DO identity. Later event appends and method calls address the Thread DO directly. An unknown thread returns `404`.
+
+```ts
+await fetch("/v1/actors/customer-42", { method: "PUT", headers })
+await fetch("/v1/actors/customer-42/threads/conversation-7", { method: "PUT", headers })
+await fetch("/v1/actors/customer-42/threads/conversation-7/events", {
+  method: "POST",
+  headers: { ...headers, "content-type": "application/json" },
+  body: JSON.stringify({ type: "MessageReceived", id: "message-1", text: "Hello" })
+})
+```
+
 ## Event store policy
 
 Pass `storeFor` to set each thread's event store policy. The callback receives the Worker environment and thread identity, then returns `wrap` for event bodies and `indexKey` for event keys. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the policy. Encryption and key management remain application concerns.

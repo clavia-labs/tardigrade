@@ -33,6 +33,8 @@ The Bun actor database is a directory and routing index. Thread databases live b
 
 Cloudflare uses one Actor DO for the actor directory and one Thread DO per thread. Each Thread DO has its own SQLite database, heap, driver, and alarm lifecycle. The Actor DO builds the actor-wide thread tree from its directory without reading any thread event log. Each tree node contains its id, parent, depth, placement, and children. Effect SQL applies each DO's pending schema migrations before the DO records its identity or opens its event store.
 
+Thread creation passes through the Actor DO once. The Actor DO records the topology and initializes the Thread DO identity. Later appends and deliveries address the existing Thread DO directly. A child creation carries its parent, depth, and placement through the Actor DO before its first delivery reaches the child.
+
 ## Encrypted event stores
 
 `storeFor` sets the event store policy for each Cloudflare thread. Its `wrap` function can encrypt a plaintext object containing the event and a binding to the thread and event identity. Its `indexKey` function can replace each event key with a deterministic HMAC before SQLite uses the key for equality and uniqueness. Decryption verifies that the encrypted binding matches the current thread and the clear identity inside the sealed event before returning the event.

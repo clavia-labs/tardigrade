@@ -16,6 +16,14 @@ const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObje
 const alarm = (thread: string) =>
   runInDurableObject(threadStub(thread), (_instance, state) => state.storage.getAlarm())
 
+const createThread = async (thread: string): Promise<void> => {
+  const actor = await SELF.fetch("http://test/v1/actors/main", { method: "PUT", headers: authorization })
+  expect(actor.status).toBe(200)
+  const created = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}`, { method: "PUT", headers: authorization })
+  expect(created.status).toBe(200)
+  expect(await created.json()).toEqual({ actor: "main", thread })
+}
+
 const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
     const response = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
@@ -90,6 +98,13 @@ describe("cloudflare actor", () => {
       inputSchema: expect.objectContaining({ type: "object" }),
       outputSchema: expect.objectContaining({ type: "string" })
     })])
+    const missing = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: "Run in workerd." })
+    })
+    expect(missing.status).toBe(404)
+    await createThread("root")
     const accepted = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
@@ -125,6 +140,7 @@ describe("cloudflare actor", () => {
 
   test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
+      await createThread(thread)
       const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
         method: "PUT",
         headers: { ...authorization, "content-type": "application/json" },
@@ -168,6 +184,7 @@ describe("cloudflare actor", () => {
 
   test("a thread store wrapper covers method ingress, reactors, and API reads", async () => {
     const prompt = "classified prompt"
+    await createThread("sealed")
     const accepted = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
@@ -224,13 +241,13 @@ describe("cloudflare actor", () => {
   test("actor directory owns the thread tree", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
-    await directory.registerThread("ag.directory-parent")
-    await directory.registerThread("ag.directory-child", {
+    await directory.createThread("ag.directory-parent")
+    await directory.createThread("ag.directory-child", {
       parent: { actor: "echo", instance: "main", thread: "ag.directory-parent" },
       depth: 1,
       placement: "independent"
     })
-    await directory.registerThread("ag.directory-child")
+    await directory.createThread("ag.directory-child")
     const entries = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{
         thread: string
@@ -262,7 +279,7 @@ describe("cloudflare actor", () => {
   test("a durable object alarm terminates an overdue method call", async () => {
     const deadlineAt = Date.now() - 1
     const stub = threadStub("timeout")
-    await stub.init("echo", "main", "ag.timeout")
+    await createThread("timeout")
     await stub.append("timeout", {
       type: "CallDispatched",
       id: "overdue-1",
