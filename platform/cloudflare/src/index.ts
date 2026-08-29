@@ -14,6 +14,12 @@ export {
 } from "./worker"
 export { DEFAULT_ALARM_DELAY_MILLIS, DEFAULT_ALARM_POLICY, type AlarmPolicy } from "./alarm"
 export {
+  BACKGROUND_TASK_OWNERS,
+  backgroundTaskOwnerOf,
+  DEFAULT_BACKGROUND_TASK_OWNER,
+  type BackgroundTaskOwner
+} from "./background-task"
+export {
   hmacSha256EventKeyIndex,
   plaintextEventKeyIndex,
   type CloudflareEventKeyIndex,

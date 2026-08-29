@@ -54,12 +54,14 @@ import {
 } from "./host"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
+import { backgroundTaskOwnerOf, DEFAULT_BACKGROUND_TASK_OWNER, retainBackgroundTask, type BackgroundTaskOwner } from "./background-task"
 
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorDO>
   readonly THREADS: DurableObjectNamespace<ThreadDO>
   readonly LOADER: WorkerLoader
   readonly TARDIGRADE_CONFIG?: unknown
+  readonly TARDIGRADE_BACKGROUND_TASK_OWNER?: string
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MODEL_CATALOG_URL?: string
   readonly TARDIGRADE_MODEL_CATALOG_LOAD_POLICY?: string
@@ -146,6 +148,7 @@ interface MountedActor {
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
   readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
   readonly defaultChildPlacement: ChildPlacement
+  readonly backgroundTaskOwner: BackgroundTaskOwner
 }
 
 let mountedActor: MountedActor | undefined
@@ -521,6 +524,7 @@ export class ThreadDO extends DurableObject<Env> {
   private actorInstance: string | undefined
   private threadId: string | undefined
   private readonly alarmPolicy: AlarmPolicy
+  private readonly backgroundTaskOwner: BackgroundTaskOwner
   private readonly sandboxCalls = new Map<
     string,
     (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
@@ -531,6 +535,10 @@ export class ThreadDO extends DurableObject<Env> {
     this.alarmPolicy = alarmPolicyOf(env.TARDIGRADE_ALARM_DELAY_MILLIS === undefined
       ? {}
       : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
+    this.backgroundTaskOwner = backgroundTaskOwnerOf(
+      env.TARDIGRADE_BACKGROUND_TASK_OWNER,
+      mountedActor?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER
+    )
   }
 
   async init(name: string, instance: string, thread: string): Promise<void> {
@@ -764,6 +772,7 @@ export class ThreadDO extends DurableObject<Env> {
       }
     })()
     this.driving = driving
+    retainBackgroundTask(this.ctx, this.backgroundTaskOwner, driving)
     void driving.finally(() => {
       if (this.driving === driving) this.driving = undefined
       if (!failed && host.work() > 0) this.kick(host)
@@ -1184,6 +1193,7 @@ export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
         readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
         readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
         readonly defaultChildPlacement?: ChildPlacement
+        readonly backgroundTaskOwner?: BackgroundTaskOwner
       }
     : {
         readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
@@ -1191,6 +1201,7 @@ export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
         readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
         readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
         readonly defaultChildPlacement?: ChildPlacement
+        readonly backgroundTaskOwner?: BackgroundTaskOwner
       })
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
@@ -1217,6 +1228,7 @@ export const cloudflareWorker = <
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
     defaultChildPlacement,
+    backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER,
     ...(options?.inferenceObserverFor === undefined ? {} : {
       inferenceObserverFor: options.inferenceObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
     }),

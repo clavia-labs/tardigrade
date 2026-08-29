@@ -4,6 +4,8 @@ This binding mounts each actor in an `ActorDO` and each thread in a `ThreadDO`. 
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
+Cloudflare assigns background tasks to the `host` by default because a Durable Object remains active while ongoing work exists. Hosts that end background work with the request set `backgroundTaskOwner: "request"` or `TARDIGRADE_BACKGROUND_TASK_OWNER=request`. Request ownership registers each reconciliation drive with `waitUntil`. The generated Celld manifest sets this variable.
+
 ## Thread isolation
 
 Each actor thread has a separate Thread DO, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ThreadAddress`, so a child thread routes to its own Thread DO when it uses the same actor definition.

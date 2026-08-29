@@ -64,6 +64,7 @@ describe("initActor", () => {
     ])
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
+    expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_BACKGROUND_TASK_OWNER"]).toBe("request")
     expect(packageManifest).toEqual({ private: true, type: "module", dependencies: { tardie: "0.7.1-test" } })
     expect(built.manifest.name).toBe("reviewer")
   })
