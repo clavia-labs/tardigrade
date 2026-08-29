@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/clavia-labs/tardigrade/compare/v0.14.0...v0.15.0) (2026-08-29)
+
+
+### Features
+
+* isolate actor threads ([#298](https://github.com/clavia-labs/tardigrade/issues/298)) ([59ce425](https://github.com/clavia-labs/tardigrade/commit/59ce4258f2d440870b2822633534e33ade215838))
+
 ## [0.14.0](https://github.com/clavia-labs/tardigrade/compare/v0.13.0...v0.14.0) (2026-08-28)
 
 
