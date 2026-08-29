@@ -2,7 +2,7 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -40,6 +40,7 @@ export type CloudflareThreadHostOptions<R> = {
 export interface CloudflareThreadHost {
   readonly identity: ThreadAddress
   readonly read: () => Promise<ReadonlyArray<Event>>
+  readonly readPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
@@ -147,7 +148,8 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(Effect.tap(() => sync)),
     read: events.read,
     head: events.head,
-    readFrom: (mark: number) => events.readFrom(mark)
+    readFrom: (mark: number) => events.readFrom(mark),
+    readPage: (mark: number, limit: number) => events.readPage(mark, limit)
   }
   const ports = Layer.mergeAll(
     Layer.succeed(EventLog, eventLogFrom(store)),
@@ -190,6 +192,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   return {
     identity,
     read: () => Effect.runPromise(readEffect),
+    readPage: (mark, limit) => Effect.runPromise(events.readPage(mark, limit)),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),

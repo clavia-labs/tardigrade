@@ -184,6 +184,20 @@ describe("cloudflare actor", () => {
     expect(visible.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "EchoCompleted"])
     expect(visible.some((row) => row.event.text?.includes(prompt))).toBe(true)
 
+    const filtered = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=0&limit=1&types=EchoCompleted",
+      { headers: authorization }
+    )
+    expect(await filtered.json()).toEqual([{
+      seq: 3,
+      event: expect.objectContaining({ type: "EchoCompleted", text: expect.stringContaining(prompt) })
+    }])
+    const idle = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=3&limit=1",
+      { headers: authorization }
+    )
+    expect(await idle.json()).toEqual([])
+
     const raw = await runInDurableObject(threadStub("sealed"), (_instance, state) =>
       state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
     )

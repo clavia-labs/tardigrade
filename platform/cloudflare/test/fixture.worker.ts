@@ -94,6 +94,12 @@ const encryptedStore = (inner: ThreadEventStore, thread: string, key: Promise<Cr
   head: inner.head,
   readFrom: (mark) => inner.readFrom(mark).pipe(
     Effect.flatMap((events) => Effect.promise(() => openAll(key, thread, events)))
+  ),
+  readPage: (mark, limit) => inner.readPage(mark, limit).pipe(
+    Effect.flatMap((rows) => Effect.promise(async () => {
+      const events = await openAll(key, thread, rows.map((row) => row.event))
+      return rows.map((row, index) => ({ seq: row.seq, event: events[index]! }))
+    }))
   )
 })
 

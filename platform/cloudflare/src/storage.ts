@@ -98,6 +98,18 @@ export class CloudflareEventStore implements ThreadEventStore {
       )
   }
 
+  readPage(mark: number, limit: number): Effect.Effect<ReadonlyArray<EventRow>> {
+    return this.sql
+      .unsafe<{ readonly seq: number; readonly event: string }>(
+        "SELECT seq, event FROM events WHERE seq > ? ORDER BY seq LIMIT ?",
+        [mark, limit]
+      )
+      .pipe(
+        Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
+        Effect.orDie
+      )
+  }
+
   get head(): Effect.Effect<number> {
     return this.sql
       .unsafe<{ readonly head: number }>("SELECT COALESCE(MAX(seq), 0) AS head FROM events")

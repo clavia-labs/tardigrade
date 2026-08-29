@@ -1,6 +1,11 @@
 import { Context, Effect } from "effect"
 import type { Event } from "./event"
 
+export interface ThreadEventRow {
+  readonly seq: number
+  readonly event: Event
+}
+
 // ThreadEventStore is the durable boundary for one thread's event log. A host and its reactors
 // share this object, so every read and append observes the same application policy.
 export interface ThreadEventStore {
@@ -8,6 +13,7 @@ export interface ThreadEventStore {
   readonly read: Effect.Effect<ReadonlyArray<Event>>
   readonly head: Effect.Effect<number>
   readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
+  readonly readPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
 }
 
 // EventLog is the one durable thing; append is the only mutation in the system (tla/runtime/Log.tla).
@@ -21,6 +27,7 @@ export interface ThreadEventStore {
 // 4. Atomic append of a batch. A crash leaves all of it or none of it.
 // 5. Dedup by key. A keyed redelivery is absorbed; an absorbed append leaves `head` unchanged.
 // 6. Ordered tail from a watermark. `readFrom(mark)` returns exactly the events after `mark`.
+// 7. Bounded ordered page. `readPage(mark, limit)` returns at most `limit` rows after `mark` with their durable sequence numbers.
 //
 // `head` is the store's own testimony of progress: the settle loop compares it instead of
 // materializing the log (packages/core/src/reconciliation/reconciler.ts, settleActor).

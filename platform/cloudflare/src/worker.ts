@@ -82,6 +82,7 @@ const actorObjectNameOf = (actor: string, instance: string): string => JSON.stri
 const threadObjectNameOf = (actor: string, instance: string, thread: string): string => JSON.stringify([actor, instance, thread])
 
 const DEFAULT_ACTOR_NAME = "default"
+export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const satisfies ReadonlyArray<ChildPlacement>
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT: ChildPlacement = "independent"
 
@@ -747,6 +748,35 @@ export class ThreadDO extends DurableObject<Env> {
     return (await this.host()).read()
   }
 
+  async queryEvents(
+    thread: string,
+    query: { readonly after: number; readonly limit: number; readonly types?: ReadonlyArray<string> }
+  ): Promise<ReadonlyArray<{ readonly seq: number; readonly event: Event }>> {
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
+    }
+    if (!Number.isSafeInteger(query.after) || query.after < 0) throw new Error("event query after must be a non-negative integer")
+    if (!Number.isSafeInteger(query.limit) || query.limit < 0) throw new Error("event query limit must be a non-negative integer")
+    if (query.limit === 0) return []
+    const host = await this.host()
+    const wanted = query.types === undefined ? undefined : new Set(query.types)
+    const selected: Array<{ readonly seq: number; readonly event: Event }> = []
+    let mark = query.after
+    while (selected.length < query.limit) {
+      const rows = await host.readPage(mark, query.limit)
+      if (rows.length === 0) break
+      for (const row of rows) {
+        if (wanted === undefined || wanted.has(row.event.type)) selected.push(row)
+        if (selected.length === query.limit) break
+      }
+      mark = rows[rows.length - 1]!.seq
+      if (rows.length < query.limit) break
+    }
+    return selected
+  }
+
   async status(): Promise<{ readonly status: "resting" | "driving"; readonly dirty: number }> {
     const host = await this.host()
     return { status: await host.resting() ? "resting" : "driving", dirty: host.work() }
@@ -1026,18 +1056,16 @@ const routes = [
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
-      const limit = Number(url.searchParams.get("limit") ?? 200)
-      const types = url.searchParams.get("types")?.split(",")
+      const limit = Number(url.searchParams.get("limit") ?? DEFAULT_CLOUDFLARE_EVENT_LIMIT)
+      if (!Number.isSafeInteger(after) || after < 0) return json({ error: "after must be a non-negative integer" }, 400)
+      if (!Number.isSafeInteger(limit) || limit < 0) return json({ error: "limit must be a non-negative integer" }, 400)
+      const types = url.searchParams.get("types")?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
       return yield* Effect.tryPromise({
-        try: (): Promise<ReadonlyArray<Event>> => stub.events(thread),
+        try: () => stub.queryEvents(thread, { after, limit, ...(types === undefined ? {} : { types }) }),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause)
       }).pipe(Effect.match({
         onFailure: (error) => json({ error }, 500),
-        onSuccess: (events) => events.length === 0
-          ? json({ error: "unknown thread" }, 404)
-          : json(events.map((event, index) => ({ seq: index + 1, event }))
-            .filter((row) => row.seq > after && (types === undefined || types.includes(row.event.type)))
-            .slice(0, limit))
+        onSuccess: (rows) => json(rows)
       }))
     })
   )),

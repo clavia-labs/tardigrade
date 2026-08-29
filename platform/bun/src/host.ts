@@ -245,6 +245,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const readFrom: ThreadEventStore["readFrom"] = (mark) => sql<{ event: string }>`SELECT event FROM events WHERE seq > ${mark} ORDER BY seq`.pipe(
       Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
     )
+    const readPage: ThreadEventStore["readPage"] = (mark, limit) => sql<{ seq: number; event: string }>`
+      SELECT seq, event FROM events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
+      Effect.orDie
+    )
     const append: ThreadEventStore["append"] = (events) => {
       if (events.length === 0) return Effect.succeed(0)
       return sql.withTransaction(Effect.gen(function* () {
@@ -264,7 +270,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         return appended
       })).pipe(Effect.orDie)
     }
-    return { runtime, store: { append, read, head, readFrom }, workspace }
+    return { runtime, store: { append, read, head, readFrom, readPage }, workspace }
   }
 
   const runtimeOf = (thread: string): Promise<BunThreadRuntime> => {
