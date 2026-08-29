@@ -15,6 +15,7 @@ import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createThreadDriver } from "@clavia/tardigrade-host/driver"
+import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { CloudflareEventStore, layerWorkspace, type CloudflareThreadStorePolicy } from "./storage"
 
@@ -35,6 +36,8 @@ export type CloudflareThreadHostOptions<R> = {
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly keyOf?: (event: Event) => string | undefined
   readonly store?: CloudflareThreadStorePolicy
+  readonly commitObserver?: CommitObserver
+  readonly retainCommitTask?: (task: Promise<void>) => void
 } & LayersFor<R>
 
 export interface CloudflareThreadHost {
@@ -45,6 +48,7 @@ export interface CloudflareThreadHost {
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly commitRoot: (event: Event) => Promise<void>
   readonly stageRoot: (event: Event) => Promise<void>
+  readonly publishStaged: () => void
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly nextMethodDeadline: () => Promise<number | undefined>
@@ -69,6 +73,15 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   await Effect.runPromise(events.initialize())
   const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
+  const commitDispatcher = options.commitObserver === undefined
+    ? undefined
+    : new CommitDispatcher(options.commitObserver, options.retainCommitTask)
+  let stagedHead = 0
+  const publish = (head: number): Effect.Effect<void> => Effect.sync(() => {
+    commitDispatcher?.offer({ ...identity, head })
+  })
+  const syncCommit = (result: { readonly appended: number; readonly head: number }): Effect.Effect<void> =>
+    result.appended > 0 ? Effect.andThen(sync, publish(result.head)) : Effect.void
 
   const commitEffect = (
     target: ThreadAddress,
@@ -102,9 +115,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
         return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
       }
-      const appended = yield* events.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
-      if (appended > 0) driver.mark(options.thread)
-      if (flush) yield* sync
+      const result = yield* events.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+      if (result.appended > 0) driver.mark(options.thread)
+      if (flush) yield* syncCommit(result)
+      else if (result.appended > 0) stagedHead = Math.max(stagedHead, result.head)
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
   }
 
@@ -127,7 +141,9 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
   const self = formatThreadAddress(identity)
   const store = {
-    append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(Effect.tap(() => sync)),
+    append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
+      Effect.tap(syncCommit)
+    ),
     read: events.read,
     head: events.head,
     readFrom: (mark: number) => events.readFrom(mark),
@@ -163,10 +179,12 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const recordAlarm = async (at: number): Promise<void> => {
     const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect))
     if (deadline !== undefined && deadline <= at) {
-      const appended = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
-      if (appended > 0) driver.mark(options.thread)
+      const result = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
+      if (result.appended > 0) driver.mark(options.thread)
+      await Effect.runPromise(syncCommit(result))
+    } else {
+      await options.storage.sync()
     }
-    await options.storage.sync()
   }
   const resting = async (): Promise<boolean> => {
     return restingActor(options.actor, await Effect.runPromise(readEffect)) && driver.resting()
@@ -179,6 +197,12 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
     commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
     stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),
+    publishStaged: () => {
+      if (stagedHead === 0) return
+      const head = stagedHead
+      stagedHead = 0
+      commitDispatcher?.offer({ ...identity, head })
+    },
     drive,
     recover,
     nextMethodDeadline,
@@ -187,6 +211,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     work: driver.work,
     self,
     close: async () => {
+      await commitDispatcher?.close()
       await workspaceRuntime.dispose()
       await database.dispose()
     }

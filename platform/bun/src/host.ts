@@ -1,11 +1,11 @@
-import { Effect, Layer, ManagedRuntime } from "effect"
+import { Effect, Layer, ManagedRuntime, PubSub, Stream } from "effect"
 import { mkdir, readdir } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -19,6 +19,7 @@ import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadl
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createThreadDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
+import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { assertSupportedBun } from "./runtime"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
@@ -59,11 +60,14 @@ export type BunHostOptions<R> = {
   readonly alarm?: BunAlarmScheduler
   readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (event: Event) => string | undefined
+  readonly commitObserverFor?: (context: { readonly actorInstance: string; readonly thread: string }) => CommitObserver
 } & LayersFor<R>
 
 export interface BunHost {
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
+  readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
+  readonly awaitHead: (thread: string, mark: number, signal?: AbortSignal) => Promise<number>
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly threads: () => Promise<ReadonlyArray<string>>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
@@ -79,6 +83,8 @@ export interface BunHost {
 interface BunThreadRuntime {
   readonly runtime: ManagedRuntime.ManagedRuntime<BunThreadServices, never>
   readonly store: ThreadEventStore
+  readonly commits: PubSub.PubSub<number>
+  readonly commitDispatcher?: CommitDispatcher
   readonly workspace: KeyValueStore.KeyValueStore
   alarm?: { readonly deadlineAt: number; readonly handle: BunAlarmHandle }
 }
@@ -262,11 +268,19 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
       Effect.orDie
     )
+    const commits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
+    const observer = options.commitObserverFor?.({ actorInstance, thread })
+    const commitDispatcher = observer === undefined ? undefined : new CommitDispatcher(observer)
+    {
+      const currentHead = await runtime.runPromise(head)
+      await runtime.runPromise(PubSub.publish(commits, currentHead))
+    }
     const append: ThreadEventStore["append"] = (events) => {
-      if (events.length === 0) return Effect.succeed(0)
+      if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
       return sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
-        let seq = Number(rows[0]?.seq ?? 0) + 1
+        const currentHead = Number(rows[0]?.seq ?? 0)
+        let seq = currentHead + 1
         let appended = 0
         for (const event of events) {
           const key = storeKeyOf(event)
@@ -278,10 +292,24 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           seq += 1
           appended += 1
         }
-        return appended
-      })).pipe(Effect.orDie)
+        return { appended, head: seq - 1 }
+      })).pipe(
+        Effect.tap((result) => result.appended > 0
+          ? Effect.all([
+              PubSub.publish(commits, result.head),
+              Effect.sync(() => commitDispatcher?.offer({ actor: actorName, instance: actorInstance, thread, head: result.head }))
+            ]).pipe(Effect.asVoid)
+          : Effect.void),
+        Effect.orDie
+      )
     }
-    return { runtime, store: { append, read, head, readFrom, readPage }, workspace }
+    return {
+      runtime,
+      store: { append, read, head, readFrom, readPage },
+      commits,
+      ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
+      workspace
+    }
   }
 
   const runtimeOf = (thread: string): Promise<BunThreadRuntime> => {
@@ -297,11 +325,11 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const alarmScheduler = options.alarm ?? bunAlarmScheduler
   let driver: ReturnType<typeof createThreadDriver>
 
-  const appendTo = async (thread: string, events: ReadonlyArray<Event>): Promise<number> => {
+  const appendTo = async (thread: string, events: ReadonlyArray<Event>): Promise<AppendResult> => {
     const threadRuntime = await runtimeOf(thread)
-    const appended = await threadRuntime.runtime.runPromise(threadRuntime.store.append(events))
-    if (appended > 0) await register(thread)
-    return appended
+    const result = await threadRuntime.runtime.runPromise(threadRuntime.store.append(events))
+    if (result.appended > 0) await register(thread)
+    return result
   }
 
   const commitEffect = (
@@ -322,7 +350,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
     const thread = threadOf(address)
     const threadRuntime = await runtimeOf(thread)
-    const appended = await threadRuntime.runtime.runPromise(Effect.gen(function* () {
+    const result = await threadRuntime.runtime.runPromise(Effect.gen(function* () {
       const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
       const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
         ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
@@ -334,13 +362,15 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         : stamped
       if (landed.type === "MessageReceived") {
         const id = String((landed as { id?: unknown }).id)
-        if (current.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) return 0
+        if (current.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) {
+          return { appended: 0, head: yield* threadRuntime.store.head }
+        }
       }
       const at = (event as { readonly at?: unknown }).at
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
       return yield* threadRuntime.store.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } })))
-    if (appended > 0) {
+    if (result.appended > 0) {
       await register(thread, lineage)
       driver.mark(thread)
     }
@@ -369,7 +399,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const threadRuntime = await runtimeOf(thread)
     const store: ThreadEventStore = {
       ...threadRuntime.store,
-      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((count) => count > 0 ? Effect.promise(() => register(thread)) : Effect.void))
+      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => result.appended > 0 ? Effect.promise(() => register(thread)) : Effect.void))
     }
     const ports = Layer.mergeAll(
       Layer.succeed(EventLog, eventLogFrom(store)), router,
@@ -459,6 +489,19 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const threadRuntime = await runtimeOf(thread)
       return threadRuntime.runtime.runPromise(threadRuntime.store.read)
     },
+    readPage: async (thread, mark, limit) => {
+      const threadRuntime = await runtimeOf(thread)
+      return threadRuntime.runtime.runPromise(threadRuntime.store.readPage(mark, limit))
+    },
+    awaitHead: async (thread, mark, signal) => {
+      const threadRuntime = await runtimeOf(thread)
+      const next = Stream.fromPubSub(threadRuntime.commits).pipe(
+        Stream.filter((head) => head > mark),
+        Stream.runHead,
+        Effect.flatMap((head) => head._tag === "Some" ? Effect.succeed(head.value) : Effect.interrupt)
+      )
+      return threadRuntime.runtime.runPromise(next, signal === undefined ? {} : { signal })
+    },
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
@@ -472,6 +515,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       for (const [thread, promised] of runtimes) {
         const threadRuntime = await promised
         await cancelAlarm(thread)
+        await threadRuntime.commitDispatcher?.close()
+        await threadRuntime.runtime.runPromise(PubSub.shutdown(threadRuntime.commits))
         await threadRuntime.runtime.dispose()
       }
       await directoryRuntime.dispose()

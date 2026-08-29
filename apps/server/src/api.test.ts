@@ -3,10 +3,12 @@ import { createHash } from "node:crypto"
 import { mkdtemp, rm } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
-import { Effect, Layer } from "effect"
+import { Duration, Effect, Layer } from "effect"
 import { HttpServer } from "effect/unstable/http"
 import { BunHttpServer } from "@effect/platform-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
+import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
 import { Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
@@ -14,8 +16,9 @@ import { openStreams } from "./api"
 import { layerModelCatalogValue } from "./catalog"
 import { layerConfig, readConfig } from "./config"
 import { PROBLEM_TYPE_BASE, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { layerThreads } from "./host"
+import { layerThreads, Threads, type ActorThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
+import { layerGaugeResting } from "./driver-gauge"
 import type { TurnViewShape as TurnView } from "./actor"
 import type { ThreadSummary, ThreadNode } from "./projections"
 
@@ -542,6 +545,96 @@ const framesOf = (text: string): ReadonlyArray<{ readonly id: string; readonly d
     })
 
 describe("the event stream", () => {
+  test("an idle tail reads again only after its committed head advances", async () => {
+    let pageReads = 0
+    let head = 1
+    let rows: ReadonlyArray<ThreadEventRow> = [{
+      seq: 1,
+      event: { type: "ThreadCreated", actor: "test", instance: "main", thread: "alpha", depth: 0, at: 0 } as Event
+    }]
+    const waiters = new Set<(head: number) => void>()
+    const actorThreads: ActorThreads = {
+      methods: {},
+      sqlite: ":memory:",
+      append: () => Effect.void,
+      events: () => Effect.succeed(rows.map((row) => row.event)),
+      eventsPage: (_id, mark, limit) => Effect.sync(() => {
+        pageReads += 1
+        return rows.filter((row) => row.seq > mark).slice(0, limit)
+      }),
+      awaitHead: (_id, mark) => head > mark ? Effect.succeed(head) : Effect.callback<number>((resume) => {
+        const wake = (head: number) => {
+          waiters.delete(wake)
+          resume(Effect.succeed(head))
+        }
+        waiters.add(wake)
+        return Effect.sync(() => { waiters.delete(wake) })
+      }),
+      list: Effect.succeed([]),
+      settled: Effect.void
+    }
+    const threads = Layer.succeed(Threads)({
+      methods: {},
+      sqlite: ":memory:",
+      actorName: "test",
+      instances: Effect.succeed([{ id: "main", definition: "test" }]),
+      ensure: () => Effect.succeed(actorThreads),
+      instance: (id) => Effect.succeed(id === "main" ? actorThreads : undefined),
+      append: () => Effect.void,
+      events: () => Effect.succeed(rows.map((row) => row.event)),
+      list: () => Effect.succeed([]),
+      settled: () => Effect.void
+    })
+    const ingress = Layer.succeed(Ingress)({ commit: () => Effect.void, schedule: () => Effect.void })
+    const testApp = Layer.provideMerge(serve({
+      disableLogger: true,
+      disableListenLog: true,
+      api: { heartbeat: Duration.millis(10) }
+    }), [BunHttpServer.layer({ port: 0 }), config, catalogLayer, threads, ingress, layerGaugeResting])
+
+    const verify = async (port: number) => {
+      const abort = new AbortController()
+      const response = await fetch(`http://127.0.0.1:${port}/v1/actors/main/threads/alpha/events/stream?after=1`, {
+        signal: abort.signal
+      })
+      const reader = response.body!.getReader()
+      const decoder = new TextDecoder()
+      let text = ""
+      const pump = (async () => {
+        for (;;) {
+          const chunk = await reader.read()
+          if (chunk.done) return
+          text += decoder.decode(chunk.value, { stream: true })
+        }
+      })().catch(() => undefined)
+
+      try {
+        await until("the idle follower", async () => waiters.size === 1 ? true : undefined)
+        const idleReads = pageReads
+        await sleep(80)
+        expect(pageReads).toBe(idleReads)
+
+        rows = [...rows, { seq: 2, event: { type: "MessageReceived", id: "live", at: 1 } as Event }]
+        head = 2
+        waiters.forEach((wake) => { queueMicrotask(() => wake(2)) })
+        await until("the pushed frame", async () => framesOf(text).some((frame) => frame.id === "2") ? true : undefined)
+        expect(pageReads).toBe(idleReads + 1)
+      } finally {
+        abort.abort()
+        await reader.cancel().catch(() => undefined)
+        await pump
+      }
+      await until("the pushed tail to close", async () => waiters.size === 0 ? true : undefined)
+    }
+
+    await Effect.gen(function*() {
+      const server = yield* HttpServer.HttpServer
+      const address = server.address
+      const port = address._tag === "TcpAddress" ? address.port : 0
+      yield* Effect.promise(() => verify(port))
+    }).pipe(Effect.provide(testApp), Effect.scoped, Effect.runPromise)
+  })
+
   test("a reconnect replays from Last-Event-ID and then runs live, once each", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })

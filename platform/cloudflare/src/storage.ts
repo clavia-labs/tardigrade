@@ -3,7 +3,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ThreadEventStore } from "@clavia/tardigrade-core/log"
+import type { AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
 
 export interface EventRow {
   readonly seq: number
@@ -172,8 +172,8 @@ export class CloudflareEventStore implements ThreadEventStore {
       )
   }
 
-  append(events: ReadonlyArray<Event>): Effect.Effect<number> {
-    if (events.length === 0) return Effect.succeed(0)
+  append(events: ReadonlyArray<Event>): Effect.Effect<AppendResult> {
+    if (events.length === 0) return Effect.map(this.head, (head) => ({ appended: 0, head }))
     const sql = this.sql
     const keyOf = this.keyOf
     const codec = this.codec
@@ -192,7 +192,8 @@ export class CloudflareEventStore implements ThreadEventStore {
           const heads = yield* sql.unsafe<{ readonly head: number }>(
             "SELECT COALESCE(MAX(seq), 0) AS head FROM events"
           )
-          let seq = Number(heads[0]?.head ?? 0) + 1
+          const currentHead = Number(heads[0]?.head ?? 0)
+          let seq = currentHead + 1
           let appended = 0
           for (let index = 0; index < encoded.length; index++) {
             const event = encoded[index]!
@@ -211,7 +212,7 @@ export class CloudflareEventStore implements ThreadEventStore {
             seq += 1
             appended += 1
           }
-          return appended
+          return { appended, head: seq - 1 }
         })
       )
     }).pipe(Effect.orDie)

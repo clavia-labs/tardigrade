@@ -13,6 +13,7 @@ The specifications describe the runtime and communication contracts independentl
 | `communication/Method` | Durable method futures from request through dispatch, acceptance, terminal resolution, and reversed-link response | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
+| `runtime/CommitTail` | A durable head wakes a cursor after the read and subscribe race | `CommitTail.cfg` | `CommitTailDrop.cfg` |
 | `runtime/Child` | Parent-owned child identity, delivery ordering, initialization, and recovery | `Child.cfg`, `ChildLive.cfg` | `ChildEarly.cfg`, `ChildRecompute.cfg` |
 | `runtime/ActorInstance` | Instance authorization, child ownership, routing, listing, key isolation, revocation, and request settlement | `ActorInstance.cfg`, `ActorInstanceLive.cfg` | `ActorInstanceAuthority.cfg`, `ActorInstanceChildEscape.cfg`, `ActorInstanceObjectAlias.cfg`, `ActorInstanceGlobalList.cfg`, `ActorInstanceSharedKey.cfg` |
 | `runtime/ConcurrentDriver` | Bounded parallel settlement, keyed commits, and parked fiber release | `ConcurrentDriver.cfg`, `ConcurrentDriverLive.cfg` | `ConcurrentDriverUnbounded.cfg`, `ConcurrentDriverParkLeak.cfg` |
