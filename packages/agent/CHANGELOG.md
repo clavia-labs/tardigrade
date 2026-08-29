@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.16.0](https://github.com/clavia-labs/tardigrade/compare/v0.15.0...v0.16.0) (2026-08-29)
+
+
+### Features
+
+* push committed event tails ([#301](https://github.com/clavia-labs/tardigrade/issues/301)) ([0786eaf](https://github.com/clavia-labs/tardigrade/commit/0786eaf2cad1fa867c716d473e35bbacf1239607))
+
+
+### Bug Fixes
+
+* **models:** isolate catalog storage ([#303](https://github.com/clavia-labs/tardigrade/issues/303)) ([3f349f0](https://github.com/clavia-labs/tardigrade/commit/3f349f0eda6524950ce9e187ae9bbf53c68ea6e7))
+* **web:** clarify example prompt ([#294](https://github.com/clavia-labs/tardigrade/issues/294)) ([31da8b0](https://github.com/clavia-labs/tardigrade/commit/31da8b0c174463e262fdd778a1da3bb2897dc9d0))
+
 ## [0.15.0](https://github.com/clavia-labs/tardigrade/compare/v0.14.0...v0.15.0) (2026-08-29)
 
 
