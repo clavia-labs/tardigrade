@@ -10,6 +10,28 @@ export interface EventRow {
   readonly event: Event
 }
 
+export type CloudflareEventKeyIndex = (key: string) => Effect.Effect<string>
+
+export interface CloudflareThreadStorePolicy {
+  readonly wrap: (inner: ThreadEventStore) => ThreadEventStore
+  readonly indexKey: CloudflareEventKeyIndex
+}
+
+export const plaintextEventKeyIndex: CloudflareEventKeyIndex = Effect.succeed
+
+export const hmacSha256EventKeyIndex = (
+  key: CryptoKey | Promise<CryptoKey>,
+  binding: string
+): CloudflareEventKeyIndex => (value) => Effect.promise(async () => {
+  const signature = new Uint8Array(await crypto.subtle.sign(
+    "HMAC",
+    await key,
+    new TextEncoder().encode(JSON.stringify([binding, value]))
+  ))
+  const digest = Array.from(signature, (byte) => byte.toString(16).padStart(2, "0")).join("")
+  return `hmac-sha256:${digest}`
+})
+
 const actorMigrations = SqliteMigrator.fromRecord({
   "0001_actor_directory": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -68,10 +90,16 @@ export const initializeCloudflareThreadSchema: Effect.Effect<void, never, SqlCli
 export class CloudflareEventStore implements ThreadEventStore {
   readonly sql: SqlClient.SqlClient
   readonly keyOf: (event: Event) => string | undefined
+  readonly indexKey: CloudflareEventKeyIndex
 
-  constructor(sql: SqlClient.SqlClient, keyOf: (event: Event) => string | undefined) {
+  constructor(
+    sql: SqlClient.SqlClient,
+    keyOf: (event: Event) => string | undefined,
+    indexKey: CloudflareEventKeyIndex = plaintextEventKeyIndex
+  ) {
     this.sql = sql
     this.keyOf = keyOf
+    this.indexKey = indexKey
   }
 
   initialize(): Effect.Effect<void> {
@@ -123,6 +151,7 @@ export class CloudflareEventStore implements ThreadEventStore {
     if (events.length === 0) return Effect.succeed(0)
     const sql = this.sql
     const keyOf = this.keyOf
+    const indexKey = this.indexKey
     return sql.withTransaction(
       Effect.gen(function* () {
         const heads = yield* sql.unsafe<{ readonly head: number }>(
@@ -131,17 +160,18 @@ export class CloudflareEventStore implements ThreadEventStore {
         let seq = Number(heads[0]?.head ?? 0) + 1
         let appended = 0
         for (const event of events) {
-          const key = keyOf(event)
-          if (key !== undefined) {
+          const eventKey = keyOf(event)
+          const indexedKey = eventKey === undefined ? undefined : yield* indexKey(eventKey)
+          if (indexedKey !== undefined) {
             const present = yield* sql.unsafe<{ readonly present: number }>(
               "SELECT 1 AS present FROM events WHERE key = ?",
-              [key]
+              [indexedKey]
             )
             if (present.length > 0) continue
           }
           yield* sql.unsafe(
             "INSERT INTO events (seq, key, event) VALUES (?, ?, ?)",
-            [seq, key ?? null, JSON.stringify(event)]
+            [seq, indexedKey ?? null, JSON.stringify(event)]
           )
           seq += 1
           appended += 1

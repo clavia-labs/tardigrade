@@ -26,7 +26,6 @@ import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog
 import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
 import { treeOf, type ThreadNode, type ThreadSummary } from "@clavia/tardigrade-server/projections"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
@@ -43,7 +42,11 @@ import {
   type WorkerLoaderSandboxTransport
 } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
-import { initializeCloudflareActorSchema, initializeCloudflareThreadSchema } from "./storage"
+import {
+  initializeCloudflareActorSchema,
+  initializeCloudflareThreadSchema,
+  type CloudflareThreadStorePolicy
+} from "./storage"
 import {
   createCloudflareThreadHost,
   type CloudflareThreadHost,
@@ -95,7 +98,7 @@ interface MountedActor {
   readonly modelAdapters: ModelAdapterRegistry
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
-  readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => (inner: ThreadEventStore) => ThreadEventStore
+  readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
   readonly defaultChildPlacement: ChildPlacement
 }
 
@@ -638,7 +641,7 @@ export class ThreadDO extends DurableObject<Env> {
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),
       routes: [independentRoute],
-      ...(mountedActor?.storeFor === undefined ? {} : { storeFor: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
+      ...(mountedActor?.storeFor === undefined ? {} : { store: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
       keyOf: selectedAssembly.keyOf
     })
   }
@@ -1102,7 +1105,7 @@ type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
 ) => CloudflareThreadEnv<CloudflareApplicationRequirements<R>>
 export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
   context: CloudflareWorkerLayerContext<WorkerEnv>
-) => (inner: ThreadEventStore) => ThreadEventStore
+) => CloudflareThreadStorePolicy
 // CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
 export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
   ([CloudflareApplicationRequirements<R>] extends [never]
@@ -1152,7 +1155,7 @@ export const cloudflareWorker = <
       layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
     }),
     ...(options?.storeFor === undefined ? {} : {
-      storeFor: options.storeFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => (inner: ThreadEventStore) => ThreadEventStore
+      storeFor: options.storeFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
     })
   }
   deployedActor = definition.name

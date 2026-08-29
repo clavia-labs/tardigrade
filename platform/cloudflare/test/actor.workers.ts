@@ -178,6 +178,16 @@ describe("cloudflare actor", () => {
       status: "completed",
       output: "workers:ag.sealed:1:classified prompt"
     })
+    const repeated = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: prompt })
+    })
+    expect(repeated.status).toBe(202)
+    expect(await methodState("sealed", "sealed-call")).toEqual({
+      status: "completed",
+      output: "workers:ag.sealed:1:classified prompt"
+    })
 
     const response = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", { headers: authorization })
     const visible = await response.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly text?: string } }>
@@ -199,7 +209,7 @@ describe("cloudflare actor", () => {
     expect(await idle.json()).toEqual([])
 
     const raw = await runInDurableObject(threadStub("sealed"), (_instance, state) =>
-      state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+      state.storage.sql.exec<{ readonly key: string | null; readonly event: string }>("SELECT key, event FROM events ORDER BY seq").toArray()
     )
     expect(raw).toHaveLength(3)
     expect(raw.every((row) => {
@@ -207,6 +217,8 @@ describe("cloudflare actor", () => {
       return typeof encrypted.iv === "string" && typeof encrypted.ciphertext === "string"
     })).toBe(true)
     expect(raw.every((row) => !row.event.includes(prompt))).toBe(true)
+    expect(raw.every((row) => row.key === null || /^hmac-sha256:[a-f0-9]{64}$/.test(row.key))).toBe(true)
+    expect(raw.every((row) => !row.key?.includes("sealed-call"))).toBe(true)
   })
 
   test("actor directory registration keeps child lineage", async () => {

@@ -10,6 +10,7 @@ import {
   type CloudflareWorkerLayerContext,
   type Env
 } from "../src/worker"
+import { hmacSha256EventKeyIndex, plaintextEventKeyIndex } from "../src/storage"
 
 interface FixtureEnv extends Env {
   readonly APPLICATION_PREFIX: string
@@ -26,6 +27,14 @@ const keyFor = (): Promise<CryptoKey> => crypto.subtle.importKey(
   { name: "AES-GCM" },
   false,
   ["encrypt", "decrypt"]
+)
+
+const indexKeyFor = (): Promise<CryptoKey> => crypto.subtle.importKey(
+  "raw",
+  new TextEncoder().encode("abcdef0123456789abcdef0123456789"),
+  { name: "HMAC", hash: "SHA-256" },
+  false,
+  ["sign"]
 )
 
 const identityOf = (event: Event): { readonly type: string; readonly id?: unknown; readonly callId?: unknown } => {
@@ -155,8 +164,11 @@ const worker = cloudflareWorker(actor({
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
   storeFor: ({ thread }) => thread === "ag.sealed"
-    ? (inner) => encryptedStore(inner, thread, keyFor())
-    : (inner) => inner
+    ? {
+        wrap: (inner) => encryptedStore(inner, thread, keyFor()),
+        indexKey: hmacSha256EventKeyIndex(indexKeyFor(), thread)
+      }
+    : { wrap: (inner) => inner, indexKey: plaintextEventKeyIndex }
 })
 
 export { ActorDO, ThreadDO }

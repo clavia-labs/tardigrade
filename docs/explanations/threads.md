@@ -35,11 +35,13 @@ Cloudflare uses one Actor DO for the actor directory and one Thread DO per threa
 
 ## Encrypted event stores
 
-`storeFor` can wrap the `ThreadEventStore` for each Cloudflare thread. The wrapper can encrypt a plaintext object containing the event and a binding to the thread and event identity. It stores the random initialization vector and ciphertext beside the clear event identity required for event keys. Decryption verifies that the encrypted binding matches the current thread and the clear identity before returning the event.
+`storeFor` sets the event store policy for each Cloudflare thread. Its `wrap` function can encrypt a plaintext object containing the event and a binding to the thread and event identity. Its `indexKey` function can replace each event key with a deterministic HMAC before SQLite uses the key for equality and uniqueness. Decryption verifies that the encrypted binding matches the current thread and the clear identity inside the sealed event before returning the event.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/encrypted-thread-store-dark.svg">
   <img alt="A thread event passes through storeFor, is bound to its thread and event identity inside encrypted plaintext, stored as AES-GCM ciphertext, decrypted, and verified before use" src="../assets/encrypted-thread-store-light.svg">
 </picture>
 
-workerd does not support importing an HKDF key through `SubtleCrypto`, so the application must provision a raw AES-GCM key or use an external key service. workerd also ignores AES-GCM `additionalData`. The binding therefore lives inside the encrypted plaintext and is checked after decryption. A random 96-bit initialization vector is generated for every encrypted event.
+`hmacSha256EventKeyIndex` binds the HMAC input to the thread and returns a versioned hexadecimal index. The application supplies HMAC key material separate from its AES-GCM key. This prevents the SQLite index from exposing sensitive grant tokens, call IDs, and other event key identifiers.
+
+workerd does not support importing an HKDF key through `SubtleCrypto`, so the application must provision raw keys or use an external key service. workerd also ignores AES-GCM `additionalData`. The binding therefore lives inside the encrypted plaintext and is checked after decryption. A random 96-bit initialization vector is generated for every encrypted event.

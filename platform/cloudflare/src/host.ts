@@ -2,7 +2,7 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type ThreadEventRow } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -16,7 +16,7 @@ import { sameThreadAddress, sameThreadLineage, threadCreated, threadCreatedOf, t
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createThreadDriver } from "@clavia/tardigrade-host/driver"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
-import { CloudflareEventStore, layerWorkspace } from "./storage"
+import { CloudflareEventStore, layerWorkspace, type CloudflareThreadStorePolicy } from "./storage"
 
 export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
 export type CloudflareThreadEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
@@ -34,7 +34,7 @@ export type CloudflareThreadHostOptions<R> = {
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly keyOf?: (event: Event) => string | undefined
-  readonly storeFor?: (inner: ThreadEventStore) => ThreadEventStore
+  readonly store?: CloudflareThreadStorePolicy
 } & LayersFor<R>
 
 export interface CloudflareThreadHost {
@@ -65,9 +65,9 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
-  const innerEvents = new CloudflareEventStore(sql, storeKeyOf)
+  const innerEvents = new CloudflareEventStore(sql, storeKeyOf, options.store?.indexKey)
   await Effect.runPromise(innerEvents.initialize())
-  const events = options.storeFor?.(innerEvents) ?? innerEvents
+  const events = options.store?.wrap(innerEvents) ?? innerEvents
   const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
 

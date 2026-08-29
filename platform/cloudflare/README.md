@@ -47,9 +47,9 @@ The callback may require Tardigrade's thread ports while constructing its layer.
 
 ## Event store policy
 
-Pass `storeFor` to wrap each thread's `ThreadEventStore`. The callback receives the Worker environment and thread identity, then returns a wrapper for that thread's store. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the wrapped store. Encryption and key management remain application concerns.
+Pass `storeFor` to set each thread's event store policy. The callback receives the Worker environment and thread identity, then returns `wrap` for event bodies and `indexKey` for event keys. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the policy. Encryption and key management remain application concerns.
 
-The wrapper must preserve the `ThreadEventStore` append order, atomic batch, deduplication, watermark, and ordered-tail guarantees. Omitting `storeFor` uses the SQLite store directly.
+The wrapper must preserve the `ThreadEventStore` append order, atomic batch, deduplication, watermark, and ordered-tail guarantees. `hmacSha256EventKeyIndex` creates a deterministic thread-bound HMAC index that hides identifiers stored in event keys. Give it HMAC key material separate from any body encryption key. Omitting `storeFor` uses the SQLite store and plaintext event keys directly.
 
 ## Model adapters
 

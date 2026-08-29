@@ -54,13 +54,13 @@ random IV · raw AES-GCM key" data-shape="rectangle">
   <text x="185.99166666666662" y="314.5" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="185.99166666666662" dy="-3.9000000000000012">seal</tspan><tspan x="185.99166666666662" dy="16.900000000000002">random IV · raw AES-GCM key</tspan></text>
 </g>
 <g class="node" data-id="row" data-label="events row
-clear identity · IV · ciphertext" data-shape="cylinder">
+HMAC index · IV · ciphertext" data-shape="cylinder">
   <rect x="80.17216666666661" y="396.40000000000003" width="211.639" height="53.80000000000001" fill="var(--_node-fill)" stroke="none" />
   <line x1="80.17216666666661" y1="396.40000000000003" x2="80.17216666666661" y2="450.20000000000005" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <line x1="291.8111666666666" y1="396.40000000000003" x2="291.8111666666666" y2="450.20000000000005" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <ellipse cx="185.99166666666662" cy="450.20000000000005" rx="105.8195" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
   <ellipse cx="185.99166666666662" cy="396.40000000000003" rx="105.8195" ry="7" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="185.99166666666662" y="423.30000000000007" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="185.99166666666662" dy="-3.9000000000000012">events row</tspan><tspan x="185.99166666666662" dy="16.900000000000002">clear identity · IV · ciphertext</tspan></text>
+  <text x="185.99166666666662" y="423.30000000000007" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="185.99166666666662" dy="-3.9000000000000012">events row</tspan><tspan x="185.99166666666662" dy="16.900000000000002">HMAC index · IV · ciphertext</tspan></text>
 </g>
 <g class="node" data-id="open" data-label="open
 AES-GCM decrypt" data-shape="rectangle">
