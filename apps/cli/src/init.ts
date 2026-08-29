@@ -41,17 +41,20 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   compatibility_date: now.toISOString().slice(0, 10),
   compatibility_flags: ["nodejs_compat"],
   durable_objects: {
-    bindings: [{ name: "ACTORS", class_name: "ActorHost" }]
+    bindings: [
+      { name: "ACTORS", class_name: "ActorDO" },
+      { name: "THREADS", class_name: "ThreadDO" }
+    ]
   },
   worker_loaders: [{ binding: "LOADER" }],
-  migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }],
+  migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }],
   observability: { enabled: true },
   limits: { cpu_ms: 300_000 },
   vars: {
     TARDIGRADE_ALARM_DELAY_MILLIS: "120000",
     TARDIGRADE_COMPACTION_FIRE_RATIO: "0.8",
     TARDIGRADE_COMPACTION_KEEP_RATIO: "0.5",
-    TARDIGRADE_MAX_CONCURRENT_LANES: "4",
+    TARDIGRADE_MAX_CONCURRENT_THREADS: "4",
     TARDIGRADE_MODEL_CATALOG_URL: "https://models.dev/api.json",
     TARDIGRADE_MODEL_CATALOG_LOAD_POLICY: "refresh",
     TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS: "10000",
@@ -74,11 +77,11 @@ const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly 
 const workerTemplate = (protocol: ModelProtocol): string => {
   const adapter = adapterFor(protocol)
   return `import definition from "./actor"
-import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 
-export { ActorHost }
+export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
   modelAdapters: modelAdapters(${adapter.name})
 })

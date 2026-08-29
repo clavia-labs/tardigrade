@@ -3,14 +3,14 @@ import { Effect, Layer, Schema } from "effect"
 import type { Event } from "../../log/event"
 import { Self } from "../../reconciliation"
 import { Router } from "../../communication/router"
-import { actorIdOf } from "../../communication/endpoint"
+import { threadAddressOf } from "../../communication/endpoint"
 import { linkOf } from "../../communication/link"
 import { actorMethod, actorMethodsOf } from "./definition"
 import { methodResponseReactor } from "./response"
 import { EventLog, withWatermark } from "../../log"
 
-const source = actorIdOf("parent", "root")
-const target = actorIdOf("child", "worker")
+const source = threadAddressOf("parent", "main", "root")
+const target = threadAddressOf("child", "main", "worker")
 
 const call = {
   type: "Asked",

@@ -7,14 +7,14 @@ import {
   DEFAULT_ACTORS,
   DEFAULT_ACTOR_DATA,
   DEFAULT_DB,
-  DEFAULT_MAX_CONCURRENT_LANES,
+  DEFAULT_MAX_CONCURRENT_THREADS,
   DEFAULT_PORT,
   layerConfig,
   projectConfigOf,
   readConfig,
   type ServerConfigValue
 } from "./config"
-import { Threads } from "./host"
+import { Threads, type ActorThreads } from "./host"
 import { layerModelCatalogUnavailable } from "./catalog"
 import { ALLOWED_HEADERS, serve, PROBLEM_CONTENT_TYPE, type Health } from "./http"
 import { DriverGauge, layerGaugeResting } from "./driver-gauge"
@@ -35,10 +35,13 @@ setDefaultTimeout(BOOT_MS)
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   sqlite: ":memory:",
+  instances: Effect.succeed([]),
+  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), list: Effect.succeed([]), settled: Effect.void }),
+  instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
-  list: Effect.succeed([]),
-  settled: Effect.void
+  list: () => Effect.succeed([]),
+  settled: () => Effect.void
 })
 
 const configOf = (overrides: Partial<ServerConfigValue> = {}): ServerConfigValue => ({
@@ -78,7 +81,7 @@ describe("config", () => {
     expect(config.db).toBe(DEFAULT_DB)
     expect(config.actors).toBe(DEFAULT_ACTORS)
     expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
-    expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
+    expect(config.maxConcurrentThreads).toBe(DEFAULT_MAX_CONCURRENT_THREADS)
     expect(config.token).toBeUndefined()
     expect(config.model).toEqual({
       allow: "*",
@@ -98,14 +101,14 @@ describe("config", () => {
       TARDIGRADE_DB: "/var/lib/agents.sqlite",
       TARDIGRADE_ACTORS: "/var/lib/actors",
       TARDIGRADE_ACTOR_DATA: "/var/lib/actor-data",
-      TARDIGRADE_MAX_CONCURRENT_LANES: "7",
+      TARDIGRADE_MAX_CONCURRENT_THREADS: "7",
       TARDIGRADE_TOKEN: "secret"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("/var/lib/agents.sqlite")
     expect(config.actors).toBe("/var/lib/actors")
     expect(config.actorData).toBe("/var/lib/actor-data")
-    expect(config.maxConcurrentLanes).toBe(7)
+    expect(config.maxConcurrentThreads).toBe(7)
     expect(config.token).toBe("secret")
     expect(config.model).toEqual({ allow: "*", providers: {} })
     expect(config.modelCredentials).toEqual({})
@@ -189,9 +192,9 @@ describe("config", () => {
     expect(() => readConfig({ PORT: "70000" })).toThrow()
   })
 
-  test("a concurrency cap that cannot schedule a lane refuses to resolve", () => {
-    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "0" })).toThrow("positive integer")
-    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_LANES: "many" })).toThrow("positive integer")
+  test("a concurrency cap that cannot schedule a thread refuses to resolve", () => {
+    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_THREADS: "0" })).toThrow("positive integer")
+    expect(() => readConfig({ TARDIGRADE_MAX_CONCURRENT_THREADS: "many" })).toThrow("positive integer")
   })
 })
 
@@ -202,7 +205,7 @@ describe("healthz", () => {
     expect(body).toEqual({ status: "resting", dirty: 0 } satisfies Health)
   })
 
-  test("a driving host with owed lanes reads through", async () => {
+  test("a driving host with owed threads reads through", async () => {
     const gauge = Layer.succeed(DriverGauge)({
       resting: Effect.succeed(false),
       dirty: Effect.succeed(3)
@@ -232,7 +235,7 @@ describe("auth", () => {
 
     const anonymous = await serving({ config }, (client) =>
       Effect.gen(function*() {
-        const response = yield* client.get("/v1/threads")
+        const response = yield* client.get("/v1/actors/main/threads")
         return { status: response.status, contentType: response.headers["content-type"], body: yield* response.json }
       }))
     expect(anonymous.status).toBe(401)
@@ -240,11 +243,11 @@ describe("auth", () => {
     expect(anonymous.body).toMatchObject({ status: 401, title: "Unauthorized" })
 
     const wrong = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/threads"), "guess")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/definitions"), "guess")))
     expect(wrong.status).toBe(403)
 
     const right = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/threads"), "secret")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/definitions"), "secret")))
     expect(right.status).toBe(200)
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
@@ -263,7 +266,7 @@ describe("cors", () => {
     const allowed = await serving({}, (client) =>
       Effect.map(
         client.execute(
-          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/threads"), {
+          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/actors/main/threads"), {
             origin: "http://localhost:5173",
             "access-control-request-method": "GET",
             "access-control-request-headers": ALLOWED_HEADERS.join(",")

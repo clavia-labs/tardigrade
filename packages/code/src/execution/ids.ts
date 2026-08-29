@@ -1,9 +1,9 @@
-// Package ids holds the code lane's id grammar: what the executor mints and what a response
+// Package ids holds the code thread's id grammar: what the executor mints and what a response
 // answers to. RUN_PREFIX matches the product's run ids (apps/api/src/grammar/grammar.ts
 // re-exports these, so the two grammars cannot drift).
 
 // mintedRunId names a child run by the awaiting call's id under the run prefix, so a replayed
-// fire lands on the same lane and the keyed fire absorbs the duplicate.
+// fire lands on the same thread and the keyed fire absorbs the duplicate.
 export const RUN_PREFIX = "run-"
 export const mintedRunId = (mint: string): string => `${RUN_PREFIX}${mint}`
 

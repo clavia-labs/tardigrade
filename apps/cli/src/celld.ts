@@ -4,6 +4,8 @@ export const CELLD_PROJECT_CONFIG_PATH = "celld.jsonc"
 export const CELLD_OMITTED_KEYS = ["limits", "observability", "worker_loaders"] as const
 export const CELLD_SANDBOX_TRANSPORT_VAR = "TARDIGRADE_SANDBOX_TRANSPORT"
 export const CELLD_SANDBOX_TRANSPORT = "replay"
+export const CELLD_BACKGROUND_TASK_OWNER_VAR = "TARDIGRADE_BACKGROUND_TASK_OWNER"
+export const CELLD_BACKGROUND_TASK_OWNER = "request"
 
 export interface CelldConfig {
   readonly source: string
@@ -48,7 +50,8 @@ export const celldConfigOf = (raw: string, path = "wrangler.jsonc"): CelldConfig
     ]))
   config["vars"] = {
     ...vars,
-    [CELLD_SANDBOX_TRANSPORT_VAR]: CELLD_SANDBOX_TRANSPORT
+    [CELLD_SANDBOX_TRANSPORT_VAR]: CELLD_SANDBOX_TRANSPORT,
+    [CELLD_BACKGROUND_TASK_OWNER_VAR]: CELLD_BACKGROUND_TASK_OWNER
   }
   return { source: `${JSON.stringify(config, undefined, 2)}\n`, omitted }
 }

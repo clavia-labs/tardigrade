@@ -13,6 +13,8 @@ The specifications describe the runtime and communication contracts independentl
 | `communication/Method` | Durable method futures from request through dispatch, acceptance, terminal resolution, and reversed-link response | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
+| `runtime/Child` | Parent-owned child identity, delivery ordering, initialization, and recovery | `Child.cfg`, `ChildLive.cfg` | `ChildEarly.cfg`, `ChildRecompute.cfg` |
+| `runtime/ActorInstance` | Instance authorization, child ownership, routing, listing, key isolation, revocation, and request settlement | `ActorInstance.cfg`, `ActorInstanceLive.cfg` | `ActorInstanceAuthority.cfg`, `ActorInstanceChildEscape.cfg`, `ActorInstanceObjectAlias.cfg`, `ActorInstanceGlobalList.cfg`, `ActorInstanceSharedKey.cfg` |
 | `runtime/ConcurrentDriver` | Bounded parallel settlement, keyed commits, and parked fiber release | `ConcurrentDriver.cfg`, `ConcurrentDriverLive.cfg` | `ConcurrentDriverUnbounded.cfg`, `ConcurrentDriverParkLeak.cfg` |
 | `runtime/Driver` | Wake accounting, service, isolation, and bounded failure | `Driver.cfg`, `DriverLive.cfg`, `DriverIsolate.cfg`, `DriverPoisoned.cfg` | `DriverDrop.cfg` |
 | `runtime/Execution` | Mixed package completion and parked fiber release | `Execution.cfg` | `ExecutionReadyLeak.cfg` |
@@ -23,6 +25,7 @@ The specifications describe the runtime and communication contracts independentl
 | `runtime/Replay` | Recorded answers remain bound to their questions | `Replay.cfg` | `ReplayTrust.cfg` |
 | `runtime/Thread` | Atomic creation, immutable lineage, and retry absorption | `Thread.cfg`, `ThreadLive.cfg` | `ThreadSplit.cfg`, `ThreadDepth.cfg`, `ThreadConflict.cfg` |
 | `runtime/Totality` | A rulebook covers every live event without swallowing work | `Totality.cfg` | `TotalityVoid.cfg` |
+| `cloudflare/ThreadCreation` | Actor directory reservation, child acceptance, publication, and retry completion | `ThreadCreation.cfg`, `ThreadCreationLive.cfg` | `ThreadCreationCurrent.cfg` |
 
 A counterexample configuration is successful when TLC violates the property named by the suite manifest. A parser error, deadlock report, or unrelated violation fails the suite.
 

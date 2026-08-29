@@ -15,7 +15,7 @@
    counter and holds for the marks, because the race lives in timing, not
    in the store.
 
-   This module makes the premise a theorem. One lane, one body, one
+   This module makes the premise a theorem. One thread, one body, one
    guard. The body starts an attempt, appends progress (a replay that
    passes its recorded prefix appends a new call), and ends by returning
    a result or by dying. The guard counts stagnation and gives up at the

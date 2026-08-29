@@ -2,7 +2,7 @@ import { Clock, Effect, Schema } from "effect"
 import type { Event } from "../../log/event"
 import type { KeyFragment } from "../../log"
 import { methodEnvelopeOf } from "../../communication/envelope"
-import { formatActorId } from "../../communication/endpoint"
+import { formatThreadAddress } from "../../communication/endpoint"
 import { linkOf } from "../../communication/link"
 import { Router } from "../../communication/router"
 import { Self, effect, type Transition } from "../../reconciliation"
@@ -89,7 +89,7 @@ export const actorCall = <
   log: ReadonlyArray<Event>,
   options: ActorCallOptions<Methods, Name>
 ): ActorCall<ActorMethodOutput<Methods[Name]>, Router | Self> => {
-  const target = formatActorId(options.target.address)
+  const target = formatThreadAddress(options.target.address)
   const declaration = options.target.methods[options.method] as ActorMethodDeclaration
   const response = terminalFor(log, options.method, options.id, target)
   if (response?.type === "CallTimedOut") {
@@ -158,7 +158,7 @@ export const actorCall = <
         type: "CallDispatched",
         id: current.id,
         method: current.method,
-        target: formatActorId(current.target.address),
+        target: formatThreadAddress(current.target.address),
         input: current.input,
         timeoutMs,
         deadlineAt,

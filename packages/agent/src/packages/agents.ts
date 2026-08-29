@@ -1,4 +1,4 @@
-import { Clock, Effect } from "effect"
+import { Clock, Effect, Schema } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/reconciliation"
 import { EventLog } from "@clavia/tardigrade-core/log"
@@ -8,11 +8,19 @@ import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { boundaryId } from "@clavia/tardigrade-core/communication/message"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import { childLineageOf, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import {
-  actorIdOf,
-  formatActorId,
-  type ActorId
+  ChildCreated,
+  childCreated,
+  childLineageOf,
+  ChildPlacement,
+  threadCreatedOf,
+  type ThreadCreated,
+  type ThreadLineage
+} from "@clavia/tardigrade-core/thread"
+import {
+  threadAddressOf,
+  formatThreadAddress,
+  type ThreadAddress
 } from "@clavia/tardigrade-core/communication/endpoint"
 import { decodeOutput, outputFrom, type OutputContract } from "../output/contract"
 import { modelRefOf } from "../inference/reference"
@@ -40,14 +48,11 @@ import {
 // message id, so a replayed dispatch reaches the same child and is absorbed as a duplicate.
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
-// arguments. `Router` sends, `Self` names the calling lane, and `EventLog` supplies its durable
+// arguments. `Router` sends, `Self` names the calling thread, and `EventLog` supplies its durable
 // calls, responses, and creation record.
 //
-// place selects the child's actor address from the call id and parent address. The host resolves
-// that stable identity to current placement when it interprets the resulting link.
-//
 // A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
-// deliver the brief through a link from this lane, then await the reply row on this lane, host-side
+// deliver the brief through a link from this thread, then await the reply row on this thread, host-side
 // `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a promise
 // that never settles for the code body). It never holds a call open.
 //
@@ -246,19 +251,46 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// sibling is the default placement: the child is a facet of the parent's own principal, named `ag.<callId>`. The address selects the target while ThreadCreated records its lineage (spawn.test.ts, "the default placement is the host's own sibling address"; tla/runtime/Thread.tla, CreationFirst).
-const sibling = (callId: string, self: ActorId): ActorId =>
-  actorIdOf(self.actor, `ag.${callId}`)
+// sibling is the default address: the child inherits the parent's actor instance and uses the name `ag.<callId>`. Thread placement remains a separate host decision (spawn.test.ts, "the default address is the host's own sibling"; tla/runtime/Thread.tla, CreationFirst).
+const sibling = (callId: string, self: ThreadAddress): ThreadAddress =>
+  threadAddressOf(self.actor, self.instance, `ag.${callId}`)
+
+const childClaimOf = (
+  placement: unknown,
+  events: ReadonlyArray<{ readonly type: string }>,
+  parent: ThreadCreated,
+  callId: string,
+  source: ThreadAddress
+) => {
+  if (placement !== undefined && !Schema.is(ChildPlacement)(placement)) {
+    return { error: "agents.run placement must be colocated or independent" }
+  }
+  const recorded = events.find(
+    (event) => event.type === "ChildCreated" && (event as { readonly callId?: unknown }).callId === callId
+  )
+  if (recorded !== undefined && !Schema.is(ChildCreated)(recorded)) {
+    throw new Error(`child ${callId} has an invalid creation record`)
+  }
+  const lineage: ThreadLineage = recorded === undefined
+    ? childLineageOf(parent, placement as ChildPlacement | undefined)
+    : {
+        parent: parent.address,
+        depth: recorded.depth,
+        ...(recorded.placement === undefined ? {} : { placement: recorded.placement })
+      }
+  return {
+    recorded,
+    target: recorded?.address ?? sibling(callId, source),
+    lineage
+  }
+}
 
 const inheritedModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy => {
   const resolved = [...events].reverse().find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
   return resolved?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(resolved.models)
 }
 
-export const agentsPackage = (
-  options: SpawnOptions & { readonly place?: (callId: string, self: ActorId) => ActorId } = {}
-): Package<Router | Self | EventLog> => {
-  const place = options.place ?? sibling
+export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog> => {
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
@@ -331,6 +363,7 @@ export const agentsPackage = (
               additionalProperties: false
             },
             budget: { type: "integer", description: "max tool calls before the agent must answer, a whole number of calls; keeps a research agent bounded" },
+            placement: { type: "string", enum: ["colocated", "independent"], description: "place the child relative to this thread's host" },
             escalatable: { type: "boolean", description: "true: at its budget the child may ask its parent's budget authority for more before answering" }
           },
           required: ["text"]
@@ -394,7 +427,7 @@ export const agentsPackage = (
       }),
       run: (args, ctx) =>
         Effect.gen(function* () {
-          // The three cross-lane privileges, read where the work happens: send, identity,
+          // The three cross-thread privileges, read where the work happens: send, identity,
           // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
           const source = yield* Self
@@ -402,15 +435,17 @@ export const agentsPackage = (
           const events = yield* log.read
           const created = threadCreatedOf(events)
           if (created === undefined) {
-            return yield* Effect.die(new Error(`thread ${formatActorId(source)} cannot spawn without ThreadCreated`))
+            return yield* Effect.die(new Error(`thread ${formatThreadAddress(source)} cannot spawn without ThreadCreated`))
           }
-          const lineage = childLineageOf(created)
-          const self = formatActorId(source)
+          const self = formatThreadAddress(source)
           const a = args as
-            | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown }
+            | { text?: unknown; background?: unknown; output?: unknown; outputSchema?: unknown; model?: unknown; budget?: unknown; escalatable?: unknown; placement?: unknown }
             | undefined
           const text = String(a?.text ?? "")
           if (text === "") return { error: "agents.run needs { text }" }
+          const child = childClaimOf(a?.placement, events, created, ctx.callId, source)
+          if ("error" in child) return child
+          const { lineage, recorded: recordedChild, target } = child
           // The contract parameter is `output`, and a near-miss spelling fails silently: no
           // contract means a prose answer, so the caller's field reads come back undefined and
           // the run returns something plausible and wrong. Say so instead.
@@ -454,11 +489,8 @@ export const agentsPackage = (
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          const target = place(ctx.callId, source)
-          if (a?.background === true) {
-            // A background run uses the same actor protocol. Its budget request can be served while
-            // no code body awaits it, and its terminal is collected later by agents.result.
-            const at = yield* Clock.currentTimeMillis
+          const dispatch = (at: number) => Effect.gen(function* () {
+            if (recordedChild === undefined) yield* log.append([childCreated(ctx.callId, target, lineage, at)])
             yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
               type: "MessageReceived",
               id: ctx.callId,
@@ -474,6 +506,12 @@ export const agentsPackage = (
               from: self,
               at
             }, lineage))
+          })
+          if (a?.background === true) {
+            // A background run uses the same actor protocol. Its budget request can be served while
+            // no code body awaits it, and its terminal is collected later by agents.result.
+            const at = yield* Clock.currentTimeMillis
+            yield* dispatch(at)
             return { dispatched: true, callId: ctx.callId }
           }
           // Foreground runs park on their terminal response. A replay reads that response
@@ -481,21 +519,7 @@ export const agentsPackage = (
           const already = yield* awaitedBoundary(ctx.callId)
           if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
-          yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
-            type: "MessageReceived",
-            id: ctx.callId,
-            text,
-            ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-            ...(selectedModel === undefined ? {} : { model: selectedModel }),
-            models,
-            budget,
-            ...(a?.escalatable === true ? { escalatable: true } : {}),
-            ...(actor === undefined ? {} : { actor }),
-            ...(shadow ? { shadow: true } : {}),
-            ...(world === undefined ? {} : { world }),
-            from: self,
-            at
-          }, lineage))
+          yield* dispatch(at)
           return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
         }),
       // Await a run already fired in the background: no delivery, the same reply-or-park read the

@@ -71,21 +71,21 @@ const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelA
 }
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
-// routes speak thread ids; the lane a host knows lives here and nowhere else, so a route can never
-// name a lane and the store can never see an id.
+// routes speak thread ids; the thread a host knows lives here and nowhere else, so a route can never
+// name a thread and the store can never see an id.
 
-// LANE_PREFIX is the id-to-lane map (apps-server-spec.md, "Resources"). A lane outside it belongs
+// THREAD_PREFIX is the id-to-thread map (apps-server-spec.md, "Resources"). A thread outside it belongs
 // to something other than a thread and never appears in a listing. The prefix stays `ag.` while the
-// API's noun is the thread, because the lane is where the agent assembly runs, and that assembly
-// mints its own child lanes under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
+// API's noun is the thread, because the thread is where the agent assembly runs, and that assembly
+// mints its own child threads under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
 // it would rename addresses a spawn already wrote into a durable log.
-export const LANE_PREFIX = "ag."
+export const THREAD_PREFIX = "ag."
 
-export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
+export const threadOf = (id: string): string => `${THREAD_PREFIX}${id}`
 
-// idOf is laneOf's inverse, undefined for a lane this server does not own.
-export const idOf = (lane: string): string | undefined =>
-  lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
+// idOf is threadOf's inverse, undefined for a thread this server does not own.
+export const idOf = (thread: string): string | undefined =>
+  thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
 
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
@@ -108,19 +108,22 @@ export interface ActorThreads {
 export class Threads extends Context.Service<
   Threads,
   {
-    readonly append: ActorThreads["append"]
     readonly methods: ActorThreads["methods"]
     readonly sqlite: ActorThreads["sqlite"]
-    readonly events: ActorThreads["events"]
-    readonly list: ActorThreads["list"]
     readonly actorName?: string
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
     // client never waits on it (a delivery answers 202 and the client polls the turn); a test and
     // a shutdown do (host.test.ts).
-    readonly settled: ActorThreads["settled"]
-    readonly actors?: Effect.Effect<ReadonlyArray<ActorSummary>>
-    readonly actor?: (name: string) => Effect.Effect<ActorThreads | undefined>
-    readonly push?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
+    readonly instances: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly definition: string }>>
+    readonly ensure: (id: string) => Effect.Effect<ActorThreads>
+    readonly instance: (id: string) => Effect.Effect<ActorThreads | undefined>
+    readonly append: (actor: string, thread: string, event: Event) => Effect.Effect<void>
+    readonly events: (actor: string, thread: string) => Effect.Effect<ReadonlyArray<Event>>
+    readonly list: (actor: string) => ActorThreads["list"]
+    readonly settled: (actor: string) => Effect.Effect<void>
+    readonly definitions?: Effect.Effect<ReadonlyArray<ActorSummary>>
+    readonly definition?: (name: string) => Effect.Effect<ActorThreads | undefined>
+    readonly pushDefinition?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
   }
 >()("tardigrade/server/Threads") {}
 
@@ -309,11 +312,11 @@ const layerInferFrom = (
   })
 }
 
-// The lane environment: everything the assembly needs that the bun host does not bind. The model
+// The thread environment: everything the assembly needs that the bun host does not bind. The model
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
-const layerLane = (
+const layerThread = (
   config: ServerConfigValue,
   catalog: ModelCatalogState,
   options: ThreadsOptions,
@@ -384,20 +387,22 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
 
 const runtimeOf = async (
   summary: ActorSummary,
+  actorInstance: string,
   definition: Actor<ServerR>,
-  log: string,
-  lane: ReturnType<typeof layerLane>,
+  database: string,
+  thread: ReturnType<typeof layerThread>,
   providers: ReadonlyArray<Provider>,
-  maxConcurrentLanes: number
+  maxConcurrentThreads: number
 ): Promise<ActorRuntime> => {
   const actor = definition
   const host: BunHost = await createBunHost<ServerR>({
-    log,
-    principal: summary.name,
+    database,
+    actorName: summary.name,
+    actorInstance,
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
-    layersFor: () => lane,
+    layersFor: () => thread,
     providers,
-    driver: { maxConcurrentLanes },
+    driver: { maxConcurrentThreads },
     keyOf: (event) => actor.keyOf?.(event)
   })
   let driving: Promise<void> | undefined
@@ -435,12 +440,12 @@ const runtimeOf = async (
     )
   )
   await host.recover()
-  const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
+  const read = (id: string) => Effect.promise(() => host.read(threadOf(id)))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const stamped = event.at === undefined ? { ...event, at } : event
-      yield* Effect.promise(() => host.commitRoot(host.self(laneOf(id)), stamped))
+      yield* Effect.promise(() => host.commitRoot(host.self(threadOf(id)), stamped))
     })
   const commit = (delivery: Envelope) =>
     Effect.gen(function*() {
@@ -451,7 +456,7 @@ const runtimeOf = async (
         ...delivery,
         link: {
           source: delivery.link.source,
-          target: { actor: summary.name, thread: laneOf(delivery.link.target.thread) }
+          target: { actor: summary.name, instance: actorInstance, thread: threadOf(delivery.link.target.thread) }
         },
         event: stamped
       }
@@ -459,7 +464,7 @@ const runtimeOf = async (
     })
   const threads: ActorThreads = {
     methods: definition.methods,
-    sqlite: log === ":memory:" ? log : resolve(log),
+    sqlite: database === ":memory:" ? database : resolve(database),
     append: (id, event) =>
       Effect.gen(function*() {
         yield* commitRoot(id, event)
@@ -467,8 +472,8 @@ const runtimeOf = async (
       }),
     events: read,
     list: Effect.gen(function*() {
-      const lanes = yield* Effect.promise(() => host.lanes())
-      const ids = lanes.flatMap((candidate) => {
+      const threads = yield* Effect.promise(() => host.threads())
+      const ids = threads.flatMap((candidate) => {
         const id = idOf(candidate)
         return id === undefined ? [] : [id]
       })
@@ -494,6 +499,20 @@ const runtimeOf = async (
 
 export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers">
 
+const actorDatabasePath = (database: string, actor: string): string =>
+  database === ":memory:"
+    ? ":memory:"
+    : join(`${database}.actors`, `${Buffer.from(actor, "utf8").toString("base64url")}.sqlite`)
+
+const actorIdFromDatabase = (file: string): string | undefined => {
+  if (!file.endsWith(".sqlite")) return undefined
+  try {
+    return Buffer.from(file.slice(0, -7), "base64url").toString("utf8")
+  } catch {
+    return undefined
+  }
+}
+
 // layerActorThreads mounts one deployed definition as the runtime.
 export const layerActorThreads = (
   definition: Actor<ServerR>,
@@ -505,36 +524,80 @@ export const layerActorThreads = (
     const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const summary: ActorSummary = { name: definition.name, builtIn: false }
-    const runtime = yield* Effect.acquireRelease(
-      Effect.promise(() => runtimeOf(
+    const thread = layerThread(config, catalog, options, adapters)
+    const runtimes = new Map<string, ActorRuntime>()
+    const opening = new Map<string, Promise<ActorRuntime>>()
+    const open = (id: string): Promise<ActorRuntime> => {
+      const current = runtimes.get(id)
+      if (current !== undefined) return Promise.resolve(current)
+      const pending = opening.get(id)
+      if (pending !== undefined) return pending
+      const created = runtimeOf(
         summary,
+        id,
         definition,
-        config.db,
-        layerLane(config, catalog, options, adapters),
+        actorDatabasePath(config.db, id),
+        thread,
         options.providers ?? [],
-        config.maxConcurrentLanes
-      )),
-      (opened) => Effect.promise(() => opened.close())
+        config.maxConcurrentThreads
+      ).then((runtime) => {
+        runtimes.set(id, runtime)
+        opening.delete(id)
+        return runtime
+      }, (cause) => {
+        opening.delete(id)
+        throw cause
+      })
+      opening.set(id, created)
+      return created
+    }
+    yield* Effect.acquireRelease(
+      Effect.promise(async () => {
+        if (config.db !== ":memory:") {
+          const directory = `${config.db}.actors`
+          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return []
+            throw error
+          })
+          for (const file of files) {
+            const id = actorIdFromDatabase(file)
+            if (id !== undefined) await open(id)
+          }
+        }
+      }),
+      () => Effect.promise(async () => {
+        await Promise.all(opening.values())
+        await Promise.all([...runtimes.values()].map((runtime) => runtime.close()))
+      })
     )
     const service: Context.Service.Shape<typeof Threads> = {
-      ...runtime.threads,
+      methods: definition.methods,
+      sqlite: config.db === ":memory:" ? config.db : resolve(config.db),
       actorName: definition.name,
-      actors: Effect.succeed([summary]),
-      actor: (name) => Effect.succeed(name === definition.name ? runtime.threads : undefined)
+      instances: Effect.sync(() => [...runtimes.keys()].sort().map((id) => ({ id, definition: definition.name }))),
+      ensure: (id) => Effect.promise(() => open(id)).pipe(Effect.map((runtime) => runtime.threads)),
+      instance: (id) => Effect.succeed(runtimes.get(id)?.threads),
+      append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => open(actor)), (runtime) => runtime.threads.append(thread, event)),
+      events: (actor, thread) => runtimes.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
+      list: (actor) => runtimes.get(actor)?.threads.list ?? Effect.succeed([]),
+      settled: (actor) => runtimes.get(actor)?.threads.settled ?? Effect.void
     }
-    const directory: Directory<{ readonly actor: string }, {
+    const directory: Directory<{ readonly actor: string; readonly instance: string }, {
       readonly commit: ActorRuntime["commit"]
       readonly schedule: ActorRuntime["schedule"]
     }> = {
       resolve: (id) => Effect.succeed(id.actor === definition.name
-        ? { commit: runtime.commit, schedule: runtime.schedule }
+        ? (() => {
+            const runtime = runtimes.get(id.instance)
+            return runtime === undefined ? undefined : { commit: runtime.commit, schedule: runtime.schedule }
+          })()
         : undefined)
     }
     return Context.make(Threads, service).pipe(
       Context.add(Ingress, ingressFrom(directory)),
       Context.add(DriverGauge, {
-        resting: Effect.promise(() => runtime.resting()),
-        dirty: Effect.sync(() => runtime.dirty())
+        resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
+        dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
       })
     )
   }))
@@ -563,8 +626,10 @@ const make = (options: ThreadsOptions) =>
     const catalog = yield* ModelCatalogStore
     const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
-    const lane = layerLane(config, catalog, options, adapters)
+    const thread = layerThread(config, catalog, options, adapters)
     const runtimes = new Map<string, ActorRuntime>()
+    const instances = new Map<string, ActorRuntime>()
+    const openingInstances = new Map<string, Promise<ActorRuntime>>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
     const snapshot = catalog.snapshot
@@ -587,6 +652,7 @@ const make = (options: ThreadsOptions) =>
           ...(agentCatalog === undefined ? {} : { catalog: agentCatalog })
         })
       : builtInActor(agentCatalog === undefined ? {} : { catalog: agentCatalog })
+    const builtInSummary: ActorSummary = { name: RESERVED_ACTOR, builtIn: true }
     const root = resolve(config.actors)
     let mutations: Promise<void> = Promise.resolve()
     const exclusive = <A>(operation: () => Promise<A>): Promise<A> => {
@@ -594,18 +660,43 @@ const make = (options: ThreadsOptions) =>
       mutations = result.then(() => undefined, () => undefined)
       return result
     }
-    const open = async (summary: ActorSummary, definition: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
+    const open = async (summary: ActorSummary, definition: Actor<ServerR>, database: string): Promise<ActorRuntime> => {
       const runtime = await runtimeOf(
         summary,
+        summary.name,
         definition,
-        log,
-        lane,
+        database,
+        thread,
         options.providers ?? [],
-        config.maxConcurrentLanes
+        config.maxConcurrentThreads
       )
       runtimes.set(summary.name, runtime)
       await runRegistry(registry.put(summary))
       return runtime
+    }
+    const openInstance = (id: string): Promise<ActorRuntime> => {
+      const current = instances.get(id)
+      if (current !== undefined) return Promise.resolve(current)
+      const pending = openingInstances.get(id)
+      if (pending !== undefined) return pending
+      const created = runtimeOf(
+        builtInSummary,
+        id,
+        builtIn,
+        actorDatabasePath(config.db, id),
+        thread,
+        options.providers ?? [],
+        config.maxConcurrentThreads
+      ).then((runtime) => {
+        instances.set(id, runtime)
+        openingInstances.delete(id)
+        return runtime
+      }, (cause) => {
+        openingInstances.delete(id)
+        throw cause
+      })
+      openingInstances.set(id, created)
+      return created
     }
     const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: Actor<ServerR> }> => {
       const artifact = await manifestOf(directory)
@@ -645,15 +736,28 @@ const make = (options: ThreadsOptions) =>
         await runRegistry(registry.remove(name))
       }
       for (const registration of await runRegistry(registry.list)) {
-        if (!runtimes.has(registration.name)) await runRegistry(registry.remove(registration.name))
+        if (registration.name !== RESERVED_ACTOR && !runtimes.has(registration.name)) {
+          await runRegistry(registry.remove(registration.name))
+        }
       }
     }
     let watcher: FSWatcher | undefined
     let refreshTimer: ReturnType<typeof setTimeout> | undefined
     yield* Effect.acquireRelease(
       Effect.promise(async () => {
-        await open({ name: RESERVED_ACTOR, builtIn: true }, builtIn, config.db)
+        await runRegistry(registry.put(builtInSummary))
         await synchronize()
+        if (config.db !== ":memory:") {
+          const directory = `${config.db}.actors`
+          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT") return []
+            throw error
+          })
+          for (const file of files) {
+            const id = actorIdFromDatabase(file)
+            if (id !== undefined) await openInstance(id)
+          }
+        }
         if (options.actorRefresh !== undefined) {
           const { debounceMillis } = options.actorRefresh
           if (!Number.isInteger(debounceMillis) || debounceMillis < 0) {
@@ -669,19 +773,19 @@ const make = (options: ThreadsOptions) =>
             }, debounceMillis)
           })
         }
-        return runtimes
+        return { runtimes, instances }
       }),
       (opened) => Effect.promise(async () => {
         watcher?.close()
         if (refreshTimer !== undefined) clearTimeout(refreshTimer)
         await mutations
-        await Promise.all([...opened.values()].map((runtime) => runtime.close()))
+        await Promise.all(openingInstances.values())
+        await Promise.all([...opened.runtimes.values(), ...opened.instances.values()].map((runtime) => runtime.close()))
       })
     )
 
     const selected = (name: string): Effect.Effect<ActorThreads | undefined> =>
       registry.resolve(name).pipe(Effect.map((registration) => registration === undefined ? undefined : runtimes.get(name)?.threads))
-    const primary = runtimes.get(RESERVED_ACTOR)!.threads
     const push = (artifact: ActorArtifact): Effect.Effect<ActorSummary, ActorPushRefused> =>
       Effect.tryPromise({
         try: () => exclusive(async () => {
@@ -727,25 +831,40 @@ const make = (options: ThreadsOptions) =>
       })
 
     const service: Context.Service.Shape<typeof Threads> = {
-      ...primary,
-      actors: registry.list,
-      actor: selected,
-      push,
-      settled: Effect.forEach(runtimes.values(), (runtime) => runtime.threads.settled, { discard: true })
+      methods: builtIn.methods,
+      sqlite: config.db === ":memory:" ? config.db : resolve(config.db),
+      actorName: builtIn.name,
+      instances: Effect.sync(() => [...instances.keys()].sort().map((id) => ({ id, definition: builtIn.name }))),
+      ensure: (id) => Effect.promise(() => openInstance(id)).pipe(Effect.map((runtime) => runtime.threads)),
+      instance: (id) => Effect.succeed(instances.get(id)?.threads),
+      append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => openInstance(actor)), (runtime) => runtime.threads.append(thread, event)),
+      events: (actor, thread) => instances.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
+      list: (actor) => instances.get(actor)?.threads.list ?? Effect.succeed([]),
+      settled: (actor) => instances.get(actor)?.threads.settled ?? Effect.void,
+      definitions: registry.list,
+      definition: selected,
+      pushDefinition: push
     }
-    const directory: Directory<{ readonly actor: string }, {
+    const directory: Directory<{ readonly actor: string; readonly instance: string }, {
       readonly commit: ActorRuntime["commit"]
       readonly schedule: ActorRuntime["schedule"]
     }> = {
-      resolve: (id) => registry.resolve(id.actor).pipe(Effect.map((registration) => {
-        const runtime = registration === undefined ? undefined : runtimes.get(registration.name)
-        return runtime === undefined ? undefined : { commit: runtime.commit, schedule: runtime.schedule }
+      resolve: (id) => registry.resolve(id.actor).pipe(Effect.flatMap((registration) => {
+        if (registration === undefined) return Effect.as(Effect.void, undefined as undefined)
+        const runtime = registration.name === RESERVED_ACTOR
+          ? Effect.promise(() => openInstance(id.instance))
+          : Effect.succeed(runtimes.get(registration.name))
+        return Effect.map(runtime, (resolved) => resolved === undefined
+          ? undefined
+          : { commit: resolved.commit, schedule: resolved.schedule })
       }))
     }
     const ingress = ingressFrom(directory)
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
-      resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
-      dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
+      resting: Effect.promise(async () => (await Promise.all(
+        [...runtimes.values(), ...instances.values()].map((runtime) => runtime.resting())
+      )).every(Boolean)),
+      dirty: Effect.sync(() => [...runtimes.values(), ...instances.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
     }
     return Context.make(Threads, service).pipe(
       Context.add(Ingress, ingress),

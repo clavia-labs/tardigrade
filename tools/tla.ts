@@ -56,6 +56,17 @@ export const checks: ReadonlyArray<Check> = [
   pass("runtime", "Coherence", "Coherence.cfg"),
   counterexample("runtime", "Coherence", "CoherenceBatch.cfg", "Invariant NoSuppressedCommit is violated"),
   counterexample("runtime", "Coherence", "CoherenceRevalidate.cfg", "Invariant NoSuppressedCommit is violated"),
+  pass("runtime", "Child", "Child.cfg"),
+  pass("runtime", "Child", "ChildLive.cfg"),
+  counterexample("runtime", "Child", "ChildEarly.cfg", "Invariant DeliveryFollowsParent is violated"),
+  counterexample("runtime", "Child", "ChildRecompute.cfg", "Invariant DeliveryFollowsParent is violated"),
+  pass("runtime", "ActorInstance", "ActorInstance.cfg"),
+  pass("runtime", "ActorInstance", "ActorInstanceLive.cfg"),
+  counterexample("runtime", "ActorInstance", "ActorInstanceAuthority.cfg", "Invariant AcceptedAuthorized is violated"),
+  counterexample("runtime", "ActorInstance", "ActorInstanceChildEscape.cfg", "Invariant ChildInheritsInstance is violated"),
+  counterexample("runtime", "ActorInstance", "ActorInstanceObjectAlias.cfg", "Invariant RoutedObjectIsolation is violated"),
+  counterexample("runtime", "ActorInstance", "ActorInstanceGlobalList.cfg", "Invariant ListingIsolation is violated"),
+  counterexample("runtime", "ActorInstance", "ActorInstanceSharedKey.cfg", "Invariant LiveKeysRemain is violated"),
   pass("runtime", "ConcurrentDriver", "ConcurrentDriver.cfg"),
   pass("runtime", "ConcurrentDriver", "ConcurrentDriverLive.cfg"),
   counterexample("runtime", "ConcurrentDriver", "ConcurrentDriverUnbounded.cfg", "Invariant ConcurrencyBound is violated"),
@@ -86,7 +97,10 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("runtime", "Totality", "TotalityVoid.cfg", "Invariant NoVoidCur is violated"),
   pass("cloudflare", "DurableExecution", "DurableExecution.cfg"),
   counterexample("cloudflare", "DurableExecution", "DurableExecutionNoTurn.cfg", "Invariant CoveredBeforeDrive is violated"),
-  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated")
+  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated"),
+  pass("cloudflare", "ThreadCreation", "ThreadCreation.cfg"),
+  pass("cloudflare", "ThreadCreation", "ThreadCreationLive.cfg"),
+  counterexample("cloudflare", "ThreadCreation", "ThreadCreationCurrent.cfg", "Invariant CreatedHasAccepted is violated")
 ]
 
 const jar = process.env["TLA2TOOLS_JAR"]

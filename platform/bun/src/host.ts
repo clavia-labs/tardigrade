@@ -1,450 +1,480 @@
 import { Effect, Layer, ManagedRuntime } from "effect"
-import { mkdir } from "node:fs/promises"
-import { dirname } from "node:path"
+import { mkdir, readdir } from "node:fs/promises"
+import { basename, dirname, join } from "node:path"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
-import { SqliteClient } from "@effect/sql-sqlite-bun"
+import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog } from "@clavia/tardigrade-core/log"
-import { assertSupportedBun } from "./runtime"
+import { EventLog, eventLogFrom, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
-import {
-  isActorEnvelope,
-  isProviderEnvelope,
-  linkedEventOf,
-  type ActorEnvelope,
-  type Envelope
-} from "@clavia/tardigrade-core/communication/envelope"
-import {
-  formatActorId,
-  isActorId,
-  parseActorId,
-  type ActorId,
-  type ProviderEndpoint
-} from "@clavia/tardigrade-core/communication/endpoint"
+import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
+import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
-import { alarmFired, earliestDeadlineOf } from "@clavia/tardigrade-core/actor/method"
+import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import { threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
-import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
+import { createThreadDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
-import {
-  sameActorId,
-  sameThreadLineage,
-  threadCreated,
-  threadCreatedOf,
-  threadKeys,
-  type ThreadLineage
-} from "@clavia/tardigrade-core/thread"
+import { assertSupportedBun } from "./runtime"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 import { bunSandboxFor, type BunSandboxPolicy } from "./sandbox"
 import { bunAlarmScheduler, type BunAlarmHandle, type BunAlarmScheduler } from "./alarm"
 
-// The bun binding: packages/host's semantics with physics. The log lives in SQLite through
-// @effect/sql-sqlite-bun, so a process death loses nothing and `recover()` re-derives the owed
-// work from what survived; replay is re-derivation, recovery is re-settling
-// (packages/core/src/log/service.ts). The store keeps the port's six guarantees: append-only
-// rows, one rising seq per lane, this process as the one writer, batch appends in one
-// transaction, dedup by key inside that transaction under a unique index, and the ordered tail
-// read from a watermark. Conformance is behavioral: host.test.ts mirrors the reference host's
-// tests, plus the two only physics can show (a reopen keeps the log; a reopen recovers owed
-// work). The same database holds the workspace a bounded value spills to; the tables the model
-// creates through workspace.sql live in a second file beside it, out of the log's reach
-// (workspace.ts).
-
-// BunPorts are the services this binding leaves an actor no work to bind: packages/host's four,
-// plus the workspace store, which on bun is durable and therefore the platform's to give
-// (packages/code/src/storage/store.ts). BunLaneEnv is the rest of an actor's R, the same shape the
-// reference host asks for.
 type BunPorts = HostPorts | KeyValueStore.KeyValueStore
-type BunLaneEnv<R> = Layer.Layer<Exclude<R, BunPorts>, never, BunPorts>
-
+type BunThreadServices = BunPorts | SqlClient.SqlClient
+type BunThreadEnv<R> = Layer.Layer<Exclude<R, BunPorts>, never, BunPorts>
 type LayersFor<R> = [Exclude<R, BunPorts>] extends [never]
-  ? { readonly layersFor?: (lane: string) => BunLaneEnv<R> }
-  : { readonly layersFor: (lane: string) => BunLaneEnv<R> }
+  ? { readonly layersFor?: (thread: string) => BunThreadEnv<R> }
+  : { readonly layersFor: (thread: string) => BunThreadEnv<R> }
+
+// bunThreadDatabasePath places a thread database beside the actor directory database. The reversible encoding lets startup repair the directory from surviving files.
+export const bunThreadDatabasePath = (actorDatabase: string, thread: string): string =>
+  actorDatabase === ":memory:" ? ":memory:" : join(`${actorDatabase}.threads`, `${Buffer.from(thread, "utf8").toString("base64url")}.sqlite`)
+
+export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArray<ChildPlacement>
+export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 export type BunHostOptions<R> = {
-  readonly log: string // where the log lives: a SQLite file, or ":memory:" for a volatile run
-  // The tracer the spans flow to, when the app brings one (an @effect/opentelemetry layer, a
-  // test capture). Absent, every span is inert: instrumentation lives in the packages, export
-  // is the platform's, and this seam is the whole of it.
+  // database stores the actor's thread directory. Each thread database lives at threadDatabase(thread).
+  readonly database: string
+  // threadDatabase selects the physical database for a thread. The default is bunThreadDatabasePath(database, thread).
+  readonly threadDatabase?: (thread: string) => string
+  readonly defaultChildPlacement?: ChildPlacement
   readonly telemetry?: Layer.Layer<never>
-  // The store spilled values land in. The default is `bunWorkspace()`, durable in the log's own
-  // database; an app that wants another table, a prefixed view, or a volatile run passes its own
-  // layer over the same client (workspace.ts).
   readonly workspace?: Layer.Layer<KeyValueStore.KeyValueStore, never, SqlClient.SqlClient>
-  // The SQL surface the workspace's sql verb runs on. The default is `bunWorkspaceSql()` over a
-  // database beside the log, so the model's own tables are durable and the log is out of its reach
-  // (workspace.ts). `false` withholds the surface and the workspace package drops the method, which
-  // is the honest answer for an agent that should never run SQL; any other layer replaces it, and
-  // one built over the host's own client hands the model the log's database too, which is what
-  // `bunWorkspaceSql({ doc: bunWorkspaceLogSqlDoc() })` tells the model it is holding.
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
-  // sandbox configures the process boundary that contains model-authored code outside the actor host (sandbox.test.ts, "contains a native process abort reached through a constructor escape").
   readonly sandbox?: Partial<BunSandboxPolicy>
-  readonly principal?: string
-  readonly actorFor: (lane: string) => Actor<R> | undefined
+  readonly actorName?: string
+  readonly actorInstance?: string
+  readonly actorFor: (thread: string) => Actor<R> | undefined
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
   readonly edgesOf?: EdgesOf
   readonly driver?: Partial<DriverPolicy>
   readonly alarm?: BunAlarmScheduler
   readonly pick?: (dirty: ReadonlySet<string>) => string
-  readonly keyOf?: (e: Event) => string | undefined
+  readonly keyOf?: (event: Event) => string | undefined
 } & LayersFor<R>
 
 export interface BunHost {
-  readonly seed: (lane: string, events: ReadonlyArray<Event>) => Promise<void>
-  readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
-  readonly commit: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
-  // lanes names every lane the log holds, ordered by name. An app that lists what exists asks the
-  // host rather than the database, so the store stays this module's (host.test.ts, "lanes names
-  // every lane the log holds").
-  readonly lanes: () => Promise<ReadonlyArray<string>>
+  readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
+  readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
+  readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
+  readonly threads: () => Promise<ReadonlyArray<string>>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
-  readonly wake: (lane: string) => Promise<void>
+  readonly wake: (thread: string) => Promise<void>
   readonly drive: () => Promise<void>
-  // recover marks every lane that has an actor as owed a visit and drives: the alarm a real
-  // process runs at start, so work interrupted by a death settles from the surviving log.
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
-  // work counts lanes that are dirty, live, or both.
   readonly work: () => number
-  readonly self: (lane: string) => string
+  readonly self: (thread: string) => string
   readonly close: () => Promise<void>
 }
 
-const laneOf = (address: string): string => {
-  const i = address.indexOf(":")
-  return i === -1 ? address : address.slice(i + 1)
+interface BunThreadRuntime {
+  readonly runtime: ManagedRuntime.ManagedRuntime<BunThreadServices, never>
+  readonly store: ThreadEventStore
+  readonly workspace: KeyValueStore.KeyValueStore
+  alarm?: { readonly deadlineAt: number; readonly handle: BunAlarmHandle }
 }
 
+const threadOf = (address: string): string => {
+  return parseThreadAddress(address).thread
+}
+
+const threadFromDatabase = (file: string): string | undefined => {
+  if (!file.endsWith(".sqlite")) return undefined
+  try {
+    const encoded = file.slice(0, -7)
+    const thread = Buffer.from(encoded, "base64url").toString("utf8")
+    return Buffer.from(thread, "utf8").toString("base64url") === encoded ? thread : undefined
+  } catch {
+    return undefined
+  }
+}
+
+const actorMigrations = SqliteMigrator.fromRecord({
+  "0001_actor_identity": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE actor_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      actor TEXT NOT NULL,
+      instance TEXT NOT NULL
+    )`
+  }),
+  "0002_actor_directory": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE thread_directory (
+      thread TEXT PRIMARY KEY,
+      parent_thread TEXT,
+      depth INTEGER NOT NULL DEFAULT 0,
+      placement TEXT
+    ) WITHOUT ROWID`
+  })
+})
+
+const threadMigrations = SqliteMigrator.fromRecord({
+  "0001_thread_identity": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE thread_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      actor TEXT NOT NULL,
+      instance TEXT NOT NULL,
+      thread TEXT NOT NULL
+    )`
+  }),
+  "0002_thread_events": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE events (
+      seq INTEGER NOT NULL PRIMARY KEY,
+      key TEXT,
+      event TEXT NOT NULL
+    ) WITHOUT ROWID`
+    yield* sql`CREATE UNIQUE INDEX events_key ON events (key) WHERE key IS NOT NULL`
+  })
+})
+
+const initializeDatabase = (loader: SqliteMigrator.Loader): Effect.Effect<void, never, SqlClient.SqlClient> =>
+  SqliteMigrator.run({ loader }).pipe(Effect.asVoid, Effect.orDie)
+
+// openActorDirectory initializes one actor database and recovers directory entries from its thread files.
+const openActorDirectory = async (
+  options: Pick<BunHostOptions<never>, "database" | "threadDatabase" | "telemetry">,
+  actorName: string,
+  actorInstance: string
+) => {
+  if (options.database !== "" && options.database !== ":memory:") await mkdir(dirname(options.database), { recursive: true })
+  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.database }), options.telemetry ?? Layer.empty))
+  const sql = await runtime.runPromise(SqlClient.SqlClient)
+  try {
+    await runtime.runPromise(initializeDatabase(actorMigrations))
+    await runtime.runPromise(sql`
+      INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ${actorName}, ${actorInstance})
+    `.pipe(Effect.orDie))
+    const identities = await runtime.runPromise(sql<{ actor: string; instance: string }>`
+      SELECT actor, instance FROM actor_identity WHERE singleton = 1
+    `.pipe(Effect.orDie))
+    if (identities[0]?.actor !== actorName || identities[0]?.instance !== actorInstance) {
+      throw new Error("actor identity does not match its database")
+    }
+    if (options.database !== ":memory:" && options.threadDatabase === undefined) {
+      const directory = `${options.database}.threads`
+      await mkdir(directory, { recursive: true })
+      for (const file of await readdir(directory)) {
+        const thread = threadFromDatabase(basename(file))
+        if (thread !== undefined) await runtime.runPromise(sql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.orDie))
+      }
+    }
+    return { runtime, sql }
+  } catch (cause) {
+    await runtime.dispose()
+    throw cause
+  }
+}
+
+// createBunHost runs an actor definition over isolated thread databases in one Bun process.
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
-  if (options.log !== "" && options.log !== ":memory:") await mkdir(dirname(options.log), { recursive: true })
-  const principal = options.principal ?? "bun"
-  // The workspace is built with the runtime and over the same client, so its table is created once
-  // and every lane spills through the connection the log already holds.
-  const client = SqliteClient.layer({ filename: options.log })
-  // The SQL surface holds its own client on its own file, so a statement the model wrote reaches
-  // its tables and nothing else (workspace.ts). Both clients are built with the runtime and closed
-  // with it.
-  const workspaceSql =
-    options.workspaceSql === false
+  const actorName = options.actorName ?? "bun"
+  const actorInstance = options.actorInstance ?? "default"
+  const defaultChildPlacement = options.defaultChildPlacement ?? DEFAULT_BUN_CHILD_PLACEMENT
+  if (!BUN_CHILD_PLACEMENTS.includes(defaultChildPlacement as "colocated")) {
+    throw new Error(`Bun host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
+  }
+  const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
+  const { runtime: directoryRuntime, sql: directorySql } = await openActorDirectory(options, actorName, actorInstance)
+
+  const register = (thread: string, lineage?: ThreadLineage): Promise<void> => {
+    if (lineage !== undefined && (
+      lineage.parent.actor !== actorName || lineage.parent.instance !== actorInstance
+    )) {
+      return Promise.reject(new Error("a child thread must inherit its actor instance"))
+    }
+    return directoryRuntime.runPromise(lineage === undefined
+      ? directorySql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.asVoid, Effect.orDie)
+      : directorySql`INSERT INTO thread_directory (thread, parent_thread, depth, placement)
+          VALUES (${thread}, ${lineage.parent.thread}, ${lineage.depth}, ${lineage.placement ?? null})
+          ON CONFLICT(thread) DO UPDATE SET
+            parent_thread = excluded.parent_thread,
+            depth = excluded.depth,
+            placement = excluded.placement`.pipe(Effect.asVoid, Effect.orDie)
+    )
+  }
+  const threads = (): Promise<ReadonlyArray<string>> => directoryRuntime.runPromise(
+    directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)
+  )
+  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
+  const runtimes = new Map<string, Promise<BunThreadRuntime>>()
+
+  const openThread = async (thread: string): Promise<BunThreadRuntime> => {
+    const filename = pathOf(thread)
+    if (filename !== "" && filename !== ":memory:") await mkdir(dirname(filename), { recursive: true })
+    const client = SqliteClient.layer({ filename })
+    const workspaceSql = options.workspaceSql === false
       ? Layer.empty
       : options.workspaceSql === undefined
-        ? bunWorkspaceSql().pipe(Layer.provide(SqliteClient.layer({ filename: workspaceSqlFile(options.log) })))
+        ? bunWorkspaceSql().pipe(Layer.provide(SqliteClient.layer({ filename: workspaceSqlFile(filename) })))
         : options.workspaceSql.pipe(Layer.provide(client))
-  const runtime = ManagedRuntime.make(
-    Layer.mergeAll(
+    const runtime = ManagedRuntime.make(Layer.mergeAll(
       (options.workspace ?? bunWorkspace()).pipe(Layer.provideMerge(client)),
       workspaceSql,
       options.telemetry ?? Layer.empty
+    )) as ManagedRuntime.ManagedRuntime<BunThreadServices, never>
+    let sql: SqlClient.SqlClient
+    let workspace: KeyValueStore.KeyValueStore
+    try {
+      sql = await runtime.runPromise(SqlClient.SqlClient)
+      await runtime.runPromise(initializeDatabase(threadMigrations))
+      await runtime.runPromise(sql`
+        INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread)
+        VALUES (1, ${actorName}, ${actorInstance}, ${thread})
+      `.pipe(Effect.orDie))
+      const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
+        SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1
+      `.pipe(Effect.orDie))
+      if (
+        identities[0]?.actor !== actorName ||
+        identities[0]?.instance !== actorInstance ||
+        identities[0]?.thread !== thread
+      ) throw new Error("thread identity does not match its database")
+      workspace = await runtime.runPromise(KeyValueStore.KeyValueStore)
+    } catch (cause) {
+      await runtime.dispose()
+      throw cause
+    }
+    const read: ThreadEventStore["read"] = sql<{ event: string }>`SELECT event FROM events ORDER BY seq`.pipe(
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
     )
-  )
-  // One client, acquired once: every read and every append shares the connection, so ":memory:"
-  // is one database and the per-lane writer stays this process.
-  const sql = await runtime.runPromise(SqlClient.SqlClient)
-  // The store, acquired the same way: one instance, one table build, handed to every lane below.
-  const store = await runtime.runPromise(KeyValueStore.KeyValueStore)
-  const alarmScheduler = options.alarm ?? bunAlarmScheduler
-  await runtime.runPromise(
-    sql`CREATE TABLE IF NOT EXISTS events (
-      lane  TEXT    NOT NULL,
-      seq   INTEGER NOT NULL,
-      key   TEXT,
-      event TEXT    NOT NULL,
-      PRIMARY KEY (lane, seq)
-    ) WITHOUT ROWID`.pipe(
-      Effect.andThen(sql`CREATE UNIQUE INDEX IF NOT EXISTS events_lane_key ON events (lane, key) WHERE key IS NOT NULL`)
+    const head: ThreadEventStore["head"] = sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events`.pipe(
+      Effect.map((rows) => Number(rows[0]?.head ?? 0)), Effect.orDie
     )
-  )
+    const readFrom: ThreadEventStore["readFrom"] = (mark) => sql<{ event: string }>`SELECT event FROM events WHERE seq > ${mark} ORDER BY seq`.pipe(
+      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)), Effect.orDie
+    )
+    const readPage: ThreadEventStore["readPage"] = (mark, limit) => sql<{ seq: number; event: string }>`
+      SELECT seq, event FROM events WHERE seq > ${mark} ORDER BY seq LIMIT ${limit}
+    `.pipe(
+      Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
+      Effect.orDie
+    )
+    const append: ThreadEventStore["append"] = (events) => {
+      if (events.length === 0) return Effect.succeed(0)
+      return sql.withTransaction(Effect.gen(function* () {
+        const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
+        let seq = Number(rows[0]?.seq ?? 0) + 1
+        let appended = 0
+        for (const event of events) {
+          const key = storeKeyOf(event)
+          if (key !== undefined) {
+            const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${key}`
+            if (Number(present[0]?.n ?? 0) > 0) continue
+          }
+          yield* sql`INSERT INTO events (seq, key, event) VALUES (${seq}, ${key ?? null}, ${JSON.stringify(event)})`
+          seq += 1
+          appended += 1
+        }
+        return appended
+      })).pipe(Effect.orDie)
+    }
+    return { runtime, store: { append, read, head, readFrom, readPage }, workspace }
+  }
+
+  const runtimeOf = (thread: string): Promise<BunThreadRuntime> => {
+    const current = runtimes.get(thread)
+    if (current !== undefined) return current
+    const opened = openThread(thread)
+    runtimes.set(thread, opened)
+    void opened.catch(() => runtimes.delete(thread))
+    return opened
+  }
 
   const providerTransport = providerTransportFrom(options.providers ?? [])
-  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
+  const alarmScheduler = options.alarm ?? bunAlarmScheduler
+  let driver: ReturnType<typeof createThreadDriver>
 
-  const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>, never> =>
-    sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
-      Effect.orDie
-    )
-
-  const appendRowsEffect = (lane: string, events: ReadonlyArray<Event>): Effect.Effect<void, never> =>
-    Effect.gen(function* () {
-      const head = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events WHERE lane = ${lane}`
-      let seq = Number(head[0]?.seq ?? 0) + 1
-      for (const event of events) {
-        const key = storeKeyOf(event)
-        if (key !== undefined) {
-          const present = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE lane = ${lane} AND key = ${key}`
-          if (Number(present[0]?.n ?? 0) > 0) continue
-        }
-        yield* sql`INSERT INTO events (lane, seq, key, event) VALUES (${lane}, ${seq}, ${key ?? null}, ${JSON.stringify(event)})`
-        seq += 1
-      }
-    }).pipe(Effect.orDie)
-
-  // appendEffect keeps guarantees 4 and 5 in the store itself: the batch lands in one transaction, and a keyed event already recorded is absorbed inside it.
-  const appendEffect = (lane: string, events: ReadonlyArray<Event>): Effect.Effect<void, never> =>
-    events.length === 0 ? Effect.void : sql.withTransaction(appendRowsEffect(lane, events)).pipe(Effect.orDie)
-
-  const headEffect = (lane: string): Effect.Effect<number, never> =>
-    sql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM events WHERE lane = ${lane}`.pipe(
-      Effect.map((rows) => Number(rows[0]?.head ?? 0)),
-      Effect.orDie
-    )
-
-  const readFromEffect = (lane: string, mark: number): Effect.Effect<ReadonlyArray<Event>, never> =>
-    sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} AND seq > ${mark} ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
-      Effect.orDie
-    )
+  const appendTo = async (thread: string, events: ReadonlyArray<Event>): Promise<number> => {
+    const threadRuntime = await runtimeOf(thread)
+    const appended = await threadRuntime.runtime.runPromise(threadRuntime.store.append(events))
+    if (appended > 0) await register(thread)
+    return appended
+  }
 
   const commitEffect = (
-    target: ActorId,
+    target: ThreadAddress,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorId>,
+    link?: Link<unknown, ThreadAddress>,
     call?: ActorMethodInvocation
-  ): Effect.Effect<void, never> => {
-    const address = formatActorId(target)
-    return Effect.gen(function* () {
-      // The membrane, identical to the reference host: a cross-lane event names its occurrence
-      // or it does not travel (packages/host/src/host.ts).
-      if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
-        return yield* Effect.die(
-          new Error(
-            `unkeyed cross-lane event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`
-          )
-        )
+  ): Effect.Effect<void, never> => Effect.promise(async () => {
+    const address = formatThreadAddress(target)
+    if (lineage !== undefined && (
+      lineage.parent.actor !== target.actor || lineage.parent.instance !== target.instance
+    )) {
+      throw new Error("a child thread must inherit its actor instance")
+    }
+    if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
+      throw new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
+    }
+    const thread = threadOf(address)
+    const threadRuntime = await runtimeOf(thread)
+    const appended = await threadRuntime.runtime.runPromise(Effect.gen(function* () {
+      const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
+      const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
+        ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
+        : event
+      const current = yield* threadRuntime.store.read
+      const created = threadCreatedForDelivery(current, target, lineage, link?.source)
+      const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
+        ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
+        : stamped
+      if (landed.type === "MessageReceived") {
+        const id = String((landed as { id?: unknown }).id)
+        if (current.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) return 0
       }
-      const lane = laneOf(address)
-      // The platform stamps the sending span's context onto the event it persists (the W3C
-      // header form), so a later settle on the receiving lane links back to this delivery: one
-      // business event, one trace, across lanes (packages/core/src/log/trace.ts). An event already
-      // carrying a context keeps it: the first stamp is the causal one.
-      const current = yield* Effect.currentSpan.pipe(Effect.option)
-      const stamped =
-        current._tag === "Some" && (event as { traceparent?: unknown }).traceparent === undefined
-          ? ({ ...event, traceparent: traceparentOf(current.value) } as Event)
-          : event
-      const appended = yield* sql.withTransaction(
-        Effect.gen(function* () {
-          const rows = yield* sql<{ event: string }>`SELECT event FROM events WHERE lane = ${lane} ORDER BY seq`
-          const events = rows.map((row) => JSON.parse(row.event) as Event)
-          const created = threadCreatedOf(events)
-          if (events.length > 0 && created === undefined) {
-            return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
-          }
-          if (created !== undefined && !sameActorId(created.address, target)) {
-            return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
-          }
-          if (lineage !== undefined) {
-            if (lineage.depth <= 0 || sameActorId(lineage.parent, target)) {
-              return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
-            }
-            if (link === undefined || !isActorId(link.source) || !sameActorId(lineage.parent, link.source)) {
-              return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
-            }
-            if (created !== undefined && !sameThreadLineage(created, lineage)) {
-              return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
-            }
-          } else if (created === undefined && link !== undefined && isActorId(link.source)) {
-            return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
-          }
-          const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
-            ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
-            : stamped
-          if (landed.type === "MessageReceived") {
-            const id = String((landed as { id?: unknown }).id)
-            if (events.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) {
-              return false
-            }
-          }
-          const at = (event as { readonly at?: unknown }).at
-          if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
-            return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
-          }
-          yield* appendRowsEffect(
-            lane,
-            created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed]
-          )
-          return true
-        })
-      ).pipe(Effect.orDie)
-      if (appended) driver.mark(lane)
-    }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
-  }
+      const at = (event as { readonly at?: unknown }).at
+      if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
+      return yield* threadRuntime.store.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+    }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } })))
+    if (appended > 0) {
+      await register(thread, lineage)
+      driver.mark(thread)
+    }
+  }).pipe(Effect.orDie)
 
-  const commitEnvelopeEffect = (envelope: Envelope<unknown, Event, ActorId>): Effect.Effect<void, never> =>
-    commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
-
-  const commitRootEffect = (address: string, event: Event): Effect.Effect<void, never> =>
-    commitEffect(parseActorId(address), event, undefined)
-
-  const localTransport: Transport<ActorId, ActorEnvelope> = {
-    name: "local",
-    send: (_destination, envelope) => commitEnvelopeEffect(envelope)
+  const colocatedTransport: Transport<ThreadAddress, ActorEnvelope> = {
+    name: "colocated",
+    send: (_destination, envelope) => {
+      const placement = envelope.lineage?.placement ?? defaultChildPlacement
+      if (placement !== "colocated") return Effect.die(new Error(`Bun host does not support ${JSON.stringify(placement)} thread placement`))
+      const lineage = envelope.lineage === undefined ? undefined : { ...envelope.lineage, placement }
+      return commitEffect(envelope.link.target, envelope.event, lineage, envelope.link, envelope.call)
+    }
   }
   const routes = [
-    directoryRoute(
-      localTransport,
-      mappedDirectory((id: ActorId) => id.actor === principal ? id : undefined),
-      isActorEnvelope,
-      (envelope) => envelope.link.target
-    ),
-    directoryRoute(
-      providerTransport,
-      mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint),
-      isProviderEnvelope,
-      (envelope) => envelope.link.target
-    ),
+    directoryRoute(colocatedTransport, mappedDirectory((id: ThreadAddress) =>
+      id.actor === actorName && id.instance === actorInstance ? id : undefined
+    ), isActorEnvelope, (envelope) => envelope.link.target),
+    directoryRoute(providerTransport, mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint), isProviderEnvelope, (envelope) => envelope.link.target),
     ...(options.routes ?? [])
   ]
-  const router = Layer.succeed(Router, {
-    send: (envelope) => sendThrough(routes, envelope)
-  })
+  const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
+  const self = (thread: string): string => `${actorName}:${actorInstance}:${thread}`
 
-  const self = (lane: string): string => `${principal}:${lane}`
-
-  const portsOf = (lane: string) =>
-    Layer.mergeAll(
-      Layer.succeed(EventLog, {
-        append: (events: ReadonlyArray<Event>) => appendEffect(lane, events),
-        read: readEffect(lane),
-        head: headEffect(lane),
-        readFrom: (mark: number) => readFromEffect(lane, mark)
-      }),
-      router,
-      Layer.succeed(KeyValueStore.KeyValueStore, store),
-      Layer.succeed(Self, parseActorId(self(lane))),
-      bunSandboxFor(options.sandbox ?? {})
+  const layersOf = async (thread: string): Promise<Layer.Layer<R | EventLog>> => {
+    const threadRuntime = await runtimeOf(thread)
+    const store: ThreadEventStore = {
+      ...threadRuntime.store,
+      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((count) => count > 0 ? Effect.promise(() => register(thread)) : Effect.void))
+    }
+    const ports = Layer.mergeAll(
+      Layer.succeed(EventLog, eventLogFrom(store)), router,
+      Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
+      Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {})
     )
-
-  const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
-    const ports = portsOf(lane)
-    const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunLaneEnv<R>))(lane)
+    const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunThreadEnv<R>))(thread)
     return Layer.mergeAll(extra.pipe(Layer.provide(ports)), ports) as Layer.Layer<R | EventLog>
   }
 
-  const alarms = new Map<string, { readonly deadlineAt: number; readonly handle: BunAlarmHandle }>()
-
-  const cancelAlarm = (lane: string): void => {
-    alarms.get(lane)?.handle.cancel()
-    alarms.delete(lane)
+  const cancelAlarm = async (thread: string): Promise<void> => {
+    const threadRuntime = await runtimeOf(thread)
+    threadRuntime.alarm?.handle.cancel()
+    delete threadRuntime.alarm
   }
-
-  const synchronizeAlarm = async (lane: string): Promise<void> => {
-    const deadlineAt = earliestDeadlineOf(await runtime.runPromise(readEffect(lane)))
-    const current = alarms.get(lane)
-    if (current?.deadlineAt === deadlineAt) return
-    cancelAlarm(lane)
+  const synchronizeAlarm = async (thread: string): Promise<void> => {
+    const threadRuntime = await runtimeOf(thread)
+    const deadlineAt = earliestDeadlineOf(await threadRuntime.runtime.runPromise(threadRuntime.store.read))
+    if (threadRuntime.alarm?.deadlineAt === deadlineAt) return
+    await cancelAlarm(thread)
     if (deadlineAt === undefined) return
     const handle = alarmScheduler.schedule(deadlineAt, async (at) => {
-      const armed = alarms.get(lane)
-      if (armed?.deadlineAt !== deadlineAt) return
-      alarms.delete(lane)
-      await runtime.runPromise(appendEffect(lane, [alarmFired({ scheduledFor: deadlineAt, at })]))
-      driver.mark(lane)
+      const active = await runtimeOf(thread)
+      if (active.alarm?.deadlineAt !== deadlineAt) return
+      delete active.alarm
+      await appendTo(thread, [alarmFired({ scheduledFor: deadlineAt, at })])
+      driver.mark(thread)
       await drive()
     })
-    alarms.set(lane, { deadlineAt, handle })
+    threadRuntime.alarm = { deadlineAt, handle }
   }
 
-  const driver = createLaneDriver({
+  driver = createThreadDriver({
     ...(options.driver === undefined ? {} : { policy: options.driver }),
     ...(options.pick === undefined ? {} : { pick: options.pick }),
-    serve: async (lane) => {
-      const actor = options.actorFor(lane)
+    serve: async (thread) => {
+      const actor = options.actorFor(thread)
       if (actor === undefined) return
-      await runtime.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
-      await synchronizeAlarm(lane)
+      const threadRuntime = await runtimeOf(thread)
+      await threadRuntime.runtime.runPromise(settleActor(actor).pipe(Effect.provide(await layersOf(thread))))
+      await synchronizeAlarm(thread)
     }
   })
 
-  const drain = (): Promise<void> => driver.drain()
-
-  const lanesEffect: Effect.Effect<ReadonlyArray<string>, never> = sql<{
-    lane: string
-  }>`SELECT DISTINCT lane FROM events ORDER BY lane`.pipe(
-    Effect.map((rows) => rows.map((row) => row.lane)),
-    Effect.orDie
-  )
-
-  const lanesMap = async (): Promise<Map<string, ReadonlyArray<Event>>> => {
-    const lanes = await runtime.runPromise(lanesEffect)
-    const map = new Map<string, ReadonlyArray<Event>>()
-    for (const lane of lanes) map.set(lane, await runtime.runPromise(readEffect(lane)))
-    return map
+  const logs = async (): Promise<Map<string, ReadonlyArray<Event>>> => {
+    const result = new Map<string, ReadonlyArray<Event>>()
+    for (const thread of await threads()) {
+      const threadRuntime = await runtimeOf(thread)
+      result.set(thread, await threadRuntime.runtime.runPromise(threadRuntime.store.read))
+    }
+    return result
   }
-
   const driveGraph = async (): Promise<void> => {
-    await drain()
+    await driver.drain()
     if (options.edgesOf === undefined) return
     for (;;) {
-      const found = deadlocks(await lanesMap(), options.edgesOf)
+      const found = deadlocks(await logs(), options.edgesOf)
       if (found.length === 0) return
       for (const knot of found) {
         const victim = victimOf(knot)
-        await runtime.runPromise(
-          commitRootEffect(self(victim.from), {
-            type: "MessageReceived",
-            id: victim.replyId,
-            outcome: "failed",
-            text: `deadlock: ${[...knot.members, knot.members[0]].join(" waits for ")}`,
-            at: 0
-          } as Event)
-        )
+        await Effect.runPromise(commitEffect(parseThreadAddress(self(victim.from)), { type: "MessageReceived", id: victim.replyId, outcome: "failed", text: `deadlock: ${[...knot.members, knot.members[0]].join(" waits for ")}`, at: 0 } as Event, undefined))
       }
-      await drain()
+      await driver.drain()
     }
   }
-
   let driveTail: Promise<void> = Promise.resolve()
   const drive = (): Promise<void> => {
     const next = driveTail.then(driveGraph)
     driveTail = next.then(() => undefined, () => undefined)
     return next
   }
-
   const resting = async (): Promise<boolean> => {
-    for (const [lane, events] of await lanesMap()) {
-      const actor = options.actorFor(lane)
+    for (const [thread, events] of await logs()) {
+      const actor = options.actorFor(thread)
       if (actor !== undefined && !restingActor(actor, events)) return false
     }
     return driver.resting()
   }
-
   const recover = async (): Promise<void> => {
-    for (const lane of (await lanesMap()).keys()) {
-      if (options.actorFor(lane) !== undefined) driver.mark(lane)
-    }
+    for (const thread of await threads()) if (options.actorFor(thread) !== undefined) driver.mark(thread)
     await drive()
   }
 
   return {
-    seed: (lane, events) => runtime.runPromise(appendEffect(lane, events)),
-    read: (lane) => runtime.runPromise(readEffect(lane)),
-    commit: (envelope) => runtime.runPromise(commitEnvelopeEffect(envelope)),
-    lanes: () => runtime.runPromise(lanesEffect),
-    commitRoot: (address, event) => runtime.runPromise(commitRootEffect(address, event)),
-    wake: (lane) => {
-      driver.mark(lane)
-      return drive()
+    seed: async (thread, events) => { await appendTo(thread, events) },
+    read: async (thread) => {
+      const threadRuntime = await runtimeOf(thread)
+      return threadRuntime.runtime.runPromise(threadRuntime.store.read)
     },
+    commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
+    threads,
+    commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
+    wake: (thread) => { driver.mark(thread); return drive() },
     drive,
     recover,
     resting,
     work: driver.work,
     self,
     close: async () => {
-      for (const lane of alarms.keys()) cancelAlarm(lane)
-      await runtime.dispose()
+      for (const [thread, promised] of runtimes) {
+        const threadRuntime = await promised
+        await cancelAlarm(thread)
+        await threadRuntime.runtime.dispose()
+      }
+      await directoryRuntime.dispose()
     }
   }
 }

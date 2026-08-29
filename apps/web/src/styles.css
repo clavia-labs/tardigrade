@@ -300,10 +300,10 @@ h1 span { display: block; white-space: nowrap; }
 .observability-log ol { margin: 0; padding: 0; list-style: none; }
 .observability-log li { min-height: 38px; padding: 0 13px; display: grid; grid-template-columns: 22px 34px minmax(0, 1fr) auto; gap: 9px; align-items: center; border-bottom: 1px solid var(--hair); }
 .observability-log li:last-child { border-bottom: 0; }
-.observability-log li[data-lane="child"] { background: rgb(237 242 255 / 66%); }
+.observability-log li[data-thread="child"] { background: rgb(237 242 255 / 66%); }
 .observability-log li > span { color: var(--faint); font-size: 10px; }
 .observability-log em { color: var(--faint); font-size: 9px; font-style: normal; letter-spacing: .04em; text-transform: uppercase; }
-.observability-log li[data-lane="child"] em { color: var(--moss-ink); }
+.observability-log li[data-thread="child"] em { color: var(--moss-ink); }
 .observability-log strong { overflow: hidden; color: var(--ink); font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .observability-log code { color: var(--ink-2); font-family: inherit; font-size: 10px; white-space: nowrap; }
 .deployments { position: relative; background: var(--bg); }

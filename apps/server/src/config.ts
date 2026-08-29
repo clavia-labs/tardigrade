@@ -1,6 +1,6 @@
 import { Context, Layer } from "effect"
 import {
-  DEFAULT_MAX_CONCURRENT_LANES,
+  DEFAULT_MAX_CONCURRENT_THREADS,
   driverPolicyOf
 } from "@clavia/tardigrade-host/driver"
 import {
@@ -13,7 +13,7 @@ import {
 import { modelProtocolOf, type ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 
-export { DEFAULT_MAX_CONCURRENT_LANES } from "@clavia/tardigrade-host/driver"
+export { DEFAULT_MAX_CONCURRENT_THREADS } from "@clavia/tardigrade-host/driver"
 
 // The server combines ordinary project configuration with environment credentials and host
 // settings. Every default is exported, and every resolved value is visible on ServerConfig
@@ -77,7 +77,7 @@ export interface ServerConfigValue {
   readonly db: string
   readonly actors: string
   readonly actorData: string
-  readonly maxConcurrentLanes: number
+  readonly maxConcurrentThreads: number
   // Absent leaves the API open, which is why the process is meant to bind to localhost. Present
   // makes a bearer token required on runtime and control routes. Health, API documents, and model catalog routes stay public (http.ts).
   readonly token: string | undefined
@@ -267,19 +267,19 @@ const port = (env: Env): number => {
   return value
 }
 
-// maxConcurrentLanesOf validates the host-wide count used by configuration flags and environment
+// maxConcurrentThreadsOf validates the host-wide count used by configuration flags and environment
 // resolution.
-export const maxConcurrentLanesOf = (value: number): number =>
-  driverPolicyOf({ maxConcurrentLanes: value }).maxConcurrentLanes
+export const maxConcurrentThreadsOf = (value: number): number =>
+  driverPolicyOf({ maxConcurrentThreads: value }).maxConcurrentThreads
 
-const maxConcurrentLanes = (env: Env): number => {
-  const raw = text(env, "TARDIGRADE_MAX_CONCURRENT_LANES")
-  if (raw === undefined) return DEFAULT_MAX_CONCURRENT_LANES
+const maxConcurrentThreads = (env: Env): number => {
+  const raw = text(env, "TARDIGRADE_MAX_CONCURRENT_THREADS")
+  if (raw === undefined) return DEFAULT_MAX_CONCURRENT_THREADS
   const value = Number(raw)
   if (!Number.isSafeInteger(value) || value <= 0) {
-    throw new Error(`TARDIGRADE_MAX_CONCURRENT_LANES must be a positive integer, got ${JSON.stringify(raw)}`)
+    throw new Error(`TARDIGRADE_MAX_CONCURRENT_THREADS must be a positive integer, got ${JSON.stringify(raw)}`)
   }
-  return maxConcurrentLanesOf(value)
+  return maxConcurrentThreadsOf(value)
 }
 
 const modelCatalogTimeout = (env: Env): number => {
@@ -310,7 +310,7 @@ export const readConfig = (
     db: text(env, "TARDIGRADE_DB") ?? DEFAULT_DB,
     actors: text(env, "TARDIGRADE_ACTORS") ?? DEFAULT_ACTORS,
     actorData: text(env, "TARDIGRADE_ACTOR_DATA") ?? DEFAULT_ACTOR_DATA,
-    maxConcurrentLanes: maxConcurrentLanes(env),
+    maxConcurrentThreads: maxConcurrentThreads(env),
     token: text(env, "TARDIGRADE_TOKEN"),
     model,
     modelCredentials: modelCredentialsFrom(model, env),

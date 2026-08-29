@@ -40,7 +40,7 @@ describe("Bun webhooks", () => {
     const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
-        target: { actor: "support", thread: "incident" }
+        target: { actor: "support", instance: "main", thread: "incident" }
       },
       event: { type: "MessageReceived", id: "m1", text: "hello", at: 42 }
     }
@@ -97,7 +97,7 @@ describe("Bun webhooks", () => {
         }),
         send: () => Effect.void
       },
-      () => ({ actor: "support", thread: "incident" }),
+      () => ({ actor: "support", instance: "main", thread: "incident" }),
       { method: "message" }
     )
     const handler = bunChannelHandler(channel, {
@@ -110,7 +110,7 @@ describe("Bun webhooks", () => {
     expect(response.status).toBe(200)
     expect(committed[0]?.link).toEqual({
       source: { provider: "example", chat: "c1" },
-      target: { actor: "support", thread: "incident" }
+      target: { actor: "support", instance: "main", thread: "incident" }
     })
   })
 })

@@ -167,7 +167,7 @@ describe("the threads service", () => {
     expect(methods).toEqual(["message", "requestBudget"])
   })
 
-  test("the configured lane capacity runs model calls concurrently", async () => {
+  test("the configured thread capacity runs model calls concurrently", async () => {
     let release!: () => void
     const released = new Promise<void>((resolve) => {
       release = resolve
@@ -194,19 +194,19 @@ describe("the threads service", () => {
     const concurrentConfig = layerConfig(readConfig({
       TARDIGRADE_DB: ":memory:",
       TARDIGRADE_ACTORS: `/tmp/tardigrade-host-concurrent-${process.pid}`,
-      TARDIGRADE_MAX_CONCURRENT_LANES: "2"
+      TARDIGRADE_MAX_CONCURRENT_THREADS: "2"
     }))
 
     await running(
       (threads) => Effect.gen(function*() {
         yield* Effect.all([
-          threads.append("alpha", brief("a")),
-          threads.append("beta", brief("b"))
+          threads.append("main", "alpha", brief("a")),
+          threads.append("main", "beta", brief("b"))
         ], { concurrency: "unbounded" })
         yield* Effect.promise(() => started)
         expect(active).toBe(2)
         release()
-        yield* threads.settled
+        yield* threads.settled("main")
         expect(peak).toBe(2)
       }),
       { infer: concurrent, config: concurrentConfig }
@@ -221,21 +221,21 @@ describe("the threads service", () => {
           {
             link: {
               source: { provider: "test" },
-              target: { actor: RESERVED_ACTOR, thread: "alpha" }
+              target: { actor: RESERVED_ACTOR, instance: "main", thread: "alpha" }
             },
             event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
           },
           {
             link: {
               source: { provider: "test" },
-              target: { actor: RESERVED_ACTOR, thread: "beta" }
+              target: { actor: RESERVED_ACTOR, instance: "main", thread: "beta" }
             },
             event: { type: "MessageReceived", id: "m2", text: "second", at: 43 }
           },
           {
             link: {
               source: { provider: "test" },
-              target: { actor: RESERVED_ACTOR, thread: "alpha" }
+              target: { actor: RESERVED_ACTOR, instance: "main", thread: "alpha" }
             },
             event: { type: "MessageReceived", id: "m1", text: "first", at: 42 }
           }
@@ -243,18 +243,18 @@ describe("the threads service", () => {
         yield* ingress.commit(envelopes)
         const gauge = yield* DriverGauge
         const committed = {
-          alpha: yield* threads.events("alpha"),
-          beta: yield* threads.events("beta"),
+          alpha: yield* threads.events("main", "alpha"),
+          beta: yield* threads.events("main", "beta"),
           dirty: yield* gauge.dirty,
           resting: yield* gauge.resting
         }
         yield* ingress.schedule(envelopes)
-        yield* threads.settled
+        yield* threads.settled("main")
         return {
           committed,
           settled: {
-            alpha: yield* threads.events("alpha"),
-            beta: yield* threads.events("beta")
+            alpha: yield* threads.events("main", "alpha"),
+            beta: yield* threads.events("main", "beta")
           }
         }
       })
@@ -271,12 +271,12 @@ describe("the threads service", () => {
   test("an appended brief drives to a completed turn", async () => {
     const types = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.append("alpha", brief("m1"))
-        yield* threads.settled
+        yield* threads.append("main", "alpha", brief("m1"))
+        yield* threads.settled("main")
         const gauge = yield* DriverGauge
         expect(yield* gauge.dirty).toBe(0)
         expect(yield* gauge.resting).toBe(true)
-        return (yield* threads.events("alpha")).map((e) => e.type)
+        return (yield* threads.events("main", "alpha")).map((e) => e.type)
       })
     )
     expect(types).toContain("TurnCompleted")
@@ -336,14 +336,14 @@ describe("the threads service", () => {
 
     await running(
       (threads) => Effect.gen(function*() {
-        yield* threads.append("stream", brief("stream-message"))
+        yield* threads.append("main", "stream", brief("stream-message"))
         yield* Effect.promise(() => first)
-        const open = yield* threads.events("stream")
+        const open = yield* threads.events("main", "stream")
         expect(open.some((event) => event.type === "TurnCompleted")).toBe(false)
         expect(deltas.map((delta) => delta.text)).toEqual(["hel"])
         release()
-        yield* threads.settled
-        const settled = yield* threads.events("stream")
+        yield* threads.settled("main")
+        const settled = yield* threads.events("main", "stream")
         expect(settled).toContainEqual(expect.objectContaining({ type: "TurnCompleted", output: "hello" }))
       }),
       {
@@ -366,13 +366,13 @@ describe("the threads service", () => {
     ])
   })
 
-  test("list names every thread lane with its log", async () => {
+  test("list names every thread thread with its log", async () => {
     const listed = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.append("alpha", brief("m1"))
-        yield* threads.append("beta", brief("m2"))
-        yield* threads.settled
-        return yield* threads.list
+        yield* threads.append("main", "alpha", brief("m1"))
+        yield* threads.append("main", "beta", brief("m2"))
+        yield* threads.settled("main")
+        return yield* threads.list("main")
       })
     )
     expect(listed.map((entry) => entry.id)).toEqual(["alpha", "beta"])
@@ -385,9 +385,9 @@ describe("the threads service", () => {
   test("an appended event keeps the time it states", async () => {
     const stamps = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.append("alpha", { type: "MessageReceived", id: "m1", text: "hello", at: 4242 })
-        yield* threads.settled
-        const log = yield* threads.events("alpha")
+        yield* threads.append("main", "alpha", { type: "MessageReceived", id: "m1", text: "hello", at: 4242 })
+        yield* threads.settled("main")
+        const log = yield* threads.events("main", "alpha")
         return log.filter((event) => event.type === "MessageReceived").map((event) => event["at"])
       })
     )
@@ -397,12 +397,12 @@ describe("the threads service", () => {
   test("redelivering one message id is absorbed", async () => {
     const counts = await running((threads) =>
       Effect.gen(function*() {
-        yield* threads.append("alpha", brief("m1"))
-        yield* threads.settled
-        const before = (yield* threads.events("alpha")).length
-        yield* threads.append("alpha", brief("m1"))
-        yield* threads.settled
-        return [before, (yield* threads.events("alpha")).length]
+        yield* threads.append("main", "alpha", brief("m1"))
+        yield* threads.settled("main")
+        const before = (yield* threads.events("main", "alpha")).length
+        yield* threads.append("main", "alpha", brief("m1"))
+        yield* threads.settled("main")
+        return [before, (yield* threads.events("main", "alpha")).length]
       })
     )
     expect(counts[1]).toBe(counts[0]!)

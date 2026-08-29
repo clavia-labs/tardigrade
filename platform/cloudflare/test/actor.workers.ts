@@ -4,19 +4,34 @@ import { describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
-import type { Env } from "../src/worker"
+import {
+  backgroundTaskOwnerOf,
+  DEFAULT_BACKGROUND_TASK_OWNER,
+  retainBackgroundTask,
+  type Env
+} from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
-const objectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
-const controlStub = () => (env as Env).ACTORS.getByName("echo")
-const actorStub = (thread: string) => (env as Env).ACTORS.getByName(objectNameOf(thread))
+const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
+const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", "main", `ag.${thread}`])
+const controlStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "main"]))
+const catalogStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "$catalog"]))
+const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
 const alarm = (thread: string) =>
-  runInDurableObject(actorStub(thread), (_instance, state) => state.storage.getAlarm())
+  runInDurableObject(threadStub(thread), (_instance, state) => state.storage.getAlarm())
+
+const createThread = async (thread: string): Promise<void> => {
+  const actor = await SELF.fetch("http://test/v1/actors/main", { method: "PUT", headers: authorization })
+  expect(actor.status).toBe(200)
+  const created = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}`, { method: "PUT", headers: authorization })
+  expect(created.status).toBe(200)
+  expect(await created.json()).toEqual({ actor: "main", thread })
+}
 
 const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const response = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
+    const response = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
       headers: authorization
     })
     const state = await response.json() as { readonly status?: unknown }
@@ -27,6 +42,35 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 }
 
 describe("cloudflare actor", () => {
+  test("background tasks belong to the configured owner", () => {
+    expect(backgroundTaskOwnerOf(undefined)).toBe(DEFAULT_BACKGROUND_TASK_OWNER)
+    expect(backgroundTaskOwnerOf("request", "host")).toBe("request")
+    expect(() => backgroundTaskOwnerOf("detached")).toThrow("must be \"host\" or \"request\"")
+    const retained: Array<Promise<unknown>> = []
+    const task = Promise.resolve()
+    const scope = { waitUntil: (value: Promise<unknown>) => retained.push(value) }
+    retainBackgroundTask(scope, "host", task)
+    retainBackgroundTask(scope, "request", task)
+    expect(retained).toEqual([task])
+  })
+
+  test("an ambiguous actor instance id is refused", async () => {
+    const invalidActor = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
+      method: "PUT",
+      headers: authorization
+    })
+    expect(invalidActor.status).toBe(400)
+  })
+
+  test("actor instance path parameters are decoded once", async () => {
+    const response = await SELF.fetch("http://test/v1/actors/tenant%252Fwest", {
+      method: "PUT",
+      headers: authorization
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ actor: "tenant%2Fwest", definition: "echo" })
+  })
+
   test("actor storage persists model catalog snapshots", async () => {
     const snapshot: ModelCatalog = {
       source: "models.dev",
@@ -40,7 +84,7 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    await runInDurableObject(controlStub(), async (_instance, state) => {
+    await runInDurableObject(catalogStub(), async (_instance, state) => {
       const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(state.storage))
       try {
         const repository = await runtime.runPromise(ModelCatalogRepository)
@@ -71,14 +115,20 @@ describe("cloudflare actor", () => {
       inputSchema: expect.objectContaining({ type: "object" }),
       outputSchema: expect.objectContaining({ type: "string" })
     })])
-    const accepted = await SELF.fetch("http://test/v1/threads/root/methods/echo/calls/workers-smoke", {
+    const missing = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: "Run in workerd." })
+    })
+    expect(missing.status).toBe(404)
+    await createThread("root")
+    const accepted = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
       body: JSON.stringify({ text: "Run in workerd." })
     })
     expect(accepted.status).toBe(202)
-    expect(await accepted.json()).toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
-    expect(await alarm("root")).not.toBeNull()
+    expect(await accepted.json()).toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
@@ -86,11 +136,11 @@ describe("cloudflare actor", () => {
       token: "workers-test-token",
       fetch: (input, init) => SELF.fetch(input, init)
     })
-    expect(await client.invoke("root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
-      .toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
-    expect(await client.methodState("root", "echo", "workers-smoke"))
+    expect(await client.invoke("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
+      .toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
+    expect(await client.methodState("main", "root", "echo", "workers-smoke"))
       .toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
-    const events = await SELF.fetch("http://test/v1/threads/root/events", { headers: authorization })
+    const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",
       "EchoRequested",
@@ -98,49 +148,256 @@ describe("cloudflare actor", () => {
     ])
     const health = await SELF.fetch("http://test/healthz")
     expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
-    const threads = await SELF.fetch("http://test/v1/threads", { headers: authorization })
-    expect(threads.status).toBe(400)
-    expect(await threads.json()).toEqual({ error: "thread-scoped workers do not support actor-wide thread listing" })
+    const threads = await SELF.fetch("http://test/v1/actors/main/threads", { headers: authorization })
+    expect(threads.status).toBe(200)
+    expect(await threads.json()).toEqual([{ id: "root", depth: 0, children: [] }])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
-  })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
-  test("a mounted actor receives lane application services", async () => {
+  test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
-      const accepted = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
+      await createThread(thread)
+      const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
         method: "PUT",
         headers: { ...authorization, "content-type": "application/json" },
         body: JSON.stringify({ text })
       })
       expect(accepted.status).toBe(202)
-      return methodState(thread, call)
     }
-    const [first, second] = await Promise.all([
+    await Promise.all([
       invoke("application-a", "application-a", "first"),
       invoke("application-b", "application-b", "second")
     ])
+    const first = await methodState("application-a", "application-a")
+    const second = await methodState("application-b", "application-b")
     expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
     expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
-    expect(actorStub("application-a").id.equals(actorStub("application-b").id)).toBe(false)
-    const firstLanes = await runInDurableObject(actorStub("application-a"), (_instance, state) =>
-      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    expect(threadStub("application-a").id.equals(threadStub("application-b").id)).toBe(false)
+    const firstEvents = await runInDurableObject(threadStub("application-a"), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM events").toArray()
     )
-    const secondLanes = await runInDurableObject(actorStub("application-b"), (_instance, state) =>
-      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    const secondEvents = await runInDurableObject(threadStub("application-b"), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM events").toArray()
     )
-    expect(firstLanes).toEqual([{ lane: "ag.application-a" }])
-    expect(secondLanes).toEqual([{ lane: "ag.application-b" }])
+    expect(firstEvents[0]?.count).toBeGreaterThan(0)
+    expect(secondEvents[0]?.count).toBeGreaterThan(0)
+    const migrations = await runInDurableObject(threadStub("application-a"), (_instance, state) => ({
+      tables: state.storage.sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'"
+      ).toArray().map((row) => row.name),
+      entries: state.storage.sql.exec<{ migration_id: number; name: string }>(
+        "SELECT migration_id, name FROM effect_sql_migrations"
+      ).toArray()
+    }))
+    expect(migrations).toEqual({
+      tables: ["effect_sql_migrations"],
+      entries: [
+        { migration_id: 1, name: "thread_identity" },
+        { migration_id: 2, name: "thread_events" }
+      ]
+    })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+  test("a thread event codec covers method ingress, reactors, and API reads", async () => {
+    const prompt = "classified prompt"
+    await createThread("sealed")
+    const accepted = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: prompt })
+    })
+    expect(accepted.status).toBe(202)
+    expect(await methodState("sealed", "sealed-call")).toEqual({
+      status: "completed",
+      output: "workers:ag.sealed:1:classified prompt"
+    })
+    const repeated = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: prompt })
+    })
+    expect(repeated.status).toBe(202)
+    expect(await methodState("sealed", "sealed-call")).toEqual({
+      status: "completed",
+      output: "workers:ag.sealed:1:classified prompt"
+    })
+
+    const response = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", { headers: authorization })
+    const visible = await response.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly text?: string } }>
+    expect(visible.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "EchoCompleted"])
+    expect(visible.some((row) => row.event.text?.includes(prompt))).toBe(true)
+
+    const filtered = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=0&limit=1&types=EchoCompleted",
+      { headers: authorization }
+    )
+    expect(await filtered.json()).toEqual([{
+      seq: 3,
+      event: expect.objectContaining({ type: "EchoCompleted", text: expect.stringContaining(prompt) })
+    }])
+    const idle = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=3&limit=1",
+      { headers: authorization }
+    )
+    expect(await idle.json()).toEqual([])
+
+    const raw = await runInDurableObject(threadStub("sealed"), (_instance, state) =>
+      state.storage.sql.exec<{ readonly key: string | null; readonly event: string }>("SELECT key, event FROM events ORDER BY seq").toArray()
+    )
+    expect(raw).toHaveLength(3)
+    expect(raw.every((row) => {
+      const encrypted = JSON.parse(row.event) as { readonly iv?: unknown; readonly ciphertext?: unknown }
+      return typeof encrypted.iv === "string" && typeof encrypted.ciphertext === "string"
+    })).toBe(true)
+    expect(raw.every((row) => !row.event.includes(prompt))).toBe(true)
+    expect(raw.every((row) => row.key === null || /^hmac-sha256:[a-f0-9]{64}$/.test(row.key))).toBe(true)
+    expect(raw.every((row) => !row.key?.includes("sealed-call"))).toBe(true)
+
+    for (const secretId of ["first-secret", "second-secret"]) {
+      const appended = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ type: "IndexedRecord", secretId })
+      })
+      expect(appended.status).toBe(202)
+    }
+    const indexed = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=0&limit=10&types=IndexedRecord",
+      { headers: authorization }
+    )
+    expect((await indexed.json() as ReadonlyArray<{ readonly event: { readonly secretId: string } }>).map((row) => row.event.secretId))
+      .toEqual(["first-secret", "second-secret"])
+  })
+
+  test("actor supervisor creates a child after durable acceptance", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.directory-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.directory-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.directory-child" }
+    const lineage = {
+      parent,
+      depth: 1,
+      placement: "independent" as const
+    }
+    const requested = await runInDurableObject(directory, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO events (seq, key, event)
+         VALUES (
+           (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
+           'thread:requested:ag.directory-child',
+           '{"type":"ThreadRequested","thread":"ag.directory-child","parentThread":"ag.directory-parent","depth":1,"placement":"independent","at":1}'
+         )`
+      )
+      return state.storage.sql.exec<{
+        key: string
+        event: string
+      }>("SELECT key, event FROM events WHERE key = 'thread:requested:ag.directory-child'").toArray()
+    })
+    expect(requested).toEqual([{ key: "thread:requested:ag.directory-child", event: expect.stringContaining('"type":"ThreadRequested"') }])
+    const requestedTree = await directory.threadTree()
+    expect(requestedTree.find((node) => node.id === "directory-parent")).toEqual({
+      id: "directory-parent",
+      depth: 0,
+      children: []
+    })
+    expect(requestedTree.some((node) => node.id === "directory-child")).toBe(false)
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
+      lineage
+    })
+    const fresh = { actor: "echo", instance: "main", thread: "ag.directory-fresh" }
+    await directory.deliverChild({
+      link: { source: parent, target: fresh },
+      event: { type: "MessageReceived", id: "directory-fresh-message", text: "hello", at: 3 },
+      lineage
+    })
+    const tree = await directory.threadTree()
+    expect(tree.find((node) => node.id === "directory-parent")).toEqual({
+      id: "directory-parent",
+      depth: 0,
+      children: [{
+        id: "directory-child",
+        parent: "directory-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }, {
+        id: "directory-fresh",
+        parent: "directory-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
+    const childEvents = await threadStub("directory-child").events("directory-child")
+    expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
+    const lifecycle = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(lifecycle
+      .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
+      .filter((event) => event.thread.startsWith("ag.directory-"))
+      .map((event) => event.type)).toEqual([
+      "ThreadRequested",
+      "ThreadCreated",
+      "ThreadRequested",
+      "ThreadCreated",
+      "ThreadRequested",
+      "ThreadCreated"
+    ])
+  })
+
+  test("actor supervisor alarm completes a staged child", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.recovery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.recovery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.recovery-child" }
+    const lineage = { parent, depth: 1, placement: "independent" as const }
+    const child = threadStub("recovery-child")
+    await child.init("echo", "main", "ag.recovery-child")
+    await child.stageCreation({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "recovery-message", text: "hello", at: 4 },
+      lineage
+    })
+    await runInDurableObject(directory, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO events (seq, key, event)
+         VALUES (
+           (SELECT COALESCE(MAX(seq), 0) + 1 FROM events),
+           'thread:requested:ag.recovery-child',
+           '{"type":"ThreadRequested","thread":"ag.recovery-child","parentThread":"ag.recovery-parent","depth":1,"placement":"independent","at":4}'
+         )`
+      )
+    })
+    expect((await directory.threadTree()).some((node) => node.id === "recovery-child")).toBe(false)
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect((await directory.threadTree()).find((node) => node.id === "recovery-parent")).toEqual({
+      id: "recovery-parent",
+      depth: 0,
+      children: [{
+        id: "recovery-child",
+        parent: "recovery-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {
     const deadlineAt = Date.now() - 1
-    const stub = actorStub("timeout")
-    await stub.init("echo", "ag.timeout")
+    const stub = threadStub("timeout")
+    await createThread("timeout")
     await stub.append("timeout", {
       type: "CallDispatched",
       id: "overdue-1",
       method: "inspect",
-      target: "remote:shared",
+      target: "remote:main:shared",
       input: {},
       timeoutMs: 10,
       deadlineAt,

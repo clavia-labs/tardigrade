@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { Effect } from "effect"
-import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import {
   channelOf,
@@ -29,7 +29,7 @@ export interface SlackOptions {
   readonly name: string
   readonly botToken: string
   readonly signingSecret: string
-  readonly target: (source: SlackEndpoint) => ActorId
+  readonly target: (source: SlackEndpoint) => ThreadAddress
   readonly method?: string
   readonly apiBaseUrl?: string
   readonly fetch?: SlackFetch

@@ -9,6 +9,7 @@ import {
   ResumeRefused,
   type Accepted,
   type ActorArtifact,
+  type ActorInstanceSummary,
   type ActorMetadata,
   type ActorSummary,
   type Append,
@@ -41,6 +42,7 @@ import { stream, type OpenEventSource, type StreamOptions } from "./stream"
 // Where the server listens when a caller states no base URL, matching the server's own DEFAULT_PORT
 // (apps/server/src/config.ts).
 export const DEFAULT_BASE_URL = "http://localhost:4242"
+export const DEFAULT_ACTOR_INSTANCE = "main"
 
 // The titles a failure that carries no problem document shows. They stand where the server's own
 // `title` would be, so a screen renders one field either way.
@@ -66,7 +68,7 @@ type DerivedActorApi<P extends Projections> = HttpApiClient.Client<GroupsOf<Retu
 type DerivedControlApi = HttpApiClient.Client<GroupsOf<typeof controlApi>>
 
 type ProjectionCall = (request: {
-  readonly params: { readonly id: string }
+  readonly params: { readonly id: string; readonly thread: string }
   readonly query: unknown
 }) => Effect.Effect<unknown, unknown>
 
@@ -115,7 +117,7 @@ export interface ModelPageOptions extends CatalogPageOptions {
 }
 
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
-export type FollowOptions = Omit<StreamOptions, "baseUrl" | "thread" | "eventSource">
+export type FollowOptions = Omit<StreamOptions, "baseUrl" | "actor" | "thread" | "eventSource">
 
 // The query one projection accepts, and what it answers: both read from the actor's own
 // declaration, so a caller states what that projection states and gets back what it promises
@@ -140,22 +142,27 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   readonly providers: (options?: CatalogPageOptions) => Promise<ProviderCatalogPage>
   // models searches the validated public catalog.
   readonly models: (options?: ModelPageOptions) => Promise<ModelCatalogPage>
-  readonly list: () => Promise<ReadonlyArray<ThreadSummary>>
-  readonly tree: (thread: string) => Promise<ThreadNode>
-  readonly events: (thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
+  readonly actors: () => Promise<ReadonlyArray<ActorInstanceSummary>>
+  readonly ensureActor: (actor: string) => Promise<ActorInstanceSummary>
+  readonly actor: (actor: string) => Promise<ActorInstanceSummary>
+  readonly list: (actor: string) => Promise<ReadonlyArray<ThreadSummary>>
+  readonly tree: (actor: string, thread: string) => Promise<ThreadNode>
+  readonly events: (actor: string, thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
-  readonly append: (thread: string, event: Append) => Promise<Accepted>
+  readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // invoke commits one declared method call and returns its durable handle.
   readonly invoke: <const Name extends keyof M & string>(
+    actor: string,
     thread: string,
     name: Name,
     call: MethodCall<M, Name>
   ) => Promise<MethodAccepted>
   // methodState reads the selected declaration's typed durable state.
   readonly methodState: <const Name extends keyof M & string>(
+    actor: string,
     thread: string,
     name: Name,
     call: string
@@ -163,24 +170,25 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
   // SDK's convenience rather than a route: the platform has no resume, because a resume is an
   // append like any other (resume, below).
-  readonly resume: (thread: string, turn: string) => Promise<Accepted>
+  readonly resume: (actor: string, thread: string, turn: string) => Promise<Accepted>
   readonly health: () => Promise<Health>
   // Reads one projection the actor declared. The name is one this client was built with, and the
   // query and the answer are that declaration's own types (client.test.ts, "a declared projection
   // serves and types").
   readonly projection: <const Name extends keyof P & string>(
+    actor: string,
     thread: string,
     name: Name,
     query?: ProjectionQuery<P, Name>
   ) => Promise<ProjectionResult<P, Name>>
   // Follows one thread's log and answers with the unsubscribe.
-  readonly follow: (thread: string, options: FollowOptions) => (() => void)
+  readonly follow: (actor: string, thread: string, options: FollowOptions) => (() => void)
 }
 
 export interface ControlClient {
   readonly baseUrl: string
-  readonly actors: () => Promise<ReadonlyArray<ActorSummary>>
-  readonly pushActor: (artifact: ActorArtifact) => Promise<ActorSummary>
+  readonly definitions: () => Promise<ReadonlyArray<ActorSummary>>
+  readonly pushDefinition: (artifact: ActorArtifact) => Promise<ActorSummary>
 }
 
 export type ControlClientOptions = Pick<ActorClientOptions, "baseUrl" | "token" | "fetch">
@@ -277,14 +285,14 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   // derived has no requirements for every concrete declaration, which a generic P cannot reduce.
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
   const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
-  const append = (thread: string, event: Append): Promise<Accepted> =>
-    run(api.threads.append({ params: { id: thread }, payload: event }))
+  const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
+    run(api.threads.append({ params: { id: actor, thread }, payload: event }))
 
   // turnsOf reads the `turns` projection through the derivation, which is where the resume
   // convenience gets the epoch it has to stamp. It is spelled by name rather than through
   // `projection` because `resume` is on every client while the declaration is not: a client built
   // for an actor that declares no `turns` says so instead of failing on an undefined call.
-  const turnsOf = async (thread: string, turn: string): Promise<ReadonlyArray<TurnView>> => {
+  const turnsOf = async (actor: string, thread: string, turn: string): Promise<ReadonlyArray<TurnView>> => {
     const call = (api.projections as Record<string, ProjectionCall | undefined>)["turns"]
     if (call === undefined) {
       throw new ProblemError({
@@ -295,7 +303,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     }
     // call erases the selected endpoint failure before run converts it to ProblemError.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-    return await run(call({ params: { id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
+    return await run(call({ params: { id: actor, thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
   return {
@@ -303,20 +311,23 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     metadata: () => run(api.runtime.metadata({})),
     providers: (options = {}) => run(api.models.providers({ query: catalogQuery(options) })),
     models: (options = {}) => run(api.models.models({ query: catalogQuery(options) })),
-    list: () => run(api.threads.list({})),
-    tree: (thread) => run(api.threads.tree({ params: { id: thread } })),
-    events: (thread, events = {}) =>
-      run(api.threads.events({ params: { id: thread }, query: eventsQuery(events) })),
+    actors: () => run(api.actors.actors({})),
+    ensureActor: (actor) => run(api.actors.ensureActor({ params: { id: actor } })),
+    actor: (actor) => run(api.actors.actor({ params: { id: actor } })),
+    list: (actor) => run(api.threads.list({ params: { id: actor } })),
+    tree: (actor, thread) => run(api.threads.tree({ params: { id: actor, thread } })),
+    events: (actor, thread, events = {}) =>
+      run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
     methods: () => run(api.methods.methods({})),
-    invoke: (thread, name, call) =>
+    invoke: (actor, thread, name, call) =>
       run(api.methods.invoke({
-        params: { id: thread, method: name, call: call.id },
+        params: { id: actor, thread, method: name, call: call.id },
         payload: call.input
       })),
-    methodState: (thread, name, call) =>
+    methodState: (actor, thread, name, call) =>
       run(api.methods.methodState({
-        params: { id: thread, method: name, call }
+        params: { id: actor, thread, method: name, call }
       })) as never,
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
@@ -325,8 +336,8 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
     // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/log/events.ts,
     // agentKeys).
-    resume: async (thread, turn) => {
-      const views = await turnsOf(thread, turn)
+    resume: async (actor, thread, turn) => {
+      const views = await turnsOf(actor, thread, turn)
       const view = views.find((candidate) => candidate.turn === turn)
       if (view === undefined) {
         throw new ProblemError({
@@ -342,7 +353,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       }
       // The next execution epoch, stamped the way the library stamps it
       // (packages/agent/src/runtime/resume.ts, resumeTurn).
-      return append(thread, {
+      return append(actor, thread, {
         type: "TurnResumed",
         turn,
         failedEpoch: view.epoch,
@@ -353,17 +364,18 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     // The derivation keys the projections group by name, and the name a caller passes is one of
     // those keys, so the lookup cannot miss. The types are recovered on the way out because an
     // index into a mapped record of endpoint methods is not one the compiler can narrow per call.
-    projection: (thread, name, query) =>
+    projection: (actor, thread, name, query) =>
       // ProjectionCall erases the selected endpoint failure before run converts it to ProblemError.
       // @effect-diagnostics-next-line anyUnknownInErrorContext:off
       run((api.projections as Record<string, ProjectionCall>)[name]!({
-        params: { id: thread },
+        params: { id: actor, thread },
         query: query ?? {}
       })) as never,
-    follow: (thread, follow) =>
+    follow: (actor, thread, follow) =>
       stream({
         ...follow,
         baseUrl,
+        actor,
         thread,
         ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
       })
@@ -388,7 +400,7 @@ export const makeControlClient = (options: ControlClientOptions = {}): ControlCl
   const api = Effect.runSync(derived as Effect.Effect<DerivedControlApi>)
   return {
     baseUrl,
-    actors: () => run(api.actors.actors({})),
-    pushActor: (artifact) => run(api.actors.pushActor({ payload: artifact }))
+    definitions: () => run(api.definitions.definitions({})),
+    pushDefinition: (artifact) => run(api.definitions.pushDefinition({ payload: artifact }))
   }
 }

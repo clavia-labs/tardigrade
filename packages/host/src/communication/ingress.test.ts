@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
-import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { ActorUnavailable, ingressFrom, type IngressActor } from "./ingress"
@@ -16,7 +16,7 @@ const message = (id: string): MessageReceived => ({
 const delivery = (actor: string, thread: string, id: string): ActorEnvelope<MessageReceived> => ({
   link: {
     source: { provider: "example" },
-    target: { actor, thread }
+    target: { actor, instance: "main", thread }
   },
   event: message(id)
 })
@@ -48,7 +48,7 @@ describe("ingressFrom", () => {
 
   test("an empty batch commits nothing", async () => {
     let resolutions = 0
-    const ingress = ingressFrom(mappedDirectory<ActorId, IngressActor>(() => {
+    const ingress = ingressFrom(mappedDirectory<ThreadAddress, IngressActor>(() => {
       resolutions += 1
       return undefined
     }))
@@ -60,7 +60,7 @@ describe("ingressFrom", () => {
 
   test("an unavailable actor refuses the complete batch before any commit", async () => {
     const committed: string[] = []
-    const ingress = ingressFrom(mappedDirectory<ActorId, IngressActor>((id) =>
+    const ingress = ingressFrom(mappedDirectory<ThreadAddress, IngressActor>((id) =>
       id.actor === "support"
         ? { commit: (delivery) => Effect.sync(() => committed.push(delivery.event.id)), schedule: Effect.void }
         : undefined

@@ -110,7 +110,7 @@ const line = (parts: ReadonlyArray<string | undefined>, chars: number): string =
   truncate(parts.filter((part) => part !== undefined && part !== "").join(" · "), chars)
 
 // summaryOf is the one line a row shows for an event: what a reader needs to decide whether to open
-// it. The known alphabet is the agent lane's and the code lane's (packages/agent/src/log/events.ts,
+// it. The known alphabet is the agent thread's and the code thread's (packages/agent/src/log/events.ts,
 // packages/code/src/execution/events.ts); a type from neither renders its field names, so an event the app has
 // never seen still says what it carries rather than nothing.
 /** @internal */
@@ -206,14 +206,14 @@ export interface Field {
   readonly kind: "text" | "code" | "json"
 }
 
-// STAMP is what the host writes onto every event it records, whatever lane minted it: the turn the
+// STAMP is what the host writes onto every event it records, whatever thread minted it: the turn the
 // event belongs to, the trace it belongs to, and the instant. It closes each order, between the
 // event's own ids and the payload they name.
 const STAMP: ReadonlyArray<string> = ["turn", "traceparent", "at"]
 
 // The field order per event type: what names the event, then when it happened, then what it
 // carries. A reader opens a row to find an id to follow or a payload to read, and those are the two
-// ends of the list. The orders name the lanes' own fields (packages/core/src/communication/message.ts,
+// ends of the list. The orders name the threads' own fields (packages/core/src/communication/message.ts,
 // packages/agent/src/log/events.ts, packages/code/src/execution/events.ts). A field an order does not name still
 // renders, after the named ones and in the event's own key order, so a type this table is behind on
 // hides nothing; a type it lists not at all falls back to that order entirely.
@@ -242,7 +242,7 @@ const ORDER: Readonly<Record<string, ReadonlyArray<string>>> = {
   CompactionCompleted: ["keepFrom", "contextWindowTokens", "fireTokens", "keepTokens", ...STAMP, "summary"]
 }
 
-// TIME_FIELDS are the fields whose number is an instant rather than a quantity. The lanes stamp
+// TIME_FIELDS are the fields whose number is an instant rather than a quantity. The threads stamp
 // every event with `at` and nothing else carries a clock.
 /** @internal */
 export const TIME_FIELDS: ReadonlyArray<string> = ["at"]
@@ -357,7 +357,7 @@ const endsOf = (rows: ReadonlyArray<EventRow>) => {
 // remaining row carrying the span it opened. A `CodeDispatched` spans to its `CodeSettled`, a
 // `PackageCalled` to its `PackageReturned`, and a `TurnCompleted` back to the `MessageReceived`
 // that opened its turn (packages/code/src/execution/events.ts, packages/agent/src/log/events.ts). The three ids
-// are the lanes' own correlation keys, so nothing here parses an id or guesses a pairing, and a
+// are the threads' own correlation keys, so nothing here parses an id or guesses a pairing, and a
 // span whose other half is outside the rows the screen holds simply has no duration.
 export const momentsOf = (rows: ReadonlyArray<EventRow>): ReadonlyArray<Moment> => {
   const { calls, execs, turns } = endsOf(rows)

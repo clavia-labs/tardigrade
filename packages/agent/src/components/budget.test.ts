@@ -6,7 +6,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { Self, settleActor } from "@clavia/tardigrade-core/reconciliation"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { actorIdOf, parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { threadAddressOf, parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { Infer } from "../runtime/turn"
 import { NativeOutputSupport } from "../inference/reactor"
@@ -36,7 +36,7 @@ const rest = Layer.mergeAll(
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
-  Layer.succeed(Self, parseActorId("test-agent")),
+  Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
   Layer.succeed(NativeOutputSupport, { withTools: true }),
   Layer.succeed(Infer, { react: () => Effect.die("the budget guard never asks the model") })
 )
@@ -126,7 +126,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
       memory,
       KeyValueStore.layerMemory,
       Layer.succeed(Router, { send: () => Effect.void }),
-      Layer.succeed(Self, parseActorId("test-agent")),
+      Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
       Layer.succeed(NativeOutputSupport, { withTools: true }),
       Layer.succeed(Infer, { react: () => Effect.succeed({ kind: "complete" as const, output: "done" }) })
     )
@@ -272,8 +272,8 @@ describe("the escalation lifecycle", () => {
   })
 
   test("the authority option exposes the request tool through an accepted actor call", () => {
-    const source = actorIdOf("agent", "parent")
-    const target = actorIdOf("agent", "child")
+    const source = threadAddressOf("agent", "main", "parent")
+    const target = threadAddressOf("agent", "main", "child")
     const head: Event = {
       type: "MessageReceived",
       id: "m1",

@@ -4,13 +4,13 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { createHost } from "./host"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 
 // The host against toy reactors, package-pure: no app vocabulary.
-// A "player" lane answers every unanswered ping on its log with a pong
+// A "player" thread answers every unanswered ping on its log with a pong
 // delivered to the sender, up to a rally length, so two players and one
 // serve exercise delivery, dirtying, and the drive loop's fairness.
 
@@ -52,12 +52,12 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           Effect.gen(function* () {
             const router = yield* Router
             if (input.n < RALLY) {
-              yield* router.send(envelopeOf(linkOf(parseActorId(`mem:${me}`), parseActorId(opponent)), {
+              yield* router.send(envelopeOf(linkOf(parseThreadAddress(`mem:main:${me}`), parseThreadAddress(opponent)), {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
-              } as Event, me === "a" ? { parent: parseActorId("mem:a"), depth: 1 } : undefined))
+              } as Event, me === "a" ? { parent: parseThreadAddress("mem:main:a"), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -67,16 +67,16 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
 
 const rally = () => {
   const host = createHost<Router>({
-    actorFor: (lane) =>
-      lane === "a" ? { reactors: [playerReactor("a", "mem:b")], keyOf: rallyKeys }
-      : lane === "b" ? { reactors: [playerReactor("b", "mem:a")], keyOf: rallyKeys }
+    actorFor: (thread) =>
+      thread === "a" ? { reactors: [playerReactor("a", "mem:main:b")], keyOf: rallyKeys }
+      : thread === "b" ? { reactors: [playerReactor("b", "mem:main:a")], keyOf: rallyKeys }
       : undefined
   })
   return host
 }
 
 describe("the host", () => {
-  test("settles distinct lanes up to the configured capacity", async () => {
+  test("settles distinct threads up to the configured capacity", async () => {
     const release = signal()
     const twoStarted = signal()
     let active = 0
@@ -106,11 +106,11 @@ describe("the host", () => {
     }
     const host = createHost({
       actorFor: () => actor,
-      driver: { maxConcurrentLanes: 2 },
+      driver: { maxConcurrentThreads: 2 },
       keyOf: actor.keyOf
     })
-    for (const lane of ["a", "b", "c"]) {
-      host.commitRoot(`mem:${lane}`, { type: "MessageReceived", id: lane, at: 0 } as Event)
+    for (const thread of ["a", "b", "c"]) {
+      host.commitRoot(`mem:main:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
     const driving = host.drive()
@@ -122,13 +122,13 @@ describe("the host", () => {
 
     expect(peak).toBe(2)
     expect(host.resting()).toBe(true)
-    expect(["a", "b", "c"].map((lane) => host.read(lane).some((event) => event.type === "Done")))
+    expect(["a", "b", "c"].map((thread) => host.read(thread).some((event) => event.type === "Done")))
       .toEqual([true, true, true])
   })
 
   test("one serve drives the whole rally to quiescence", async () => {
     const host = rally()
-    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.resting()).toBe(true)
     const total =
@@ -139,17 +139,17 @@ describe("the host", () => {
 
   test("redelivery is absorbed: same id, no second answer", async () => {
     const host = rally()
-    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     const before = host.read("a").length
-    host.commitRoot("mem:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.read("a").length).toBe(before)
   })
 
-  test("a sink lane takes deliveries and owes nothing", async () => {
+  test("a sink thread takes deliveries and owes nothing", async () => {
     const host = rally()
-    host.commitRoot("mem:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
+    host.commitRoot("mem:main:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
     expect(host.read("reg").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(host.resting()).toBe(true)
@@ -157,8 +157,8 @@ describe("the host", () => {
 
   test("a child is created with its first delivery and keeps that lineage", () => {
     const host = createHost({ actorFor: () => undefined })
-    const parent = parseActorId("mem:parent")
-    const target = parseActorId("mem:child")
+    const parent = parseThreadAddress("mem:main:parent")
+    const target = parseThreadAddress("mem:main:child")
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
@@ -171,16 +171,16 @@ describe("the host", () => {
       { ...first.event, link: first.link }
     ])
     expect(() => host.commit(envelopeOf(
-      linkOf(parseActorId("mem:other"), target),
+      linkOf(parseThreadAddress("mem:main:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
-      { parent: parseActorId("mem:other"), depth: 1 }
+      { parent: parseThreadAddress("mem:main:other"), depth: 1 }
     ))).toThrow("already has different lineage")
   })
 
   test("an initial actor delivery must carry child lineage", () => {
     const host = createHost({ actorFor: () => undefined })
     expect(() => host.commit(envelopeOf(
-      linkOf(parseActorId("mem:parent"), parseActorId("mem:child")),
+      linkOf(parseThreadAddress("mem:main:parent"), parseThreadAddress("mem:main:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
     ))).toThrow("must carry lineage")
     expect(host.read("child")).toEqual([])
@@ -188,15 +188,15 @@ describe("the host", () => {
 })
 
 describe("the router membrane", () => {
-  test("an unkeyed cross-lane event refuses loudly; a keyed one travels", () => {
+  test("an unkeyed cross-thread event refuses loudly; a keyed one travels", () => {
     const host = createHost<never>({
       actorFor: () => undefined,
       keyOf: (e) => (e.type === "MessageReceived" || e.type === "Keyed" ? `k:${String((e as { id?: unknown }).id)}` : undefined)
     })
-    expect(() => host.commitRoot("mem:lane", { type: "Rogue", at: 1 } as never)).toThrow(
-      'unkeyed cross-lane event "Rogue"'
+    expect(() => host.commitRoot("mem:main:thread", { type: "Rogue", at: 1 } as never)).toThrow(
+      'unkeyed cross-thread event "Rogue"'
     )
-    host.commitRoot("mem:lane", { type: "Keyed", id: "k1", at: 1 } as never)
-    expect(host.read("lane").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
+    host.commitRoot("mem:main:thread", { type: "Keyed", id: "k1", at: 1 } as never)
+    expect(host.read("thread").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
   })
 })

@@ -163,18 +163,18 @@ const put = (base: string, path: string, body: unknown) =>
 // agentProjections).
 const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
   const views = (await (await fetch(
-    `${base}/v1/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
+    `${base}/v1/actors/main/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
   )).json()) as ReadonlyArray<TurnView>
   return views[0]
 }
 
 const birth = async (base: string, id: string, message: { id: string; text: string }) => {
-  const response = await post(base, `/v1/threads/${id}/events`, {
+  const response = await post(base, `/v1/actors/main/threads/${id}/events`, {
     type: "MessageReceived",
     ...message
   })
   expect(response.status).toBe(202)
-  expect(await response.json()).toEqual({ thread: id })
+  expect(await response.json()).toEqual({ actor: "main", thread: id })
   return until(`turn ${message.id} of ${id}`, async () => {
     const view = await turnOf(base, id, message.id)
     return view === undefined || view.status === "pending" ? undefined : view
@@ -184,17 +184,18 @@ const birth = async (base: string, id: string, message: { id: string; text: stri
 const callMessage = async (base: string, thread: string, call: string, text: string) => {
   const response = await put(
     base,
-    `/v1/threads/${thread}/methods/message/calls/${call}`,
+    `/v1/actors/main/threads/${thread}/methods/message/calls/${call}`,
     { text }
   )
   expect(response.status).toBe(202)
   expect(await response.json()).toEqual({
+    actor: "main",
     thread,
     method: "message",
     call
   })
   return until(`method call ${call} of ${thread}`, async () => {
-    const state = await get(base, `/v1/threads/${thread}/methods/message/calls/${call}`)
+    const state = await get(base, `/v1/actors/main/threads/${thread}/methods/message/calls/${call}`)
     const body = await state.json() as Record<string, unknown>
     return body["status"] === "pending" ? undefined : body
   })
@@ -313,17 +314,17 @@ describe("actor methods", () => {
 
   test("an invocation births a thread and exposes its completed state", async () => {
     const result = await serving(async (base) => {
-      const response = await put(base, "/v1/threads/alpha/methods/message/calls/m1", {
+      const response = await put(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1", {
         text: "hello",
         model: { provider: "openai", model_id: "gpt-test" }
       })
       expect(response.status).toBe(202)
       const state = await until("method call m1 of alpha", async () => {
-        const current = await get(base, "/v1/threads/alpha/methods/message/calls/m1")
+        const current = await get(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1")
         const body = await current.json() as Record<string, unknown>
         return body["status"] === "pending" ? undefined : body
       })
-      const events = await (await get(base, "/v1/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const events = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
       return { state, events }
     })
     expect(result.state).toEqual({ status: "completed", output: "ok: hello" })
@@ -335,16 +336,16 @@ describe("actor methods", () => {
   test("putting the same call URL is absorbed", async () => {
     const read = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
-      const eventsAt = async () => await (await get(base, "/v1/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const eventsAt = async () => await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
       const before = await eventsAt()
-      const repeated = await put(base, "/v1/threads/alpha/methods/message/calls/m1", { text: "different" })
+      const repeated = await put(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1", { text: "different" })
       const after = await eventsAt()
-      const state = await get(base, "/v1/threads/alpha/methods/message/calls/m1")
+      const state = await get(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1")
       return { repeated: { status: repeated.status, body: await repeated.json() }, before, after, state: await state.json() }
     })
     expect(read.repeated).toEqual({
       status: 202,
-      body: { thread: "alpha", method: "message", call: "m1" }
+      body: { actor: "main", thread: "alpha", method: "message", call: "m1" }
     })
     expect(read.after).toEqual(read.before)
     expect(read.state).toEqual({ status: "completed", output: "ok: hello" })
@@ -352,7 +353,7 @@ describe("actor methods", () => {
 
   test("an invalid input is refused before it reaches the log", async () => {
     const refusal = await serving(async (base) => {
-      const response = await put(base, "/v1/threads/alpha/methods/message/calls/m1", {})
+      const response = await put(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1", {})
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(400)
@@ -363,7 +364,7 @@ describe("actor methods", () => {
 
   test("an unknown method names the methods the actor declares", async () => {
     const refusal = await serving(async (base) => {
-      const response = await put(base, "/v1/threads/alpha/methods/missing/calls/m1", {})
+      const response = await put(base, "/v1/actors/main/threads/alpha/methods/missing/calls/m1", {})
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(404)
@@ -374,7 +375,7 @@ describe("actor methods", () => {
   test("a call the method cannot derive is its own 404", async () => {
     const refusal = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
-      const response = await get(base, "/v1/threads/alpha/methods/message/calls/missing")
+      const response = await get(base, "/v1/actors/main/threads/alpha/methods/message/calls/missing")
       return { status: response.status, body: await response.json() as Record<string, unknown> }
     })
     expect(refusal.status).toBe(404)
@@ -392,8 +393,8 @@ describe("appending", () => {
   // other fields mean is the actor's knowledge (contract.ts, Append).
   test("a body with no type is refused", async () => {
     const problems = await serving(async (base) => {
-      const noType = await post(base, "/v1/threads/alpha/events", { id: "m1", text: "hello" })
-      const emptyType = await post(base, "/v1/threads/alpha/events", { type: "" })
+      const noType = await post(base, "/v1/actors/main/threads/alpha/events", { id: "m1", text: "hello" })
+      const emptyType = await post(base, "/v1/actors/main/threads/alpha/events", { type: "" })
       return [
         { status: noType.status, type: noType.headers.get("content-type"), body: await noType.json() },
         { status: emptyType.status, type: emptyType.headers.get("content-type"), body: await emptyType.json() }
@@ -413,16 +414,16 @@ describe("appending", () => {
   test("a redelivered message id answers the same and writes nothing", async () => {
     const counts = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = ((await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
-      const again = await post(base, "/v1/threads/alpha/events", {
+      const before = ((await (await fetch(`${base}/v1/actors/main/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const again = await post(base, "/v1/actors/main/threads/alpha/events", {
         type: "MessageReceived",
         id: "m1",
         text: "hello"
       })
       expect(again.status).toBe(202)
-      expect(await again.json()).toEqual({ thread: "alpha" })
+      expect(await again.json()).toEqual({ actor: "main", thread: "alpha" })
       await sleep(50)
-      const after = ((await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
+      const after = ((await (await fetch(`${base}/v1/actors/main/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>).length
       return [before, after]
     })
     expect(counts[1]).toBe(counts[0]!)
@@ -454,12 +455,12 @@ describe("actors", () => {
         const port = address._tag === "TcpAddress" ? address.port : 0
         const base = `http://127.0.0.1:${port}`
         return yield* Effect.promise(async () => {
-          const pushed = await put(base, "/v1/actors", {
+          const pushed = await put(base, "/v1/definitions", {
             manifest: { schema: 3, name: "reviewer", module: "actor.mjs", digest },
             module
           })
           const summary = await pushed.json()
-          const actors = await (await get(base, "/v1/actors")).json()
+          const actors = await (await get(base, "/v1/definitions")).json()
           return { pushStatus: pushed.status, summary, actors }
         })
       }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)
@@ -477,7 +478,7 @@ describe("the listing", () => {
   test("a thread that has settled lists as settled", async () => {
     const listed = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      return (await (await fetch(`${base}/v1/threads`)).json()) as ReadonlyArray<ThreadSummary>
+      return (await (await fetch(`${base}/v1/actors/main/threads`)).json()) as ReadonlyArray<ThreadSummary>
     })
     expect(listed).toHaveLength(1)
     expect(listed[0]).toMatchObject({ id: "alpha", status: "settled", depth: 0 })
@@ -491,13 +492,13 @@ describe("events", () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<EventRow>
-      const all = await json("/v1/threads/alpha/events")
+      const all = await json("/v1/actors/main/threads/alpha/events")
       return {
         all,
-        page: await json("/v1/threads/alpha/events?after=1&limit=2"),
-        completed: await json("/v1/threads/alpha/events?types=TurnCompleted"),
-        both: await json(`/v1/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
-        empty: await json("/v1/threads/alpha/events?types=NothingLikeThis")
+        page: await json("/v1/actors/main/threads/alpha/events?after=1&limit=2"),
+        completed: await json("/v1/actors/main/threads/alpha/events?types=TurnCompleted"),
+        both: await json(`/v1/actors/main/threads/alpha/events?after=1&types=MessageReceived,TurnCompleted`),
+        empty: await json("/v1/actors/main/threads/alpha/events?types=NothingLikeThis")
       }
     })
     expect(read.all.map((row) => row.seq)).toEqual(read.all.map((_, i) => i + 1))
@@ -516,7 +517,8 @@ describe("events", () => {
   test("a log that never existed is the only 404", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const missing = await fetch(`${base}/v1/threads/ghost/events`)
+      await put(base, "/v1/actors/main", {})
+      const missing = await fetch(`${base}/v1/actors/main/threads/ghost/events`)
       return { status: missing.status, type: missing.headers.get("content-type"), body: await missing.json() }
     })
     expect(answers.status).toBe(404)
@@ -543,9 +545,9 @@ describe("the event stream", () => {
   test("a reconnect replays from Last-Event-ID and then runs live, once each", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const before = (await (await fetch(`${base}/v1/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
+      const before = (await (await fetch(`${base}/v1/actors/main/threads/alpha/events`)).json()) as ReadonlyArray<EventRow>
       const abort = new AbortController()
-      const response = await fetch(`${base}/v1/threads/alpha/events/stream?after=0`, {
+      const response = await fetch(`${base}/v1/actors/main/threads/alpha/events/stream?after=0`, {
         // The header wins over the query, which is the whole of what a resuming EventSource can
         // state: it replays the URL it was opened with and carries the id in the header.
         headers: { "last-event-id": "2" },
@@ -570,7 +572,7 @@ describe("the event stream", () => {
       expect(openStreams()).toBe(1)
 
       // Then a message delivered while the stream is open arrives on it.
-      await post(base, "/v1/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
+      await post(base, "/v1/actors/main/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
       await until("the live frames", async () => (framesOf(text).length > replayed.length ? true : undefined))
       const live = framesOf(text)
 
@@ -602,7 +604,7 @@ describe("projections", () => {
   test("a declared projection serves what the actor computes", async () => {
     const read = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/threads/alpha/projections/turns`)
+      const response = await fetch(`${base}/v1/actors/main/threads/alpha/projections/turns`)
       return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
     })
     expect(read.status).toBe(200)
@@ -621,7 +623,7 @@ describe("projections", () => {
         }
       }
       return {
-        ghost: await read("/v1/threads/alpha/projections/facts")
+        ghost: await read("/v1/actors/main/threads/alpha/projections/facts")
       }
     })
     expect(answers.ghost.status).toBe(404)
@@ -638,7 +640,7 @@ describe("projections", () => {
   test("the event log keeps its platform route", async () => {
     const answers = await serving(async (base) => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      const events = await fetch(`${base}/v1/threads/alpha/events`)
+      const events = await fetch(`${base}/v1/actors/main/threads/alpha/events`)
       return { status: events.status, type: events.headers.get("content-type") }
     })
     expect(answers.status).toBe(200)
@@ -650,8 +652,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        now: await json("/v1/threads/alpha/projections/turns"),
-        atTwo: await json("/v1/threads/alpha/projections/turns?at=2")
+        now: await json("/v1/actors/main/threads/alpha/projections/turns"),
+        atTwo: await json("/v1/actors/main/threads/alpha/projections/turns?at=2")
       }
     })
     expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
@@ -666,8 +668,8 @@ describe("projections", () => {
       await birth(base, "alpha", { id: "m1", text: "hello" })
       const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
       return {
-        one: await json("/v1/threads/alpha/projections/turns?turn=m1"),
-        ghost: await json("/v1/threads/alpha/projections/turns?turn=m9")
+        one: await json("/v1/actors/main/threads/alpha/projections/turns?turn=m1"),
+        ghost: await json("/v1/actors/main/threads/alpha/projections/turns?turn=m9")
       }
     })
     expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
@@ -681,16 +683,16 @@ describe("the tree", () => {
   test("a spawned child hangs under the thread whose code briefed it", async () => {
     const read = await serving(async (base) => {
       await birth(base, "root", { id: "m1", text: "spawn call-1" })
-      // The root's turn can complete while the child's lane is still settling, so the tree read
-      // waits for the driver to rest; resting means every lane's owed work is done.
+      // The root's turn can complete while the child's thread is still settling, so the tree read
+      // waits for the driver to rest; resting means every thread's owed work is done.
       await until("the driver rests", async () => {
         const health = (await (await fetch(`${base}/healthz`)).json()) as { status: string }
         return health.status === "resting" ? health : undefined
       })
       return {
-        tree: (await (await fetch(`${base}/v1/threads/root/tree`)).json()) as ThreadNode,
-        listed: (await (await fetch(`${base}/v1/threads`)).json()) as ReadonlyArray<ThreadSummary>,
-        ghost: (await fetch(`${base}/v1/threads/ghost/tree`)).status
+        tree: (await (await fetch(`${base}/v1/actors/main/threads/root/tree`)).json()) as ThreadNode,
+        listed: (await (await fetch(`${base}/v1/actors/main/threads`)).json()) as ReadonlyArray<ThreadSummary>,
+        ghost: (await fetch(`${base}/v1/actors/main/threads/ghost/tree`)).status
       }
     })
     expect(read.tree.id).toBe("root")

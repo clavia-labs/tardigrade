@@ -7,7 +7,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 import { layerConfig, readConfig } from "./config"
 import { DOCS_PATH, OPENAPI_PATH } from "@clavia/tardigrade-client/contract"
 import { ServerApi } from "./api"
-import { Threads } from "./host"
+import { Threads, type ActorThreads } from "./host"
 import { layerModelCatalogUnavailable } from "./catalog"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import { layerGaugeResting } from "./driver-gauge"
@@ -20,10 +20,13 @@ import { layerGaugeResting } from "./driver-gauge"
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   sqlite: ":memory:",
+  instances: Effect.succeed([]),
+  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), list: Effect.succeed([]), settled: Effect.void }),
+  instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
-  list: Effect.succeed([]),
-  settled: Effect.void
+  list: () => Effect.succeed([]),
+  settled: () => Effect.void
 })
 
 const serving = <A, E>(
@@ -59,17 +62,20 @@ setDefaultTimeout(BOOT_MS)
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/providers"],
   ["get", "/v1/models"],
+  ["get", "/v1/definitions"],
+  ["put", "/v1/definitions"],
   ["get", "/v1/actors"],
-  ["put", "/v1/actors"],
+  ["get", "/v1/actors/{id}"],
+  ["put", "/v1/actors/{id}"],
   ["get", "/v1/metadata"],
   ["get", "/v1/methods"],
-  ["post", "/v1/threads/{id}/events"],
-  ["put", "/v1/threads/{id}/methods/{method}/calls/{call}"],
-  ["get", "/v1/threads"],
-  ["get", "/v1/threads/{id}/events"],
-  ["get", "/v1/threads/{id}/methods/{method}/calls/{call}"],
-  ["get", "/v1/threads/{id}/projections/turns"],
-  ["get", "/v1/threads/{id}/tree"],
+  ["post", "/v1/actors/{id}/threads/{thread}/events"],
+  ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
+  ["get", "/v1/actors/{id}/threads"],
+  ["get", "/v1/actors/{id}/threads/{thread}/events"],
+  ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
+  ["get", "/v1/actors/{id}/threads/{thread}/projections/turns"],
+  ["get", "/v1/actors/{id}/threads/{thread}/tree"],
   ["get", "/healthz"]
 ]
 
@@ -90,7 +96,7 @@ describe("the OpenAPI document", () => {
         readonly content?: Record<string, unknown>
       }> }>>
     }
-    const responses = spec.paths["/v1/threads/{id}/events"]!["get"]!.responses
+    const responses = spec.paths["/v1/actors/{id}/threads/{thread}/events"]!["get"]!.responses
     expect(Object.keys(responses).sort()).toEqual(["200", "400", "404"])
     expect(Object.keys(responses["404"]!.content!)).toEqual([PROBLEM_CONTENT_TYPE])
   })
@@ -123,7 +129,7 @@ describe("the OpenAPI document", () => {
         const document = yield* client.get(OPENAPI_PATH)
         const page = yield* client.get(DOCS_PATH)
         const catalog = yield* client.get("/v1/models")
-        const gated = yield* client.get("/v1/threads")
+        const gated = yield* client.get("/v1/actors/main/threads")
         return [document.status, page.status, catalog.status, gated.status]
       }))
     expect(statuses).toEqual([200, 200, 503, 401])
@@ -136,9 +142,9 @@ describe("problem documents", () => {
   test("carry type, title, status, and detail", async () => {
     const failures = await serving({}, (client) =>
       Effect.gen(function*() {
-        const unknownThread = yield* client.get("/v1/threads/ghost/events")
-        const unknownProjection = yield* client.get("/v1/threads/ghost/projections/facts")
-        const unknownTurn = yield* client.get("/v1/threads/ghost/projections/turns?at=1")
+        const unknownThread = yield* client.get("/v1/actors/main/threads/ghost/events")
+        const unknownProjection = yield* client.get("/v1/actors/main/threads/ghost/projections/facts")
+        const unknownTurn = yield* client.get("/v1/actors/main/threads/ghost/projections/turns?at=1")
         return [
           { status: unknownThread.status, type: unknownThread.headers["content-type"], body: yield* unknownThread.json },
           {
@@ -160,9 +166,9 @@ describe("problem documents", () => {
       expect(String(body["detail"]).length).toBeGreaterThan(0)
     }
     expect(failures.map((failure) => failure.status)).toEqual([404, 404, 404])
-    // An endpoint declaring two failures encodes the one the value names, so the 404 does not
-    // render as the 400 beside it (contract.ts, problemKind).
-    expect(failures[2]!.body).toMatchObject({ title: "Unknown Thread" })
+    // An endpoint declaring several failures encodes the one the value names, so this absent
+    // actor does not render as an absent thread or an invalid request (contract.ts, problemKind).
+    expect(failures[2]!.body).toMatchObject({ title: "Unknown Actor" })
   })
 
   // A Schema in the declaration refusing input is a failure like any other, so it answers in the
@@ -173,14 +179,15 @@ describe("problem documents", () => {
       Effect.gen(function*() {
         const post = (path: string, body: unknown) =>
           client.post(path, { body: HttpBody.jsonUnsafe(body) })
-        const repeated = yield* client.get("/v1/threads/ghost/projections/turns?at=1&at=2")
-        const notANumber = yield* client.get("/v1/threads/ghost/events?after=soon")
-        const negative = yield* client.get("/v1/threads/ghost/events?limit=-1")
-        const missingField = yield* post("/v1/threads/ghost/events", { id: "m1" })
-        const emptyType = yield* post("/v1/threads/ghost/events", { type: "", id: "m1" })
-        const notAnObject = yield* post("/v1/threads/ghost/events", "hello")
+        const repeated = yield* client.get("/v1/actors/main/threads/ghost/projections/turns?at=1&at=2")
+        const notANumber = yield* client.get("/v1/actors/main/threads/ghost/events?after=soon")
+        const negative = yield* client.get("/v1/actors/main/threads/ghost/events?limit=-1")
+        const missingField = yield* post("/v1/actors/main/threads/ghost/events", { id: "m1" })
+        const emptyType = yield* post("/v1/actors/main/threads/ghost/events", { type: "", id: "m1" })
+        const notAnObject = yield* post("/v1/actors/main/threads/ghost/events", "hello")
+        const invalidActor = yield* client.get("/v1/actors/tenant%3Awest/threads/ghost/events")
         return yield* Effect.forEach(
-          [repeated, notANumber, negative, missingField, emptyType, notAnObject],
+          [repeated, notANumber, negative, missingField, emptyType, notAnObject, invalidActor],
           (response) =>
             Effect.map(response.json, (body) => ({
               status: response.status,
@@ -206,6 +213,7 @@ describe("problem documents", () => {
     expect(details[2]).toContain("`limit` is not a value it accepts")
     expect(details[3]).toBe("The request body is not what this endpoint accepts. `type` is missing.")
     expect(details[4]).toContain("`type` is not a value it accepts")
+    expect(details[6]).toContain("`id` is not a value it accepts")
     // A body that is not an object at all names no field, so the sentence stops at the part.
     expect(details[5]).toBe("The request body is not what this endpoint accepts.")
   })

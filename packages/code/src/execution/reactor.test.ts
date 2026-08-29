@@ -386,7 +386,7 @@ describe("the pointer's note", () => {
 
 describe("a package's requirements ride its type", () => {
   // A package that reaches for a service names it in its type, and the reactor that runs the
-  // package declares the same requirement, so the environment that drives the lane must provide
+  // package declares the same requirement, so the environment that drives the thread must provide
   // it. The funnel is what makes this true at run time: every method runs under the attempt's own
   // context (execute.ts, executeRecorded).
   class Ticker extends Context.Service<Ticker, string>()("code/test/Ticker") {}

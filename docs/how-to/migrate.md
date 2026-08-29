@@ -120,10 +120,10 @@ Use `createBunHost().seed()` for imported history. `seed` appends a complete bat
 ```ts
 import { createBunHost } from "tardie/bun/host"
 import type { Event } from "tardie/core/event"
-import { laneOf } from "tardie/server/host"
+import { threadOf } from "tardie/server/host"
 
 const host = await createBunHost({
-  log: ".tardigrade/imported.sqlite",
+  database: ".tardigrade/imported.sqlite",
   actorFor: () => undefined
 })
 
@@ -133,7 +133,7 @@ const events: Event[] = [
   { type: "TurnCompleted", turn, output: "The deployment changed.", at: 1_700_000_001_000 }
 ]
 
-await host.seed(laneOf("legacy-conversation-42"), events)
+await host.seed(threadOf("legacy-conversation-42"), events)
 await host.close()
 ```
 

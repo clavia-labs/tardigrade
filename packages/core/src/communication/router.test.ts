@@ -2,21 +2,21 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "../log/event"
 import { mappedDirectory } from "./directory"
-import type { ActorId, ProviderEndpoint } from "./endpoint"
+import type { ThreadAddress, ProviderEndpoint } from "./endpoint"
 import { envelopeOf, isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type ProviderEnvelope } from "./envelope"
 import { linkOf } from "./link"
 import type { MessageReceived } from "./message"
 import { directoryRoute, sendThrough } from "./router"
 import type { Transport } from "./transport"
 
-const source: ActorId = { actor: "agent", thread: "root" }
-const localTarget: ActorId = { actor: "agent", thread: "child" }
+const source: ThreadAddress = { actor: "agent", instance: "main", thread: "root" }
+const localTarget: ThreadAddress = { actor: "agent", instance: "main", thread: "child" }
 const providerTarget: ProviderEndpoint = { provider: "slack", channel: "C1" }
 const message = { type: "MessageReceived", id: "m1", text: "hello", at: 1 } as Event
 
 interface LocalDestination {
   readonly node: string
-  readonly actor: ActorId
+  readonly actor: ThreadAddress
 }
 
 describe("transport routing", () => {
@@ -33,7 +33,7 @@ describe("transport routing", () => {
     const routes = [
       directoryRoute(
         local,
-        mappedDirectory((id: ActorId): LocalDestination => ({ node: "node-a", actor: id })),
+        mappedDirectory((id: ThreadAddress): LocalDestination => ({ node: "node-a", actor: id })),
         isActorEnvelope,
         (envelope) => envelope.link.target
       ),
@@ -60,14 +60,14 @@ describe("transport routing", () => {
 
   test("overlapping routes refuse before either transport sends", async () => {
     let sent = 0
-    const transport = (name: string): Transport<ActorId, ActorEnvelope> => ({
+    const transport = (name: string): Transport<ThreadAddress, ActorEnvelope> => ({
       name,
       send: () => {
         sent += 1
         return Effect.void
       }
     })
-    const directory = mappedDirectory((id: ActorId) => id)
+    const directory = mappedDirectory((id: ThreadAddress) => id)
     const route = (name: string) => directoryRoute(transport(name), directory, isActorEnvelope, (envelope) => envelope.link.target)
     await expect(Effect.runPromise(sendThrough([
       route("local"),

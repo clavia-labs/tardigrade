@@ -13,7 +13,7 @@ import { turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool, type AgentView } from "../runtime/composition"
 import type { ToolSpec } from "../inference/request"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { formatActorId, isActorId, type ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { requestBudgetMethod } from "../actor/budget"
@@ -194,8 +194,8 @@ const requestBudgetTool: AgentTool = {
   }
 }
 
-const requestCallId = (child: ActorId, turn: string, request: string): string =>
-  `budget/${formatActorId(child)}/${turn}/${request}`
+const requestCallId = (child: ThreadAddress, turn: string, request: string): string =>
+  `budget/${formatThreadAddress(child)}/${turn}/${request}`
 
 const authorityFor = (
   log: ReadonlyArray<Event>,
@@ -206,17 +206,17 @@ const authorityFor = (
   if ("address" in authority) return authority
   const head = log.find((event) =>
     event.type === "MessageReceived" && String((event as { readonly id?: unknown }).id) === turn
-  ) as { readonly link?: Link<unknown, ActorId> } | undefined
-  return isActorId(head?.link?.source)
+  ) as { readonly link?: Link<unknown, ThreadAddress> } | undefined
+  return isThreadAddress(head?.link?.source)
     ? { address: head.link.source, methods: { requestBudget: requestBudgetMethod } }
     : undefined
 }
 
-const sourceFor = (log: ReadonlyArray<Event>, turn: string): ActorId | undefined => {
+const sourceFor = (log: ReadonlyArray<Event>, turn: string): ThreadAddress | undefined => {
   const head = log.find((event) =>
     event.type === "MessageReceived" && String((event as { readonly id?: unknown }).id) === turn
   ) as { readonly link?: Link<unknown, unknown> } | undefined
-  if (isActorId(head?.link?.target)) return head.link.target
+  if (isThreadAddress(head?.link?.target)) return head.link.target
   return threadCreatedOf(log)?.address
 }
 

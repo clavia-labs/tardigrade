@@ -7,10 +7,10 @@ import { boundaryEvent } from "../../communication/message"
 import { envelopeOf } from "../../communication/envelope"
 import { reverseLink, type Link } from "../../communication/link"
 import {
-  formatActorId,
-  isActorId,
+  formatThreadAddress,
+  isThreadAddress,
   isProviderEndpoint,
-  type ActorId,
+  type ThreadAddress,
   type ProviderEndpoint
 } from "../../communication/endpoint"
 import type { ActorMethodDeclaration, ActorMethods } from "./definition"
@@ -107,8 +107,8 @@ const delivered = (log: ReadonlyArray<Event>, response: ActorMethodResponse): bo
 const linkedCalls = (
   log: ReadonlyArray<Event>,
   methods: ActorMethods
-): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ActorId> }> => {
-  const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ActorId> }> = []
+): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> => {
+  const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> = []
   for (const event of log) {
     const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
     const invocation = typeof candidate.call === "object" && candidate.call !== null
@@ -116,14 +116,14 @@ const linkedCalls = (
       : undefined
     const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
     if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null) continue
-    if (!("source" in candidate.link) || !("target" in candidate.link) || !isActorId(candidate.link.target)) continue
+    if (!("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) continue
     for (const [name, method] of Object.entries(methods)) {
       if (invocation !== undefined && invocation.method !== name) continue
       const declaration = method as ActorMethodDeclaration
       const state = declaration.state(log, id)
       if (state === undefined || state.status === "pending") continue
       const response = responseOf(name, id, terminalOf(name, declaration, state))
-      if (!delivered(log, response)) calls.push({ response, link: candidate.link as Link<unknown, ActorId> })
+      if (!delivered(log, response)) calls.push({ response, link: candidate.link as Link<unknown, ThreadAddress> })
       break
     }
   }
@@ -147,16 +147,16 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
             round: 0,
             text: textOf(state),
             outcome: state.status,
-            from: formatActorId(self),
+            from: formatThreadAddress(self),
             ...(state.data === undefined ? {} : { data: state.data }),
             at
           })
           if (isProviderEndpoint(accepted.source)) {
             yield* router.send(envelopeOf(
-              reverseLink(accepted as Link<ProviderEndpoint, ActorId>),
+              reverseLink(accepted as Link<ProviderEndpoint, ThreadAddress>),
               message
             ))
-          } else if (isActorId(accepted.source)) {
+          } else if (isThreadAddress(accepted.source)) {
             const responseEvent: ResponseReceived = {
               type: "ResponseReceived",
               id: message.id,
@@ -166,11 +166,11 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
               ...(state.status === "completed" ? { output: state.output } : {}),
               ...(state.status === "failed" ? { error: state.error } : {}),
               ...(state.data === undefined ? {} : { data: state.data }),
-              from: formatActorId(self),
+              from: formatThreadAddress(self),
               at
             }
             yield* router.send(envelopeOf(
-              reverseLink(accepted as Link<ActorId, ActorId>),
+              reverseLink(accepted as Link<ThreadAddress, ThreadAddress>),
               responseEvent
             ))
           }

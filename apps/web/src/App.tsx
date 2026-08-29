@@ -573,10 +573,10 @@ const Observability = (): ReactElement => (
             <span className="observability-live"><span />Live</span>
           </div>
           <ol>
-            {observedEvents.map(([sequence, lane, event, detail]) => (
-              <li data-lane={lane} key={sequence}>
+            {observedEvents.map(([sequence, thread, event, detail]) => (
+              <li data-thread={thread} key={sequence}>
                 <span>{sequence}</span>
-                <em>{lane}</em>
+                <em>{thread}</em>
                 <strong>{event}</strong>
                 <code>{detail}</code>
               </li>

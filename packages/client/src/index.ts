@@ -3,6 +3,7 @@
 
 export {
   DEFAULT_BASE_URL,
+  DEFAULT_ACTOR_INSTANCE,
   makeControlClient,
   makeActorClient,
   SERVER_ERROR_DETAIL,
@@ -36,6 +37,7 @@ export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenE
 export type {
   Accepted,
   ActorArtifact,
+  ActorInstanceSummary,
   ActorMetadata,
   ActorSummary,
   Append,

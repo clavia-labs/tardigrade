@@ -44,9 +44,12 @@ describe("initActor", () => {
       name: "reviewer",
       main: "worker.ts",
       compatibility_date: "2026-08-24",
-      durable_objects: { bindings: [{ name: "ACTORS", class_name: "ActorHost" }] },
+      durable_objects: { bindings: [
+        { name: "ACTORS", class_name: "ActorDO" },
+        { name: "THREADS", class_name: "ThreadDO" }
+      ] },
       worker_loaders: [{ binding: "LOADER" }],
-      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }]
+      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
     })
     expect(manifest).not.toHaveProperty("d1_databases")
     expect(Object.keys(celldManifest).sort()).toEqual([
@@ -61,6 +64,7 @@ describe("initActor", () => {
     ])
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
+    expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_BACKGROUND_TASK_OWNER"]).toBe("request")
     expect(packageManifest).toEqual({ private: true, type: "module", dependencies: { tardie: "0.7.1-test" } })
     expect(built.manifest.name).toBe("reviewer")
   })

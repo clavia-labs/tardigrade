@@ -46,6 +46,7 @@ const globalEventSource: OpenEventSource = (url) => {
 
 export interface StreamOptions {
   readonly baseUrl: string
+  readonly actor: string
   readonly thread: string
   // Where the first connection starts. A reconnect ignores it: the source replays the same URL with
   // a Last-Event-ID header, and the server prefers that header, so a resume lands where the dropped
@@ -65,11 +66,12 @@ const trimSlash = (url: string): string => (url.endsWith("/") ? url.slice(0, -1)
 // (stream.test.ts, "the first connection carries after").
 export const streamUrl = (
   baseUrl: string,
+  actor: string,
   thread: string,
   after?: number
 ): string => {
   const suffix = after === undefined ? "" : `?after=${after}`
-  return `${trimSlash(baseUrl)}${V1_PREFIX}/threads/${encodeURIComponent(thread)}/events/stream${suffix}`
+  return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/${encodeURIComponent(thread)}/events/stream${suffix}`
 }
 
 // stream follows one thread's log and returns the unsubscribe. Reconnection belongs to the
@@ -83,7 +85,7 @@ export const streamUrl = (
 // an ordinary `events` poll as the fallback.
 export const stream = (options: StreamOptions): (() => void) => {
   const open = options.eventSource ?? globalEventSource
-  const source = open(streamUrl(options.baseUrl, options.thread, options.after))
+  const source = open(streamUrl(options.baseUrl, options.actor, options.thread, options.after))
   source.onmessage = (frame) => {
     const seq = Number(frame.lastEventId)
     if (!Number.isFinite(seq)) return

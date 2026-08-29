@@ -5,7 +5,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { Self, effect, settleActor } from "@clavia/tardigrade-core/reconciliation"
 import { actor, composeComponents } from "@clavia/tardigrade-core/actor"
 import {
@@ -57,7 +57,7 @@ const noRouter = Layer.mergeAll(
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
-  Layer.succeed(Self, parseActorId("test-agent")),
+  Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
   Layer.succeed(NativeOutputSupport, { withTools: true })
 )
 

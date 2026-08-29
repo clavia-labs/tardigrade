@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { parse } from "jsonc-parser"
 
 import {
+  CELLD_BACKGROUND_TASK_OWNER,
+  CELLD_BACKGROUND_TASK_OWNER_VAR,
   CELLD_OMITTED_KEYS,
   CELLD_SANDBOX_TRANSPORT,
   CELLD_SANDBOX_TRANSPORT_VAR,
@@ -34,6 +36,7 @@ describe("Celld configuration", () => {
       '{"models":{"default":{"provider":"openai","model_id":"gpt-5.2"},"allow":"*"}}'
     )
     expect((config["vars"] as Record<string, string>)[CELLD_SANDBOX_TRANSPORT_VAR]).toBe(CELLD_SANDBOX_TRANSPORT)
+    expect((config["vars"] as Record<string, string>)[CELLD_BACKGROUND_TASK_OWNER_VAR]).toBe(CELLD_BACKGROUND_TASK_OWNER)
   })
 
   test("updates shared config without replacing Celld settings", () => {

@@ -29,7 +29,7 @@ describe("host providers", () => {
         const router = yield* Router
         yield* router.send(envelopeOf(
           {
-            source: { actor: "support", thread: "incident" },
+            source: { actor: "support", instance: "main", thread: "incident" },
             target: { provider: "telegram-support", chat: "-100123", topic: 42 }
           },
           message
@@ -50,7 +50,7 @@ describe("host providers", () => {
         const router = yield* Router
         yield* router.send(envelopeOf(
           {
-            source: { actor: "support", thread: "incident" },
+            source: { actor: "support", instance: "main", thread: "incident" },
             target: { provider: "missing" }
           },
           message

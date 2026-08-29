@@ -7,7 +7,7 @@ import { send, settleActor, effect } from "@clavia/tardigrade-core/reconciliatio
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox/service"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { Self } from "@clavia/tardigrade-core/reconciliation"
 import { Infer, receive } from "./turn"
 import { modelRequest } from "../inference/request"
@@ -104,7 +104,7 @@ const noRouter = Layer.mergeAll(
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
-  Layer.succeed(Self, parseActorId("test-agent")),
+  Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
   Layer.succeed(NativeOutputSupport, { withTools: true })
 )
 

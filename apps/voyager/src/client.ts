@@ -1,4 +1,4 @@
-import { DEFAULT_BASE_URL, makeActorClient, type ActorClient } from "@clavia/tardigrade-client"
+import { DEFAULT_ACTOR_INSTANCE, DEFAULT_BASE_URL, makeActorClient, type ActorClient } from "@clavia/tardigrade-client"
 import { DOCS_PATH } from "@clavia/tardigrade-client/contract"
 
 // Where the app reads the server. The calls and the wire types are the client package's, derived
@@ -51,6 +51,13 @@ export const token = (): string | undefined => {
   if (typeof localStorage === "undefined") return undefined
   const stored = localStorage.getItem(TOKEN_KEY)
   return stored === null || stored.length === 0 ? undefined : stored
+}
+
+// actorInstance is the actor incarnation this tab inspects. The URL can select another instance.
+export const actorInstance = (): string => {
+  if (typeof location === "undefined") return DEFAULT_ACTOR_INSTANCE
+  const stated = new URLSearchParams(location.search).get("actor")
+  return stated !== null && stated.length > 0 ? stated : DEFAULT_ACTOR_INSTANCE
 }
 
 // One client for the tab. The address and the token are read at load, which is when a reader could

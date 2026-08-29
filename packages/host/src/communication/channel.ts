@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
@@ -36,7 +36,7 @@ export interface ChannelOptions {
 // channelOf adapts a provider into ingress envelopes using the application's source-to-actor binding.
 export const channelOf = <Source extends ProviderEndpoint, R = never, E = never>(
   provider: ChannelProvider<Source, R, E>,
-  target: (source: Source) => ActorId,
+  target: (source: Source) => ThreadAddress,
   options: ChannelOptions
 ): Channel<Source, R, E> => ({
   provider,

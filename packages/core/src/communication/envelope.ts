@@ -1,12 +1,12 @@
 import type { Event as CoreEvent } from "../log/event"
 import type { ThreadLineage } from "../thread"
-import type { ActorId, Endpoint, ProviderEndpoint } from "./endpoint"
+import type { ThreadAddress, Endpoint, ProviderEndpoint } from "./endpoint"
 import type { Link } from "./link"
 import type { MessageReceived } from "./message"
 import type { ActorMethodInvocation } from "../actor/method/call"
 
 // Envelope carries one event through a logical link without interpreting placement or transport.
-export interface Envelope<Source = unknown, Event = MessageReceived, Target = ActorId> {
+export interface Envelope<Source = unknown, Event = MessageReceived, Target = ThreadAddress> {
   readonly link: Link<Source, Target>
   readonly event: Event
   readonly call?: ActorMethodInvocation
@@ -14,10 +14,10 @@ export interface Envelope<Source = unknown, Event = MessageReceived, Target = Ac
 }
 
 // ActorEnvelope carries any endpoint event to an actor identity.
-export type ActorEnvelope<Event = CoreEvent> = Envelope<Endpoint, Event, ActorId>
+export type ActorEnvelope<Event = CoreEvent> = Envelope<Endpoint, Event, ThreadAddress>
 
 // ProviderEnvelope carries one actor message to an external provider endpoint.
-export type ProviderEnvelope = Envelope<ActorId, MessageReceived, ProviderEndpoint>
+export type ProviderEnvelope = Envelope<ThreadAddress, MessageReceived, ProviderEndpoint>
 
 // RoutedEnvelope is the complete envelope family Router can send.
 export type RoutedEnvelope = ActorEnvelope | ProviderEnvelope
@@ -34,7 +34,7 @@ export const isProviderEnvelope = (envelope: RoutedEnvelope): envelope is Provid
 
 // LinkedEvent preserves the accepted link beside its event in the target actor's durable log.
 export type LinkedEvent<Source = unknown, Event = MessageReceived> = Event & {
-  readonly link: Link<Source, ActorId>
+  readonly link: Link<Source, ThreadAddress>
   readonly call?: ActorMethodInvocation
 }
 
@@ -60,7 +60,7 @@ export const methodEnvelopeOf = <Source, Target, Event>(
 
 // linkedEventOf attaches an accepted envelope's link to the event committed at its actor target.
 export const linkedEventOf = <Source, Event extends object>(
-  envelope: Envelope<Source, Event, ActorId>
+  envelope: Envelope<Source, Event, ThreadAddress>
 ): LinkedEvent<Source, Event> => ({
   ...envelope.event,
   link: envelope.link,

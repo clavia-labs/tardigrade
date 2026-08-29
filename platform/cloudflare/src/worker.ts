@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers"
-import { Clock, Context, Effect, Layer, Schema } from "effect"
+import { Clock, Context, Effect, Layer, ManagedRuntime, Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpEffect, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
+import { SqliteClient } from "@effect/sql-sqlite-do"
 import { actor, agentMethods, agentsPackage, applyModelPolicy, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, intersectModelPolicies, modelAllowedBy, outputValidateOnce, workspacePackage, type Actor, type ActorMethods, type InferenceObserver, type ModelPolicy, type ModelRef } from "tardie"
 import type { Action } from "tardie/log/events"
 import {
@@ -23,15 +24,16 @@ import {
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-server/catalog-availability"
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
-import { treeOf, type ThreadNode, type ThreadSummary } from "@clavia/tardigrade-server/projections"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
-import { DEFAULT_MAX_CONCURRENT_LANES, driverPolicyOf } from "@clavia/tardigrade-host/driver"
+import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
+import { actorFromReactors, effect, restingActor, settleActor } from "@clavia/tardigrade-core/reconciliation"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
   layerWorkerLoaderSandbox,
@@ -42,23 +44,30 @@ import {
 } from "@clavia/tardigrade-worker-loader/sandbox"
 import { alarmPolicyOf, armAt, scheduledAlarmAt, type AlarmPolicy } from "./alarm"
 import {
-  createCloudflareHost,
-  type CloudflareHost,
-  type CloudflareLaneEnv,
+  initializeCloudflareActorSchema,
+  initializeCloudflareThreadSchema,
+  CloudflareEventStore,
+  type CloudflareThreadStorePolicy
+} from "./storage"
+import {
+  createCloudflareThreadHost,
+  type CloudflareThreadHost,
+  type CloudflareThreadEnv,
   type CloudflarePorts
 } from "./host"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 
 export interface Env {
-  readonly ACTORS: DurableObjectNamespace<ActorHost>
+  readonly ACTORS: DurableObjectNamespace<ActorDO>
+  readonly THREADS: DurableObjectNamespace<ThreadDO>
   readonly LOADER: WorkerLoader
   readonly TARDIGRADE_CONFIG?: unknown
+  readonly TARDIGRADE_BACKGROUND_TASK_OWNER?: string
   readonly TARDIGRADE_TOKEN?: string
   readonly TARDIGRADE_MODEL_CATALOG_URL?: string
   readonly TARDIGRADE_MODEL_CATALOG_LOAD_POLICY?: string
   readonly TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS?: string
-  readonly TARDIGRADE_MAX_CONCURRENT_LANES?: string
   readonly TARDIGRADE_ALARM_DELAY_MILLIS?: string
   readonly TARDIGRADE_COMPACTION_FIRE_RATIO?: string
   readonly TARDIGRADE_COMPACTION_KEEP_RATIO?: string
@@ -68,19 +77,172 @@ export interface Env {
   readonly TARDIGRADE_SANDBOX_TRANSPORT?: string
 }
 
-const LANE_PREFIX = "ag."
-const laneOf = (thread: string): string => `${LANE_PREFIX}${thread}`
-const actorThreadOf = (thread: string): string => thread.startsWith(LANE_PREFIX) ? thread : laneOf(thread)
-const threadOf = (lane: string): string | undefined => lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
+const THREAD_PREFIX = "ag."
+const actorThreadOf = (thread: string): string => thread.startsWith(THREAD_PREFIX) ? thread : `${THREAD_PREFIX}${thread}`
+const threadIdOf = (thread: string): string | undefined =>
+  thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
 
-const flattenThreads = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
-  nodes.flatMap(({ children, ...summary }) => [summary, ...flattenThreads(children)])
-export type CloudflarePlacement = "actor" | "thread"
+export interface ActorThreadNode {
+  readonly id: string
+  readonly parent?: string
+  readonly depth: number
+  readonly placement?: ChildPlacement
+  readonly children: ReadonlyArray<ActorThreadNode>
+}
 
-const objectNameOf = (actor: string, thread: string | undefined, placement: CloudflarePlacement): string =>
-  placement === "thread" && thread !== undefined ? JSON.stringify([actor, thread]) : actor
+interface ActorThreadRecord {
+  readonly [key: string]: string | number | null
+  readonly thread: string
+  readonly parent_thread: string | null
+  readonly depth: number
+  readonly placement: ChildPlacement | null
+  readonly state: "requested" | "created"
+}
+
+interface ThreadRequested extends Event {
+  readonly type: "ThreadRequested"
+  readonly thread: string
+  readonly parentThread?: string
+  readonly depth: number
+  readonly placement?: ChildPlacement
+  readonly at: number
+}
+
+interface ActorThreadCreated extends Event {
+  readonly type: "ThreadCreated"
+  readonly thread: string
+  readonly at: number
+}
+
+type ThreadLifecycleEvent = ThreadRequested | ActorThreadCreated
+
+const requestedKeyOf = (thread: string): string => `thread:requested:${thread}`
+const createdKeyOf = (thread: string): string => `thread:created:${thread}`
+
+const threadLifecycleKeyOf = (event: Event): string | undefined => {
+  if (event.type === "ThreadRequested" && typeof event.thread === "string") return requestedKeyOf(event.thread)
+  if (event.type === "ThreadCreated" && typeof event.thread === "string") return createdKeyOf(event.thread)
+  return undefined
+}
+
+const lifecycleEventsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ThreadLifecycleEvent> =>
+  events.filter((event): event is ThreadLifecycleEvent =>
+    (event.type === "ThreadRequested" || event.type === "ThreadCreated") && typeof event.thread === "string"
+  )
+
+const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorThreadRecord> => {
+  const entries = new Map<string, ActorThreadRecord>()
+  for (const event of lifecycleEventsOf(events)) {
+    if (event.type === "ThreadRequested") {
+      entries.set(event.thread, {
+        thread: event.thread,
+        parent_thread: event.parentThread ?? null,
+        depth: event.depth,
+        placement: event.placement ?? null,
+        state: "requested"
+      })
+      continue
+    }
+    const requested = entries.get(event.thread)
+    if (requested === undefined) throw new Error(`thread ${JSON.stringify(event.thread)} was created without a request`)
+    entries.set(event.thread, { ...requested, state: "created" })
+  }
+  return [...entries.values()].sort((left, right) => left.thread.localeCompare(right.thread))
+}
+
+const actorSupervisorOf = (
+  env: Env,
+  identity: { readonly actor: string; readonly instance: string }
+) => actorFromReactors([
+  (events) => {
+    const lifecycle = lifecycleEventsOf(events)
+    const created = new Set(lifecycle.flatMap((event) => event.type === "ThreadCreated" ? [event.thread] : []))
+    return lifecycle.flatMap((event) => {
+      if (event.type !== "ThreadRequested" || created.has(event.thread)) return []
+      return [effect({
+        key: createdKeyOf(event.thread),
+        input: event,
+        act: (request) => Effect.gen(function* () {
+          yield* Effect.promise(async () => {
+            const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, request.thread))
+            if (request.parentThread === undefined) {
+              if (!(await stub.exists(identity.actor, identity.instance, request.thread))) {
+                throw new Error(`root thread ${JSON.stringify(request.thread)} has no durable host`)
+              }
+            } else {
+              await stub.commitCreation()
+            }
+          })
+          return [{ type: "ThreadCreated", thread: request.thread, at: yield* Clock.currentTimeMillis }]
+        })
+      })]
+    })
+  }
+], threadLifecycleKeyOf)
+
+const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<ActorThreadNode> => {
+  const entries = new Map<string, Omit<ActorThreadNode, "children">>()
+  const children = new Map<string, string[]>()
+  const roots: string[] = []
+  for (const row of rows) {
+    const id = threadIdOf(row.thread)
+    if (id === undefined) continue
+    const parent = row.parent_thread === null ? undefined : threadIdOf(row.parent_thread)
+    entries.set(id, {
+      id,
+      ...(parent === undefined ? {} : { parent }),
+      depth: row.depth,
+      ...(row.placement === null ? {} : { placement: row.placement })
+    })
+    if (parent === undefined) roots.push(id)
+    else children.set(parent, [...children.get(parent) ?? [], id])
+  }
+  const visited = new Set<string>()
+  const node = (id: string, ancestors: ReadonlySet<string>): ActorThreadNode => {
+    if (ancestors.has(id)) throw new Error(`thread tree contains a cycle at ${JSON.stringify(id)}`)
+    const entry = entries.get(id)
+    if (entry === undefined) throw new Error(`thread tree is missing ${JSON.stringify(id)}`)
+    visited.add(id)
+    const next = new Set(ancestors).add(id)
+    return {
+      ...entry,
+      children: [...children.get(id) ?? []].sort().map((child) => node(child, next))
+    }
+  }
+  const tree = roots.sort().map((root) => node(root, new Set()))
+  if (visited.size !== entries.size) throw new Error("thread tree contains an orphan or cycle")
+  return tree
+}
+const actorObjectNameOf = (actor: string, instance: string): string => JSON.stringify([actor, instance])
+const threadObjectNameOf = (actor: string, instance: string, thread: string): string => JSON.stringify([actor, instance, thread])
 
 const DEFAULT_ACTOR_NAME = "default"
+export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200
+export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const satisfies ReadonlyArray<ChildPlacement>
+export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT: ChildPlacement = "independent"
+
+export const BACKGROUND_TASK_OWNERS = ["host", "request"] as const
+export type BackgroundTaskOwner = typeof BACKGROUND_TASK_OWNERS[number]
+export const DEFAULT_BACKGROUND_TASK_OWNER: BackgroundTaskOwner = "host"
+
+// backgroundTaskOwnerOf validates which execution scope retains work after a Durable Object RPC returns.
+export const backgroundTaskOwnerOf = (
+  raw: string | undefined,
+  fallback: BackgroundTaskOwner = DEFAULT_BACKGROUND_TASK_OWNER
+): BackgroundTaskOwner => {
+  if (raw === undefined) return fallback
+  if (raw === "host" || raw === "request") return raw
+  throw new Error(`TARDIGRADE_BACKGROUND_TASK_OWNER must be "host" or "request", got ${JSON.stringify(raw)}`)
+}
+
+// retainBackgroundTask assigns the task to the request when the host does not retain ongoing work after an RPC returns.
+export const retainBackgroundTask = (
+  scope: { waitUntil(task: Promise<unknown>): void },
+  owner: BackgroundTaskOwner,
+  task: Promise<unknown>
+): void => {
+  if (owner === "request") scope.waitUntil(task)
+}
 
 type DefaultAssembly = ReturnType<typeof defaultAssemblyOf>
 
@@ -90,8 +252,10 @@ interface MountedActor {
   readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
-  readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
-  readonly placement: CloudflarePlacement
+  readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
+  readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
+  readonly defaultChildPlacement: ChildPlacement
+  readonly backgroundTaskOwner: BackgroundTaskOwner
 }
 
 let mountedActor: MountedActor | undefined
@@ -348,56 +512,153 @@ const methodsOf = (name: string): ActorMethods | undefined => {
   return name === DEFAULT_ACTOR_NAME ? agentMethods : undefined
 }
 
-// ActorHost runs one actor graph over one SQLite-backed Durable Object.
-export class ActorHost extends DurableObject<Env> {
-  private runtime: Promise<CloudflareHost> | undefined
+// ActorDO reconciles one actor instance lifecycle from its durable log.
+export class ActorDO extends DurableObject<Env> {
+  private schema: Promise<void> | undefined
+  private lifecycleStore: Promise<CloudflareEventStore> | undefined
   private catalogState: Promise<ModelCatalogState> | undefined
-  private driving: Promise<void> | undefined
-  private principal: string | undefined
-  private threadId: string | undefined
+  private actorName: string | undefined
+  private actorInstance: string | undefined
+  private readonly database = ManagedRuntime.make(SqliteClient.layer({ storage: this.ctx.storage }))
   private readonly alarmPolicy: AlarmPolicy
-  private readonly sandboxCalls = new Map<
-    string,
-    (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
-  >()
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env)
-    ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS actor_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
     this.alarmPolicy = alarmPolicyOf(env.TARDIGRADE_ALARM_DELAY_MILLIS === undefined
       ? {}
       : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
   }
 
-  async init(name: string, thread?: string): Promise<void> {
+  async init(name: string, instance: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
-    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('principal', ?)", name)
-    if (thread !== undefined) {
-      this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_meta (key, value) VALUES ('thread', ?)", thread)
-    }
-    const principal = this.meta("principal")
-    const storedThread = this.meta("thread", false)
-    if (principal !== name) throw new Error("actor definition does not match the durable host identity")
-    if (storedThread !== thread) throw new Error("actor thread does not match the durable host identity")
-    this.principal ??= principal
-    this.threadId ??= storedThread
+    if (!Schema.is(ActorInstanceId)(instance)) throw new Error("invalid actor instance id")
+    this.schema ??= this.database.runPromise(initializeCloudflareActorSchema)
+    await this.schema
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ?, ?)", name, instance)
+    const identity = this.identity()
+    if (identity.actor !== name) throw new Error("actor definition does not match the durable host identity")
+    if (identity.instance !== instance) throw new Error("actor instance does not match the durable host identity")
   }
 
-  private meta(key: string, required = true): string | undefined {
-    const row = this.ctx.storage.sql.exec<{ value: string }>(
-      "SELECT value FROM actor_meta WHERE key = ?",
-      key
+  async exists(name: string, instance: string): Promise<boolean> {
+    const table = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'actor_identity'"
     ).toArray()[0]
-    if (row === undefined && required) throw new Error("actor host has not been initialized")
-    return row?.value
+    if (table === undefined) return false
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string }>(
+      "SELECT actor, instance FROM actor_identity WHERE singleton = 1"
+    ).toArray()[0]
+    return row?.actor === name && row.instance === instance
   }
 
-  private name(): string {
-    return this.principal ??= this.meta("principal")!
+  private identity(): { readonly actor: string; readonly instance: string } {
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string }>(
+      "SELECT actor, instance FROM actor_identity WHERE singleton = 1"
+    ).toArray()[0]
+    if (row === undefined) throw new Error("Actor DO has not been initialized")
+    this.actorName ??= row.actor
+    this.actorInstance ??= row.instance
+    return row
   }
 
-  private thread(): string | undefined {
-    return this.threadId ??= this.meta("thread", false)
+  private store(): Promise<CloudflareEventStore> {
+    this.lifecycleStore ??= this.database.runPromise(SqliteClient.SqliteClient).then(
+      (sql) => new CloudflareEventStore(sql, threadLifecycleKeyOf)
+    )
+    return this.lifecycleStore
+  }
+
+  private async lifecycle(): Promise<ReadonlyArray<Event>> {
+    return this.database.runPromise((await this.store()).read)
+  }
+
+  private async resting(): Promise<boolean> {
+    return restingActor(actorSupervisorOf(this.env, this.identity()), await this.lifecycle())
+  }
+
+  private async synchronizeAlarm(): Promise<void> {
+    const current = await this.ctx.storage.getAlarm()
+    const at = scheduledAlarmAt(
+      current,
+      await this.resting(),
+      Date.now(),
+      this.alarmPolicy.recoveryDelayMillis,
+      undefined
+    )
+    if (at === null) {
+      if (current !== null) await this.ctx.storage.deleteAlarm()
+    } else if (current !== at) {
+      await this.ctx.storage.setAlarm(at)
+    }
+  }
+
+  private async reconcile(): Promise<void> {
+    const identity = this.identity()
+    const store = await this.store()
+    await this.database.runPromise(
+      settleActor(actorSupervisorOf(this.env, identity)).pipe(
+        Effect.provideService(EventLog, eventLogFrom(store))
+      )
+    )
+    await this.ctx.storage.sync()
+  }
+
+  private async request(event: ThreadRequested): Promise<void> {
+    await this.database.runPromise((await this.store()).append([event]))
+    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
+    if (at !== null) await this.ctx.storage.setAlarm(at)
+    await scheduler.wait(0)
+    await this.reconcile()
+    await this.synchronizeAlarm()
+  }
+
+  async createThread(thread: string): Promise<void> {
+    const identity = this.identity()
+    const existing = actorThreadsOf(await this.lifecycle()).find((entry) => entry.thread === thread)
+    if (existing !== undefined && existing.parent_thread !== null) {
+      throw new Error("a child thread cannot be recreated as a root")
+    }
+    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
+    await stub.init(identity.actor, identity.instance, thread)
+    await this.request({ type: "ThreadRequested", thread, depth: 0, at: Date.now() })
+  }
+
+  // deliverChild records creation after the child log and actor supervisor accept the request (tla/ThreadCreation.tla, CreatedHasAccepted).
+  async deliverChild(envelope: ActorEnvelope): Promise<void> {
+    const identity = this.identity()
+    const target = envelope.link.target
+    const lineage = envelope.lineage
+    if (lineage === undefined) throw new Error("child delivery requires lineage")
+    if (target.actor !== identity.actor || target.instance !== identity.instance) {
+      throw new Error("a child thread must inherit its actor instance")
+    }
+    if (!isThreadAddress(envelope.link.source) || !sameThreadAddress(envelope.link.source, lineage.parent)) {
+      throw new Error("a child thread lineage must match its delivery source")
+    }
+    const threads = actorThreadsOf(await this.lifecycle())
+    const parent = threads.find((entry) => entry.thread === lineage.parent.thread)
+    if (parent === undefined || parent.state !== "created") throw new Error("a child thread requires a created parent")
+    if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
+    const existing = threads.find((entry) => entry.thread === target.thread)
+    const placement = lineage.placement ?? null
+    if (existing !== undefined && (
+      existing.parent_thread !== lineage.parent.thread ||
+      Number(existing.depth) !== lineage.depth ||
+      existing.placement !== placement
+    )) {
+      throw new Error("a child thread already has different lineage")
+    }
+    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
+    await stub.init(identity.actor, identity.instance, target.thread)
+    await stub.stageCreation(envelope)
+    await this.request({
+      type: "ThreadRequested",
+      thread: target.thread,
+      parentThread: lineage.parent.thread,
+      depth: lineage.depth,
+      ...(placement === null ? {} : { placement }),
+      at: Date.now()
+    })
   }
 
   async catalog(): Promise<ModelCatalogState> {
@@ -419,6 +680,111 @@ export class ActorHost extends DurableObject<Env> {
     return this.catalogState
   }
 
+  async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
+    const entries = actorThreadsOf(await this.lifecycle()).filter((entry) => entry.state === "created")
+    return threadTreeOf(entries)
+  }
+
+  async alarm(): Promise<void> {
+    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
+    if (at !== null) await this.ctx.storage.setAlarm(at)
+    await scheduler.wait(0)
+    await this.reconcile()
+    await this.synchronizeAlarm()
+  }
+}
+
+// ThreadDO runs one thread over one SQLite-backed Durable Object.
+export class ThreadDO extends DurableObject<Env> {
+  private schema: Promise<void> | undefined
+  private runtime: Promise<CloudflareThreadHost> | undefined
+  private driving: Promise<void> | undefined
+  private actorName: string | undefined
+  private actorInstance: string | undefined
+  private threadId: string | undefined
+  private readonly alarmPolicy: AlarmPolicy
+  private readonly backgroundTaskOwner: BackgroundTaskOwner
+  private readonly sandboxCalls = new Map<
+    string,
+    (ordinal: number, packageName: string, method: string, args: unknown) => Promise<SandboxCallOutcome>
+  >()
+
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env)
+    this.alarmPolicy = alarmPolicyOf(env.TARDIGRADE_ALARM_DELAY_MILLIS === undefined
+      ? {}
+      : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
+    this.backgroundTaskOwner = backgroundTaskOwnerOf(
+      env.TARDIGRADE_BACKGROUND_TASK_OWNER,
+      mountedActor?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER
+    )
+  }
+
+  async init(name: string, instance: string, thread: string): Promise<void> {
+    if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
+    if (!Schema.is(ActorInstanceId)(instance)) throw new Error("invalid actor instance id")
+    this.schema ??= Effect.runPromise(initializeCloudflareThreadSchema.pipe(
+      Effect.provide(SqliteClient.layer({ storage: this.ctx.storage }))
+    ))
+    await this.schema
+    this.ctx.storage.sql.exec(
+      "INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread) VALUES (1, ?, ?, ?)",
+      name,
+      instance,
+      thread
+    )
+    const identity = this.identity()
+    if (identity.actor !== name) throw new Error("actor definition does not match the Thread DO identity")
+    if (identity.instance !== instance) throw new Error("actor instance does not match the Thread DO identity")
+    if (identity.thread !== thread) throw new Error("thread does not match the Thread DO identity")
+  }
+
+  async exists(name: string, instance: string, thread: string): Promise<boolean> {
+    const table = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'thread_identity'"
+    ).toArray()[0]
+    if (table === undefined) return false
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string; thread: string }>(
+      "SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1"
+    ).toArray()[0]
+    return row?.actor === name && row.instance === instance && row.thread === thread
+  }
+
+  private initialized(): boolean {
+    return this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'thread_identity'"
+    ).toArray()[0] !== undefined
+  }
+
+  private identity(): { readonly actor: string; readonly instance: string; readonly thread: string } {
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string; thread: string }>(
+      "SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1"
+    ).toArray()[0]
+    if (row === undefined) throw new Error("Thread DO has not been initialized")
+    this.actorName ??= row.actor
+    this.actorInstance ??= row.instance
+    this.threadId ??= row.thread
+    return row
+  }
+
+  private name(): string {
+    return this.actorName ?? this.identity().actor
+  }
+
+  private instance(): string {
+    return this.actorInstance ?? this.identity().instance
+  }
+
+  private thread(): string {
+    return this.threadId ?? this.identity().thread
+  }
+
+  private async catalog(): Promise<ModelCatalogState> {
+    const directory = this.env.ACTORS.getByName(actorObjectNameOf(this.name(), this.instance()))
+    await directory.init(this.name(), this.instance())
+    return directory.catalog()
+  }
+
   async sandboxCallBatch(
     execution: string,
     calls: ReadonlyArray<SandboxBridgeCall>
@@ -428,21 +794,18 @@ export class ActorHost extends DurableObject<Env> {
     return Promise.all(calls.map((entry) => call(entry.ordinal, entry.packageName, entry.method, entry.args)))
   }
 
-  private async openHost(): Promise<CloudflareHost> {
+  private async openHost(): Promise<CloudflareThreadHost> {
     const models = modelsFrom(this.env)
     const adapters = mountedActor?.modelAdapters ?? modelAdapters()
     for (const provider of Object.values(models?.providers ?? {})) adapters.resolve(provider.protocol)
     const catalog: ModelCatalogState = models === undefined
       ? { refreshError: "no model is configured" }
       : await this.catalog()
-    const principal = this.name()
-    const selectedAssembly = assemblyOf(principal, this.env, models, catalog)
-    if (selectedAssembly === undefined) throw new Error(`actor ${JSON.stringify(principal)} is not deployed`)
-    const placement = mountedActor?.placement ?? "actor"
+    const actorName = this.name()
+    const actorInstance = this.instance()
+    const selectedAssembly = assemblyOf(actorName, this.env, models, catalog)
+    if (selectedAssembly === undefined) throw new Error(`actor ${JSON.stringify(actorName)} is not deployed`)
     const currentThread = this.thread()
-    if (placement === "thread" && currentThread === undefined) {
-      throw new Error("thread-scoped actor host requires a thread identity")
-    }
     const sandboxCpuMs = optionalNonNegativeInteger(this.env.TARDIGRADE_SANDBOX_CPU_MILLIS, "TARDIGRADE_SANDBOX_CPU_MILLIS")
     const sandboxSubRequests = optionalNonNegativeInteger(
       this.env.TARDIGRADE_SANDBOX_SUBREQUESTS,
@@ -452,15 +815,15 @@ export class ActorHost extends DurableObject<Env> {
       ...(sandboxCpuMs === undefined ? {} : { cpuMs: sandboxCpuMs }),
       ...(sandboxSubRequests === undefined ? {} : { subRequests: sandboxSubRequests })
     }
-    const actorName = this.ctx.id.name
-    if (actorName === undefined) throw new Error("actor host requires a named durable object")
+    const durableObjectName = this.ctx.id.name
+    if (durableObjectName === undefined) throw new Error("Thread DO requires a named Durable Object")
     const sandboxLayer = layerWorkerLoaderSandbox(
       this.env.LOADER,
       (call): SandboxBridgeLease => {
         const execution = crypto.randomUUID()
         this.sandboxCalls.set(execution, call)
         return {
-          binding: this.env.ACTORS.getByName(actorName),
+          binding: this.env.THREADS.getByName(durableObjectName),
           execution,
           close: () => {
             this.sandboxCalls.delete(execution)
@@ -475,7 +838,7 @@ export class ActorHost extends DurableObject<Env> {
         ...(Object.keys(sandboxLimits).length === 0 ? {} : { limits: sandboxLimits })
       }
     )
-    const remoteTransport: Transport<ActorId, ActorEnvelope> = {
+    const independentTransport: Transport<ThreadAddress, ActorEnvelope> = {
       name: "durable-object",
       send: (destination, envelope) => Effect.currentSpan.pipe(
         Effect.option,
@@ -484,50 +847,53 @@ export class ActorHost extends DurableObject<Env> {
             ? ({ ...envelope.event, traceparent: traceparentOf(current.value) } as Event)
             : envelope.event
           return Effect.promise(async () => {
+            const placement = envelope.lineage?.placement ?? mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
+            if (placement !== "independent") throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(placement)} thread placement`)
             if (!deployed(destination.actor)) throw new Error(`actor ${JSON.stringify(destination.actor)} is not deployed`)
-            const targetThread = placement === "thread" ? destination.thread : undefined
-            const stub = this.env.ACTORS.getByName(objectNameOf(destination.actor, targetThread, placement))
-            await stub.init(destination.actor, targetThread)
-            await stub.deliver({ ...envelope, event })
+            const delivered = {
+              ...envelope,
+              event,
+              ...(envelope.lineage === undefined ? {} : { lineage: { ...envelope.lineage, placement } })
+            }
+            if (envelope.lineage !== undefined) {
+              const directory = this.env.ACTORS.getByName(actorObjectNameOf(destination.actor, destination.instance))
+              await directory.deliverChild(delivered)
+              return
+            }
+            const stub = this.env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.instance, destination.thread))
+            await stub.deliver(delivered)
           })
         })
       )
     }
-    const remoteRoute = directoryRoute(
-      remoteTransport,
-      mappedDirectory((id: ActorId) => {
-        if (placement === "actor") return id.actor === principal ? undefined : id
-        return id.actor === principal && id.thread === currentThread ? undefined : id
+    const independentRoute = directoryRoute(
+      independentTransport,
+      mappedDirectory((id: ThreadAddress) => {
+        return id.actor === actorName && id.instance === actorInstance && id.thread === currentThread ? undefined : id
       }),
       isActorEnvelope,
       (envelope) => envelope.link.target
     )
-    return createCloudflareHost(
-      { localThread: placement === "thread" ? currentThread : undefined },
-      {
+    return createCloudflareThreadHost({
       storage: this.ctx.storage,
-      principal,
-      actorFor: (lane) => threadOf(lane) === undefined ? undefined : selectedAssembly,
-      layersFor: (lane) => {
-        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, lane })
+      actorName,
+      actorInstance,
+      thread: currentThread,
+      actor: selectedAssembly,
+      layers: (() => {
+        const thread = currentThread
+        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
         const framework = Layer.mergeAll(modelLayer(models, catalog, adapters, observer), FetchHttpClient.layer, sandboxLayer)
-        const application = mountedActor?.layersFor?.({ env: this.env, lane })
+        const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
-      },
-      routes: [remoteRoute],
-      driver: driverPolicyOf({
-        maxConcurrentLanes: positiveInteger(
-          this.env.TARDIGRADE_MAX_CONCURRENT_LANES,
-          DEFAULT_MAX_CONCURRENT_LANES,
-          "TARDIGRADE_MAX_CONCURRENT_LANES"
-        )
-      }),
+      })(),
+      routes: [independentRoute],
+      ...(mountedActor?.storeFor === undefined ? {} : { store: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
       keyOf: selectedAssembly.keyOf
-      }
-    )
+    })
   }
 
-  private host(): Promise<CloudflareHost> {
+  private host(): Promise<CloudflareThreadHost> {
     this.runtime ??= this.openHost()
     return this.runtime
   }
@@ -537,7 +903,7 @@ export class ActorHost extends DurableObject<Env> {
     if (at !== null) await this.ctx.storage.setAlarm(at)
   }
 
-  private async synchronizeAlarm(host: CloudflareHost): Promise<void> {
+  private async synchronizeAlarm(host: CloudflareThreadHost): Promise<void> {
     const current = await this.ctx.storage.getAlarm()
     const at = scheduledAlarmAt(
       current,
@@ -558,7 +924,7 @@ export class ActorHost extends DurableObject<Env> {
   }
 
   // accept stages the work and recovery alarm, crosses their commit turn, and starts reconciliation in that order (tla/DurableExecution.tla, CoveredBeforeDrive).
-  private async accept(host: CloudflareHost, stage: () => Promise<void>): Promise<void> {
+  private async accept(host: CloudflareThreadHost, stage: () => Promise<void>): Promise<void> {
     const current = await this.ctx.storage.getAlarm()
     await stage()
     const at = scheduledAlarmAt(
@@ -574,7 +940,7 @@ export class ActorHost extends DurableObject<Env> {
   }
 
   // kick starts reconciliation while the Durable Object is active and leaves its alarm armed until the host rests (test/actor.workers.ts, "a mounted actor exposes durable methods").
-  private kick(host: CloudflareHost): void {
+  private kick(host: CloudflareThreadHost): void {
     if (this.driving !== undefined) return
     let failed = false
     const driving = (async () => {
@@ -587,29 +953,57 @@ export class ActorHost extends DurableObject<Env> {
       }
     })()
     this.driving = driving
+    retainBackgroundTask(this.ctx, this.backgroundTaskOwner, driving)
     void driving.finally(() => {
       if (this.driving === driving) this.driving = undefined
       if (!failed && host.work() > 0) this.kick(host)
     })
   }
 
-  async append(thread: string, event: Event): Promise<void> {
+  async append(thread: string, event: Event): Promise<boolean> {
+    if (!this.initialized()) return false
     const actorThread = actorThreadOf(thread)
     const ownedThread = this.thread()
-    if (ownedThread !== undefined && ownedThread !== actorThread) {
-      throw new Error("request thread does not match actor host identity")
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
     }
     const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
     const host = await this.host()
-    await this.accept(host, () => host.stageRoot(host.self(actorThread), stamped))
+    await this.accept(host, () => host.stageRoot(stamped))
+    return true
+  }
+
+  private validateDelivery(envelope: ActorEnvelope): void {
+    if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
+    if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")
+    if (envelope.lineage !== undefined && (
+      envelope.lineage.parent.actor !== envelope.link.target.actor ||
+      envelope.lineage.parent.instance !== envelope.link.target.instance
+    )) {
+      throw new Error("a child thread must inherit its actor instance")
+    }
+    const ownedThread = this.thread()
+    if (envelope.link.target.thread !== ownedThread) {
+      throw new Error("delivery target does not match actor thread")
+    }
+  }
+
+  async stageCreation(envelope: ActorEnvelope): Promise<void> {
+    this.validateDelivery(envelope)
+    if (envelope.lineage === undefined) throw new Error("staged thread creation requires lineage")
+    await (await this.host()).stage(envelope)
+    await this.ctx.storage.sync()
+  }
+
+  async commitCreation(): Promise<void> {
+    const host = await this.host()
+    await this.arm()
+    await this.commitTurn()
+    this.kick(host)
   }
 
   async deliver(envelope: ActorEnvelope): Promise<void> {
-    if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
-    const ownedThread = this.thread()
-    if (ownedThread !== undefined && envelope.link.target.thread !== ownedThread) {
-      throw new Error("delivery target does not match actor thread")
-    }
+    this.validateDelivery(envelope)
     const host = await this.host()
     await this.accept(host, () => host.stage(envelope))
   }
@@ -617,20 +1011,39 @@ export class ActorHost extends DurableObject<Env> {
   async events(thread: string): Promise<ReadonlyArray<Event>> {
     const actorThread = actorThreadOf(thread)
     const ownedThread = this.thread()
-    if (ownedThread !== undefined && ownedThread !== actorThread) {
-      throw new Error("request thread does not match actor host identity")
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
     }
-    return (await this.host()).read(actorThread)
+    return (await this.host()).read()
   }
 
-  async threads(): Promise<ReadonlyArray<ThreadSummary>> {
-    const host = await this.host()
-    const logs = new Map<string, ReadonlyArray<Event>>()
-    for (const lane of await host.lanes()) {
-      const id = threadOf(lane)
-      if (id !== undefined) logs.set(id, await host.read(lane))
+  async queryEvents(
+    thread: string,
+    query: { readonly after: number; readonly limit: number; readonly types?: ReadonlyArray<string> }
+  ): Promise<ReadonlyArray<{ readonly seq: number; readonly event: Event }>> {
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
     }
-    return flattenThreads(treeOf(logs))
+    if (!Number.isSafeInteger(query.after) || query.after < 0) throw new Error("event query after must be a non-negative integer")
+    if (!Number.isSafeInteger(query.limit) || query.limit < 0) throw new Error("event query limit must be a non-negative integer")
+    if (query.limit === 0) return []
+    const host = await this.host()
+    const wanted = query.types === undefined ? undefined : new Set(query.types)
+    const selected: Array<{ readonly seq: number; readonly event: Event }> = []
+    let mark = query.after
+    while (selected.length < query.limit) {
+      const rows = await host.readPage(mark, query.limit)
+      if (rows.length === 0) break
+      for (const row of rows) {
+        if (wanted === undefined || wanted.has(row.event.type)) selected.push(row)
+        if (selected.length === query.limit) break
+      }
+      mark = rows[rows.length - 1]!.seq
+      if (rows.length < query.limit) break
+    }
+    return selected
   }
 
   async status(): Promise<{ readonly status: "resting" | "driving"; readonly dirty: number }> {
@@ -652,15 +1065,34 @@ export class ActorHost extends DurableObject<Env> {
 const actorStub = async (
   env: Env,
   name: string,
-  thread?: string
-): Promise<DurableObjectStub<ActorHost> | undefined> => {
+  instance: string,
+  create: boolean
+): Promise<DurableObjectStub<ActorDO> | undefined> => {
   if (!deployed(name)) return undefined
-  const placement = mountedActor?.placement ?? "actor"
-  const targetThread = placement === "thread" && thread !== undefined ? actorThreadOf(thread) : undefined
-  const stub = env.ACTORS.getByName(objectNameOf(name, targetThread, placement))
-  await stub.init(name, targetThread)
+  const stub = env.ACTORS.getByName(actorObjectNameOf(name, instance))
+  if (!create && !(await stub.exists(name, instance))) return undefined
+  if (create) await stub.init(name, instance)
   return stub
 }
+
+const catalogStub = (env: Env, name: string): DurableObjectStub<ActorDO> =>
+  env.ACTORS.getByName(JSON.stringify([name, "$catalog"]))
+
+const threadStub = async (
+  env: Env,
+  name: string,
+  instance: string,
+  thread: string
+): Promise<DurableObjectStub<ThreadDO> | undefined> => {
+  if (!deployed(name)) return undefined
+  const targetThread = actorThreadOf(thread)
+  const stub = env.THREADS.getByName(threadObjectNameOf(name, instance, targetThread))
+  if (!(await stub.exists(name, instance, targetThread))) return undefined
+  return stub
+}
+
+const addressedThreadStub = (env: Env, name: string, instance: string, thread: string): DurableObjectStub<ThreadDO> =>
+  env.THREADS.getByName(threadObjectNameOf(name, instance, actorThreadOf(thread)))
 
 class WorkerEnv extends Context.Service<WorkerEnv, Env>()("tardigrade/cloudflare/WorkerEnv") {}
 
@@ -729,19 +1161,14 @@ const protectedRoute = <E, R>(
 
 const routes = [
   HttpRouter.route("GET", "/healthz", Effect.gen(function* () {
-    if ((mountedActor?.placement ?? "actor") === "thread") {
-      return json({ status: "ready", actor: deployedActor })
-    }
-    const env = yield* WorkerEnv
-    return json(yield* Effect.promise(async () => (await actorStub(env, deployedActor))!.status()))
+    return json({ status: "ready", actor: deployedActor })
   })),
   HttpRouter.route("GET", "/v1/providers", Effect.gen(function* () {
     const request = yield* HttpServerRequest.HttpServerRequest
     const env = yield* WorkerEnv
     return yield* Effect.tryPromise({
       try: async () => {
-        const stub = await actorStub(env, deployedActor)
-        if (stub === undefined) throw new Error("no actor is deployed")
+        const stub = catalogStub(env, deployedActor)
         const catalog = await stub.catalog()
         if (catalog.snapshot === undefined) {
           throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
@@ -762,8 +1189,7 @@ const routes = [
     const env = yield* WorkerEnv
     return yield* Effect.tryPromise({
       try: async () => {
-        const stub = await actorStub(env, deployedActor)
-        if (stub === undefined) throw new Error("no actor is deployed")
+        const stub = catalogStub(env, deployedActor)
         const catalog = await stub.catalog()
         if (catalog.snapshot === undefined) {
           throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
@@ -798,36 +1224,73 @@ const routes = [
       })))
     })
   )),
-  HttpRouter.route("PUT", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:id", protectedRoute((_request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, true))
+      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      return json({ actor: instance, definition: deployedActor })
+    })
+  )),
+  HttpRouter.route("GET", "/v1/actors/:id", protectedRoute((_request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      return stub === undefined
+        ? json({ error: "unknown actor" }, 404)
+        : json({ actor: instance, definition: deployedActor })
+    })
+  )),
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread", protectedRoute((_request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const directory = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      if (directory === undefined) return json({ error: "unknown actor" }, 404)
+      yield* Effect.promise(() => directory.createThread(actorThreadOf(thread)))
+      return json({ actor: instance, thread })
+    })
+  )),
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const thread = decodeURIComponent(params.thread ?? "")
-      const methodName = decodeURIComponent(params.method ?? "")
-      const call = decodeURIComponent(params.call ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const methodName = params.method ?? ""
+      const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const input = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
       const at = yield* Clock.currentTimeMillis
       const decoded = methodEventOf(method, { id: call, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
-      yield* Effect.promise(() => stub.append(thread, decoded.event))
-      return json({ thread, method: methodName, call }, 202)
+      const stub = addressedThreadStub(env, actor, instance, thread)
+      const appended = yield* Effect.promise(() => stub.append(thread, decoded.event))
+      if (!appended) return json({ error: "unknown thread" }, 404)
+      return json({ actor: instance, thread, method: methodName, call }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const thread = decodeURIComponent(params.thread ?? "")
-      const methodName = decodeURIComponent(params.method ?? "")
-      const call = decodeURIComponent(params.call ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const methodName = params.method ?? ""
+      const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
-      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
@@ -835,52 +1298,54 @@ const routes = [
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
-      if ((mountedActor?.placement ?? "actor") === "thread") {
-        return json({ error: "thread-scoped workers do not support actor-wide thread listing" }, 400)
-      }
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
-      return json(yield* Effect.promise(() => stub.threads()))
+      const params = yield* HttpRouter.params
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      if (stub === undefined) return json({ error: "unknown actor" }, 404)
+      return json(yield* Effect.promise(() => stub.threadTree()))
     })
   )),
-  HttpRouter.route("POST", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const stub = addressedThreadStub(env, actor, instance, thread)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
         return json({ error: "event type is required" }, 400)
       }
-      yield* Effect.promise(() => stub.append(thread, event))
-      return json({ thread }, 202)
+      const appended = yield* Effect.promise(() => stub.append(thread, event))
+      if (!appended) return json({ error: "unknown thread" }, 404)
+      return json({ actor: instance, thread }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => actorStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
-      const limit = Number(url.searchParams.get("limit") ?? 200)
-      const types = url.searchParams.get("types")?.split(",")
+      const limit = Number(url.searchParams.get("limit") ?? DEFAULT_CLOUDFLARE_EVENT_LIMIT)
+      if (!Number.isSafeInteger(after) || after < 0) return json({ error: "after must be a non-negative integer" }, 400)
+      if (!Number.isSafeInteger(limit) || limit < 0) return json({ error: "limit must be a non-negative integer" }, 400)
+      const types = url.searchParams.get("types")?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
       return yield* Effect.tryPromise({
-        try: (): Promise<ReadonlyArray<Event>> => stub.events(thread),
+        try: () => stub.queryEvents(thread, { after, limit, ...(types === undefined ? {} : { types }) }),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause)
       }).pipe(Effect.match({
         onFailure: (error) => json({ error }, 500),
-        onSuccess: (events) => events.length === 0
-          ? json({ error: "unknown thread" }, 404)
-          : json(events.map((event, index) => ({ seq: index + 1, event }))
-            .filter((row) => row.seq > after && (types === undefined || types.includes(row.event.type)))
-            .slice(0, limit))
+        onSuccess: (rows) => json(rows)
       }))
     })
   )),
@@ -905,41 +1370,40 @@ const worker = {
 type CloudflareWorkerProvided = CloudflarePorts | Infer | HttpClient.HttpClient
 type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 
-// CloudflareWorkerLayerContext exposes the Worker bindings and lane identity used to construct application services.
+// CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.
 export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
   readonly env: WorkerEnv
-  readonly lane: string
+  readonly actorInstance: string
+  readonly thread: string
 }
 
 type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
   context: CloudflareWorkerLayerContext<WorkerEnv>
-) => CloudflareLaneEnv<CloudflareApplicationRequirements<R>>
-interface CloudflareWorkerPlacementOptions {
-  readonly placement?: CloudflarePlacement
-}
+) => CloudflareThreadEnv<CloudflareApplicationRequirements<R>>
+export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
+  context: CloudflareWorkerLayerContext<WorkerEnv>
+) => CloudflareThreadStorePolicy
 
+interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
+  readonly modelAdapters?: ModelAdapterRegistry
+  readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
+  readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
+  readonly defaultChildPlacement?: ChildPlacement
+  readonly backgroundTaskOwner?: BackgroundTaskOwner
+}
 
 // CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
 export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
-  ([CloudflareApplicationRequirements<R>] extends [never]
-    ? {
-        readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv>
-        readonly modelAdapters?: ModelAdapterRegistry
-        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
-      }
-    : {
-        readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
-        readonly modelAdapters?: ModelAdapterRegistry
-        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
-      }) &
-  CloudflareWorkerPlacementOptions
+  CloudflareWorkerBaseOptions<WorkerEnv> & ([CloudflareApplicationRequirements<R>] extends [never]
+    ? { readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv> }
+    : { readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv> })
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
   [CloudflareApplicationRequirements<R>] extends [never]
     ? [options?: CloudflareWorkerOptions<R, WorkerEnv>]
     : [options: CloudflareWorkerOptions<R, WorkerEnv>]
 
-// cloudflareWorker mounts a defined actor and its application layers into the Worker host (test/actor.workers.ts, "a mounted actor receives lane application services").
+// cloudflareWorker mounts a defined actor and its application layers into the Worker host (test/actor.workers.ts, "a mounted actor receives thread application services").
 export const cloudflareWorker = <
   R,
   const Methods extends ActorMethods,
@@ -948,17 +1412,25 @@ export const cloudflareWorker = <
   definition: Actor<R, Methods>,
   ...[options]: CloudflareWorkerArguments<R, WorkerEnv>
 ): ExportedHandler<WorkerEnv> => {
+  const defaultChildPlacement = options?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
+  if (!CLOUDFLARE_CHILD_PLACEMENTS.includes(defaultChildPlacement as "independent")) {
+    throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
+  }
   mountedActor = {
     name: definition.name,
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
-    placement: options?.placement ?? "actor",
+    defaultChildPlacement,
+    backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER,
     ...(options?.inferenceObserverFor === undefined ? {} : {
       inferenceObserverFor: options.inferenceObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
     }),
     ...(options?.layersFor === undefined ? {} : {
-      layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareLaneEnv<never>
+      layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
+    }),
+    ...(options?.storeFor === undefined ? {} : {
+      storeFor: options.storeFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
     })
   }
   deployedActor = definition.name

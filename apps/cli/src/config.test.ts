@@ -9,7 +9,7 @@ import {
   DEFAULT_ACTORS,
   DEFAULT_ACTOR_DATA,
   DEFAULT_DB,
-  DEFAULT_MAX_CONCURRENT_LANES,
+  DEFAULT_MAX_CONCURRENT_THREADS,
   DEFAULT_PORT
 } from "@clavia/tardigrade-server/config"
 
@@ -61,7 +61,7 @@ describe("resolveServer", () => {
     expect(config.db).toBe(DEFAULT_DB)
     expect(config.actors).toBe(DEFAULT_ACTORS)
     expect(config.actorData).toBe(DEFAULT_ACTOR_DATA)
-    expect(config.maxConcurrentLanes).toBe(DEFAULT_MAX_CONCURRENT_LANES)
+    expect(config.maxConcurrentThreads).toBe(DEFAULT_MAX_CONCURRENT_THREADS)
     expect(config.token).toBeUndefined()
   })
 
@@ -69,22 +69,22 @@ describe("resolveServer", () => {
     const config = resolveServer({}, {
       PORT: "8080",
       TARDIGRADE_DB: "runs.sqlite",
-      TARDIGRADE_MAX_CONCURRENT_LANES: "6"
+      TARDIGRADE_MAX_CONCURRENT_THREADS: "6"
     })
     expect(config.port).toBe(8080)
     expect(config.db).toBe("runs.sqlite")
-    expect(config.maxConcurrentLanes).toBe(6)
+    expect(config.maxConcurrentThreads).toBe(6)
     expect(config.model).toEqual({ allow: "*", providers: {} })
   })
 
   test("a flag beats the environment", () => {
     const config = resolveServer(
-      { port: 9000, db: "other.sqlite", maxConcurrentLanes: 3 },
-      { PORT: "8080", TARDIGRADE_DB: "runs.sqlite", TARDIGRADE_MAX_CONCURRENT_LANES: "2" }
+      { port: 9000, db: "other.sqlite", maxConcurrentThreads: 3 },
+      { PORT: "8080", TARDIGRADE_DB: "runs.sqlite", TARDIGRADE_MAX_CONCURRENT_THREADS: "2" }
     )
     expect(config.port).toBe(9000)
     expect(config.db).toBe("other.sqlite")
-    expect(config.maxConcurrentLanes).toBe(3)
+    expect(config.maxConcurrentThreads).toBe(3)
   })
 
   // `tdg dev` is the local command and binds loopback (dev.ts, DEV_HOST), so the token the server
@@ -99,8 +99,8 @@ describe("resolveServer", () => {
     expect(() => resolveServer({}, { PORT: "http" })).toThrow()
   })
 
-  test("a concurrency flag that cannot schedule a lane refuses to resolve", () => {
-    expect(() => resolveServer({ maxConcurrentLanes: 0 }, {})).toThrow("positive integer")
+  test("a concurrency flag that cannot schedule a thread refuses to resolve", () => {
+    expect(() => resolveServer({ maxConcurrentThreads: 0 }, {})).toThrow("positive integer")
   })
 })
 

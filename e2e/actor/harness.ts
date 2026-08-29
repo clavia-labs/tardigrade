@@ -3,7 +3,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
-import { createHost, type Host, type HostOptions, type LaneEnv } from "@clavia/tardigrade-host/host"
+import { createHost, type Host, type HostOptions, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import {
   boundaryOf,
   Infer,
@@ -13,7 +13,7 @@ import {
 } from "tardie"
 import type { Action } from "tardie/log/events"
 
-export const ROOT_LANE = "ag.root"
+export const ROOT_THREAD = "ag.root"
 export const TEST_MODEL = {
   models: {
     default: { provider: "test", model_id: "test-model" },
@@ -44,7 +44,7 @@ export const actorScenario = (
   mind: Mind,
   options: ActorScenarioOptions = {}
 ): ActorScenario => {
-  const layersFor = (_lane: string): LaneEnv<TestR> =>
+  const layersFor = (_thread: string): ThreadEnv<TestR> =>
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
@@ -54,8 +54,8 @@ export const actorScenario = (
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   const host: Host = createHost<TestR>({
-    principal: "mem",
-    actorFor: (lane: string) => lane.startsWith("ag.") ? assembled : undefined,
+    actorName: "mem",
+    actorFor: (thread: string) => thread.startsWith("ag.") ? assembled : undefined,
     layersFor,
     keyOf: assembled.keyOf,
     ...(options.pick === undefined ? {} : { pick: options.pick }),
@@ -65,7 +65,7 @@ export const actorScenario = (
   let sequence = 0
   const enqueue = (brief: string): string => {
     const turn = `run-${sequence++}`
-    host.commitRoot(host.self(ROOT_LANE), {
+    host.commitRoot(host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: turn,
       text: brief,
@@ -74,7 +74,7 @@ export const actorScenario = (
     return turn
   }
   const result = (turn: string) => {
-    const boundary = boundaryOf(host.read(ROOT_LANE), turn)
+    const boundary = boundaryOf(host.read(ROOT_THREAD), turn)
     if (boundary?.kind === "completed") return { turn, output: boundary.output }
     if (boundary?.kind === "failed") return { turn, error: boundary.error }
     return { turn, error: "the root did not reach a terminal boundary" }

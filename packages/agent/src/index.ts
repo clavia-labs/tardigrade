@@ -140,8 +140,8 @@ export {
 // boundary is a projection of the log rather than a value the driver returns (boundary.ts).
 export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
 
-// The spawn package: a value with no lane in it, so the assembly that mounts it and the host
-// that binds Router and Self per lane cannot disagree about placement (packages/agents.ts).
+// The spawn package: a value with no thread in it, so the assembly that mounts it and the host
+// that binds Router and Self per thread cannot disagree about placement (packages/agents.ts).
 export {
   agentsPackage,
   INLINE_OUTPUT_NAME,

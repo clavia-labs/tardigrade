@@ -5,7 +5,7 @@ import { isAbsolute, join } from "node:path"
 import { parse, printParseErrorCode, type ParseError } from "jsonc-parser"
 import { DEFAULT_BASE_URL } from "@clavia/tardigrade-client"
 import {
-  maxConcurrentLanesOf,
+  maxConcurrentThreadsOf,
   projectConfigOf,
   projectConfigPathOf,
   readConfig,
@@ -164,7 +164,7 @@ export interface ServerFlags {
   readonly db?: string | undefined
   readonly actors?: string | undefined
   readonly actorData?: string | undefined
-  readonly maxConcurrentLanes?: number | undefined
+  readonly maxConcurrentThreads?: number | undefined
 }
 
 // resolveServer answers what `tdg dev` boots on. It starts from the server's own reader, so a
@@ -189,7 +189,7 @@ export const resolveServer = (
     db: text(flags.db) ?? base.db,
     actors: text(flags.actors) ?? base.actors,
     actorData: text(flags.actorData) ?? base.actorData,
-    maxConcurrentLanes: maxConcurrentLanesOf(flags.maxConcurrentLanes ?? base.maxConcurrentLanes),
+    maxConcurrentThreads: maxConcurrentThreadsOf(flags.maxConcurrentThreads ?? base.maxConcurrentThreads),
     token: undefined
   }
 }

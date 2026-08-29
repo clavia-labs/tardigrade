@@ -1,5 +1,5 @@
 import { Context, Data, Effect } from "effect"
-import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
@@ -26,7 +26,7 @@ export class Ingress extends Context.Service<
 
 // ingressFrom binds actor identities to host doors through a Directory. It resolves the complete batch before writing, so an unavailable actor leaves every envelope in that batch uncommitted.
 export const ingressFrom = (
-  directory: Directory<ActorId, IngressActor>
+  directory: Directory<ThreadAddress, IngressActor>
 ): Context.Service.Shape<typeof Ingress> => {
   const resolve = (envelopes: ReadonlyArray<ActorEnvelope<MessageReceived>>) =>
     Effect.gen(function* () {

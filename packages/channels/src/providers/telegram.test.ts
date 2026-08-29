@@ -19,7 +19,7 @@ describe("telegram", () => {
       name: "telegram-support",
       token: "token",
       secretToken: "secret_token",
-      target: (source) => ({ actor: "support", thread: `telegram:${source.chat}:${source.topic ?? "main"}` })
+      target: (source) => ({ actor: "support", instance: "main", thread: `telegram:${source.chat}:${source.topic ?? "main"}` })
     })
 
     const result = await Effect.runPromise(channel.webhook.receive(request({
@@ -44,7 +44,7 @@ describe("telegram", () => {
             topic: 42,
             sender: "99"
           },
-          target: { actor: "support", thread: "telegram:-100123:42" }
+          target: { actor: "support", instance: "main", thread: "telegram:-100123:42" }
         },
         event: {
           type: "MessageReceived",
@@ -76,7 +76,7 @@ describe("telegram", () => {
       name: "telegram-support",
       token: "token",
       secretToken: "secret_token",
-      target: () => ({ actor: "support", thread: "main" })
+      target: () => ({ actor: "support", instance: "main", thread: "main" })
     })
 
     const result = await Effect.runPromise(channel.webhook.receive(request({}, "wrong")))
@@ -95,7 +95,7 @@ describe("telegram", () => {
         calls.push({ url: String(input), ...(init === undefined ? {} : { init }) })
         return Response.json({ ok: true, result: { message_id: 8 } })
       },
-      target: () => ({ actor: "support", thread: "main" })
+      target: () => ({ actor: "support", instance: "main", thread: "main" })
     })
 
     await Effect.runPromise(channel.provider.send(
@@ -116,7 +116,7 @@ describe("telegram", () => {
       name: "telegram-support",
       token: "token",
       secretToken: "contains spaces",
-      target: () => ({ actor: "support", thread: "main" })
+      target: () => ({ actor: "support", instance: "main", thread: "main" })
     })).toThrow()
   })
 })

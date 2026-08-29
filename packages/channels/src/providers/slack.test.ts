@@ -35,6 +35,7 @@ const options = () => ({
   signingSecret: "signing-secret",
   target: (source: { readonly channel: string; readonly thread: string }) => ({
     actor: "support",
+    instance: "main",
     thread: `slack:${source.channel}:${source.thread}`
   })
 })
@@ -69,6 +70,7 @@ describe("slack", () => {
       },
       target: {
         actor: "support",
+        instance: "main",
         thread: "slack:C123:1699999999.000001"
       }
     })

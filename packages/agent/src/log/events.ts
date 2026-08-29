@@ -377,7 +377,7 @@ export type Action =
       }
     } & Served)
 
-// agentKeys is the agent lane's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
+// agentKeys is the agent thread's dedup fragment, owned beside its alphabet. tr names the tool call's recorded
 // pair; bdec names the budget request a local decision answers, so a grant and denial for one request
 // cannot both commit. A grant is summed into the ceiling, so a redelivery must also absorb. A
 // decision that carries no callId predates the stamp and lands unkeyed; the fold tolerates it.

@@ -5,14 +5,14 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { createHost, type HostOptions } from "./host"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 
 // The driver's confluence property: the order the driver services dirty
-// lanes must not change any outcome. This is the driver-level bag law,
+// threads must not change any outcome. This is the driver-level bag law,
 // and the assumption under Driver.tla's any-order visits. Outcomes are
-// compared as fingerprints, the per-lane set of (type, id) pairs, since
+// compared as fingerprints, the per-thread set of (type, id) pairs, since
 // service order legitimately changes arrival order and timestamps.
 
 const RALLY = 5
@@ -45,14 +45,14 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
             const router = yield* Router
             if (input.n < RALLY) {
               yield* router.send(envelopeOf(
-                linkOf(parseActorId(`mem:${me}`), parseActorId(`mem:${opponent}`)),
+                linkOf(parseThreadAddress(`mem:main:${me}`), parseThreadAddress(`mem:main:${opponent}`)),
                 {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
                 } as Event
-              , me === "a" || me === "b" ? { parent: parseActorId(`mem:${me}`), depth: 1 } : undefined))
+              , me === "a" || me === "b" ? { parent: parseThreadAddress(`mem:main:${me}`), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -60,31 +60,31 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
     ]
   }
 
-// Four players, two interleaved rallies, so several lanes are dirty at
+// Four players, two interleaved rallies, so several threads are dirty at
 // once and the schedule genuinely matters.
-const LANES = ["a", "b", "c", "d"]
+const THREADS = ["a", "b", "c", "d"]
 
 const scenario = (pick: HostOptions<Router>["pick"]) => {
   const host = createHost<Router>({
-    actorFor: (lane) => {
-      const i = LANES.indexOf(lane)
+    actorFor: (thread) => {
+      const i = THREADS.indexOf(thread)
       if (i === -1) return undefined
-      const partner = LANES[(i + 2) % 4]!
-      return { reactors: [playerReactor(lane, partner)], keyOf: rallyKeys }
+      const partner = THREADS[(i + 2) % 4]!
+      return { reactors: [playerReactor(thread, partner)], keyOf: rallyKeys }
     },
     ...(pick === undefined ? {} : { pick })
   })
-  host.commitRoot("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
-  host.commitRoot("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:main:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host
 }
 
 const fingerprint = (host: ReturnType<typeof scenario>): string =>
   JSON.stringify(
-    LANES.map((lane) => [
-      lane,
+    THREADS.map((thread) => [
+      thread,
       host
-        .read(lane)
+        .read(thread)
         .map((e) => `${e.type}:${str((e as { id?: unknown }).id)}`)
         .sort()
     ])
@@ -99,8 +99,8 @@ describe("driver confluence", () => {
     await fc.assert(
       fc.asyncProperty(fc.infiniteStream(fc.nat()), async (seeds) => {
         const shuffled = scenario((dirty) => {
-          const lanes = [...dirty]
-          return lanes[seeds.next().value % lanes.length]!
+          const threads = [...dirty]
+          return threads[seeds.next().value % threads.length]!
         })
         await shuffled.drive()
         expect(shuffled.resting()).toBe(true)

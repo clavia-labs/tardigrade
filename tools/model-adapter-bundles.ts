@@ -21,13 +21,13 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 const workerSource = (adapter: { readonly name: string; readonly source: string }): string => `import { actor } from "tardie"
-import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 
 const definition = actor({ name: "bundle-proof", methods: {}, components: [] })
 
-export { ActorHost }
+export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
   modelAdapters: modelAdapters(${adapter.name})
 })
@@ -38,9 +38,12 @@ const wranglerSource = `${JSON.stringify({
   main: "worker.ts",
   compatibility_date: "2026-08-28",
   compatibility_flags: ["nodejs_compat"],
-  durable_objects: { bindings: [{ name: "ACTORS", class_name: "ActorHost" }] },
+  durable_objects: { bindings: [
+    { name: "ACTORS", class_name: "ActorDO" },
+    { name: "THREADS", class_name: "ThreadDO" }
+  ] },
   worker_loaders: [{ binding: "LOADER" }],
-  migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }],
+  migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }],
   vars: { TARDIGRADE_CONFIG: {} }
 }, undefined, 2)}\n`
 

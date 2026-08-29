@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { actorIdOf } from "@clavia/tardigrade-core/communication/endpoint"
+import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
 import { alarmFired } from "@clavia/tardigrade-core/actor/method"
 import type { Action } from "tardie/log/events"
@@ -23,7 +23,7 @@ import {
 } from "tardie"
 import { agentsPackage } from "tardie/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
-import { actorScenario, ROOT_LANE, TEST_MODEL, type Mind } from "./harness"
+import { actorScenario, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 type Outcome = "grant" | "deny" | "fail" | "timeout"
 
@@ -231,9 +231,9 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       key: `c137-${index}`
     }))
     const byKey = new Map(missions.map((mission) => [mission.key, mission]))
-    const humanLane = "ag.president-morty"
+    const humanThread = "ag.president-morty"
     const human = {
-      address: actorIdOf("mem", humanLane),
+      address: threadAddressOf("mem", "main", humanThread),
       methods: { requestPermission: requestPermissionMethod }
     }
     const assembled = validateActor(actor({
@@ -283,14 +283,14 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     }))
     let pickIndex = 0
     const scenario = actorScenario(assembled, mindFor(byKey, generated.jitter), {
-      driver: { maxConcurrentLanes: generated.concurrency },
+      driver: { maxConcurrentThreads: generated.concurrency },
       pick: (dirty) => {
-        const lanes = [...dirty].sort()
+        const threads = [...dirty].sort()
         const choice = generated.schedule[pickIndex++ % generated.schedule.length] ?? 0
-        return lanes[choice % lanes.length]!
+        return threads[choice % threads.length]!
       }
     })
-    scenario.host.seed(humanLane, [threadCreated(actorIdOf("mem", humanLane), undefined, 0)])
+    scenario.host.seed(humanThread, [threadCreated(threadAddressOf("mem", "main", humanThread), undefined, 0)])
     const turn = scenario.enqueue("Rick opens every portal")
     await scenario.drive()
     expect(scenario.host.resting()).toBe(true)
@@ -302,7 +302,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       if (current.error !== "the root did not reach a terminal boundary") {
         throw new Error(`Rick failed before the human answered: ${String(current.error)}`)
       }
-      const humanLog = scenario.host.read(humanLane)
+      const humanLog = scenario.host.read(humanThread)
       const terminals = new Set(humanLog
         .filter((event) => event.type === "PermissionRequestDecided" || event.type === "PermissionRequestFailed")
         .map((event) => String(field(event, "callId"))))
@@ -313,11 +313,11 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         const mission = byKey.get(match?.[1] ?? "")
         return (match?.[2] === "1" ? mission?.firstPermission : mission?.secondPermission) !== "timeout"
       })
-      const timeoutCalls = scenario.host.read(ROOT_LANE)
+      const timeoutCalls = scenario.host.read(ROOT_THREAD)
         .filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
         .flatMap((run) => {
-          const lane = `ag.${String(field(run, "callId"))}`
-          const child = scenario.host.read(lane)
+          const thread = `ag.${String(field(run, "callId"))}`
+          const child = scenario.host.read(thread)
           const terminal = new Set(child
             .filter((event) => event.type === "ResponseReceived" || event.type === "CallTimedOut")
             .map((event) => String(field(event, "call"))))
@@ -331,7 +331,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
             const mission = byKey.get(match?.[1] ?? "")
             const permission = match?.[2] === "1" ? mission?.firstPermission : mission?.secondPermission
             const call = String(field(event, "id"))
-            return permission === "timeout" && !terminal.has(call) ? [{ lane, dispatch: event }] : []
+            return permission === "timeout" && !terminal.has(call) ? [{ thread, dispatch: event }] : []
           })
         })
       const pending = [
@@ -357,7 +357,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
           const remaining = deadlineAt - Date.now()
           if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining))
           scenario.host.commitRoot(
-            scenario.host.self(operation.lane),
+            scenario.host.self(operation.thread),
             alarmFired({ scheduledFor: deadlineAt, at: Date.now() })
           )
           continue
@@ -368,7 +368,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         expect(match).not.toBeNull()
         const mission = byKey.get(match?.[1] ?? "")!
         const permission = match?.[2] === "1" ? mission.firstPermission : mission.secondPermission
-        scenario.host.commitRoot(scenario.host.self(humanLane), permission === "fail"
+        scenario.host.commitRoot(scenario.host.self(humanThread), permission === "fail"
           ? {
               type: "PermissionRequestFailed",
               callId: String(field(request, "id")),
@@ -395,7 +395,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       status: expectedStatus(mission)
     })))
 
-    const root = scenario.host.read(ROOT_LANE)
+    const root = scenario.host.read(ROOT_THREAD)
     const runs = root.filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
     expect(runs).toHaveLength(missions.length)
     expect(root.filter((event) => event.type === "ResponseReceived" && field(event, "method") === "message")).toHaveLength(missions.length)
@@ -404,7 +404,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     const expectedPermissionResponses = missions.reduce((count, mission) =>
       count + (mission.firstPermission === "timeout" ? 0 : 1) +
       (mission.firstPermission === "grant" && mission.budget === "grant" && mission.secondPermission !== "timeout" ? 1 : 0), 0)
-    const humanLog = scenario.host.read(humanLane)
+    const humanLog = scenario.host.read(humanThread)
     expect(humanLog.filter((event) => event.type === "PermissionRequestReceived")).toHaveLength(expectedPermissions)
     expect(humanLog.filter((event) => event.type === "ResponseDelivered" && field(event, "method") === "requestPermission")).toHaveLength(expectedPermissionResponses)
 
@@ -420,7 +420,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       expect(child.filter((event) => event.type === "CallDispatched").length).toBeGreaterThanOrEqual(1)
       const created = child[0] as { readonly type?: unknown; readonly parent?: unknown }
       expect(created.type).toBe("ThreadCreated")
-      expect(created.parent).toEqual(actorIdOf("mem", ROOT_LANE))
+      expect(created.parent).toEqual(threadAddressOf("mem", "main", ROOT_THREAD))
     }
     expect(scenario.host.resting()).toBe(true)
   }), { numRuns: 40 })

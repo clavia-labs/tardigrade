@@ -9,9 +9,9 @@ import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { agentsPackage, INLINE_OUTPUT_NAME } from "./agents"
 import { output, type OutputContract } from "../output/contract"
 import {
-  formatActorId,
-  parseActorId,
-  type ActorId,
+  formatThreadAddress,
+  parseThreadAddress,
+  type ThreadAddress,
   type ProviderEndpoint
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
@@ -23,16 +23,16 @@ import { codeSystemFor } from "../components/code"
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.
 
-type SentLink = Link<ActorId, ActorId> | Link<ActorId, ProviderEndpoint>
-type Sent = Envelope<ActorId, Event, SentLink["target"]>
+type SentLink = Link<ThreadAddress, ThreadAddress> | Link<ThreadAddress, ProviderEndpoint>
+type Sent = Envelope<ThreadAddress, Event, SentLink["target"]>
 
 const env = (
-  lane: string,
+  thread: string,
   sent: Array<Sent>,
-  lanes: Readonly<Record<string, ReadonlyArray<Event>>> = {}
+  threads: Readonly<Record<string, ReadonlyArray<Event>>> = {}
 ) => {
-  const self = parseActorId(lane)
-  const events = [threadCreated(self, undefined, 0), ...(lanes[self.thread] ?? [])]
+  const self = parseThreadAddress(thread)
+  const events = [threadCreated(self, undefined, 0), ...(threads[self.thread] ?? [])]
   return Layer.mergeAll(
     Layer.succeed(Router, {
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
@@ -59,7 +59,7 @@ const response = (
   ...(status === "completed" ? { output: value } : {}),
   ...(status === "failed" ? { error: value } : {}),
   ...(options.data === undefined ? {} : { data: options.data }),
-  from: `mem:ag.${turn}`,
+  from: `mem:main:ag.${turn}`,
   at: options.at ?? 1
 })
 
@@ -69,7 +69,7 @@ describe("agentsPackage", () => {
     expect(system).not.toContain("agents.continue")
     expect(system).toContain("agents.providers({cursor?: string, search?: string, limit?: number})")
     expect(system).toContain("agents.models({cursor?: string, search?: string, limit?: number, provider?: string, sort?: \"promptUsdPerToken\" | \"completionUsdPerToken\" | \"cachedPromptUsdPerToken\" | \"cacheWritePromptUsdPerToken\", order?: \"asc\" | \"desc\", unpriced?: \"first\" | \"last\"})")
-    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
+    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, placement?: \"colocated\" | \"independent\", escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
   })
 
   test("catalog searches return the host API pages", async () => {
@@ -115,7 +115,7 @@ describe("agentsPackage", () => {
     })
     const sent: Array<Sent> = []
     const providers = await Effect.runPromise(
-      pkg.methods.providers!({ search: "router", limit: 10 }, { callId: "providers" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.providers!({ search: "router", limit: 10 }, { callId: "providers" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     const models = await Effect.runPromise(
       pkg.methods.models!({
@@ -125,7 +125,7 @@ describe("agentsPackage", () => {
         sort: "completionUsdPerToken",
         order: "asc",
         unpriced: "last"
-      }, { callId: "models" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      }, { callId: "models" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(providerQueries).toEqual([{
       search: "router",
@@ -147,45 +147,49 @@ describe("agentsPackage", () => {
     expect(models).toEqual(modelPage)
   })
 
-  test("the default placement is the host's own sibling address", async () => {
-    const host = createHost({ actorFor: () => undefined, principal: "mem" })
+  test("the default address is the host's own sibling", async () => {
+    const host = createHost({ actorFor: () => undefined, actorName: "mem" })
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true, escalatable: true }, { callId: "c1" }).pipe(Effect.provide(env(host.self("ag.root"), sent)))
     )
-    // Parity with the closure the in-process host used to pass: same principal, `ag.<callId>`
-    // for the lane.
-    expect(sent[0]?.link.target).toEqual({ actor: "mem", thread: "ag.c1" })
+    // Parity with the closure the in-process host used to pass: same actorName, `ag.<callId>`
+    // for the thread.
+    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: "ag.c1" })
     expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
-  test("a stated place overrides the default", async () => {
+  test("a run carries its requested thread placement", async () => {
     const sent: Array<Sent> = []
-    const pkg = agentsPackage({
-      place: (callId, self) => ({
-        actor: "far",
-        thread: `${formatActorId(self)}/${callId}`
-      })
-    })
+    const pkg = agentsPackage()
     await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true }, { callId: "c2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.run!({ text: "scout", background: true, placement: "independent" }, { callId: "independent-child" })
+        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
-    expect(formatActorId(sent[0]!.link.target as ActorId)).toBe("far:mem:ag.root/c2")
+    expect(sent[0]?.lineage?.placement).toBe("independent")
+  })
+
+  test("a run refuses an unknown thread placement", async () => {
+    const result = await Effect.runPromise(
+      agentsPackage().methods.run!({ text: "scout", background: true, placement: "nearby" }, { callId: "bad-placement" })
+        .pipe(Effect.provide(env("mem:main:ag.root", [])))
+    )
+    expect(result).toEqual({ error: "agents.run placement must be colocated or independent" })
   })
 
   test("the callId is the child's identity and the link returns to the parent", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(answer).toEqual({ dispatched: true, callId: "c3" })
     const brief = sent[0]!.event as { id?: unknown }
     expect(brief.id).toBe("c3")
     expect(sent[0]!.link).toEqual({
-      source: { actor: "mem", thread: "ag.root" },
-      target: { actor: "mem", thread: "ag.c3" }
+      source: { actor: "mem", instance: "main", thread: "ag.root" },
+      target: { actor: "mem", instance: "main", thread: "ag.c3" }
     })
   })
 
@@ -196,15 +200,15 @@ describe("agentsPackage", () => {
     const inherited = agentsPackage()
     const fixed = agentsPackage({ models: { default: selected, allow: "*" } })
     await Effect.runPromise(
-      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     await Effect.runPromise(
-      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(sent[0]!.event).not.toHaveProperty("model")
     expect(sent[1]!.event).toMatchObject({ model: selected })
     await Effect.runPromise(
-      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(sent[2]!.event).toMatchObject({ model: overridden })
     expect(sent).toHaveLength(3)
@@ -234,7 +238,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true }, { callId: "narrow" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -258,7 +262,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       agentsPackage().methods.run!({ text: "scout", background: true }, { callId: "inherit" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -270,14 +274,14 @@ describe("agentsPackage", () => {
     })
   })
 
-  test("a reply already on the lane answers without parking", async () => {
+  test("a reply already on the thread answers without parking", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
-    const lanes = {
+    const threads = {
       "ag.root": [response("c4", "completed", "4")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:ag.root", sent, lanes)))
+      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ output: "4" })
     // The durable response answered, so nothing was re-delivered.
@@ -291,26 +295,26 @@ describe("agentsPackage", () => {
       // flip then orDie: the call must park, and a success is a defect rather than a failure
       // typed as the method's own result.
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c5" }).pipe(
-        Effect.provide(env("mem:ag.root", sent)),
+        Effect.provide(env("mem:main:ag.root", sent)),
         Effect.flip,
         Effect.orDie
       )
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
-    expect(formatActorId(sent[0]!.link.target as ActorId)).toBe("mem:ag.c5")
+    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.c5")
   })
 
   test("result reads the response from its own log", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
-    const lanes = {
+    const threads = {
       "ag.root": [
         response("c6", "failed", "nope")
       ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:ag.root", sent, lanes)))
+      pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ error: "nope" })
   })
@@ -327,7 +331,7 @@ describe("agentsPackage", () => {
       }
     })
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(answer).toEqual({ error: "agents.run takes budget as a whole number of tool calls, at least 1; got 0.7" })
     expect(draws.length).toBe(0)
@@ -357,7 +361,7 @@ describe("the output a spawn asks for", () => {
     const answer = await Effect.runPromise(
       pkg.methods
         .run!({ text: "scout", background: true, output: asked }, { callId: "o1" })
-        .pipe(Effect.provide(env("mem:ag.root", sent)))
+        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     return { answer, brief: sent[0]?.event as { output?: unknown } | undefined }
   }
@@ -417,7 +421,7 @@ describe("a run stays bound to the schema it was started under", () => {
   })
 
   // The response carries the declaration the child accepted with its call.
-  const lanes = (declaration: unknown, text: string) => ({
+  const threads = (declaration: unknown, text: string) => ({
     "ag.root": [response("b1", "completed", text, {
       data: declaration === undefined ? undefined : { output: declaration },
       at: 2
@@ -425,51 +429,51 @@ describe("a run stays bound to the schema it was started under", () => {
   }) as Readonly<Record<string, ReadonlyArray<Event>>>
 
   const resultOf = async (
-    lanesFor: Readonly<Record<string, ReadonlyArray<Event>>>,
+    threadsFor: Readonly<Record<string, ReadonlyArray<Event>>>,
     outputs: Readonly<Record<string, OutputContract>> = {}
   ): Promise<unknown> => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage({ outputs })
     return Effect.runPromise(
-      pkg.methods.result!({ id: "b1" }, { callId: "later" }).pipe(Effect.provide(env("mem:ag.root", sent, lanesFor)))
+      pkg.methods.result!({ id: "b1" }, { callId: "later" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threadsFor)))
     )
   }
 
   const declarationA = { name: SCOUT.name, schema: SCOUT.schema }
 
   test("a run that declared a contract comes back decoded and validated", async () => {
-    expect(await resultOf(lanes(declarationA, structured), { scout: SCOUT })).toEqual({ output: { summary: "done" } })
+    expect(await resultOf(threads(declarationA, structured), { scout: SCOUT })).toEqual({ output: { summary: "done" } })
   })
 
   test("a later call cannot invent a contract the run never declared", async () => {
     // The reply is JSON that would satisfy a contract nobody asked for. The run declared none, so
     // it comes back as the text it is.
-    expect(await resultOf(lanes(undefined, structured), { scout: SCOUT })).toEqual({ output: structured })
+    expect(await resultOf(threads(undefined, structured), { scout: SCOUT })).toEqual({ output: structured })
   })
 
   // The three cases the durable log has to settle: the run was started under schema A, and only
   // schema A can read its answer, whatever is mounted when the answer is read.
   test("the answer stays bound to schema A when the registry now holds schema B", async () => {
-    expect(await resultOf(lanes(declarationA, structured), { scout: SCOUT_B })).toEqual({ output: { summary: "done" } })
+    expect(await resultOf(threads(declarationA, structured), { scout: SCOUT_B })).toEqual({ output: { summary: "done" } })
   })
 
   test("the answer stays readable when the registry entry is gone entirely", async () => {
-    expect(await resultOf(lanes(declarationA, structured))).toEqual({ output: { summary: "done" } })
+    expect(await resultOf(threads(declarationA, structured))).toEqual({ output: { summary: "done" } })
   })
 
   test("a reply invalid under A but valid under B still fails as A", async () => {
-    const answered = await resultOf(lanes(declarationA, '{"summary":7}'), { scout: SCOUT_B })
+    const answered = await resultOf(threads(declarationA, '{"summary":7}'), { scout: SCOUT_B })
     expect((answered as { error?: string }).error).toContain('outside its declared contract "scout"')
   })
 
   test("a reply outside the run's declared contract is an error, never a value", async () => {
-    const answered = await resultOf(lanes(declarationA, '{"summary":7}'), { scout: SCOUT })
+    const answered = await resultOf(threads(declarationA, '{"summary":7}'), { scout: SCOUT })
     expect((answered as { error?: string }).error).toContain('outside its declared contract "scout"')
   })
 
   // A carried declaration that cannot be read fails closed.
   test("a declaration that cannot be read fails the read, never returns the text", async () => {
-    const answered = await resultOf(lanes(null, structured))
+    const answered = await resultOf(threads(null, structured))
     expect((answered as { error?: string }).error).toContain('the original output declaration for run "b1" is unavailable')
   })
 

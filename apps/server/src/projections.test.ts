@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replyId } from "@clavia/tardigrade-core/communication/message"
-import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { childCreated, threadCreated } from "@clavia/tardigrade-core/thread"
 
 import { statusOf, summaryOf, treeOf } from "./projections"
 
@@ -14,8 +14,16 @@ const at = () => ++clock
 
 const created = (id: string, parent?: string, depth = 0): Event =>
   threadCreated(
-    { actor: "default", thread: id },
-    parent === undefined ? undefined : { parent: { actor: "default", thread: parent }, depth },
+    { actor: "default", instance: "main", thread: id },
+    parent === undefined ? undefined : { parent: { actor: "default", instance: "main", thread: parent }, depth },
+    at()
+  )
+
+const spawned = (id: string, parent: string, depth: number): Event =>
+  childCreated(
+    `create-${id}`,
+    { actor: "default", instance: "main", thread: id },
+    { parent: { actor: "default", instance: "main", thread: parent }, depth },
     at()
   )
 
@@ -66,7 +74,7 @@ describe("statusOf", () => {
     expect(statusOf(log)).toBe("blocked")
   })
 
-  test("a landed reply unblocks the lane", () => {
+  test("a landed reply unblocks the thread", () => {
     const log = [
       inbound("m1"),
       dispatched("t1"),
@@ -113,8 +121,8 @@ describe("treeOf", () => {
   // Two roots, and one of them three levels deep: root -> t1.0 -> t9.0.
   const forest = (): ReadonlyMap<string, ReadonlyArray<Event>> =>
     new Map<string, ReadonlyArray<Event>>([
-      ["root", [created("root"), inbound("m1"), dispatched("t1"), called("t1.0"), called("t1.1")]],
-      ["t1.0", [created("t1.0", "root", 1), inbound("t1.0"), dispatched("t9"), called("t9.0")]],
+      ["root", [created("root"), inbound("m1"), dispatched("t1"), called("t1.0"), spawned("t1.0", "root", 1), called("t1.1"), spawned("t1.1", "root", 1)]],
+      ["t1.0", [created("t1.0", "root", 1), inbound("t1.0"), dispatched("t9"), called("t9.0"), spawned("t9.0", "t1.0", 2)]],
       ["t1.1", [created("t1.1", "root", 1), inbound("t1.1")]],
       ["t9.0", [created("t9.0", "t1.0", 2), inbound("t9.0")]],
       ["other", [created("other"), inbound("m2")]]
@@ -136,7 +144,7 @@ describe("treeOf", () => {
     const child = root.children[0]!
     expect(child.parent).toBe("root")
     expect(child.depth).toBe(1)
-    expect(child.events).toBe(4)
+    expect(child.events).toBe(5)
     expect(root.children[0]!.children[0]!.parent).toBe("t1.0")
     expect("parent" in root).toBe(false)
   })

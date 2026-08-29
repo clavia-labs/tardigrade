@@ -6,7 +6,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 // the store keyed by ref, and every truncation carries a pointer with a CTA. The event keeps a
 // preview and the ref; replay hydrates the ref from the same store, so recorded pairs stay whole.
 // The platform picks the backend (a memory store, a file system, any SqlClient) and picks what one
-// workspace spans by handing the lane a prefixed view.
+// workspace spans by handing the thread a prefixed view.
 
 // WORKSPACE_REFS is the reserved key the ref manifest lives under. The value is a JSON array of ref
 // strings, and a missing key reads as the empty array. The KeyValueStore interface has no

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import {
-  createLaneDriver,
-  DEFAULT_MAX_CONCURRENT_LANES,
+  createThreadDriver,
+  DEFAULT_MAX_CONCURRENT_THREADS,
   driverPolicyOf
 } from "./driver"
 
@@ -13,36 +13,36 @@ const gate = (): { readonly promise: Promise<void>; readonly open: () => void } 
   return { promise, open }
 }
 
-describe("lane driver", () => {
+describe("thread driver", () => {
   test("the exported default is the resolved capacity", () => {
-    expect(driverPolicyOf()).toEqual({ maxConcurrentLanes: DEFAULT_MAX_CONCURRENT_LANES })
+    expect(driverPolicyOf()).toEqual({ maxConcurrentThreads: DEFAULT_MAX_CONCURRENT_THREADS })
   })
 
-  test("rejects a capacity that cannot schedule a lane", () => {
-    expect(() => driverPolicyOf({ maxConcurrentLanes: 0 })).toThrow("positive integer")
-    expect(() => driverPolicyOf({ maxConcurrentLanes: 1.5 })).toThrow("positive integer")
+  test("rejects a capacity that cannot schedule a thread", () => {
+    expect(() => driverPolicyOf({ maxConcurrentThreads: 0 })).toThrow("positive integer")
+    expect(() => driverPolicyOf({ maxConcurrentThreads: 1.5 })).toThrow("positive integer")
   })
 
-  test("fills the configured capacity with distinct lanes", async () => {
+  test("fills the configured capacity with distinct threads", async () => {
     const release = gate()
     const twoStarted = gate()
     let active = 0
     let peak = 0
     let started = 0
     const served: string[] = []
-    const driver = createLaneDriver({
-      policy: { maxConcurrentLanes: 2 },
-      serve: async (lane) => {
+    const driver = createThreadDriver({
+      policy: { maxConcurrentThreads: 2 },
+      serve: async (thread) => {
         active += 1
         peak = Math.max(peak, active)
         started += 1
-        served.push(lane)
+        served.push(thread)
         if (started === 2) twoStarted.open()
         await release.promise
         active -= 1
       }
     })
-    for (const lane of ["a", "b", "c"]) driver.mark(lane)
+    for (const thread of ["a", "b", "c"]) driver.mark(thread)
 
     const draining = driver.drain()
     await twoStarted.promise
@@ -58,14 +58,14 @@ describe("lane driver", () => {
     expect(driver.resting()).toBe(true)
   })
 
-  test("a delivery to an active lane waits for its next pass", async () => {
+  test("a delivery to an active thread waits for its next pass", async () => {
     const release = gate()
     const firstStarted = gate()
     let calls = 0
     let active = 0
     let peak = 0
-    const driver = createLaneDriver({
-      policy: { maxConcurrentLanes: 4 },
+    const driver = createThreadDriver({
+      policy: { maxConcurrentThreads: 4 },
       serve: async () => {
         calls += 1
         active += 1
@@ -89,17 +89,17 @@ describe("lane driver", () => {
     expect(peak).toBe(1)
   })
 
-  test("a newly dirty lane fills idle capacity before the first lane finishes", async () => {
+  test("a newly dirty thread fills idle capacity before the first thread finishes", async () => {
     const release = gate()
     const firstStarted = gate()
     const secondStarted = gate()
     let active = 0
-    const driver = createLaneDriver({
-      policy: { maxConcurrentLanes: 2 },
-      serve: async (lane) => {
+    const driver = createThreadDriver({
+      policy: { maxConcurrentThreads: 2 },
+      serve: async (thread) => {
         active += 1
-        if (lane === "a") firstStarted.open()
-        if (lane === "b") secondStarted.open()
+        if (thread === "a") firstStarted.open()
+        if (thread === "b") secondStarted.open()
         await release.promise
         active -= 1
       }
@@ -115,9 +115,9 @@ describe("lane driver", () => {
     await draining
   })
 
-  test("a failed lane keeps its debt for the next drive", async () => {
+  test("a failed thread keeps its debt for the next drive", async () => {
     let attempts = 0
-    const driver = createLaneDriver({
+    const driver = createThreadDriver({
       serve: async () => {
         attempts += 1
         if (attempts === 1) throw new Error("crash")

@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Event } from "@clavia/tardigrade-core/log/event"
+import { ActorInstanceId } from "@clavia/tardigrade-core/communication/endpoint"
 
 // The API as a value. Every JSON route is an HttpApiEndpoint with its path params, query, success
 // schema, and error schemas, so the router, the OpenAPI document, and the derived client all read
@@ -81,6 +82,9 @@ export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 
 
 // A thread exists once its log has its ThreadCreated event, so an empty log is the only unknown thread there is (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
+
+// UnknownActor reports an actor instance that no write has created.
+export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
 
 // A name the actor never declared. The platform mounts what an actor declares and nothing else, so
 // this is the answer for any other name under a thread, and its detail lists the names that do
@@ -186,6 +190,7 @@ export type EventRow = typeof EventRow.Type
 // retrying caller gets this same answer and never learns it retried. Nothing turn-shaped is echoed:
 // a turn is the actor's reading of the log, and the caller already holds whatever id it sent.
 export const Accepted = Schema.Struct({
+  actor: Schema.String,
   thread: Schema.String
 }).annotate({ identifier: "Accepted" }).pipe(HttpApiSchema.status(202))
 
@@ -193,6 +198,7 @@ export type Accepted = typeof Accepted.Type
 
 // MethodAccepted identifies the method call committed for asynchronous reconciliation.
 export const MethodAccepted = Schema.Struct({
+  actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
   call: Schema.String
@@ -243,6 +249,13 @@ export const ActorSummary = Schema.Struct({
 }).annotate({ identifier: "ActorSummary" })
 
 export type ActorSummary = typeof ActorSummary.Type
+
+export const ActorInstanceSummary = Schema.Struct({
+  id: Schema.String,
+  definition: Schema.String
+}).annotate({ identifier: "ActorInstanceSummary" })
+
+export type ActorInstanceSummary = typeof ActorInstanceSummary.Type
 
 const ModelCatalogRate = Schema.Finite.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "non-negative" }))
@@ -419,7 +432,9 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-const RuntimeThreadParams = { id: Schema.String }
+const RuntimeActorParams = { id: ActorInstanceId }
+
+const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 
 const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
@@ -432,25 +447,27 @@ export const runtimeGroup = HttpApiGroup.make("runtime").add(
 export const threadsGroup = HttpApiGroup.make("threads").add(
   // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
-  HttpApiEndpoint.post("append", "/v1/threads/:id/events", {
+  HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     payload: Append,
     success: Accepted
   }),
-  HttpApiEndpoint.get("list", "/v1/threads", {
-    success: Schema.Array(ThreadSummary)
+  HttpApiEndpoint.get("list", "/v1/actors/:id/threads", {
+    params: RuntimeActorParams,
+    success: Schema.Array(ThreadSummary),
+    error: [UnknownActor.schema]
   }),
-  HttpApiEndpoint.get("events", "/v1/threads/:id/events", {
+  HttpApiEndpoint.get("events", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
-    error: [UnknownThread.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   }),
   // The tree reads the whole family because each thread owns its identity while parent addresses resolve against the other ThreadCreated records in the actor's listing.
-  HttpApiEndpoint.get("tree", "/v1/threads/:id/tree", {
+  HttpApiEndpoint.get("tree", "/v1/actors/:id/threads/:thread/tree", {
     params: RuntimeThreadParams,
     success: ThreadNode,
-    error: [UnknownThread.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   })
 )
 
@@ -459,16 +476,16 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
   HttpApiEndpoint.get("methods", "/v1/methods", {
     success: Schema.Array(MethodSummary)
   }),
-  HttpApiEndpoint.put("invoke", "/v1/threads/:id/methods/:method/calls/:call", {
+  HttpApiEndpoint.put("invoke", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
     payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownMethod.schema]
   }),
-  HttpApiEndpoint.get("methodState", "/v1/threads/:id/methods/:method/calls/:call", {
+  HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
     success: MethodState,
-    error: [UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+    error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   })
 )
 
@@ -476,12 +493,25 @@ export const healthGroup = HttpApiGroup.make("health").add(
   HttpApiEndpoint.get("healthz", "/healthz", { success: Health })
 )
 
-export const actorsGroup = HttpApiGroup.make("actors").add(
-  HttpApiEndpoint.get("actors", "/v1/actors", { success: Schema.Array(ActorSummary) }),
-  HttpApiEndpoint.put("pushActor", "/v1/actors", {
+export const definitionsGroup = HttpApiGroup.make("definitions").add(
+  HttpApiEndpoint.get("definitions", "/v1/definitions", { success: Schema.Array(ActorSummary) }),
+  HttpApiEndpoint.put("pushDefinition", "/v1/definitions", {
     payload: ActorArtifact,
     success: ActorSummary,
     error: [InvalidRequest.schema]
+  })
+)
+
+export const actorsGroup = HttpApiGroup.make("actors").add(
+  HttpApiEndpoint.get("actors", "/v1/actors", { success: Schema.Array(ActorInstanceSummary) }),
+  HttpApiEndpoint.put("ensureActor", "/v1/actors/:id", {
+    params: RuntimeActorParams,
+    success: ActorInstanceSummary
+  }),
+  HttpApiEndpoint.get("actor", "/v1/actors/:id", {
+    params: RuntimeActorParams,
+    success: ActorInstanceSummary,
+    error: [UnknownActor.schema]
   })
 )
 
@@ -549,11 +579,11 @@ const projectionEndpoint = <
   Params extends Schema.Struct.Fields,
   Result extends Schema.Top
 >(name: Name, params: Params, result: Result) =>
-  HttpApiEndpoint.get(name, `/v1/threads/:id/projections/${name}` as const, {
+  HttpApiEndpoint.get(name, `/v1/actors/:id/threads/:thread/projections/${name}` as const, {
     params: RuntimeThreadParams,
     query: params,
     success: result,
-    error: [UnknownThread.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   })
 
 export type ProjectionEndpoint<Name extends string, D extends ProjectionDeclaration> = ReturnType<
@@ -590,17 +620,18 @@ export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>(
 
 // actorApiOf declares the runtime mounted at one origin.
 export const actorApiOf = <const P extends Projections>(projections: P) =>
-  HttpApi.make("tardigrade-actor").add(modelsGroup, runtimeGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
+  HttpApi.make("tardigrade-actor").add(modelsGroup, runtimeGroup, actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
     .middleware(RequestProblems)
 
 // controlApi declares the host operations that manage several actors.
-export const controlApi = HttpApi.make("tardigrade-control").add(actorsGroup).middleware(RequestProblems)
+export const controlApi = HttpApi.make("tardigrade-control").add(definitionsGroup).middleware(RequestProblems)
 
 // apiOf combines the mounted runtime, control plane, and health probe served by one process.
 export const apiOf = <const P extends Projections>(projections: P) =>
   HttpApi.make("tardigrade").add(
     modelsGroup,
     runtimeGroup,
+    definitionsGroup,
     actorsGroup,
     threadsGroup,
     methodsGroup,
