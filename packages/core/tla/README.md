@@ -25,6 +25,7 @@ The specifications describe the runtime and communication contracts independentl
 | `runtime/Replay` | Recorded answers remain bound to their questions | `Replay.cfg` | `ReplayTrust.cfg` |
 | `runtime/Thread` | Atomic creation, immutable lineage, and retry absorption | `Thread.cfg`, `ThreadLive.cfg` | `ThreadSplit.cfg`, `ThreadDepth.cfg`, `ThreadConflict.cfg` |
 | `runtime/Totality` | A rulebook covers every live event without swallowing work | `Totality.cfg` | `TotalityVoid.cfg` |
+| `cloudflare/ThreadCreation` | Actor directory reservation, child acceptance, publication, and retry completion | `ThreadCreation.cfg`, `ThreadCreationLive.cfg` | `ThreadCreationCurrent.cfg` |
 
 A counterexample configuration is successful when TLC violates the property named by the suite manifest. A parser error, deadlock report, or unrelated violation fails the suite.
 

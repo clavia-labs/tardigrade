@@ -199,7 +199,7 @@ describe("cloudflare actor", () => {
     })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
-  test("a thread store wrapper covers method ingress, reactors, and API reads", async () => {
+  test("a thread event codec covers method ingress, reactors, and API reads", async () => {
     const prompt = "classified prompt"
     await createThread("sealed")
     const accepted = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
@@ -253,32 +253,72 @@ describe("cloudflare actor", () => {
     expect(raw.every((row) => !row.event.includes(prompt))).toBe(true)
     expect(raw.every((row) => row.key === null || /^hmac-sha256:[a-f0-9]{64}$/.test(row.key))).toBe(true)
     expect(raw.every((row) => !row.key?.includes("sealed-call"))).toBe(true)
+
+    for (const secretId of ["first-secret", "second-secret"]) {
+      const appended = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ type: "IndexedRecord", secretId })
+      })
+      expect(appended.status).toBe(202)
+    }
+    const indexed = await SELF.fetch(
+      "http://test/v1/actors/main/threads/sealed/events?after=0&limit=10&types=IndexedRecord",
+      { headers: authorization }
+    )
+    expect((await indexed.json() as ReadonlyArray<{ readonly event: { readonly secretId: string } }>).map((row) => row.event.secretId))
+      .toEqual(["first-secret", "second-secret"])
   })
 
-  test("actor directory owns the thread tree", async () => {
+  test("actor directory publishes a child after durable acceptance", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
     await directory.createThread("ag.directory-parent")
-    await directory.createThread("ag.directory-child", {
-      parent: { actor: "echo", instance: "main", thread: "ag.directory-parent" },
+    const parent = { actor: "echo", instance: "main", thread: "ag.directory-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.directory-child" }
+    const lineage = {
+      parent,
       depth: 1,
-      placement: "independent"
-    })
-    await directory.createThread("ag.directory-child")
-    const entries = await runInDurableObject(directory, (_instance, state) =>
-      state.storage.sql.exec<{
+      placement: "independent" as const
+    }
+    const pending = await runInDurableObject(directory, (_instance, state) => {
+      state.storage.sql.exec(
+        `INSERT INTO thread_directory (thread, parent_thread, depth, placement, status)
+         VALUES ('ag.directory-child', 'ag.directory-parent', 1, 'independent', 'pending')`
+      )
+      return state.storage.sql.exec<{
         thread: string
         parent_thread: string | null
         depth: number
         placement: string | null
-      }>("SELECT thread, parent_thread, depth, placement FROM thread_directory WHERE thread = 'ag.directory-child'").toArray()
-    )
-    expect(entries).toEqual([{
+        status: string
+      }>("SELECT thread, parent_thread, depth, placement, status FROM thread_directory WHERE thread = 'ag.directory-child'").toArray()
+    })
+    expect(pending).toEqual([{
       thread: "ag.directory-child",
       parent_thread: "ag.directory-parent",
       depth: 1,
-      placement: "independent"
+      placement: "independent",
+      status: "pending"
     }])
+    const pendingTree = await directory.threadTree()
+    expect(pendingTree.find((node) => node.id === "directory-parent")).toEqual({
+      id: "directory-parent",
+      depth: 0,
+      children: []
+    })
+    expect(pendingTree.some((node) => node.id === "directory-child")).toBe(false)
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "directory-child-message", text: "hello", at: 2 },
+      lineage
+    })
+    const fresh = { actor: "echo", instance: "main", thread: "ag.directory-fresh" }
+    await directory.deliverChild({
+      link: { source: parent, target: fresh },
+      event: { type: "MessageReceived", id: "directory-fresh-message", text: "hello", at: 3 },
+      lineage
+    })
     const tree = await directory.threadTree()
     expect(tree.find((node) => node.id === "directory-parent")).toEqual({
       id: "directory-parent",
@@ -289,8 +329,16 @@ describe("cloudflare actor", () => {
         depth: 1,
         placement: "independent",
         children: []
+      }, {
+        id: "directory-fresh",
+        parent: "directory-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
       }]
     })
+    const childEvents = await threadStub("directory-child").events("directory-child")
+    expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {

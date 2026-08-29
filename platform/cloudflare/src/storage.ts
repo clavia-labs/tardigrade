@@ -12,9 +12,19 @@ export interface EventRow {
 
 export type CloudflareEventKeyIndex = (key: string) => Effect.Effect<string>
 
+export interface CloudflareEventCodec {
+  readonly encode: (events: ReadonlyArray<Event>) => Effect.Effect<ReadonlyArray<Event>>
+  readonly decode: (events: ReadonlyArray<Event>) => Effect.Effect<ReadonlyArray<Event>>
+}
+
 export interface CloudflareThreadStorePolicy {
-  readonly wrap: (inner: ThreadEventStore) => ThreadEventStore
+  readonly codec: CloudflareEventCodec
   readonly indexKey: CloudflareEventKeyIndex
+}
+
+export const plaintextEventCodec: CloudflareEventCodec = {
+  encode: Effect.succeed,
+  decode: Effect.succeed
 }
 
 export const plaintextEventKeyIndex: CloudflareEventKeyIndex = Effect.succeed
@@ -46,6 +56,10 @@ const actorMigrations = SqliteMigrator.fromRecord({
       depth INTEGER NOT NULL,
       placement TEXT
     ) WITHOUT ROWID`)
+  }),
+  "0002_thread_creation_state": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql.unsafe("ALTER TABLE thread_directory ADD COLUMN status TEXT NOT NULL DEFAULT 'ready'")
   })
 })
 
@@ -86,15 +100,18 @@ export const initializeCloudflareThreadSchema: Effect.Effect<void, never, SqlCli
 export class CloudflareEventStore implements ThreadEventStore {
   readonly sql: SqlClient.SqlClient
   readonly keyOf: (event: Event) => string | undefined
+  readonly codec: CloudflareEventCodec
   readonly indexKey: CloudflareEventKeyIndex
 
   constructor(
     sql: SqlClient.SqlClient,
     keyOf: (event: Event) => string | undefined,
+    codec: CloudflareEventCodec = plaintextEventCodec,
     indexKey: CloudflareEventKeyIndex = plaintextEventKeyIndex
   ) {
     this.sql = sql
     this.keyOf = keyOf
+    this.codec = codec
     this.indexKey = indexKey
   }
 
@@ -109,6 +126,7 @@ export class CloudflareEventStore implements ThreadEventStore {
       .unsafe<{ readonly event: string }>("SELECT event FROM events ORDER BY seq")
       .pipe(
         Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
+        Effect.flatMap((events) => this.decode(events)),
         Effect.orDie
       )
   }
@@ -118,6 +136,7 @@ export class CloudflareEventStore implements ThreadEventStore {
       .unsafe<{ readonly event: string }>("SELECT event FROM events WHERE seq > ? ORDER BY seq", [mark])
       .pipe(
         Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
+        Effect.flatMap((events) => this.decode(events)),
         Effect.orDie
       )
   }
@@ -129,9 +148,22 @@ export class CloudflareEventStore implements ThreadEventStore {
         [mark, limit]
       )
       .pipe(
-        Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
+        Effect.flatMap((rows) => {
+          const events = rows.map((row) => JSON.parse(row.event) as Event)
+          return this.decode(events).pipe(
+            Effect.map((decoded) => rows.map((row, index) => ({ seq: Number(row.seq), event: decoded[index]! })))
+          )
+        }),
         Effect.orDie
       )
+  }
+
+  private decode(events: ReadonlyArray<Event>): Effect.Effect<ReadonlyArray<Event>> {
+    return this.codec.decode(events).pipe(
+      Effect.flatMap((decoded) => decoded.length === events.length
+        ? Effect.succeed(decoded)
+        : Effect.die(new Error("event codec decode must preserve batch length")))
+    )
   }
 
   get head(): Effect.Effect<number> {
@@ -147,34 +179,45 @@ export class CloudflareEventStore implements ThreadEventStore {
     if (events.length === 0) return Effect.succeed(0)
     const sql = this.sql
     const keyOf = this.keyOf
+    const codec = this.codec
     const indexKey = this.indexKey
-    return sql.withTransaction(
-      Effect.gen(function* () {
-        const heads = yield* sql.unsafe<{ readonly head: number }>(
-          "SELECT COALESCE(MAX(seq), 0) AS head FROM events"
-        )
-        let seq = Number(heads[0]?.head ?? 0) + 1
-        let appended = 0
-        for (const event of events) {
-          const eventKey = keyOf(event)
-          const indexedKey = eventKey === undefined ? undefined : yield* indexKey(eventKey)
-          if (indexedKey !== undefined) {
-            const present = yield* sql.unsafe<{ readonly present: number }>(
-              "SELECT 1 AS present FROM events WHERE key = ?",
-              [indexedKey]
-            )
-            if (present.length > 0) continue
-          }
-          yield* sql.unsafe(
-            "INSERT INTO events (seq, key, event) VALUES (?, ?, ?)",
-            [seq, indexedKey ?? null, JSON.stringify(event)]
-          )
-          seq += 1
-          appended += 1
-        }
-        return appended
+    return Effect.gen(function* () {
+      const indexedKeys = yield* Effect.forEach(events, (event) => {
+        const eventKey = keyOf(event)
+        return eventKey === undefined ? Effect.void : indexKey(eventKey)
       })
-    ).pipe(Effect.orDie)
+      const encoded = yield* codec.encode(events)
+      if (encoded.length !== events.length) {
+        return yield* Effect.die(new Error("event codec encode must preserve batch length"))
+      }
+      return yield* sql.withTransaction(
+        Effect.gen(function* () {
+          const heads = yield* sql.unsafe<{ readonly head: number }>(
+            "SELECT COALESCE(MAX(seq), 0) AS head FROM events"
+          )
+          let seq = Number(heads[0]?.head ?? 0) + 1
+          let appended = 0
+          for (let index = 0; index < encoded.length; index++) {
+            const event = encoded[index]!
+            const indexedKey = indexedKeys[index]
+            if (indexedKey !== undefined) {
+              const present = yield* sql.unsafe<{ readonly present: number }>(
+                "SELECT 1 AS present FROM events WHERE key = ?",
+                [indexedKey]
+              )
+              if (present.length > 0) continue
+            }
+            yield* sql.unsafe(
+              "INSERT INTO events (seq, key, event) VALUES (?, ?, ?)",
+              [seq, indexedKey ?? null, JSON.stringify(event)]
+            )
+            seq += 1
+            appended += 1
+          }
+          return appended
+        })
+      )
+    }).pipe(Effect.orDie)
   }
 }
 

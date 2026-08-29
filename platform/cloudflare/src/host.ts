@@ -65,9 +65,8 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
-  const innerEvents = new CloudflareEventStore(sql, storeKeyOf, options.store?.indexKey)
-  await Effect.runPromise(innerEvents.initialize())
-  const events = options.store?.wrap(innerEvents) ?? innerEvents
+  const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
+  await Effect.runPromise(events.initialize())
   const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
 

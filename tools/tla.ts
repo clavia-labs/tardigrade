@@ -97,7 +97,10 @@ export const checks: ReadonlyArray<Check> = [
   counterexample("runtime", "Totality", "TotalityVoid.cfg", "Invariant NoVoidCur is violated"),
   pass("cloudflare", "DurableExecution", "DurableExecution.cfg"),
   counterexample("cloudflare", "DurableExecution", "DurableExecutionNoTurn.cfg", "Invariant CoveredBeforeDrive is violated"),
-  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated")
+  counterexample("cloudflare", "DurableExecution", "DurableExecutionNoWatchdog.cfg", "Invariant OwedHasWake is violated"),
+  pass("cloudflare", "ThreadCreation", "ThreadCreation.cfg"),
+  pass("cloudflare", "ThreadCreation", "ThreadCreationLive.cfg"),
+  counterexample("cloudflare", "ThreadCreation", "ThreadCreationCurrent.cfg", "Invariant ReadyHasAccepted is violated")
 ]
 
 const jar = process.env["TLA2TOOLS_JAR"]
@@ -157,6 +160,7 @@ try {
         "tlc2.TLC",
         "-workers",
         String(workers),
+        "-noGenerateSpecTE",
         "-metadir",
         state,
         "-config",

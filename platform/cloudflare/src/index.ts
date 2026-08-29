@@ -18,7 +18,9 @@ export {
 export { DEFAULT_ALARM_DELAY_MILLIS, DEFAULT_ALARM_POLICY, type AlarmPolicy } from "./alarm"
 export {
   hmacSha256EventKeyIndex,
+  plaintextEventCodec,
   plaintextEventKeyIndex,
+  type CloudflareEventCodec,
   type CloudflareEventKeyIndex,
   type CloudflareThreadStorePolicy
 } from "./storage"

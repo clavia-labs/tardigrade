@@ -30,8 +30,8 @@ import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import type { ThreadLineage, ChildPlacement } from "@clavia/tardigrade-core/thread"
+import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
   layerWorkerLoaderSandbox,
@@ -93,6 +93,7 @@ interface ThreadDirectoryRow {
   readonly parent_thread: string | null
   readonly depth: number
   readonly placement: ChildPlacement | null
+  readonly status: "pending" | "ready"
 }
 
 const threadTreeOf = (rows: ReadonlyArray<ThreadDirectoryRow>): ReadonlyArray<ActorThreadNode> => {
@@ -468,46 +469,66 @@ export class ActorDO extends DurableObject<Env> {
     return row
   }
 
-  private registerThread(thread: string, lineage?: ThreadLineage): void {
-    if (lineage === undefined) {
-      this.ctx.storage.sql.exec(
-        "INSERT OR IGNORE INTO thread_directory (thread, depth) VALUES (?, 0)",
-        thread
-      )
-      return
-    }
+  async createThread(thread: string): Promise<void> {
+    const identity = this.identity()
+    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
+    await stub.init(identity.actor, identity.instance, thread)
     this.ctx.storage.sql.exec(
-      `INSERT INTO thread_directory (thread, parent_thread, depth, placement)
-       VALUES (?, ?, ?, ?)
-       ON CONFLICT(thread) DO UPDATE SET
-         parent_thread = excluded.parent_thread,
-         depth = excluded.depth,
-         placement = excluded.placement`,
-      thread,
-      lineage.parent.thread,
-      lineage.depth,
-      lineage.placement ?? null
+      "INSERT OR IGNORE INTO thread_directory (thread, depth, status) VALUES (?, 0, 'ready')",
+      thread
     )
   }
 
-  async createThread(thread: string, lineage?: ThreadLineage): Promise<void> {
+  // deliverChild publishes an actor directory entry only after its Thread DO accepts durable creation (tla/ThreadCreation.tla, ReadyHasAccepted).
+  async deliverChild(envelope: ActorEnvelope): Promise<void> {
     const identity = this.identity()
-    if (lineage !== undefined && (
-      lineage.parent.actor !== identity.actor || lineage.parent.instance !== identity.instance
-    )) {
+    const target = envelope.link.target
+    const lineage = envelope.lineage
+    if (lineage === undefined) throw new Error("child delivery requires lineage")
+    if (target.actor !== identity.actor || target.instance !== identity.instance) {
       throw new Error("a child thread must inherit its actor instance")
     }
-    if (lineage !== undefined) {
-      const parent = this.ctx.storage.sql.exec<{ depth: number }>(
-        "SELECT depth FROM thread_directory WHERE thread = ?",
-        lineage.parent.thread
-      ).toArray()[0]
-      if (parent === undefined) throw new Error("a child thread requires a registered parent")
-      if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
+    if (!isThreadAddress(envelope.link.source) || !sameThreadAddress(envelope.link.source, lineage.parent)) {
+      throw new Error("a child thread lineage must match its delivery source")
     }
-    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
-    await stub.init(identity.actor, identity.instance, thread)
-    this.registerThread(thread, lineage)
+    const parent = this.ctx.storage.sql.exec<{ depth: number; status: string }>(
+      "SELECT depth, status FROM thread_directory WHERE thread = ?",
+      lineage.parent.thread
+    ).toArray()[0]
+    if (parent === undefined || parent.status !== "ready") throw new Error("a child thread requires a ready parent")
+    if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
+    const existing = this.ctx.storage.sql.exec<ThreadDirectoryRow>(
+      "SELECT thread, parent_thread, depth, placement, status FROM thread_directory WHERE thread = ?",
+      target.thread
+    ).toArray()[0]
+    const placement = lineage.placement ?? null
+    if (existing === undefined) {
+      this.ctx.storage.sql.exec(
+        `INSERT INTO thread_directory (thread, parent_thread, depth, placement, status)
+         VALUES (?, ?, ?, ?, 'pending')`,
+        target.thread,
+        lineage.parent.thread,
+        lineage.depth,
+        placement
+      )
+    } else if (
+      existing.parent_thread !== lineage.parent.thread ||
+      Number(existing.depth) !== lineage.depth ||
+      existing.placement !== placement
+    ) {
+      throw new Error("a child thread already has different directory lineage")
+    }
+    const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
+    await stub.init(identity.actor, identity.instance, target.thread)
+    await stub.deliver(envelope)
+    this.ctx.storage.sql.exec(
+      `UPDATE thread_directory SET status = 'ready'
+       WHERE thread = ? AND parent_thread = ? AND depth = ? AND placement IS ?`,
+      target.thread,
+      lineage.parent.thread,
+      lineage.depth,
+      placement
+    )
   }
 
   async catalog(): Promise<ModelCatalogState> {
@@ -531,7 +552,7 @@ export class ActorDO extends DurableObject<Env> {
 
   async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
     const entries = this.ctx.storage.sql.exec<ThreadDirectoryRow>(
-      "SELECT thread, parent_thread, depth, placement FROM thread_directory ORDER BY thread"
+      "SELECT thread, parent_thread, depth, placement, status FROM thread_directory WHERE status = 'ready' ORDER BY thread"
     ).toArray()
     return threadTreeOf(entries)
   }
@@ -693,16 +714,18 @@ export class ThreadDO extends DurableObject<Env> {
             const placement = envelope.lineage?.placement ?? mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
             if (placement !== "independent") throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(placement)} thread placement`)
             if (!deployed(destination.actor)) throw new Error(`actor ${JSON.stringify(destination.actor)} is not deployed`)
-            const stub = this.env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.instance, destination.thread))
-            if (envelope.lineage !== undefined) {
-              const directory = this.env.ACTORS.getByName(actorObjectNameOf(destination.actor, destination.instance))
-              await directory.createThread(destination.thread, { ...envelope.lineage, placement })
-            }
-            await stub.deliver({
+            const delivered = {
               ...envelope,
               event,
               ...(envelope.lineage === undefined ? {} : { lineage: { ...envelope.lineage, placement } })
-            })
+            }
+            if (envelope.lineage !== undefined) {
+              const directory = this.env.ACTORS.getByName(actorObjectNameOf(destination.actor, destination.instance))
+              await directory.deliverChild(delivered)
+              return
+            }
+            const stub = this.env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.instance, destination.thread))
+            await stub.deliver(delivered)
           })
         })
       )

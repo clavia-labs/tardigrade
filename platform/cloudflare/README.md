@@ -51,6 +51,8 @@ The callback may require Tardigrade's thread ports while constructing its layer.
 
 Create an actor instance, then create each root thread through its Actor DO before writing events to the Thread DO. Creation is idempotent. It records the thread in the actor directory and initializes the Thread DO identity. Later event appends and method calls address the Thread DO directly. An unknown thread returns `404`.
 
+A child starts as a pending Actor DO directory entry. The Actor DO asks its Thread DO to record `ThreadCreated` and the initial message, then marks the child ready. Thread listings omit pending children. A retry resumes the pending entry and duplicate child delivery is absorbed.
+
 ```ts
 await fetch("/v1/actors/customer-42", { method: "PUT", headers })
 await fetch("/v1/actors/customer-42/threads/conversation-7", { method: "PUT", headers })
@@ -63,9 +65,9 @@ await fetch("/v1/actors/customer-42/threads/conversation-7/events", {
 
 ## Event store policy
 
-Pass `storeFor` to set each thread's event store policy. The callback receives the Worker environment and thread identity, then returns `wrap` for event bodies and `indexKey` for event keys. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the policy. Encryption and key management remain application concerns.
+Pass `storeFor` to set each thread's event store policy. The callback receives the Worker environment and thread identity, then returns `codec` for event bodies and `indexKey` for event keys. The store derives the logical key from the plaintext event, applies `indexKey`, encodes the body, and commits both values in one transaction. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the policy. Encryption and key management remain application concerns.
 
-The wrapper must preserve the `ThreadEventStore` append order, atomic batch, deduplication, watermark, and ordered-tail guarantees. `hmacSha256EventKeyIndex` creates a deterministic thread-bound HMAC index that hides identifiers stored in event keys. Give it HMAC key material separate from any body encryption key. Omitting `storeFor` uses the SQLite store and plaintext event keys directly.
+The codec must preserve batch length and order in both directions. `hmacSha256EventKeyIndex` creates a deterministic thread-bound HMAC index that hides identifiers stored in event keys. Give it HMAC key material separate from any body encryption key. Omitting `storeFor` uses the SQLite store with the plaintext codec and plaintext event keys.
 
 ## Model adapters
 

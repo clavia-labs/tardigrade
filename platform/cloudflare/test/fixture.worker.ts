@@ -1,7 +1,6 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
 import { actor, actorMethod } from "tardie"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { effect } from "@clavia/tardigrade-core/reconciliation"
 import {
   ActorDO,
@@ -10,7 +9,12 @@ import {
   type CloudflareWorkerLayerContext,
   type Env
 } from "../src/worker"
-import { hmacSha256EventKeyIndex, plaintextEventKeyIndex } from "../src/storage"
+import {
+  hmacSha256EventKeyIndex,
+  plaintextEventCodec,
+  plaintextEventKeyIndex,
+  type CloudflareEventCodec
+} from "../src/storage"
 
 interface FixtureEnv extends Env {
   readonly APPLICATION_PREFIX: string
@@ -97,19 +101,9 @@ const openAll = async (key: Promise<CryptoKey>, thread: string, events: Readonly
   return Promise.all(events.map((event) => open(resolved, thread, event)))
 }
 
-const encryptedStore = (inner: ThreadEventStore, thread: string, key: Promise<CryptoKey>): ThreadEventStore => ({
-  append: (events) => Effect.promise(() => sealAll(key, thread, events)).pipe(Effect.flatMap((sealed) => inner.append(sealed))),
-  read: inner.read.pipe(Effect.flatMap((events) => Effect.promise(() => openAll(key, thread, events)))),
-  head: inner.head,
-  readFrom: (mark) => inner.readFrom(mark).pipe(
-    Effect.flatMap((events) => Effect.promise(() => openAll(key, thread, events)))
-  ),
-  readPage: (mark, limit) => inner.readPage(mark, limit).pipe(
-    Effect.flatMap((rows) => Effect.promise(async () => {
-      const events = await openAll(key, thread, rows.map((row) => row.event))
-      return rows.map((row, index) => ({ seq: row.seq, event: events[index]! }))
-    }))
-  )
+const encryptedEventCodec = (thread: string, key: Promise<CryptoKey>): CloudflareEventCodec => ({
+  encode: (events) => Effect.promise(() => sealAll(key, thread, events)),
+  decode: (events) => Effect.promise(() => openAll(key, thread, events))
 })
 
 const echo = actorMethod({
@@ -133,11 +127,12 @@ const worker = cloudflareWorker(actor({
   components: [{
     name: "echo",
     keys: {
-      prefixes: ["echo-request:", "echo-complete:"],
+      prefixes: ["echo-request:", "echo-complete:", "indexed-record:"],
       keyOf: (event) => {
         const id = String((event as { readonly id?: unknown }).id)
         if (event.type === "EchoRequested") return `echo-request:${id}`
         if (event.type === "EchoCompleted") return `echo-complete:${id}`
+        if (event.type === "IndexedRecord") return `indexed-record:${String((event as { readonly secretId?: unknown }).secretId)}`
         return undefined
       }
     },
@@ -165,10 +160,10 @@ const worker = cloudflareWorker(actor({
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
   storeFor: ({ thread }) => thread === "ag.sealed"
     ? {
-        wrap: (inner) => encryptedStore(inner, thread, keyFor()),
+        codec: encryptedEventCodec(thread, keyFor()),
         indexKey: hmacSha256EventKeyIndex(indexKeyFor(), thread)
       }
-    : { wrap: (inner) => inner, indexKey: plaintextEventKeyIndex }
+    : { codec: plaintextEventCodec, indexKey: plaintextEventKeyIndex }
 })
 
 export { ActorDO, ThreadDO }
