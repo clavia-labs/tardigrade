@@ -17,13 +17,15 @@ const DIAGRAMS: Record<string, string> = {
   event -->|"newest carried context"| fire["transition.fire"]
   fire -.->|"link: the delivery that woke this work"| send`,
   "actor-thread-layout": `flowchart TB
-  actor["Actor DO<br/>actor identity · thread directory · model catalog"]
+  definition["Actor definition · support-agent<br/>methods · reactors · model catalog"]
+  instance["Actor DO · user-42<br/>actor instance · thread directory"]
   root["Thread DO · root<br/>event log · workspace · alarm"]
-  another["Thread DO · another root<br/>event log · workspace · alarm"]
+  another["Thread DO · another-root<br/>event log · workspace · alarm"]
   child["Thread DO · child<br/>event log · workspace · alarm"]
-  actor -->|"directory entry"| root
-  actor -->|"directory entry"| another
-  actor -->|"parent · depth · placement"| child
+  definition -->|"create instance"| instance
+  instance -->|"directory entry"| root
+  instance -->|"directory entry"| another
+  instance -->|"parent · depth · placement"| child
   root -->|"ChildCreated, then first delivery"| child`,
   "encrypted-thread-store": `flowchart TB
   runtime["host ingress · reactors · API reads"] --> seam["storeFor(thread)"]

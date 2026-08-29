@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 673.735 378.00000000000006" width="673.735" height="378.00000000000006" style="--bg:#ffffff;--fg:#1f2328;--accent:#d97706;--muted:#656d76;background:var(--bg)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 673.735 548.1" width="673.735" height="548.1" style="--bg:#ffffff;--fg:#1f2328;--accent:#d97706;--muted:#656d76;background:var(--bg)">
 <style>
 
   text { font-family: 'ui-sans-serif', system-ui, sans-serif; }
@@ -26,44 +26,54 @@
     <polygon points="8 0, 0 2.5, 8 5" fill="var(--_arrow)" stroke="var(--_arrow)" stroke-width="0.75" stroke-linejoin="round" />
   </marker>
 </defs>
-<polyline class="edge" data-from="actor" data-to="root" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="291.50575,69.80000000000001 291.50575,81.80000000000001 124.7835,81.80000000000001 124.78349999999999,162.1" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="actor" data-to="another" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="370.35049999999995,69.80000000000001 370.35049999999995,206.4" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="actor" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="parent · depth · placement" points="449.19525,69.80000000000001 449.19525,194.4 574.134,194.4 574.134,296.20000000000005 382.55870833333336,296.20000000000005 382.55870833333336,308.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<polyline class="edge" data-from="root" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ChildCreated, then first delivery" points="124.78349999999999,215.9 124.7835,296.20000000000005 310.036375,296.20000000000005 310.036375,308.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
-<g class="edge-label" data-from="actor" data-to="root" data-label="directory entry">
-  <rect x="80.2835" y="88.80000000000001" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="124.45150000000001" y="103.95000000000002" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
+<polyline class="edge" data-from="definition" data-to="instance" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="create instance" points="370.3505,69.80000000000001 370.3505,186.1" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="instance" data-to="root" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="312.0685,239.9 312.0685,251.9 124.7835,251.9 124.78349999999999,332.20000000000005" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="instance" data-to="another" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="directory entry" points="370.3505,239.9 370.3505,376.50000000000006" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="instance" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="parent · depth · placement" points="428.63250000000005,239.9 428.63250000000005,364.50000000000006 574.134,364.50000000000006 574.134,466.30000000000007 385.7199166666667,466.30000000000007 385.7199166666667,478.30000000000007" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<polyline class="edge" data-from="root" data-to="child" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="ChildCreated, then first delivery" points="124.78349999999999,386.00000000000006 124.7835,466.30000000000007 313.19758333333334,466.30000000000007 313.19758333333334,478.30000000000007" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" />
+<g class="edge-label" data-from="definition" data-to="instance" data-label="create instance">
+  <rect x="324.8505" y="112.80000000000001" width="90.71200000000002" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="370.2065" y="127.95000000000002" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">create instance</text>
 </g>
-<g class="edge-label" data-from="actor" data-to="another" data-label="directory entry">
-  <rect x="325.85049999999995" y="133.10000000000002" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="370.01849999999996" y="148.25000000000003" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
+<g class="edge-label" data-from="instance" data-to="root" data-label="directory entry">
+  <rect x="80.2835" y="258.90000000000003" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="124.45150000000001" y="274.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
 </g>
-<g class="edge-label" data-from="actor" data-to="child" data-label="parent · depth · placement">
-  <rect x="503.134" y="258.90000000000003" width="141.20200000000003" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="573.735" y="274.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">parent · depth · placement</text>
+<g class="edge-label" data-from="instance" data-to="another" data-label="directory entry">
+  <rect x="325.8505" y="303.20000000000005" width="88.33600000000001" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="370.0185" y="318.35" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">directory entry</text>
+</g>
+<g class="edge-label" data-from="instance" data-to="child" data-label="parent · depth · placement">
+  <rect x="503.134" y="429.00000000000006" width="141.20200000000003" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="573.735" y="444.15000000000003" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">parent · depth · placement</text>
 </g>
 <g class="edge-label" data-from="root" data-to="child" data-label="ChildCreated, then first delivery">
-  <rect x="42.283500000000004" y="258.90000000000003" width="164.368" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
-  <text x="124.4675" y="274.05" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ChildCreated, then first delivery</text>
+  <rect x="42.283500000000004" y="429.00000000000006" width="164.368" height="30.3" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1" />
+  <text x="124.4675" y="444.15000000000003" text-anchor="middle" font-size="11" font-weight="400" fill="var(--_text-sec)" dy="3.8499999999999996">ChildCreated, then first delivery</text>
 </g>
-<g class="node" data-id="actor" data-label="Actor DO
-actor identity · thread directory · model catalog" data-shape="rectangle">
-  <rect x="212.66099999999997" y="16" width="315.379" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="370.3505" y="42.900000000000006" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Actor DO</tspan><tspan x="370.3505" dy="16.900000000000002">actor identity · thread directory · model catalog</tspan></text>
+<g class="node" data-id="definition" data-label="Actor definition · support-agent
+methods · reactors · model catalog" data-shape="rectangle">
+  <rect x="247.488" y="16" width="245.72499999999994" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="370.35049999999995" y="42.900000000000006" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.35049999999995" dy="-3.9000000000000012">Actor definition · support-agent</tspan><tspan x="370.35049999999995" dy="16.900000000000002">methods · reactors · model catalog</tspan></text>
+</g>
+<g class="node" data-id="instance" data-label="Actor DO · user-42
+actor instance · thread directory" data-shape="rectangle">
+  <rect x="253.7865" y="186.1" width="233.128" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="370.3505" y="213" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Actor DO · user-42</tspan><tspan x="370.3505" dy="16.900000000000002">actor instance · thread directory</tspan></text>
 </g>
 <g class="node" data-id="root" data-label="Thread DO · root
 event log · workspace · alarm" data-shape="rectangle">
-  <rect x="16" y="162.1" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="124.78349999999999" y="189" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="124.78349999999999" dy="-3.9000000000000012">Thread DO · root</tspan><tspan x="124.78349999999999" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
+  <rect x="16" y="332.20000000000005" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="124.78349999999999" y="359.1" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="124.78349999999999" dy="-3.9000000000000012">Thread DO · root</tspan><tspan x="124.78349999999999" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
 </g>
-<g class="node" data-id="another" data-label="Thread DO · another root
+<g class="node" data-id="another" data-label="Thread DO · another-root
 event log · workspace · alarm" data-shape="rectangle">
-  <rect x="261.567" y="206.4" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="370.3505" y="233.3" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Thread DO · another root</tspan><tspan x="370.3505" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
+  <rect x="261.567" y="376.50000000000006" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="370.3505" y="403.40000000000003" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="370.3505" dy="-3.9000000000000012">Thread DO · another-root</tspan><tspan x="370.3505" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
 </g>
 <g class="node" data-id="child" data-label="Thread DO · child
 event log · workspace · alarm" data-shape="rectangle">
-  <rect x="237.51404166666669" y="308.20000000000005" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
-  <text x="346.2975416666667" y="335.1" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="346.2975416666667" dy="-3.9000000000000012">Thread DO · child</tspan><tspan x="346.2975416666667" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
+  <rect x="240.67524999999998" y="478.30000000000007" width="217.56699999999998" height="53.800000000000004" rx="0" ry="0" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75" />
+  <text x="349.45874999999995" y="505.20000000000005" text-anchor="middle" font-size="13" font-weight="500" fill="var(--_text)"><tspan x="349.45874999999995" dy="-3.9000000000000012">Thread DO · child</tspan><tspan x="349.45874999999995" dy="16.900000000000002">event log · workspace · alarm</tspan></text>
 </g>
 </svg>

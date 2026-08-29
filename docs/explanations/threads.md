@@ -12,11 +12,11 @@ The parent thread records `ChildCreated` before sending the child's first delive
 
 ## Durable Object layout
 
-The Actor DO owns the thread tree as directory metadata. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
+An actor definition gives the actor its name, methods, reactors, and model catalog. Each actor instance gets an Actor DO that owns its identity and thread tree as directory metadata. Root and child Thread DOs are physical peers. A parent-child edge records logical ancestry and does not nest one Durable Object inside another.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../assets/actor-thread-layout-dark.svg">
-  <img alt="An Actor DO indexes two root Thread DOs and one child Thread DO, while the root records creation before delivering to its child" src="../assets/actor-thread-layout-light.svg">
+  <img alt="The support-agent definition creates the user-42 actor instance, whose Actor DO indexes two root Thread DOs and one child Thread DO" src="../assets/actor-thread-layout-light.svg">
 </picture>
 
 ## Child placement
