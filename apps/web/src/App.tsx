@@ -1100,8 +1100,8 @@ export const App = (): ReactElement => {
         <PuzzlePiece />
         <div className="hero-inner">
           <div className="hero-copy">
-            <h1><span>Build complex agents</span><span>from simple components.</span></h1>
-            <p>Tardigrade is a TypeScript framework for building modular agents around a durable event log.</p>
+            <h1><span>Build stateful agents</span><span>from simple components.</span></h1>
+            <p>Tardigrade is a TypeScript framework for building modular agents around an immutable event log.</p>
             <div className="hero-cta-stack">
               <div className="hero-actions">
                 <CopyPromptButton />
