@@ -294,6 +294,40 @@ describe("parsing", () => {
     }
   })
 
+  test("setup keeps configuration and lock when resolution fails", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-setup-lock-failure-"))
+    try {
+      const initial = await drive([
+        "setup",
+        "--provider",
+        "openrouter",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model",
+        "anthropic/claude-sonnet-4-6"
+      ], { cwd })
+      expect(initial.failed).toBe(false)
+      const configPath = join(cwd, "wrangler.jsonc")
+      const lockPath = join(cwd, "models.lock.json")
+      const before = await Promise.all([readFile(configPath, "utf8"), readFile(lockPath, "utf8")])
+
+      const failed = await drive([
+        "setup",
+        "default",
+        "--provider",
+        "openrouter",
+        "--model",
+        "missing-model"
+      ], { cwd })
+
+      expect(failed.failed).toBe(true)
+      expect(failureText(failed)).toContain("missing-model is absent")
+      expect(await Promise.all([readFile(configPath, "utf8"), readFile(lockPath, "utf8")])).toEqual(before)
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
   test("init gives agents a declarative path instead of prompting", async () => {
     const ran = await drive(["init", "researcher"])
     expect(ran.failed).toBe(true)

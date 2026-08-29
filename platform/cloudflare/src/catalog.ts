@@ -54,6 +54,12 @@ const batchesOf = <A>(values: ReadonlyArray<A>, size: number): ReadonlyArray<Rea
   return batches
 }
 
+const removeGeneration = (db: D1Database, sourceUrl: string, generation: string): ReturnType<D1Database["batch"]> =>
+  db.batch([
+    db.prepare("DELETE FROM catalog_models WHERE source_url = ? AND generation = ?").bind(sourceUrl, generation),
+    db.prepare("DELETE FROM catalog_providers WHERE source_url = ? AND generation = ?").bind(sourceUrl, generation)
+  ])
+
 const parsed = (value: string): unknown => JSON.parse(value) as unknown
 
 const snapshotOf = (
@@ -154,16 +160,22 @@ const writeStored = async (
       ))
     })
   })
-  for (const batch of batchesOf(statements, batchSize)) await db.batch([...batch])
-  await db.prepare(
-    `INSERT INTO catalog_sources (source_url, source, revision, refreshed_at, active_generation) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(source_url) DO UPDATE SET source = excluded.source, revision = excluded.revision, refreshed_at = excluded.refreshed_at, active_generation = excluded.active_generation`
-  ).bind(sourceUrl, snapshot.source, snapshot.revision, snapshot.refreshedAt, generation).run()
+  try {
+    for (const batch of batchesOf(statements, batchSize)) await db.batch([...batch])
+    await db.prepare(
+      `INSERT INTO catalog_sources (source_url, source, revision, refreshed_at, active_generation) VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(source_url) DO UPDATE SET source = excluded.source, revision = excluded.revision, refreshed_at = excluded.refreshed_at, active_generation = excluded.active_generation`
+    ).bind(sourceUrl, snapshot.source, snapshot.revision, snapshot.refreshedAt, generation).run()
+  } catch (cause) {
+    try {
+      await removeGeneration(db, sourceUrl, generation)
+    } catch (cleanupCause) {
+      throw new AggregateError([cause, cleanupCause], `catalog generation ${generation} failed and could not be removed`)
+    }
+    throw cause
+  }
   if (previous !== null && previous.active_generation !== generation) {
-    await db.batch([
-      db.prepare("DELETE FROM catalog_models WHERE source_url = ? AND generation = ?").bind(sourceUrl, previous.active_generation),
-      db.prepare("DELETE FROM catalog_providers WHERE source_url = ? AND generation = ?").bind(sourceUrl, previous.active_generation)
-    ])
+    await removeGeneration(db, sourceUrl, previous.active_generation)
   }
 }
 

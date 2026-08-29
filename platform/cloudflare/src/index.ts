@@ -2,6 +2,7 @@ export {
   ActorDO,
   ThreadDO,
   cloudflareWorker,
+  modelCatalogForConfig,
   modelScopeFrom,
   BACKGROUND_TASK_OWNERS,
   CLOUDFLARE_CHILD_PLACEMENTS,
@@ -14,6 +15,7 @@ export {
   type CloudflareWorkerLayerContext,
   type CloudflareWorkerOptions,
   type CloudflareWorkerStoreFor,
+  type DeploymentModelScope,
   type Env
 } from "./worker"
 export { DEFAULT_ALARM_DELAY_MILLIS, DEFAULT_ALARM_POLICY, type AlarmPolicy } from "./alarm"

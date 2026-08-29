@@ -25,7 +25,7 @@ import {
 } from "@clavia/tardigrade-server/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-server/catalog-availability"
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
-import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
+import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
@@ -255,7 +255,7 @@ interface MountedActor {
   readonly actor: DefaultAssembly
   readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
-  readonly modelScope: ModelCatalog
+  readonly modelScope?: DeploymentModelScope
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
   readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => CommitObserver
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
@@ -275,12 +275,41 @@ const EMPTY_MODEL_SCOPE: ModelCatalog = {
   providers: []
 }
 
+export interface DeploymentModelScope {
+  readonly configDigest: string
+  readonly catalog: ModelCatalog
+}
+
 // modelScopeFrom validates the catalog snapshot embedded in a deployment model lock.
-export const modelScopeFrom = (value: unknown): ModelCatalog => {
-  if (typeof value !== "object" || value === null || !("schema" in value) || value.schema !== 1 || !("catalog" in value)) {
+export const modelScopeFrom = (value: unknown): DeploymentModelScope => {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("schema" in value) ||
+    value.schema !== 1 ||
+    !("configDigest" in value) ||
+    typeof value.configDigest !== "string" ||
+    !("catalog" in value)
+  ) {
     throw new Error("models.lock.json is invalid; run `tdg models lock`")
   }
-  return Schema.decodeUnknownSync(ModelCatalogSchema)(value.catalog)
+  return { configDigest: value.configDigest, catalog: Schema.decodeUnknownSync(ModelCatalogSchema)(value.catalog) }
+}
+
+const sha256 = async (value: string): Promise<string> => {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(value))
+  return `sha256:${[...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("")}`
+}
+
+// modelCatalogForConfig rejects a deployment lock resolved from different model configuration.
+export const modelCatalogForConfig = async (
+  config: ModelConfig,
+  scope: DeploymentModelScope
+): Promise<ModelCatalog> => {
+  if (scope.configDigest !== await sha256(canonicalModelConfig(config))) {
+    throw new Error("models.lock.json does not match model configuration; run `tdg models lock`")
+  }
+  return scope.catalog
 }
 
 // DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS bounds a catalog refresh.
@@ -310,11 +339,13 @@ const credentialFrom = (workerEnv: Env, provider: string, names: ReadonlyArray<s
   throw new Error(`provider ${JSON.stringify(provider)} needs a credential; set ${names.join(" or ")} as a Worker secret or variable`)
 }
 
-const modelsFrom = (env: Env): CloudflareModels | undefined => {
-  const config = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)
-  const rawModels = config?.["models"]
-  if (rawModels === undefined) return undefined
-  const parsed = modelConfigOf(rawModels)
+const modelConfigFrom = (env: Env): ModelConfig | undefined => {
+  const rawModels = structuredWorkerConfigOf(env.TARDIGRADE_CONFIG)?.["models"]
+  return rawModels === undefined ? undefined : modelConfigOf(rawModels)
+}
+
+const modelsFrom = (env: Env, parsed: ModelConfig | undefined): CloudflareModels | undefined => {
+  if (parsed === undefined) return undefined
   if (parsed.default === undefined) {
     throw new Error("TARDIGRADE_CONFIG.models must declare default { provider, model_id }")
   }
@@ -806,8 +837,15 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   private async openHost(): Promise<CloudflareThreadHost> {
-    const models = modelsFrom(this.env)
-    const modelScope = mountedActor?.modelScope ?? EMPTY_MODEL_SCOPE
+    const modelConfig = modelConfigFrom(this.env)
+    const deployedScope = mountedActor?.modelScope
+    if (modelConfig !== undefined && deployedScope === undefined) {
+      throw new Error("model configuration requires models.lock.json; run `tdg models lock`")
+    }
+    const modelScope = modelConfig === undefined || deployedScope === undefined
+      ? EMPTY_MODEL_SCOPE
+      : await modelCatalogForConfig(modelConfig, deployedScope)
+    const models = modelsFrom(this.env, modelConfig)
     const adapters = mountedActor?.modelAdapters ?? modelAdapters()
     for (const provider of Object.values(models?.providers ?? {})) adapters.resolve(provider.protocol)
     const catalog: ModelCatalogState = models === undefined ? { refreshError: "no model is configured" } : { snapshot: modelScope }
@@ -1397,7 +1435,7 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly modelAdapters?: ModelAdapterRegistry
-  readonly modelScope?: ModelCatalog
+  readonly modelScope?: DeploymentModelScope
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
   readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => CommitObserver
   readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
@@ -1434,7 +1472,7 @@ export const cloudflareWorker = <
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
-    modelScope: options?.modelScope ?? EMPTY_MODEL_SCOPE,
+    ...(options?.modelScope === undefined ? {} : { modelScope: options.modelScope }),
     defaultChildPlacement,
     backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER,
     ...(options?.inferenceObserverFor === undefined ? {} : {

@@ -8,6 +8,7 @@ import { actorFromReactors } from "@clavia/tardigrade-core/reconciliation"
 import {
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
+  modelCatalogForConfig,
   modelScopeFrom,
   retainBackgroundTask,
   type Env
@@ -69,10 +70,10 @@ beforeAll(async () => {
 })
 
 describe("cloudflare actor", () => {
-  test("a deployment lock supplies the thread model scope", () => {
-    expect(modelScopeFrom({
+  test("a deployment lock supplies only its matching model scope", async () => {
+    const scope = modelScopeFrom({
       schema: 1,
-      configDigest: "sha256:test",
+      configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
       catalog: {
         source: "models.dev",
         revision: "bundled",
@@ -80,7 +81,22 @@ describe("cloudflare actor", () => {
         status: "cached",
         providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: {} }] }]
       }
-    })).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
+    })
+    const config = {
+      default: { provider: "openai", model_id: "gpt-test" },
+      allow: "*" as const,
+      providers: {
+        openai: {
+          baseUrl: "https://api.openai.test/v1",
+          protocol: "openai-chat-completions" as const,
+          env: ["OPENAI_API_KEY"]
+        }
+      }
+    }
+    expect(await modelCatalogForConfig(config, scope)).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
+    await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
+      .rejects.toThrow("does not match model configuration")
+    expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
   })
 
@@ -231,7 +247,7 @@ describe("cloudflare actor", () => {
       }]
     })
     const db = (env as Env).CATALOG_DB
-    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db))
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db, { writeBatchSize: 1 }))
     try {
       const repository = await runtime.runPromise(ModelCatalogRepository)
       await Effect.runPromise(repository.write(sourceUrl, catalog("old", "working")))
@@ -240,8 +256,19 @@ describe("cloudflare actor", () => {
          WHEN NEW.source_url = '${sourceUrl}' AND NEW.model_id = 'refused'
          BEGIN SELECT RAISE(FAIL, 'refused catalog generation'); END`
       ).run()
-      await expect(Effect.runPromise(repository.write(sourceUrl, catalog("new", "refused")))).rejects.toThrow()
+      const refused = catalog("new", "refused")
+      refused.providers[0]!.models.unshift({ id: "staged", metadata: { contextWindowTokens: 128_000 } })
+      await expect(Effect.runPromise(repository.write(sourceUrl, refused))).rejects.toThrow()
       expect(await Effect.runPromise(repository.read(sourceUrl))).toEqual({ ...catalog("old", "working"), status: "cached" })
+      const [providers, models] = await Promise.all([
+        db.prepare(
+          "SELECT COUNT(*) AS count FROM catalog_providers WHERE source_url = ? AND generation != (SELECT active_generation FROM catalog_sources WHERE source_url = ?)"
+        ).bind(sourceUrl, sourceUrl).first<{ count: number }>(),
+        db.prepare(
+          "SELECT COUNT(*) AS count FROM catalog_models WHERE source_url = ? AND generation != (SELECT active_generation FROM catalog_sources WHERE source_url = ?)"
+        ).bind(sourceUrl, sourceUrl).first<{ count: number }>()
+      ])
+      expect([providers?.count, models?.count]).toEqual([0, 0])
     } finally {
       await db.prepare("DROP TRIGGER IF EXISTS refuse_catalog_generation").run()
       await runtime.dispose()

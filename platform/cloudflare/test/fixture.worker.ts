@@ -8,6 +8,7 @@ import {
   ActorDO,
   ThreadDO,
   cloudflareWorker,
+  modelScopeFrom,
   type CloudflareWorkerLayerContext,
   type Env
 } from "../src/worker"
@@ -160,18 +161,22 @@ const worker = cloudflareWorker(actor({
   }]
 }), {
   modelAdapters: modelAdapters(openAICompatibleAdapter),
-  modelScope: {
-    source: "models.dev",
-    revision: "workers-bundled-test",
-    refreshedAt: 1,
-    status: "cached",
-    providers: [{
-      id: "openai",
-      name: "OpenAI",
-      env: ["OPENAI_API_KEY"],
-      models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
-    }]
-  },
+  modelScope: modelScopeFrom({
+    schema: 1,
+    configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
+    catalog: {
+      source: "models.dev",
+      revision: "workers-bundled-test",
+      refreshedAt: 1,
+      status: "cached",
+      providers: [{
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+      }]
+    }
+  }),
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
   storeFor: ({ thread }) => thread === "ag.sealed"

@@ -7,7 +7,7 @@ import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/t
 import { loadModelCatalog } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
 import { modelCatalogScopeOf } from "@clavia/tardigrade-server/catalog-store"
-import type { ModelConfig } from "@clavia/tardigrade-server/config"
+import { canonicalModelConfig, type ModelConfig } from "@clavia/tardigrade-server/config"
 
 export const MODEL_LOCK_SCHEMA = 1
 export const MODEL_LOCK_FILE = "models.lock.json"
@@ -37,15 +37,9 @@ export const emptyModelLock = (): ModelLock => ({
   }
 })
 
-const canonical = (value: unknown): unknown => {
-  if (Array.isArray(value)) return value.map(canonical)
-  if (typeof value !== "object" || value === null) return value
-  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonical(entry)]))
-}
-
 // modelConfigDigest identifies the visible provider and model policy resolved by one lock.
 export const modelConfigDigest = (config: ModelConfig): string =>
-  `sha256:${createHash("sha256").update(JSON.stringify(canonical(config))).digest("hex")}`
+  `sha256:${createHash("sha256").update(canonicalModelConfig(config)).digest("hex")}`
 
 // resolveModelLock resolves deployment model policy against one validated public catalog snapshot.
 export const resolveModelLock = async (
