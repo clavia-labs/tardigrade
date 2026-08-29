@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import fc from "fast-check"
 import type { Event } from "../log/event"
 import { mappedDirectory } from "./directory"
-import { actorIdOf, type ActorId } from "./endpoint"
+import { threadAddressOf, type ThreadAddress } from "./endpoint"
 import { envelopeOf, isActorEnvelope, type ActorEnvelope } from "./envelope"
 import { linkOf, reverseLink } from "./link"
 import { boundaryEvent, boundaryId, type MessageReceived } from "./message"
@@ -30,7 +30,7 @@ interface GraphSpec {
 
 interface PhysicalDestination {
   readonly node: number
-  readonly identity: ActorId
+  readonly identity: ThreadAddress
 }
 
 interface Sent {
@@ -58,7 +58,7 @@ const graphArbitrary: fc.Arbitrary<GraphSpec> = fc.uniqueArray(
   }))
 })
 
-const identityOf = (id: number): ActorId => actorIdOf("graph", `participant-${id}`)
+const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", `participant-${id}`)
 
 const routingFor = (participants: ReadonlyArray<ParticipantSpec>): {
   readonly routes: ReadonlyArray<TransportRoute>
@@ -73,7 +73,7 @@ const routingFor = (participants: ReadonlyArray<ParticipantSpec>): {
   const route = (name: TransportName): TransportRoute =>
     directoryRoute(
       transport(name),
-      mappedDirectory<ActorId, PhysicalDestination>((identity) => {
+      mappedDirectory<ThreadAddress, PhysicalDestination>((identity) => {
         const participant = byId.get(Number(identity.thread.slice("participant-".length)))
         return participant?.transport === name ? { node: participant.node, identity } : undefined
       }),

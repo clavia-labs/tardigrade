@@ -217,8 +217,8 @@ describe("fieldsOf", () => {
   })
 
   test("a field a type's order does not name still renders, after the ones it does", () => {
-    const event: Event = { type: "TurnCompleted", turn: "m1", output: "two\nlines", at: stamped, lane: "agent" }
-    expect(keysOf(event)).toEqual(["turn", "at", "output", "lane"])
+    const event: Event = { type: "TurnCompleted", turn: "m1", output: "two\nlines", at: stamped, thread: "agent" }
+    expect(keysOf(event)).toEqual(["turn", "at", "output", "thread"])
   })
 
   test("a completed turn keeps its output", () => {

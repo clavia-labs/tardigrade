@@ -13,7 +13,7 @@ import { createBunHost } from "@clavia/tardigrade-bun/host"
 // The work surface: code mode with the spawn and workspace packages in scope. The packages are
 // values, so the model's system fragment lists them and the assembly's requirements carry their
 // needs (Router and Self for spawn; the spill store for workspace). The Bun host binds
-// all of those per lane.
+// all of those per thread.
 const rlm = actor({
   name: "researcher",
   methods: agentMethods,
@@ -33,11 +33,11 @@ const model = infer({
   contextWindowTokens: 400_000
 }, modelAdapters(openAICompatibleAdapter))
 
-// Every ag. lane runs the same assembly: the root, and every child a spawn births. The lane
+// Every ag. thread runs the same assembly: the root, and every child a spawn births. The thread
 // arrives as Self at run time, so one actor value serves the whole family.
 const host = await createBunHost({
-  log: "agents.sqlite",
-  actorFor: (lane) => (lane.startsWith("ag.") ? rlm : undefined),
+  database: "agents.sqlite",
+  actorFor: (thread) => (thread.startsWith("ag.") ? rlm : undefined),
   layersFor: () => model
 })
 

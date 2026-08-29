@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Data, Effect } from "effect"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
-import type { ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import { ActorUnavailable, Ingress, ingressFrom, type IngressActor } from "./ingress"
@@ -119,7 +119,7 @@ describe("handleWebhook", () => {
         webhook(() => Effect.succeed({ envelopes: [delivery], response: { status: 202 } })),
         request
       ).pipe(
-        Effect.provideService(Ingress, ingressFrom(mappedDirectory<ActorId, IngressActor>(() => undefined))),
+        Effect.provideService(Ingress, ingressFrom(mappedDirectory<ThreadAddress, IngressActor>(() => undefined))),
         Effect.flip
       )
     )

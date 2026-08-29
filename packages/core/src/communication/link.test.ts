@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { ActorId } from "./endpoint"
+import { ThreadAddress } from "./endpoint"
 import { envelopeOf, linkedEventOf } from "./envelope"
 import { linkOf, reverseLink } from "./link"
 
@@ -11,7 +11,7 @@ describe("links", () => {
       chat: "-1001234567890",
       topic: "42"
     }
-    const target = Schema.decodeSync(ActorId)({
+    const target = Schema.decodeSync(ThreadAddress)({
       actor: "support",
       thread: "telegram:-1001234567890:42"
     })

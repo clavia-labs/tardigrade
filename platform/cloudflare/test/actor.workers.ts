@@ -8,11 +8,11 @@ import type { Env } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
-const objectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
+const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
 const controlStub = () => (env as Env).ACTORS.getByName("echo")
-const actorStub = (thread: string) => (env as Env).ACTORS.getByName(objectNameOf(thread))
+const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
 const alarm = (thread: string) =>
-  runInDurableObject(actorStub(thread), (_instance, state) => state.storage.getAlarm())
+  runInDurableObject(threadStub(thread), (_instance, state) => state.storage.getAlarm())
 
 const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
@@ -99,13 +99,13 @@ describe("cloudflare actor", () => {
     const health = await SELF.fetch("http://test/healthz")
     expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
     const threads = await SELF.fetch("http://test/v1/threads", { headers: authorization })
-    expect(threads.status).toBe(400)
-    expect(await threads.json()).toEqual({ error: "thread-scoped workers do not support actor-wide thread listing" })
+    expect(threads.status).toBe(200)
+    expect(await threads.json()).toEqual([expect.objectContaining({ id: "root" })])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   })
 
-  test("a mounted actor receives lane application services", async () => {
+  test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
       const accepted = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
         method: "PUT",
@@ -121,20 +121,89 @@ describe("cloudflare actor", () => {
     ])
     expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
     expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
-    expect(actorStub("application-a").id.equals(actorStub("application-b").id)).toBe(false)
-    const firstLanes = await runInDurableObject(actorStub("application-a"), (_instance, state) =>
-      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    expect(threadStub("application-a").id.equals(threadStub("application-b").id)).toBe(false)
+    const firstEvents = await runInDurableObject(threadStub("application-a"), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM events").toArray()
     )
-    const secondLanes = await runInDurableObject(actorStub("application-b"), (_instance, state) =>
-      state.storage.sql.exec<{ lane: string }>("SELECT DISTINCT lane FROM events").toArray()
+    const secondEvents = await runInDurableObject(threadStub("application-b"), (_instance, state) =>
+      state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM events").toArray()
     )
-    expect(firstLanes).toEqual([{ lane: "ag.application-a" }])
-    expect(secondLanes).toEqual([{ lane: "ag.application-b" }])
+    expect(firstEvents[0]?.count).toBeGreaterThan(0)
+    expect(secondEvents[0]?.count).toBeGreaterThan(0)
+    const migrations = await runInDurableObject(threadStub("application-a"), (_instance, state) => ({
+      tables: state.storage.sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'"
+      ).toArray().map((row) => row.name),
+      entries: state.storage.sql.exec<{ migration_id: number; name: string }>(
+        "SELECT migration_id, name FROM effect_sql_migrations"
+      ).toArray()
+    }))
+    expect(migrations).toEqual({
+      tables: ["effect_sql_migrations"],
+      entries: [
+        { migration_id: 1, name: "thread_identity" },
+        { migration_id: 2, name: "thread_events" }
+      ]
+    })
+  })
+
+  test("a thread store wrapper covers method ingress, reactors, and API reads", async () => {
+    const prompt = "classified prompt"
+    const accepted = await SELF.fetch("http://test/v1/threads/sealed/methods/echo/calls/sealed-call", {
+      method: "PUT",
+      headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: prompt })
+    })
+    expect(accepted.status).toBe(202)
+    expect(await methodState("sealed", "sealed-call")).toEqual({
+      status: "completed",
+      output: "workers:ag.sealed:1:classified prompt"
+    })
+
+    const response = await SELF.fetch("http://test/v1/threads/sealed/events", { headers: authorization })
+    const visible = await response.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly text?: string } }>
+    expect(visible.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "EchoCompleted"])
+    expect(visible.some((row) => row.event.text?.includes(prompt))).toBe(true)
+
+    const raw = await runInDurableObject(threadStub("sealed"), (_instance, state) =>
+      state.storage.sql.exec<{ readonly event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(raw).toHaveLength(3)
+    expect(raw.every((row) => {
+      const encrypted = JSON.parse(row.event) as { readonly iv?: unknown; readonly ciphertext?: unknown }
+      return typeof encrypted.iv === "string" && typeof encrypted.ciphertext === "string"
+    })).toBe(true)
+    expect(raw.every((row) => !row.event.includes(prompt))).toBe(true)
+  })
+
+  test("actor directory registration keeps child lineage", async () => {
+    const directory = controlStub()
+    await directory.init("echo")
+    await directory.registerThread("ag.directory-child", {
+      parent: { actor: "echo", thread: "ag.directory-parent" },
+      depth: 1,
+      placement: "independent"
+    })
+    await directory.registerThread("ag.directory-child")
+    const entries = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{
+        thread: string
+        parent_thread: string | null
+        depth: number
+        placement: string | null
+      }>("SELECT thread, parent_thread, depth, placement FROM thread_directory WHERE thread = 'ag.directory-child'").toArray()
+    )
+    expect(entries).toEqual([{
+      thread: "ag.directory-child",
+      parent_thread: "ag.directory-parent",
+      depth: 1,
+      placement: "independent"
+    }])
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {
     const deadlineAt = Date.now() - 1
-    const stub = actorStub("timeout")
+    const stub = threadStub("timeout")
     await stub.init("echo", "ag.timeout")
     await stub.append("timeout", {
       type: "CallDispatched",

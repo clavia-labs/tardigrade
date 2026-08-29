@@ -317,7 +317,7 @@ describe("parsing", () => {
     expect(devHelp).toContain("--open")
     expect(devHelp).toContain("--no-open")
     expect(devHelp).toContain("--min-port")
-    expect(devHelp).toContain("--max-concurrent-lanes")
+    expect(devHelp).toContain("--max-concurrent-threads")
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
     for (const flag of ["--provider", "--provider-config", "--default-model"]) {

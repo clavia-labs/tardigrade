@@ -681,8 +681,8 @@ describe("the tree", () => {
   test("a spawned child hangs under the thread whose code briefed it", async () => {
     const read = await serving(async (base) => {
       await birth(base, "root", { id: "m1", text: "spawn call-1" })
-      // The root's turn can complete while the child's lane is still settling, so the tree read
-      // waits for the driver to rest; resting means every lane's owed work is done.
+      // The root's turn can complete while the child's thread is still settling, so the tree read
+      // waits for the driver to rest; resting means every thread's owed work is done.
       await until("the driver rests", async () => {
         const health = (await (await fetch(`${base}/healthz`)).json()) as { status: string }
         return health.status === "resting" ? health : undefined

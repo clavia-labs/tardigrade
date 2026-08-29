@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-// The code lane's domain events. Consumers connect through these and never call in: the
+// The code thread's domain events. Consumers connect through these and never call in: the
 // agent's execute tool dispatches and awaits, the task's policy dispatches and awaits, and
 // neither knows how the code runs.
 
@@ -70,9 +70,9 @@ export const CodeEvent = Schema.Union([
 ])
 export type CodeEvent = typeof CodeEvent.Type
 
-// codeKeys is the code lane's dedup key fragment, owned beside its alphabet. cd/cs name the
+// codeKeys is the code thread's dedup key fragment, owned beside its alphabet. cd/cs name the
 // execution; pr names the call's recorded pair. A key names the scope its id is unique in, and
-// no wider (execId and callId are minted per lane by the recorded machinery).
+// no wider (execId and callId are minted per thread by the recorded machinery).
 export const codeKeys: KeyFragment = {
   prefixes: ["cd:", "cs:", "pr:", "bk:"],
   keyOf: (e) => {

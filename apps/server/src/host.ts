@@ -71,21 +71,21 @@ const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelA
 }
 
 // The durable host, the assembly it runs, and the loop that drives it, behind one service. The
-// routes speak thread ids; the lane a host knows lives here and nowhere else, so a route can never
-// name a lane and the store can never see an id.
+// routes speak thread ids; the thread a host knows lives here and nowhere else, so a route can never
+// name a thread and the store can never see an id.
 
-// LANE_PREFIX is the id-to-lane map (apps-server-spec.md, "Resources"). A lane outside it belongs
+// THREAD_PREFIX is the id-to-thread map (apps-server-spec.md, "Resources"). A thread outside it belongs
 // to something other than a thread and never appears in a listing. The prefix stays `ag.` while the
-// API's noun is the thread, because the lane is where the agent assembly runs, and that assembly
-// mints its own child lanes under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
+// API's noun is the thread, because the thread is where the agent assembly runs, and that assembly
+// mints its own child threads under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
 // it would rename addresses a spawn already wrote into a durable log.
-export const LANE_PREFIX = "ag."
+export const THREAD_PREFIX = "ag."
 
-export const laneOf = (id: string): string => `${LANE_PREFIX}${id}`
+export const threadOf = (id: string): string => `${THREAD_PREFIX}${id}`
 
-// idOf is laneOf's inverse, undefined for a lane this server does not own.
-export const idOf = (lane: string): string | undefined =>
-  lane.startsWith(LANE_PREFIX) ? lane.slice(LANE_PREFIX.length) : undefined
+// idOf is threadOf's inverse, undefined for a thread this server does not own.
+export const idOf = (thread: string): string | undefined =>
+  thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
 
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
@@ -309,11 +309,11 @@ const layerInferFrom = (
   })
 }
 
-// The lane environment: everything the assembly needs that the bun host does not bind. The model
+// The thread environment: everything the assembly needs that the bun host does not bind. The model
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
 // (actor.ts, ServerR), so a package added to the assembly is a compile error here until it is bound.
-const layerLane = (
+const layerThread = (
   config: ServerConfigValue,
   catalog: ModelCatalogState,
   options: ThreadsOptions,
@@ -385,19 +385,19 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
 const runtimeOf = async (
   summary: ActorSummary,
   definition: Actor<ServerR>,
-  log: string,
-  lane: ReturnType<typeof layerLane>,
+  database: string,
+  thread: ReturnType<typeof layerThread>,
   providers: ReadonlyArray<Provider>,
-  maxConcurrentLanes: number
+  maxConcurrentThreads: number
 ): Promise<ActorRuntime> => {
   const actor = definition
   const host: BunHost = await createBunHost<ServerR>({
-    log,
-    principal: summary.name,
+    database,
+    actorName: summary.name,
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
-    layersFor: () => lane,
+    layersFor: () => thread,
     providers,
-    driver: { maxConcurrentLanes },
+    driver: { maxConcurrentThreads },
     keyOf: (event) => actor.keyOf?.(event)
   })
   let driving: Promise<void> | undefined
@@ -435,12 +435,12 @@ const runtimeOf = async (
     )
   )
   await host.recover()
-  const read = (id: string) => Effect.promise(() => host.read(laneOf(id)))
+  const read = (id: string) => Effect.promise(() => host.read(threadOf(id)))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const stamped = event.at === undefined ? { ...event, at } : event
-      yield* Effect.promise(() => host.commitRoot(host.self(laneOf(id)), stamped))
+      yield* Effect.promise(() => host.commitRoot(host.self(threadOf(id)), stamped))
     })
   const commit = (delivery: Envelope) =>
     Effect.gen(function*() {
@@ -451,7 +451,7 @@ const runtimeOf = async (
         ...delivery,
         link: {
           source: delivery.link.source,
-          target: { actor: summary.name, thread: laneOf(delivery.link.target.thread) }
+          target: { actor: summary.name, thread: threadOf(delivery.link.target.thread) }
         },
         event: stamped
       }
@@ -459,7 +459,7 @@ const runtimeOf = async (
     })
   const threads: ActorThreads = {
     methods: definition.methods,
-    sqlite: log === ":memory:" ? log : resolve(log),
+    sqlite: database === ":memory:" ? database : resolve(database),
     append: (id, event) =>
       Effect.gen(function*() {
         yield* commitRoot(id, event)
@@ -467,8 +467,8 @@ const runtimeOf = async (
       }),
     events: read,
     list: Effect.gen(function*() {
-      const lanes = yield* Effect.promise(() => host.lanes())
-      const ids = lanes.flatMap((candidate) => {
+      const threads = yield* Effect.promise(() => host.threads())
+      const ids = threads.flatMap((candidate) => {
         const id = idOf(candidate)
         return id === undefined ? [] : [id]
       })
@@ -510,9 +510,9 @@ export const layerActorThreads = (
         summary,
         definition,
         config.db,
-        layerLane(config, catalog, options, adapters),
+        layerThread(config, catalog, options, adapters),
         options.providers ?? [],
-        config.maxConcurrentLanes
+        config.maxConcurrentThreads
       )),
       (opened) => Effect.promise(() => opened.close())
     )
@@ -563,7 +563,7 @@ const make = (options: ThreadsOptions) =>
     const catalog = yield* ModelCatalogStore
     const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
-    const lane = layerLane(config, catalog, options, adapters)
+    const thread = layerThread(config, catalog, options, adapters)
     const runtimes = new Map<string, ActorRuntime>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
@@ -594,14 +594,14 @@ const make = (options: ThreadsOptions) =>
       mutations = result.then(() => undefined, () => undefined)
       return result
     }
-    const open = async (summary: ActorSummary, definition: Actor<ServerR>, log: string): Promise<ActorRuntime> => {
+    const open = async (summary: ActorSummary, definition: Actor<ServerR>, database: string): Promise<ActorRuntime> => {
       const runtime = await runtimeOf(
         summary,
         definition,
-        log,
-        lane,
+        database,
+        thread,
         options.providers ?? [],
-        config.maxConcurrentLanes
+        config.maxConcurrentThreads
       )
       runtimes.set(summary.name, runtime)
       await runRegistry(registry.put(summary))

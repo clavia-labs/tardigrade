@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import type { ActorId, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import {
   channelOf,
@@ -26,7 +26,7 @@ export interface TelegramOptions {
   readonly name: string
   readonly token: string
   readonly secretToken: string
-  readonly target: (source: TelegramEndpoint) => ActorId
+  readonly target: (source: TelegramEndpoint) => ThreadAddress
   readonly method?: string
   readonly apiBaseUrl?: string
   readonly fetch?: TelegramFetch

@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { formatActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { REPLY_SUFFIX } from "@clavia/tardigrade-core/communication/message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/execution/projections"
@@ -11,7 +11,7 @@ import { boundaryOf } from "tardie/output/boundary"
 // a lookup plus one of these calls, and a test is an array of events.
 //
 // The projections read the framework's own projections wherever one already answers the question:
-// the lane's owed work comes from the code lane (@clavia/tardigrade-code/execution/projections), and a turn's
+// the thread's owed work comes from the code thread (@clavia/tardigrade-code/execution/projections), and a turn's
 // outcome comes from the thread's boundary (tardie/boundary). The vocabulary the wire
 // speaks is the only thing added here.
 
@@ -45,14 +45,14 @@ export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> =
 }
 
 // statusOf reports what the thread is doing, decided in one order because the states overlap in the
-// log: a blocked lane also has a turn without a terminal, and a failed turn is only failed once
+// log: a blocked thread also has a turn without a terminal, and a failed turn is only failed once
 // nothing is owed (apps-server-spec.md, "GET /v1/threads").
 //
-// The first two answers are the code lane's own head-of-queue reading, not a second derivation of
+// The first two answers are the code thread's own head-of-queue reading, not a second derivation of
 // it: `workOwed` is this head plus `canProgress`, so blocked is exactly the case that leaves
 // `workOwed` empty while an execution is still open (@clavia/tardigrade-code/execution/projections). Blocked
 // means an open `BlockedOn` whose awaited reply has not landed; the moment it lands the same head
-// can progress and reads running again (projections.test.ts, "a landed reply unblocks the lane").
+// can progress and reads running again (projections.test.ts, "a landed reply unblocks the thread").
 //
 // A turn with no terminal and no owed execution is running as well: the model owes the next
 // transition, and no code has been dispatched yet (projections.test.ts, "a fresh turn is running").
@@ -112,22 +112,27 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
   return Number.POSITIVE_INFINITY
 }
 
-// treeOf builds the forest from each log's ThreadCreated record. Address lookup resolves parentage without reading a lane grammar or correlating package call ids (tla/runtime/Thread.tla, AcceptedMatchesCreated).
+// treeOf builds the forest from ChildCreated edges in parent logs. Child ThreadCreated records confirm identity, while the parent log owns discovery.
 export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): ReadonlyArray<ThreadNode> => {
   const idsByAddress = new Map<string, string>()
   for (const [id, events] of logs) {
     const created = threadCreatedOf(events)
     if (created === undefined) throw new Error(`thread ${JSON.stringify(id)} has no ThreadCreated first event`)
-    const address = formatActorId(created.address)
+    const address = formatThreadAddress(created.address)
     if (idsByAddress.has(address)) throw new Error(`thread address ${JSON.stringify(address)} appears in more than one log`)
     idsByAddress.set(address, id)
   }
   const parents = new Map<string, string>()
-  for (const [id, events] of logs) {
-    const parentAddress = threadCreatedOf(events)!.parent
-    if (parentAddress === undefined) continue
-    const parent = idsByAddress.get(formatActorId(parentAddress))
-    if (parent !== undefined && parent !== id) parents.set(id, parent)
+  for (const [parent, events] of logs) {
+    for (const event of events) {
+      if (event.type !== "ChildCreated") continue
+      const address = (event as { readonly address?: unknown }).address
+      if (typeof address !== "object" || address === null) continue
+      const value = address as { readonly actor?: unknown; readonly thread?: unknown }
+      if (typeof value.actor !== "string" || typeof value.thread !== "string") continue
+      const child = idsByAddress.get(formatThreadAddress({ actor: value.actor, thread: value.thread }))
+      if (child !== undefined && child !== parent) parents.set(child, parent)
+    }
   }
   const order = (a: string, b: string): number =>
     (firstAt(logs.get(a) ?? []) - firstAt(logs.get(b) ?? [])) || (a < b ? -1 : a > b ? 1 : 0)

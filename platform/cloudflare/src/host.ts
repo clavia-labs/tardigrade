@@ -2,83 +2,60 @@ import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
-import { formatActorId, isActorId, parseActorId, type ActorId, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, isThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
-import { sameActorId, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
+import { sameThreadAddress, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
-import { createLaneDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
+import { createThreadDriver } from "@clavia/tardigrade-host/driver"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { CloudflareEventStore, layerWorkspace } from "./storage"
 
 export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
-export type CloudflareLaneEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
+export type CloudflareThreadEnv<R> = Layer.Layer<Exclude<R, CloudflarePorts>, never, CloudflarePorts>
 
 type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
-  ? { readonly layersFor?: (lane: string) => CloudflareLaneEnv<R> }
-  : { readonly layersFor: (lane: string) => CloudflareLaneEnv<R> }
+  ? { readonly layers?: CloudflareThreadEnv<R> }
+  : { readonly layers: CloudflareThreadEnv<R> }
 
-export type CloudflareHostOptions<R> = {
+export type CloudflareThreadHostOptions<R> = {
   readonly storage: DurableObjectStorage
-  readonly principal: string
-  readonly actorFor: (lane: string) => Actor<R> | undefined
+  readonly actorName: string
+  readonly thread: string
+  readonly actor: Actor<R>
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
-  readonly driver?: Partial<DriverPolicy>
-  readonly pick?: (dirty: ReadonlySet<string>) => string
   readonly keyOf?: (event: Event) => string | undefined
+  readonly storeFor?: (inner: ThreadEventStore) => ThreadEventStore
 } & LayersFor<R>
-export interface CloudflareHostRouting {
-  readonly localThread: string | undefined
-}
 
-
-export interface CloudflareHost {
-  readonly read: (lane: string) => Promise<ReadonlyArray<Event>>
-  readonly lanes: () => Promise<ReadonlyArray<string>>
-  readonly commit: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
-  readonly stage: (envelope: Envelope<unknown, Event, ActorId>) => Promise<void>
-  readonly commitRoot: (address: string, event: Event) => Promise<void>
-  readonly stageRoot: (address: string, event: Event) => Promise<void>
+export interface CloudflareThreadHost {
+  readonly identity: ThreadAddress
+  readonly read: () => Promise<ReadonlyArray<Event>>
+  readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
+  readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
+  readonly commitRoot: (event: Event) => Promise<void>
+  readonly stageRoot: (event: Event) => Promise<void>
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly nextMethodDeadline: () => Promise<number | undefined>
   readonly recordAlarm: (at: number) => Promise<void>
   readonly resting: () => Promise<boolean>
   readonly work: () => number
-  readonly self: (lane: string) => string
+  readonly self: string
   readonly close: () => Promise<void>
 }
 
-const laneOf = (address: string): string => {
-  const separator = address.indexOf(":")
-  return separator === -1 ? address : address.slice(separator + 1)
-}
-
-// createCloudflareHost binds one actor graph to Effect SQL over its Durable Object storage.
-export function createCloudflareHost<R = never>(
-  options: CloudflareHostOptions<R>
-): Promise<CloudflareHost>
-export function createCloudflareHost<R = never>(
-  routing: CloudflareHostRouting,
-  options: CloudflareHostOptions<R>
-): Promise<CloudflareHost>
-export async function createCloudflareHost<R = never>(
-  routingOrOptions: CloudflareHostRouting | CloudflareHostOptions<R>,
-  providedOptions?: CloudflareHostOptions<R>
-): Promise<CloudflareHost> {
-  const options = "storage" in routingOrOptions ? routingOrOptions : providedOptions
-  if (options === undefined) throw new Error("Cloudflare host options are required")
-  const routing = "storage" in routingOrOptions
-    ? { localThread: undefined }
-    : routingOrOptions
+// createCloudflareThreadHost binds one actor thread to Effect SQL over its Durable Object storage.
+export async function createCloudflareThreadHost<R = never>(options: CloudflareThreadHostOptions<R>): Promise<CloudflareThreadHost> {
+  const identity = { actor: options.actorName, thread: options.thread }
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
@@ -86,49 +63,52 @@ export async function createCloudflareHost<R = never>(
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
-  const events = new CloudflareEventStore(sql, storeKeyOf)
-  await Effect.runPromise(events.initialize())
-  const readEffect = (lane: string): Effect.Effect<ReadonlyArray<Event>> => events.read(lane)
+  const innerEvents = new CloudflareEventStore(sql, storeKeyOf)
+  await Effect.runPromise(innerEvents.initialize())
+  const events = options.storeFor?.(innerEvents) ?? innerEvents
+  const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
 
   const commitEffect = (
-    target: ActorId,
+    target: ThreadAddress,
     event: Event,
     lineage: ThreadLineage | undefined,
-    link?: Link<unknown, ActorId>,
+    link?: Link<unknown, ThreadAddress>,
     call?: ActorMethodInvocation,
     flush = true
   ): Effect.Effect<void> => {
-    const address = formatActorId(target)
+    const address = formatThreadAddress(target)
     return Effect.gen(function* () {
+      if (!sameThreadAddress(target, identity)) {
+        return yield* Effect.die(new Error(`delivery target ${address} does not match thread ${formatThreadAddress(identity)}`))
+      }
       if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
         return yield* Effect.die(
-          new Error(`unkeyed cross-lane event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
+          new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
         )
       }
-      const lane = laneOf(address)
       const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
       const stamped =
         currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
           ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
           : event
-      const current = yield* readEffect(lane)
+      const current = yield* readEffect
       const created = threadCreatedOf(current)
       if (current.length > 0 && created === undefined) return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
-      if (created !== undefined && !sameActorId(created.address, target)) {
+      if (created !== undefined && !sameThreadAddress(created.address, target)) {
         return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
       }
       if (lineage !== undefined) {
-        if (lineage.depth <= 0 || sameActorId(lineage.parent, target)) {
+        if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) {
           return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
         }
-        if (link === undefined || !isActorId(link.source) || !sameActorId(lineage.parent, link.source)) {
+        if (link === undefined || !isThreadAddress(link.source) || !sameThreadAddress(lineage.parent, link.source)) {
           return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
         }
         if (created !== undefined && !sameThreadLineage(created, lineage)) {
           return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
         }
-      } else if (created === undefined && link !== undefined && isActorId(link.source)) {
+      } else if (created === undefined && link !== undefined && isThreadAddress(link.source)) {
         return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
       }
       const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
@@ -138,26 +118,21 @@ export async function createCloudflareHost<R = never>(
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
         return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
       }
-      const appended = yield* events.append(
-        lane,
-        created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed]
-      )
-      if (appended > 0) driver.mark(lane)
+      const appended = yield* events.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+      if (appended > 0) driver.mark(options.thread)
       if (flush) yield* sync
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
   }
 
-  const localTransport: Transport<ActorId, ActorEnvelope> = {
+  const localTransport: Transport<ThreadAddress, ActorEnvelope> = {
     name: "local",
     send: (_destination, envelope) => commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)
   }
   const routes = [
     directoryRoute(
       localTransport,
-      mappedDirectory((id: ActorId) =>
-        id.actor === options.principal && (routing.localThread === undefined || id.thread === routing.localThread)
-          ? id
-          : undefined
+      mappedDirectory((id: ThreadAddress) =>
+        sameThreadAddress(id, identity) ? id : undefined
       ),
       isActorEnvelope,
       (envelope) => envelope.link.target
@@ -166,28 +141,25 @@ export async function createCloudflareHost<R = never>(
     ...(options.routes ?? [])
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
-  const self = (lane: string): string => `${options.principal}:${lane}`
-  const portsOf = (lane: string) => Layer.mergeAll(
-    Layer.succeed(EventLog, {
-      append: (batch) => events.append(lane, batch).pipe(Effect.andThen(sync), Effect.asVoid),
-      read: readEffect(lane),
-      head: events.head(lane),
-      readFrom: (mark) => events.readFrom(lane, mark)
-    }),
+  const self = formatThreadAddress(identity)
+  const store = {
+    append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(Effect.tap(() => sync)),
+    read: events.read,
+    head: events.head,
+    readFrom: (mark: number) => events.readFrom(mark)
+  }
+  const ports = Layer.mergeAll(
+    Layer.succeed(EventLog, eventLogFrom(store)),
     router,
     workspace,
-    Layer.succeed(Self, parseActorId(self(lane)))
+    Layer.succeed(Self, identity)
   )
-  const layersOf = (lane: string): Layer.Layer<R | EventLog> => {
-    const extra = (options.layersFor ?? (() => Layer.empty as unknown as CloudflareLaneEnv<R>))(lane)
-    return extra.pipe(Layer.provideMerge(portsOf(lane))) as Layer.Layer<R | EventLog>
-  }
-  const driver = createLaneDriver({
-    ...(options.driver === undefined ? {} : { policy: options.driver }),
-    ...(options.pick === undefined ? {} : { pick: options.pick }),
-    serve: async (lane) => {
-      const actor = options.actorFor(lane)
-      if (actor !== undefined) await Effect.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(lane))))
+  const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
+    .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>
+  const driver = createThreadDriver({
+    serve: async (thread) => {
+      if (thread !== options.thread) throw new Error(`driver received foreign thread ${JSON.stringify(thread)}`)
+      await Effect.runPromise(settleActor(options.actor).pipe(Effect.provide(layers)))
     }
   })
   let tail: Promise<void> = Promise.resolve()
@@ -196,44 +168,31 @@ export async function createCloudflareHost<R = never>(
     tail = next.then(() => undefined, () => undefined)
     return next
   }
-  const lanes = (): Promise<ReadonlyArray<string>> => Effect.runPromise(events.lanes())
   const recover = async (): Promise<void> => {
-    for (const lane of await lanes()) if (options.actorFor(lane) !== undefined) driver.mark(lane)
+    if ((await Effect.runPromise(events.head)) > 0) driver.mark(options.thread)
     await drive()
   }
   const nextMethodDeadline = async (): Promise<number | undefined> => {
-    let earliest: number | undefined
-    for (const lane of await lanes()) {
-      if (options.actorFor(lane) === undefined) continue
-      const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect(lane)))
-      if (deadline !== undefined) earliest = earliest === undefined ? deadline : Math.min(earliest, deadline)
-    }
-    return earliest
+    return earliestDeadlineOf(await Effect.runPromise(readEffect))
   }
   const recordAlarm = async (at: number): Promise<void> => {
-    for (const lane of await lanes()) {
-      if (options.actorFor(lane) === undefined) continue
-      const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect(lane)))
-      if (deadline === undefined || deadline > at) continue
-      const appended = await Effect.runPromise(events.append(lane, [alarmFired({ scheduledFor: deadline, at })]))
-      if (appended > 0) driver.mark(lane)
+    const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect))
+    if (deadline !== undefined && deadline <= at) {
+      const appended = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
+      if (appended > 0) driver.mark(options.thread)
     }
     await options.storage.sync()
   }
   const resting = async (): Promise<boolean> => {
-    for (const lane of await lanes()) {
-      const actor = options.actorFor(lane)
-      if (actor !== undefined && !restingActor(actor, await Effect.runPromise(readEffect(lane)))) return false
-    }
-    return driver.resting()
+    return restingActor(options.actor, await Effect.runPromise(readEffect)) && driver.resting()
   }
   return {
-    read: (lane) => Effect.runPromise(readEffect(lane)),
-    lanes,
+    identity,
+    read: () => Effect.runPromise(readEffect),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),
-    commitRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined)),
-    stageRoot: (address, event) => Effect.runPromise(commitEffect(parseActorId(address), event, undefined, undefined, undefined, false)),
+    commitRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined)),
+    stageRoot: (event) => Effect.runPromise(commitEffect(identity, event, undefined, undefined, undefined, false)),
     drive,
     recover,
     nextMethodDeadline,

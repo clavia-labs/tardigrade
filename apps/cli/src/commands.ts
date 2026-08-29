@@ -502,8 +502,8 @@ export const devCommand = Command.make("dev", {
     Flag.withDescription("The SQLite file that holds every log. Defaults to TARDIGRADE_DB."),
     Flag.optional
   ),
-  maxConcurrentLanes: Flag.integer("max-concurrent-lanes").pipe(
-    Flag.withDescription("The maximum actor lanes settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_LANES."),
+  maxConcurrentThreads: Flag.integer("max-concurrent-threads").pipe(
+    Flag.withDescription("The maximum actor threads settled at once. Defaults to TARDIGRADE_MAX_CONCURRENT_THREADS."),
     Flag.optional
   ),
   ui: Flag.string("ui").pipe(
@@ -524,7 +524,7 @@ export const devCommand = Command.make("dev", {
       try: () => resolveServer({
         port: Option.getOrUndefined(flags.port),
         db: stated(flags.db),
-        maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
+        maxConcurrentThreads: Option.getOrUndefined(flags.maxConcurrentThreads)
       }, runtimeEnv, project),
       catch: userErrorOf
     })
@@ -545,7 +545,7 @@ export const devCommand = Command.make("dev", {
           try: () => resolveServer({
             port: Option.getOrUndefined(flags.port),
             db: stated(flags.db),
-            maxConcurrentLanes: Option.getOrUndefined(flags.maxConcurrentLanes)
+            maxConcurrentThreads: Option.getOrUndefined(flags.maxConcurrentThreads)
           }, runtimeEnvironmentOf(cli.env, written), writtenProject),
           catch: userErrorOf
         })

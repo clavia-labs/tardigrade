@@ -44,9 +44,12 @@ describe("initActor", () => {
       name: "reviewer",
       main: "worker.ts",
       compatibility_date: "2026-08-24",
-      durable_objects: { bindings: [{ name: "ACTORS", class_name: "ActorHost" }] },
+      durable_objects: { bindings: [
+        { name: "ACTORS", class_name: "ActorDO" },
+        { name: "THREADS", class_name: "ThreadDO" }
+      ] },
       worker_loaders: [{ binding: "LOADER" }],
-      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorHost"] }]
+      migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
     })
     expect(manifest).not.toHaveProperty("d1_databases")
     expect(Object.keys(celldManifest).sort()).toEqual([

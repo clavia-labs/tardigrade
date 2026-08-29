@@ -181,8 +181,8 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
   })
 }
 
-// workspaceFor builds the package from the lane's own bindings: the SQL surface, if the platform
-// declared one. A lane with no SQL binding gets the two-verb workspace. Which verbs exist is a
+// workspaceFor builds the package from the thread's own bindings: the SQL surface, if the platform
+// declared one. A thread with no SQL binding gets the two-verb workspace. Which verbs exist is a
 // construction-time reading of the bindings, so the build is an effect; what the verbs need at
 // call time stays in the package's own type, and the funnel supplies it.
 export const workspaceFor = (

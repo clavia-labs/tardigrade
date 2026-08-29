@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test"
+import { Database } from "bun:sqlite"
 import { existsSync, mkdtempSync, readFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -7,7 +8,7 @@ import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { actorFromReactors, effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { methodTimeoutKeys, methodTimeoutReactor } from "@clavia/tardigrade-core/actor/method"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
@@ -16,7 +17,7 @@ import { jsSandboxService, Sandbox } from "@clavia/tardigrade-code/sandbox/servi
 
 import { workspaceFor, WORKSPACE_SQL_DESCRIPTION } from "@clavia/tardigrade-code/package/workspace"
 
-import { createBunHost, type BunHost, type BunHostOptions } from "./host"
+import { bunThreadDatabasePath, createBunHost, type BunHost, type BunHostOptions } from "./host"
 import type { BunAlarmHandle, BunAlarmScheduler } from "./alarm"
 import { fileTelemetry } from "./file"
 import {
@@ -60,7 +61,7 @@ const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
-const created = (lane: string, at = 0): Event => threadCreated({ actor: "bun", thread: lane }, undefined, at)
+const created = (thread: string, at = 0): Event => threadCreated({ actor: "bun", thread: thread }, undefined, at)
 
 const signal = (): { readonly promise: Promise<void>; readonly send: () => void } => {
   let send!: () => void
@@ -97,8 +98,8 @@ class ManualAlarmScheduler implements BunAlarmScheduler {
 }
 
 const options = (path: string): BunHostOptions<never> => ({
-  log: path,
-  actorFor: (lane) => (lane === "echo" ? echo : undefined),
+  database: path,
+  actorFor: (thread) => (thread === "echo" ? echo : undefined),
   keyOf
 })
 
@@ -122,7 +123,7 @@ describe("the bun host", () => {
         })]
     }
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       actorFor: () => actor,
       keyOf,
       layersFor: () => Layer.succeed(Sandbox, jsSandboxService)
@@ -140,7 +141,7 @@ describe("the bun host", () => {
     await h.close()
   })
 
-  test("settles distinct lanes up to the configured capacity", async () => {
+  test("settles distinct threads up to the configured capacity", async () => {
     const release = signal()
     const twoStarted = signal()
     let active = 0
@@ -169,13 +170,13 @@ describe("the bun host", () => {
           })]
     }
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       actorFor: () => actor,
       keyOf,
-      driver: { maxConcurrentLanes: 2 }
+      driver: { maxConcurrentThreads: 2 }
     })
-    for (const lane of ["a", "b", "c"]) {
-      await h.commitRoot(`bun:${lane}`, { type: "MessageReceived", id: lane, at: 0 } as Event)
+    for (const thread of ["a", "b", "c"]) {
+      await h.commitRoot(`bun:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
     const driving = h.drive()
@@ -215,9 +216,9 @@ describe("the bun host", () => {
     await h.close()
   })
 
-  test("refuses an unkeyed cross-lane event, identically to the reference host", async () => {
+  test("refuses an unkeyed cross-thread event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
-    expect(h.commitRoot("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-lane event")
+    expect(h.commitRoot("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-thread event")
     await h.close()
   })
 
@@ -256,7 +257,7 @@ describe("the bun host", () => {
     const timeoutActor = actorFromReactors([methodTimeoutReactor], methodTimeoutKeys.keyOf)
     const firstAlarm = new ManualAlarmScheduler()
     const first = await createBunHost({
-      log: path,
+      database: path,
       actorFor: () => timeoutActor,
       keyOf: methodTimeoutKeys.keyOf,
       alarm: firstAlarm
@@ -281,7 +282,7 @@ describe("the bun host", () => {
 
     const recoveredAlarm = new ManualAlarmScheduler()
     const recovered = await createBunHost({
-      log: path,
+      database: path,
       actorFor: () => timeoutActor,
       keyOf: methodTimeoutKeys.keyOf,
       alarm: recoveredAlarm
@@ -309,14 +310,36 @@ describe("the bun host", () => {
     await recovered.close()
   })
 
-  test("lanes names every lane the log holds", async () => {
+  test("threads names every thread the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
-    expect(await h.lanes()).toEqual([])
+    expect(await h.threads()).toEqual([])
     await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.seed("other", [created("other"), { type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
     await h.drive()
-    expect(await h.lanes()).toEqual(["echo", "other"])
+    expect(await h.threads()).toEqual(["echo", "other"])
     await h.close()
+  })
+
+  test("each thread owns a separate database", async () => {
+    const path = freshPath()
+    const h = await createBunHost(options(path))
+    await h.seed("first", [created("first")])
+    await h.seed("second", [created("second")])
+    expect(bunThreadDatabasePath(path, "first")).not.toBe(bunThreadDatabasePath(path, "second"))
+    expect(existsSync(bunThreadDatabasePath(path, "first"))).toBe(true)
+    expect(existsSync(bunThreadDatabasePath(path, "second"))).toBe(true)
+    await h.close()
+
+    const actor = new Database(path)
+    const thread = new Database(bunThreadDatabasePath(path, "first"))
+    expect(actor.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
+      { migration_id: 1, name: "actor_directory" }
+    ])
+    expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
+      { migration_id: 1, name: "thread_events" }
+    ])
+    actor.close()
+    thread.close()
   })
 
   test("a batch appends atomically: a mid-batch key collision absorbs that row only", async () => {
@@ -333,8 +356,8 @@ describe("the bun host", () => {
 
   test("a child creation and its first delivery commit together", async () => {
     const h = await createBunHost(options(freshPath()))
-    const parent = parseActorId("bun:parent")
-    const target = parseActorId("bun:child")
+    const parent = parseThreadAddress("bun:parent")
+    const target = parseThreadAddress("bun:child")
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
@@ -347,9 +370,9 @@ describe("the bun host", () => {
       expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
     ])
     await expect(h.commit(envelopeOf(
-      linkOf(parseActorId("bun:other"), target),
+      linkOf(parseThreadAddress("bun:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
-      { parent: parseActorId("bun:other"), depth: 1 }
+      { parent: parseThreadAddress("bun:other"), depth: 1 }
     ))).rejects.toThrow("already has different lineage")
     await h.close()
   })
@@ -357,7 +380,7 @@ describe("the bun host", () => {
   test("a refused initial actor delivery leaves no partial creation", async () => {
     const h = await createBunHost(options(freshPath()))
     await expect(h.commit(envelopeOf(
-      linkOf(parseActorId("bun:parent"), parseActorId("bun:child")),
+      linkOf(parseThreadAddress("bun:parent"), parseThreadAddress("bun:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
     ))).rejects.toThrow("must carry lineage")
     expect(await h.read("child")).toEqual([])
@@ -408,18 +431,18 @@ describe("the durable workspace", () => {
   test("a value spilled before a restart hydrates from disk, manifest and all", async () => {
     const path = freshPath()
     const first = await createBunHost({
-      log: path,
+      database: path,
       keyOf: workspaceKeyOf,
-      actorFor: (lane) => (lane === "ws" ? spiller : undefined)
+      actorFor: (thread) => (thread === "ws" ? spiller : undefined)
     })
     await first.seed("ws", [created("ws"), { type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
     await first.wake("ws")
     await first.close()
 
     const second = await createBunHost({
-      log: path,
+      database: path,
       keyOf: workspaceKeyOf,
-      actorFor: (lane) => (lane === "ws" ? loader : undefined)
+      actorFor: (thread) => (thread === "ws" ? loader : undefined)
     })
     await second.seed("ws", [{ type: "MessageReceived", id: "m2", text: "load", at: 2 } as Event])
     await second.wake("ws")
@@ -432,10 +455,10 @@ describe("the durable workspace", () => {
   test("the workspace option replaces the default store", async () => {
     const path = freshPath()
     const first = await createBunHost({
-      log: path,
+      database: path,
       keyOf: workspaceKeyOf,
       workspace: bunWorkspace("elsewhere"),
-      actorFor: (lane) => (lane === "ws" ? spiller : undefined)
+      actorFor: (thread) => (thread === "ws" ? spiller : undefined)
     })
     await first.seed("ws", [created("ws"), { type: "MessageReceived", id: "m1", text: "spill", at: 1 } as Event])
     await first.wake("ws")
@@ -443,9 +466,9 @@ describe("the durable workspace", () => {
 
     // The default table never saw the write: a host on it hydrates nothing.
     const second = await createBunHost({
-      log: path,
+      database: path,
       keyOf: workspaceKeyOf,
-      actorFor: (lane) => (lane === "ws" ? loader : undefined)
+      actorFor: (thread) => (thread === "ws" ? loader : undefined)
     })
     await second.seed("ws", [{ type: "MessageReceived", id: "m2", text: "load", at: 2 } as Event])
     await second.wake("ws")
@@ -491,7 +514,7 @@ describe("telemetry seam", () => {
     await h.drive()
     expect(names.some((s) => s.name === "commit" && s.type === "MessageReceived")).toBe(true)
     expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
-    // The cross-lane seam: the committed event carries the commit span's context, and the
+    // The cross-thread seam: the committed event carries the commit span's context, and the
     // fire links back to it: one business event, one trace.
     const row = (await h.read("echo")).find((event) => event.type === "MessageReceived") as { traceparent?: string }
     expect(row.traceparent).toMatch(/^00-t-s-01$/)
@@ -520,14 +543,14 @@ describe("telemetry seam", () => {
 })
 
 // The SQL surface behind workspace.sql: the model's own database, bound by the host and reached
-// through the workspace package exactly as an agent's lane reaches it.
+// through the workspace package exactly as an agent's thread reaches it.
 
 const askKeyOf = (e: Event): string | undefined =>
   e.type === "Answered" ? `Answered:${String((e as { id?: unknown }).id)}` : undefined
 
 type Answer = { rows?: ReadonlyArray<Record<string, unknown>>; truncated?: boolean; error?: string }
 
-// One reactor runs the given statements through the lane's workspace package and records what came
+// One reactor runs the given statements through the thread's workspace package and records what came
 // back, so a test reads the answers a model would read.
 const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStore> => ({
   keyOf: askKeyOf,
@@ -586,10 +609,10 @@ describe("the workspace sql surface", () => {
   test("the sql verb is bound, and the tables it creates outlive the process", async () => {
     const path = freshPath()
     const first = await createBunHost({
-      log: path,
+      database: path,
       keyOf: askKeyOf,
-      actorFor: (lane) =>
-        lane === "ws" ? asker(["CREATE TABLE notes (n TEXT)", "INSERT INTO notes VALUES ('kept')"]) : undefined
+      actorFor: (thread) =>
+        thread === "ws" ? asker(["CREATE TABLE notes (n TEXT)", "INSERT INTO notes VALUES ('kept')"]) : undefined
     })
     const wrote = await asked(first, "m1")
     expect(wrote.methods).toEqual(["grep", "read", "sql"])
@@ -597,9 +620,9 @@ describe("the workspace sql surface", () => {
     await first.close()
 
     const second = await createBunHost({
-      log: path,
+      database: path,
       keyOf: askKeyOf,
-      actorFor: (lane) => (lane === "ws" ? asker(["SELECT n FROM notes"]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker(["SELECT n FROM notes"]) : undefined)
     })
     expect((await asked(second, "m2")).answers[0]?.rows).toEqual([{ n: "kept" }])
     await second.close()
@@ -607,9 +630,9 @@ describe("the workspace sql surface", () => {
 
   test("the default surface does not reach the log", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
-      actorFor: (lane) => (lane === "ws" ? asker(["SELECT COUNT(*) AS n FROM events"]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker(["SELECT COUNT(*) AS n FROM events"]) : undefined)
     })
     expect((await asked(h, "m1")).answers[0]?.error).toContain("events")
     await h.close()
@@ -617,9 +640,9 @@ describe("the workspace sql surface", () => {
 
   test("the sql doc says what the bound surface is, generic text first", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
-      actorFor: (lane) => (lane === "ws" ? asker([]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker([]) : undefined)
     })
     expect((await asked(h, "m1")).sqlDoc).toBe(`${WORKSPACE_SQL_DESCRIPTION} ${DEFAULT_BUN_WORKSPACE_SQL_DOC}`)
     await h.close()
@@ -627,10 +650,10 @@ describe("the workspace sql surface", () => {
 
   test("a surface over the log's own client names the table the spilled values are in", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
       workspaceSql: bunWorkspaceSql({ doc: bunWorkspaceLogSqlDoc() }),
-      actorFor: (lane) => (lane === "ws" ? asker([]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker([]) : undefined)
     })
     expect((await asked(h, "m1")).sqlDoc).toBe(`${WORKSPACE_SQL_DESCRIPTION} ${bunWorkspaceLogSqlDoc()}`)
     expect(bunWorkspaceLogSqlDoc()).toContain(`${WORKSPACE_TABLE}(id, value, value_type)`)
@@ -639,9 +662,9 @@ describe("the workspace sql surface", () => {
 
   test("a broken query answers an error the model can read", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
-      actorFor: (lane) => (lane === "ws" ? asker(["SELECT * FROM nowhere"]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker(["SELECT * FROM nowhere"]) : undefined)
     })
     const answer = (await asked(h, "m1")).answers[0]
     expect(answer?.error).toContain("nowhere")
@@ -651,11 +674,11 @@ describe("the workspace sql surface", () => {
 
   test("an answer stops at the row cap and says truncated", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
       workspaceSql: bunWorkspaceSql({ rows: 2 }),
-      actorFor: (lane) =>
-        lane === "ws"
+      actorFor: (thread) =>
+        thread === "ws"
           ? asker([
               "CREATE TABLE wide (n INTEGER)",
               "INSERT INTO wide VALUES (1), (2), (3), (4), (5)",
@@ -671,11 +694,11 @@ describe("the workspace sql surface", () => {
 
   test("the byte bound cuts a row set the row bound would pass", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
       workspaceSql: bunWorkspaceSql({ bytes: 40 }),
-      actorFor: (lane) =>
-        lane === "ws"
+      actorFor: (thread) =>
+        thread === "ws"
           ? asker([
               "CREATE TABLE wide (n TEXT)",
               `INSERT INTO wide VALUES ('${"x".repeat(60)}'), ('short')`,
@@ -691,10 +714,10 @@ describe("the workspace sql surface", () => {
 
   test("sql withheld: the package offers two verbs and no third", async () => {
     const h = await createBunHost({
-      log: freshPath(),
+      database: freshPath(),
       keyOf: askKeyOf,
       workspaceSql: false,
-      actorFor: (lane) => (lane === "ws" ? asker(["SELECT 1"]) : undefined)
+      actorFor: (thread) => (thread === "ws" ? asker(["SELECT 1"]) : undefined)
     })
     const answered = await asked(h, "m1")
     expect(answered.methods).toEqual(["grep", "read"])

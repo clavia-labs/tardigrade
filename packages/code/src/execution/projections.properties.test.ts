@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { factsOf, restingLane, workOwed } from "./projections"
+import { factsOf, restingThread, workOwed } from "./projections"
 
 // The isomorphism harness: tla/runtime/Reconcile.tla's theorems, run against the
 // real kernel.
@@ -62,7 +62,7 @@ describe("the bag law: derivations are permutation-invariant", () => {
         settled: f.settled
       })),
       owed: workOwed(events)?.execId ?? null,
-      resting: restingLane(events)
+      resting: restingThread(events)
     })
 
   test("any subset, any order: same facts, same owed work, same rest", () => {
@@ -177,8 +177,8 @@ describe("the spec's state graph: NoVoid and QuietIsBlocked on every reachable s
           expect(workOwed(s.events)?.execId).toBe("d")
         }
         // QuietIsBlocked: quiet, unsettled, no ghosts pending: then the
-        // lane is genuinely waiting on the world.
-        if (restingLane(s.events) && s.pending.length === 0 && s.ghosts.length === 0 && !facts.settled) {
+        // thread is genuinely waiting on the world.
+        if (restingThread(s.events) && s.pending.length === 0 && s.ghosts.length === 0 && !facts.settled) {
           expect(facts.open.size).toBeGreaterThan(0)
           expect(facts.home.size).toBe(0)
         }

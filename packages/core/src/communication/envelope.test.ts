@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { actorIdOf } from "./endpoint"
+import { threadAddressOf } from "./endpoint"
 import { linkedEventOf, methodEnvelopeOf } from "./envelope"
 import { linkOf } from "./link"
 
 describe("method envelopes", () => {
   test("the accepted log event preserves its method and call identity", () => {
-    const link = linkOf({ provider: "telegram", chat: "chat-1" }, actorIdOf("agent", "thread-1"))
+    const link = linkOf({ provider: "telegram", chat: "chat-1" }, threadAddressOf("agent", "thread-1"))
     const envelope = methodEnvelopeOf(
       link,
       { method: "message", id: "call-1" },

@@ -167,7 +167,7 @@ export const resolvedContextPolicyOf = (policy: Partial<ContextPolicy> = {}): Co
 
 // renderedChars counts the characters a render sends for one event: capped where the render
 // caps, zero for an event the render skips. The guard must measure the request the model sees;
-// a measure over raw event JSON counts tool results the render truncates and lanes the render
+// a measure over raw event JSON counts tool results the render truncates and threads the render
 // never shows, and fires against a size no request ever reaches.
 const renderedChars = (e: Event, policy: ContextPolicy): number => {
   const v = e as Record<string, unknown>

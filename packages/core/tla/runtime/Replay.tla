@@ -1,5 +1,5 @@
 ----------------------------- MODULE Replay -----------------------------
-(* The replay matcher: the code lane's obligation when a body lies.
+(* The replay matcher: the code thread's obligation when a body lies.
 
    A body re-runs from the top on every attempt, and the executor
    answers its nth question from the nth recorded call. That is sound

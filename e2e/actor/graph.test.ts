@@ -16,7 +16,7 @@ import {
 } from "tardie"
 import { agentsPackage } from "tardie/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
-import { actorScenario, ROOT_LANE, TEST_MODEL, type Mind } from "./harness"
+import { actorScenario, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 const WORKER_RESULT = output({
   name: "worker-result",
@@ -143,7 +143,7 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
     background: "background-ok"
   })
 
-  const root = graph.host.read(ROOT_LANE)
+  const root = graph.host.read(ROOT_THREAD)
   const runs = root.filter((event) =>
     event.type === "PackageCalled" && String((event as { readonly name?: unknown }).name) === "agents.run"
   ) as ReadonlyArray<{ readonly callId?: unknown }>

@@ -41,11 +41,11 @@ const openTurn = (rounds: number): Event[] => {
 }
 
 describe("the compaction measure and guard", () => {
-  test("the measure counts what a render sends: capped results, skipped lanes", () => {
+  test("the measure counts what a render sends: capped results, skipped threads", () => {
     const big: Event = { type: "ToolReturned", callId: "c", result: { data: "x".repeat(40_000) }, at: 1 }
     expect(estimateTokens([big])).toBe(Math.ceil(TEST_CONTEXT.resultRenderCap / 4))
-    const lane: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
-    expect(estimateTokens([lane])).toBe(0)
+    const thread: Event = { type: "CodeSettled", execId: "c", result: 1, at: 2 } as Event
+    expect(estimateTokens([thread])).toBe(0)
   })
 
   test("the guard fires inside an open turn once a resolved round passes FIRE", () => {

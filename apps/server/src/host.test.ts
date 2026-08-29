@@ -167,7 +167,7 @@ describe("the threads service", () => {
     expect(methods).toEqual(["message", "requestBudget"])
   })
 
-  test("the configured lane capacity runs model calls concurrently", async () => {
+  test("the configured thread capacity runs model calls concurrently", async () => {
     let release!: () => void
     const released = new Promise<void>((resolve) => {
       release = resolve
@@ -194,7 +194,7 @@ describe("the threads service", () => {
     const concurrentConfig = layerConfig(readConfig({
       TARDIGRADE_DB: ":memory:",
       TARDIGRADE_ACTORS: `/tmp/tardigrade-host-concurrent-${process.pid}`,
-      TARDIGRADE_MAX_CONCURRENT_LANES: "2"
+      TARDIGRADE_MAX_CONCURRENT_THREADS: "2"
     }))
 
     await running(
@@ -366,7 +366,7 @@ describe("the threads service", () => {
     ])
   })
 
-  test("list names every thread lane with its log", async () => {
+  test("list names every thread thread with its log", async () => {
     const listed = await running((threads) =>
       Effect.gen(function*() {
         yield* threads.append("alpha", brief("m1"))

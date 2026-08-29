@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
 import { handles, type Component } from "@clavia/tardigrade-core/actor"
-import { formatActorId, isActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { BudgetDecision } from "../actor/budget"
 import { budgetRequestDecided, budgetRequestFailed } from "../log/events"
 import { requestBudgetMethod } from "../actor/budget"
@@ -70,7 +70,7 @@ const authorityTransition = (
     turn: String(received.turn ?? ""),
     reason: String(received.reason ?? ""),
     amount,
-    ...(isActorId(received.link?.source) ? { from: formatActorId(received.link.source) } : {}),
+    ...(isThreadAddress(received.link?.source) ? { from: formatThreadAddress(received.link.source) } : {}),
     grant: (granted = amount) => ({ granted }),
     deny: (reason) => ({ denied: true, ...(reason === undefined ? {} : { reason }) })
   }

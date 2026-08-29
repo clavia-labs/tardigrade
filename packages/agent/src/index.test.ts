@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
-import { createHost, type Host, type LaneEnv } from "@clavia/tardigrade-host/host"
+import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./log/events"
 import { Infer, NativeOutputSupport, type InferRequest } from "./inference/reactor"
 import { boundaryOf } from "./output/boundary"
@@ -15,11 +15,11 @@ import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput, toolList, type AgentComponent } from "./index"
 import type { AgentR } from "./runtime/turn"
 
-const ROOT_LANE = "ag.root"
+const ROOT_THREAD = "ag.root"
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
 // The headline: one ask, an emergent graph, one answer, library only.
-// The root's code spawns two children; the host births their lanes,
+// The root's code spawns two children; the host births their threads,
 // routes briefs and replies, parks and wakes the root, and ask returns
 // when the root settles. No app imports anywhere.
 
@@ -33,11 +33,11 @@ type TestR = AgentR | NativeOutputSupport
 // workspace packages in scope. The packages are values, so the same list mounts on any host.
 const work = () => codeMode([agentsPackage({ budget: {} }), workspacePackage({ policy: {} })])
 
-// hosted binds one assembled actor to an in-process host and drives the root lane. It is the
+// hosted binds one assembled actor to an in-process host and drives the root thread. It is the
 // test's own driver: commit a root brief, drive to quiescence, read the boundary the settle left.
 // A caller with its own host does the same three things (host.ts, Host).
 const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
-  const layersFor = (_lane: string): LaneEnv<TestR> =>
+  const layersFor = (_thread: string): ThreadEnv<TestR> =>
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
@@ -45,17 +45,17 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   const host: Host = createHost<TestR>({
-    principal: "mem",
-    actorFor: (lane: string) => (lane.startsWith("ag.") ? assembled : undefined),
+    actorName: "mem",
+    actorFor: (thread: string) => (thread.startsWith("ag.") ? assembled : undefined),
     layersFor
   })
-  if (log.length > 0) host.seed(ROOT_LANE, log)
+  if (log.length > 0) host.seed(ROOT_THREAD, log)
 
   // Run ids continue past a seeded history, so a resumed agent's new run never wears an id the
   // log already dedups.
   let n = log.length
   const settled = (turn: string): Settled => {
-    const boundary = boundaryOf(host.read(ROOT_LANE), turn)
+    const boundary = boundaryOf(host.read(ROOT_THREAD), turn)
     if (boundary === undefined) return { turn, error: "the root never settled" }
     if (boundary.kind === "completed") return { turn, output: boundary.output }
     if (boundary.kind === "failed") return { turn, error: boundary.error }
@@ -63,12 +63,12 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
   }
   const run = async (brief: string): Promise<Settled> => {
     const id = `run-${n++}`
-    host.commitRoot(host.self(ROOT_LANE), { type: "MessageReceived", id, text: brief, at: n } as Event)
+    host.commitRoot(host.self(ROOT_THREAD), { type: "MessageReceived", id, text: brief, at: n } as Event)
     await host.drive()
     return settled(id)
   }
   const resume = async (turn: string): Promise<Settled> => {
-    await resumeTurn(host, ROOT_LANE, turn)
+    await resumeTurn(host, ROOT_THREAD, turn)
     return settled(turn)
   }
   return { run, resume, host }
@@ -127,18 +127,22 @@ describe("an assembled agent", () => {
     const answer = await mind.run("fan out and add")
     expect(answer.error).toBeUndefined()
     expect(answer.output).toBe('"4,6"')
-    expect(threadCreatedOf(mind.host.read(ROOT_LANE))).toEqual({
+    expect(threadCreatedOf(mind.host.read(ROOT_THREAD))).toEqual({
       type: "ThreadCreated",
-      address: { actor: "mem", thread: ROOT_LANE },
+      address: { actor: "mem", thread: ROOT_THREAD },
       depth: 0,
       at: 1
     })
-    // The graph existed: two child lanes, each with a served turn.
-    const children = ["ag.t1.0", "ag.t1.1"].map((lane) => mind.host.read(lane))
+    expect(mind.host.read(ROOT_THREAD).filter((event) => event.type === "ChildCreated")).toEqual([
+      expect.objectContaining({ callId: "t1.0", address: { actor: "mem", thread: "ag.t1.0" }, depth: 1 }),
+      expect.objectContaining({ callId: "t1.1", address: { actor: "mem", thread: "ag.t1.1" }, depth: 1 })
+    ])
+    // The graph existed: two child threads, each with a served turn.
+    const children = ["ag.t1.0", "ag.t1.1"].map((thread) => mind.host.read(thread))
     for (const log of children) {
       expect(threadCreatedOf(log)).toMatchObject({
         address: { actor: "mem" },
-        parent: { actor: "mem", thread: ROOT_LANE },
+        parent: { actor: "mem", thread: ROOT_THREAD },
         depth: 1
       })
       expect(log.some((e) => e.type === "TurnCompleted")).toBe(true)
@@ -157,11 +161,11 @@ describe("an assembled agent", () => {
     await mind.run("fan out and add")
     expect(seen.some(({ request }) =>
       request.identity.actor === "mem" &&
-      request.identity.thread === ROOT_LANE &&
+      request.identity.thread === ROOT_THREAD &&
       request.identity.turn === "run-0"
     )).toBe(true)
     expect(new Set(seen.map(({ request }) => request.identity.thread))).toEqual(new Set([
-      ROOT_LANE,
+      ROOT_THREAD,
       "ag.t1.0",
       "ag.t1.1"
     ]))
@@ -175,21 +179,21 @@ describe("an assembled agent", () => {
     // the same history, and a new run serves without colliding with a recorded id.
     const first = rlm(scripted)
     await first.run("sum 1+2")
-    const carried = first.host.read(ROOT_LANE)
+    const carried = first.host.read(ROOT_THREAD)
 
     const resumed = rlm(scripted, [work()], carried)
-    expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
+    expect(resumed.host.read(ROOT_THREAD)).toEqual(carried)
     const again = await resumed.run("sum 3+4")
     expect(again.output).toBe("7")
     // Both turns live on one log: the carried terminal and the new one.
-    expect(resumed.host.read(ROOT_LANE).filter((e) => e.type === "TurnCompleted")).toHaveLength(2)
+    expect(resumed.host.read(ROOT_THREAD).filter((e) => e.type === "TurnCompleted")).toHaveLength(2)
     expect(resumed.host.resting()).toBe(true)
   })
 
   test("replay emits no inference", async () => {
     const first = rlm(scripted)
     await first.run("sum 1+2")
-    const carried = first.host.read(ROOT_LANE)
+    const carried = first.host.read(ROOT_THREAD)
     let calls = 0
     const resumed = rlm(async (request) => {
       calls += 1
@@ -197,22 +201,22 @@ describe("an assembled agent", () => {
     }, [work()], carried)
     await resumed.host.drive()
     expect(calls).toBe(0)
-    expect(resumed.host.read(ROOT_LANE)).toEqual(carried)
+    expect(resumed.host.read(ROOT_THREAD)).toEqual(carried)
   })
 
-  test("a second run reuses the root lane as a genuinely fresh turn", async () => {
+  test("a second run reuses the root thread as a genuinely fresh turn", async () => {
     const mind = rlm(scripted)
     await mind.run("fan out and add")
     const again = await mind.run("fan out and add")
     expect(again.output).toBe('"4,6"')
     // The second turn ran its own execution and spawned its own children.
-    expect(mind.host.read(ROOT_LANE).filter((e) => e.type === "CodeSettled")).toHaveLength(2)
-    for (const lane of ["ag.t2.0", "ag.t2.1"]) {
-      expect(mind.host.read(lane).some((e) => e.type === "TurnCompleted")).toBe(true)
+    expect(mind.host.read(ROOT_THREAD).filter((e) => e.type === "CodeSettled")).toHaveLength(2)
+    for (const thread of ["ag.t2.0", "ag.t2.1"]) {
+      expect(mind.host.read(thread).some((e) => e.type === "TurnCompleted")).toBe(true)
     }
   })
 
-  test("a native tool surface runs the same turn loop with no code lane", async () => {
+  test("a native tool surface runs the same turn loop with no code thread", async () => {
     // The benchmark shape: a fixed table of named tools, called directly. Code mode is the
     // default rather than the only surface, so an agent measured against another harness keeps
     // the turn loop, the budget wall, and the answer contract while presenting that harness's
@@ -237,7 +241,7 @@ describe("an assembled agent", () => {
     expect(answer.output).toBe("contents of /contract.md")
     expect(reads).toEqual(["/contract.md"])
     // The tool answered directly: no code was ever dispatched.
-    const log = mind.host.read(ROOT_LANE)
+    const log = mind.host.read(ROOT_THREAD)
     expect(log.some((e) => e.type === "CodeDispatched")).toBe(false)
     expect(log.filter((e) => e.type === "ToolReturned")).toHaveLength(1)
   })
@@ -277,7 +281,7 @@ describe("an assembled agent", () => {
     expect(keys).toEqual(["run-0/infer/0", "run-0/infer/1", "run-0/infer/1"])
     expect(failureInRequest).toEqual([false, false, false])
 
-    const log = mind.host.read(ROOT_LANE)
+    const log = mind.host.read(ROOT_THREAD)
     expect(log.filter((event) => event.type === "TurnFailed")).toEqual([
       expect.objectContaining({
         turn: "run-0",

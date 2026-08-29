@@ -29,7 +29,7 @@ import { inboundOf } from "./projections"
 // what the events mean, and that is the assembly that emitted them. The platform holds the log and
 // mounts what is declared here by name (packages/client/src/contract.ts, apiOf).
 
-// The assembly, one for every lane: code mode with four packages in scope, plus the policy
+// The assembly, one for every thread: code mode with four packages in scope, plus the policy
 // components. v1 runs this one assembly and forking is the customization path (apps-server-spec.md,
 // "Explicitly out of scope for v1").
 //
@@ -71,7 +71,7 @@ export const builtInActor = assemblyOf
 
 // ServerR is what this assembly needs bound. It is read off the assembly rather than restated, so a
 // package added above lands in the host's obligation and a host that binds nothing for it fails to
-// compile (host.ts, layerLane).
+// compile (host.ts, layerThread).
 export type ServerR = ReturnType<typeof assemblyOf> extends Actor<infer R> ? R : never
 
 // TurnStatus is this actor's turn vocabulary. `parked` is the budget ask nobody can answer over

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import type { Event } from "../../log/event"
 import { EventLog, withWatermark } from "../../log"
-import { actorIdOf } from "../../communication/endpoint"
+import { threadAddressOf } from "../../communication/endpoint"
 import { Router } from "../../communication/router"
 import { Self } from "../../reconciliation"
 import { DEFAULT_ACTOR_METHOD_TIMEOUT_MS, actorMethod } from "./definition"
@@ -15,9 +15,9 @@ const inspect = actorMethod({
   state: () => ({ status: "pending" })
 })
 
-const source = actorIdOf("caller", "root")
+const source = threadAddressOf("caller", "root")
 const target = {
-  address: actorIdOf("inspector", "shared"),
+  address: threadAddressOf("inspector", "shared"),
   methods: { inspect }
 }
 

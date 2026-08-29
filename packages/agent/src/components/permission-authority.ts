@@ -3,7 +3,7 @@ import { Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
 import { externallyHandled, handles, type Component } from "@clavia/tardigrade-core/actor"
-import { formatActorId, isActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { PermissionDecision, requestPermissionMethod } from "../actor/permission"
 import { permissionRequestDecided, permissionRequestFailed } from "../log/events"
 
@@ -71,7 +71,7 @@ const authorityTransition = (
     action: String(received.action ?? ""),
     ...(typeof received.resource === "string" ? { resource: received.resource } : {}),
     reason: String(received.reason ?? ""),
-    ...(isActorId(received.link?.source) ? { from: formatActorId(received.link.source) } : {}),
+    ...(isThreadAddress(received.link?.source) ? { from: formatThreadAddress(received.link.source) } : {}),
     grant: () => ({ granted: true }),
     deny: (reason) => ({ denied: true, ...(reason === undefined ? {} : { reason }) })
   }

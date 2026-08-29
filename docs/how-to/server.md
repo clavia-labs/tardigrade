@@ -66,7 +66,7 @@ Declared request failures are `application/problem+json`.
 | --- | --- |
 | `PORT` | `4242` |
 | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
-| `TARDIGRADE_MAX_CONCURRENT_LANES` | Maximum actor lanes settled at once. Defaults to `4` |
+| `TARDIGRADE_MAX_CONCURRENT_THREADS` | Maximum actor threads settled at once. Defaults to `4` |
 | `TARDIGRADE_TOKEN` | Unset. When set, runtime and control routes need `Authorization: Bearer`. `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` stay public |
 | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc`. Project and platform configuration for a directly hosted server |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json`. Source for the public model catalog |

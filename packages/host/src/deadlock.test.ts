@@ -5,14 +5,14 @@ import { Router } from "@clavia/tardigrade-core/communication/router"
 import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
-import { parseActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 
-// The deadlock sentinel against toy reactors, package-pure. Each lane's
+// The deadlock sentinel against toy reactors, package-pure. Each thread's
 // body: on its brief, declare an await on its partner; on its await's
 // reply (however it ends), settle and answer whoever awaits it. Two
-// lanes awaiting each other is packages/core/tla/communication/Delivery.tla's
+// threads awaiting each other is packages/core/tla/communication/Delivery.tla's
 // DeliveryDeadlock trace: without the sentinel both rest forever;
 // with it, one victim edge fails, the fallout cascades, and the whole
 // knot settles.
@@ -55,7 +55,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
             const router = yield* Router
             // Answer whoever awaits me, then settle.
             yield* router.send(envelopeOf(
-              linkOf(parseActorId(`mem:${me}`), parseActorId(`mem:${input.partner}`)),
+              linkOf(parseThreadAddress(`mem:${me}`), parseThreadAddress(`mem:${input.partner}`)),
               {
               type: "MessageReceived",
               id: `${input.partner}.await.reply`,
@@ -70,24 +70,24 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
     ]
   }
 
-const edgesOf = (lane: string, events: ReadonlyArray<Event>): ReadonlyArray<AwaitEdge> => {
+const edgesOf = (thread: string, events: ReadonlyArray<Event>): ReadonlyArray<AwaitEdge> => {
   if (has(events, "Settled")) return []
   return events
     .filter((e) => e.type === "Awaiting")
-    .filter(() => !has(events, "MessageReceived", `${lane}.await.reply`))
+    .filter(() => !has(events, "MessageReceived", `${thread}.await.reply`))
     .map((e) => ({
-      from: lane,
+      from: thread,
       to: str((e as { target?: unknown }).target),
       callId: str((e as { callId?: unknown }).callId),
-      replyId: `${lane}.await.reply`
+      replyId: `${thread}.await.reply`
     }))
 }
 
 const knot = (withSentinel: boolean) =>
   createHost<Router>({
-    actorFor: (lane) =>
-      lane === "p" ? { reactors: [knotReactor("p", "c")], keyOf: knotKeys }
-      : lane === "c" ? { reactors: [knotReactor("c", "p")], keyOf: knotKeys }
+    actorFor: (thread) =>
+      thread === "p" ? { reactors: [knotReactor("p", "c")], keyOf: knotKeys }
+      : thread === "c" ? { reactors: [knotReactor("c", "p")], keyOf: knotKeys }
       : undefined,
     ...(withSentinel ? { edgesOf } : {})
   })

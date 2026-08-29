@@ -5,7 +5,7 @@
    A fold never crashes on a missing rule; it skips. Silence is ambiguous:
    an intended "not my business" or a forgotten answer, and the fold
    cannot tell them apart. The 2026-08-15 wedge was the second kind:
-   (parked, dispatch) was reachable and unwritten, and a lane froze with
+   (parked, dispatch) was reachable and unwritten, and a thread froze with
    an execution owed.
 
    THE LAW (ruled 2026-08-16): every reachable (room, event) pair is

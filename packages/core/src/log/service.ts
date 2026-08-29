@@ -1,6 +1,15 @@
 import { Context, Effect } from "effect"
 import type { Event } from "./event"
 
+// ThreadEventStore is the durable boundary for one thread's event log. A host and its reactors
+// share this object, so every read and append observes the same application policy.
+export interface ThreadEventStore {
+  readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<number>
+  readonly read: Effect.Effect<ReadonlyArray<Event>>
+  readonly head: Effect.Effect<number>
+  readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
+}
+
 // EventLog is the one durable thing; append is the only mutation in the system (tla/runtime/Log.tla).
 // State is a projection of it: replay is re-derivation, recovery is re-settling.
 //
@@ -24,6 +33,15 @@ export class EventLog extends Context.Service<
     readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>
   }
 >()("tardigrade/EventLog") {}
+
+// eventLogFrom adapts a thread store to the reactor port while preserving the store as the host's
+// persistence boundary.
+export const eventLogFrom = (store: ThreadEventStore): Context.Service.Shape<typeof EventLog> => ({
+  append: (events) => store.append(events).pipe(Effect.asVoid),
+  read: store.read,
+  head: store.head,
+  readFrom: store.readFrom
+})
 
 // withWatermark derives `head` and `readFrom` for a store that only has `append` and `read`:
 // the watermark is the event count. Correct for any append-only array binding; a real store

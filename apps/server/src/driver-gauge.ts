@@ -1,6 +1,6 @@
 import { Context, Effect, Layer } from "effect"
 
-// DriverGauge exposes the host driver's resting state and outstanding lane count to the health surface.
+// DriverGauge exposes the host driver's resting state and outstanding thread count to the health surface.
 export class DriverGauge extends Context.Service<
   DriverGauge,
   {

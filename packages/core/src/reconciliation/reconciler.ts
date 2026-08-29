@@ -1,5 +1,5 @@
 import { Clock, Context, Effect } from "effect"
-import type { ActorId } from "../communication/endpoint"
+import type { ThreadAddress } from "../communication/endpoint"
 import type { Event } from "../log/event"
 import { EventLog } from "../log"
 import { triggerOf } from "../log/trace"
@@ -9,8 +9,8 @@ import type { Transition } from "./transition"
 // Actor runtime gives one log a single writer and derives all state from that log
 // (tla/runtime/Projection.tla). The platform serializes sends per actor.
 
-// Self is the current actor's own address, bound by the platform per lane.
-export class Self extends Context.Service<Self, ActorId>()("tardigrade/Self") {}
+// Self is the current actor's own address, bound by the platform per thread.
+export class Self extends Context.Service<Self, ThreadAddress>()("tardigrade/Self") {}
 
 // Actor carries reactors and the key projection used for commitment and redelivery deduplication.
 export interface Actor<R = never> {

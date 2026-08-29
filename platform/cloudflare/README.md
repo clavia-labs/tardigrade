@@ -1,30 +1,30 @@
 # Cloudflare platform
 
-This binding mounts one actor definition into a named SQLite Durable Object. The object stores its event logs, workspace, and last valid model catalog snapshot. Every thread is a lane in the actor's event table. Each accepted event commits its log append and recovery alarm before reconciliation starts. One alarm covers interrupted drives and the earliest unresolved method deadline. When it fires, each due lane records `AlarmFired` before reconciliation resumes. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts each actor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, model catalog, and thread directory. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
 ## Thread isolation
 
-Set `placement: "thread"` to give each actor thread a separate Durable Object, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ActorId`, so a child thread routes to its own object even when it uses the same actor definition.
+Each actor thread has a separate Thread DO, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ThreadAddress`, so a child thread routes to its own Thread DO when it uses the same actor definition.
 
 ```ts
-export { ActorHost }
-export default cloudflareWorker(definition, {
-  placement: "thread"
-})
+export { ActorDO, ThreadDO }
+export default cloudflareWorker(definition)
 ```
 
-The default `placement: "actor"` keeps all threads for one actor definition in one Durable Object. Actor-scoped placement supports `GET /v1/threads`. Thread-scoped placement returns status `400` for that actor-wide listing because Durable Object namespaces do not support object enumeration. Thread-specific method and event routes select the matching thread object.
+The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
+
+The Actor DO keeps a routing and query directory with each thread's parent, depth, and placement. `GET /v1/threads` reads that directory, then reads each Thread DO log to build the tree. Thread-specific method and event routes select the matching Thread DO.
 
 
 ## Application services
 
-An actor can require an application Effect service. Pass `layersFor` to `cloudflareWorker` to build that service from the Worker environment and current lane. Tardigrade merges the returned layer with its model, HTTP, sandbox, event-log, and workspace layers. It constructs the application layer separately for each lane settlement, so mutable service state is shared only when the supplied Layer explicitly shares it.
+An actor can require an application Effect service. Pass `layersFor` to `cloudflareWorker` to build that service from the Worker environment and current thread. Tardigrade merges the returned layer with its model, HTTP, sandbox, event-log, and workspace layers. It constructs the application layer separately for each thread settlement, so mutable service state is shared only when the supplied Layer explicitly shares it.
 
 ```ts
 import { Context, Effect, Layer } from "effect"
-import { ActorHost, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
 
 interface Env extends TardigradeEnv {
   readonly CUSTOMERS: D1Database
@@ -35,26 +35,32 @@ class CustomerStore extends Context.Service<
   { readonly find: (id: string) => Effect.Effect<unknown> }
 >()("application/CustomerStore") {}
 
-export { ActorHost }
+export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
-  layersFor: ({ env, lane }: CloudflareWorkerLayerContext<Env>) => Layer.succeed(CustomerStore, {
-    find: id => Effect.promise(() => env.CUSTOMERS.prepare("SELECT * FROM customers WHERE lane = ? AND id = ?").bind(lane, id).first())
+  layersFor: ({ env, thread }: CloudflareWorkerLayerContext<Env>) => Layer.succeed(CustomerStore, {
+    find: id => Effect.promise(() => env.CUSTOMERS.prepare("SELECT * FROM customers WHERE thread = ? AND id = ?").bind(thread, id).first())
   })
 })
 ```
 
-The callback may require Tardigrade's lane ports while constructing its layer. The returned Layer has a `never` error channel.
+The callback may require Tardigrade's thread ports while constructing its layer. The returned Layer has a `never` error channel.
+
+## Event store policy
+
+Pass `storeFor` to wrap each thread's `ThreadEventStore`. The callback receives the Worker environment and thread identity, then returns a wrapper for that thread's store. Host ingress, reactor appends, API reads, recovery, deadlines, and alarms use the wrapped store. Encryption and key management remain application concerns.
+
+The wrapper must preserve the `ThreadEventStore` append order, atomic batch, deduplication, watermark, and ordered-tail guarantees. Omitting `storeFor` uses the SQLite store directly.
 
 ## Model adapters
 
 The Worker registers the protocol implementations its configured providers use. Each adapter is a separate import, so a bundle includes its provider library only when the Worker selects it. Host startup fails with the missing protocol and a registration instruction when configuration names an unregistered protocol.
 
 ```ts
-import { ActorHost, cloudflareWorker } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
 import { modelAdapters } from "tardie/model/adapter"
 import { anthropicAdapter } from "tardie/model/anthropic"
 
-export { ActorHost }
+export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
   modelAdapters: modelAdapters(anthropicAdapter)
 })
@@ -73,17 +79,17 @@ Amazon Bedrock is an optional peer dependency. Install its provider packages and
 
 ## Live inference output
 
-Pass `inferenceObserverFor` to observe normalized text while a provider stream is active. The factory receives the Worker environment and lane, so delivery can use a deployment binding. Deltas are ephemeral and carry actor, thread, turn, logical attempt, physical attempt, model, block, sequence, and text identity.
+Pass `inferenceObserverFor` to observe normalized text while a provider stream is active. The factory receives the Worker environment and thread, so delivery can use a deployment binding. Deltas are ephemeral and carry actor, thread, turn, logical attempt, physical attempt, model, block, sequence, and text identity.
 
 ```ts
 import { Effect } from "effect"
-import { ActorHost, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker, type CloudflareWorkerLayerContext, type Env as TardigradeEnv } from "tardie/cloudflare"
 
 interface Env extends TardigradeEnv {
   readonly LIVE_OUTPUT: Queue
 }
 
-export { ActorHost }
+export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
   modelAdapters: modelAdapters(anthropicAdapter),
   inferenceObserverFor: ({ env }: CloudflareWorkerLayerContext<Env>) => ({
@@ -187,7 +193,6 @@ The response has status `202` and identifies the accepted destination.
 | Name | Default | Effect |
 | --- | --- | --- |
 | `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
-| `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` | Limits lanes settled concurrently inside one actor object |
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `120000` | Sets the recovery wake delay for an interrupted actor drive |
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
 | `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |

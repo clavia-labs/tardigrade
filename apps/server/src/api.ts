@@ -88,7 +88,7 @@ const logOf = (read: (id: string) => Effect.Effect<ReadonlyArray<Event>>, id: st
     log.length === 0 ? Effect.fail(UnknownThread.of(unknownThreadDetail(id))) : Effect.succeed(log))
 
 // flatten lists a forest depth-first, parent before child. The threads listing is this rather than
-// the raw lane list because `parent` is a fact of the forest and only treeOf can see it
+// the raw thread list because `parent` is a fact of the forest and only treeOf can see it
 // (projections.ts, summaryOf).
 const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
   nodes.flatMap(({ children, ...summary }) => [summary, ...flatten(children)])

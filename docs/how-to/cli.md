@@ -62,7 +62,7 @@ A flag beats an environment variable, which beats `~/.tardigrade/config.json`, w
 | Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
 | Port for `dev` | `--port` | `PORT` | `4242`, then lower if occupied |
 | Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
-| Concurrent lanes for `dev` | `--max-concurrent-lanes` | `TARDIGRADE_MAX_CONCURRENT_LANES` | `4` |
+| Concurrent threads for `dev` | `--max-concurrent-threads` | `TARDIGRADE_MAX_CONCURRENT_THREADS` | `4` |
 | Project configuration | | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc` |
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | what interactive `tdg init` or `tdg setup` saved in `.dev.vars` |
@@ -161,7 +161,7 @@ tdg build actor.ts
 tdg ls --url https://tardigrade.example.com --token "$TOKEN"
 tdg events root --types TurnFailed
 tdg dev --port 8080 --db runs.sqlite
-tdg dev --max-concurrent-lanes 5
+tdg dev --max-concurrent-threads 5
 bunx wrangler deploy
 celld deploy --config celld.jsonc --bucket s3://actors
 ```

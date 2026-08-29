@@ -361,15 +361,15 @@ export interface CodePolicy {
 
 // codeReactorFor derives the executable head as one transition: the settle is the record
 // (`cs:<execId>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
-// a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the lane
+// a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the thread
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
 //
 // The packages arrive as values, and what they need arrives with them: the reactor's environment
-// is the spill store plus the union of the packages' own requirements, so a lane assembled with a
+// is the spill store plus the union of the packages' own requirements, so a thread assembled with a
 // service-needing package cannot be run where that service is missing (execute.test.ts, "a
 // package's requirements ride its type"). Which packages are passed is the component scope: the
-// code can only name these, and the empty array is the powerless lane (packages.ts, Package).
+// code can only name these, and the empty array is the powerless thread (packages.ts, Package).
 // Two packages under one name would make `pkg.name` ambiguous in the body's scope, so a duplicate
 // is a construction-time error, the same reading the infer root takes of two components claiming
 // one tool name (packages/agent/src/runtime/composition.ts, infer).
@@ -432,5 +432,5 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
   }
 }
 
-// codeReactor is that reactor on the default spill bound, with no packages: the powerless lane.
+// codeReactor is that reactor on the default spill bound, with no packages: the powerless thread.
 export const codeReactor: Reactor<KeyValueStore.KeyValueStore> = codeReactorFor({}, [])

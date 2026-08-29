@@ -97,7 +97,7 @@ export const layerAuth = HttpRouter.middleware(
 // The probe's body is the wire type the declaration states (contract.ts, Health).
 export type { Health }
 
-// 200 whenever the host answers, carrying the driver's state and the count of lanes that still owe
+// 200 whenever the host answers, carrying the driver's state and the count of threads that still owe
 // work (docs/how-to/server.md, "Endpoints").
 export const layerHealthGroup = HttpApiBuilder.group(Api, "health", (handlers) =>
   handlers.handle("healthz", () =>

@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-// The code lane's projections: pure functions over the event SET, the TypeScript half of
+// The code thread's projections: pure functions over the event SET, the TypeScript half of
 // tla/runtime/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
 // tla/runtime/Projection.tla); order survives only as data an event carries. The alphabet these read
 // is six events: CodeDispatched, PackageCalled, PackageReturned, BlockedOn, MessageReceived,
@@ -14,7 +14,7 @@ export interface ExecFacts {
   readonly execId: string
   // Calls one attempt recorded as blocked, with no recorded pair yet: still open.
   readonly open: ReadonlySet<string>
-  // Open calls whose awaited reply is on the lane: harvestable now.
+  // Open calls whose awaited reply is on the thread: harvestable now.
   readonly home: ReadonlySet<string>
   readonly called: boolean
   readonly settled: boolean
@@ -94,16 +94,16 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
 export const canProgress = (f: ExecFacts): boolean =>
   !f.settled && (!f.called || f.home.size > 0 || f.open.size === 0)
 
-// workOwed derives the lane's owed work: the earliest unsettled
+// workOwed derives the thread's owed work: the earliest unsettled
 // dispatch, when it can progress. Service is serial FIFO: a blocked
-// head rests the whole lane (a later body may depend on an earlier
+// head rests the whole thread (a later body may depend on an earlier
 // one's effects).
 export const workOwed = (events: ReadonlyArray<Event>): ExecFacts | undefined => {
   const head = factsOf(events).find((f) => !f.settled)
   return head !== undefined && canProgress(head) ? head : undefined
 }
 
-// restingLane reports quiescence to the platform alarm: no owed work.
+// restingThread reports quiescence to the platform alarm: no owed work.
 // The driver adds its own runtime-local "nothing in flight"; the log's
 // half is this.
-export const restingLane = (events: ReadonlyArray<Event>): boolean => workOwed(events) === undefined
+export const restingThread = (events: ReadonlyArray<Event>): boolean => workOwed(events) === undefined

@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { actorIdOf, type ActorId } from "@clavia/tardigrade-core/communication/endpoint"
+import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
@@ -27,13 +27,13 @@ const graphArbitrary: fc.Arbitrary<GraphSpec> = fc.uniqueArray(fc.integer({ min:
   }))
 })
 
-const identityOf = (id: number): ActorId => actorIdOf("graph", `participant-${id}`)
+const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", `participant-${id}`)
 
 describe("host communication over participant graphs", () => {
   test("redelivering every graph edge commits each linked message once", async () => {
     await fc.assert(
       fc.asyncProperty(graphArbitrary, async (graph) => {
-        const host = createHost({ principal: "graph", actorFor: () => undefined })
+        const host = createHost({ actorName: "graph", actorFor: () => undefined })
         for (const participant of graph.participants) {
           const identity = identityOf(participant)
           host.seed(identity.thread, [threadCreated(identity, undefined, 0)])

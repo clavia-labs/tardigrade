@@ -1,7 +1,7 @@
 import { Data } from "effect"
 
 // Park is the signal a package method fails with when it awaits a reply that has not landed on
-// the lane yet. The raisers are the awaiting methods: `tasks.fire`, `tasks.result`,
+// the thread yet. The raisers are the awaiting methods: `tasks.fire`, `tasks.result`,
 // `agents.run`, and `agents.result`. Park stays host-side: the proxy layer in `execute.ts`
 // catches it, the body sees a promise that never settles, and the executor parks the whole
 // execution. A code body can never observe or catch a park (park.test.ts, "a try/catch around
