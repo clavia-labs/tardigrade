@@ -185,8 +185,9 @@ describe("problem documents", () => {
         const missingField = yield* post("/v1/actors/main/threads/ghost/events", { id: "m1" })
         const emptyType = yield* post("/v1/actors/main/threads/ghost/events", { type: "", id: "m1" })
         const notAnObject = yield* post("/v1/actors/main/threads/ghost/events", "hello")
+        const invalidActor = yield* client.get("/v1/actors/tenant%3Awest/threads/ghost/events")
         return yield* Effect.forEach(
-          [repeated, notANumber, negative, missingField, emptyType, notAnObject],
+          [repeated, notANumber, negative, missingField, emptyType, notAnObject, invalidActor],
           (response) =>
             Effect.map(response.json, (body) => ({
               status: response.status,
@@ -212,6 +213,7 @@ describe("problem documents", () => {
     expect(details[2]).toContain("`limit` is not a value it accepts")
     expect(details[3]).toBe("The request body is not what this endpoint accepts. `type` is missing.")
     expect(details[4]).toContain("`type` is not a value it accepts")
+    expect(details[6]).toContain("`id` is not a value it accepts")
     // A body that is not an object at all names no field, so the sentence stops at the part.
     expect(details[5]).toBe("The request body is not what this endpoint accepts.")
   })

@@ -32,7 +32,7 @@ import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { ActorInstanceId, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ThreadLineage, ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
@@ -361,6 +361,7 @@ export class ActorDO extends DurableObject<Env> {
 
   async init(name: string, instance: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
+    if (!Schema.is(ActorInstanceId)(instance)) throw new Error("invalid actor instance id")
     this.schema ??= Effect.runPromise(initializeCloudflareActorSchema.pipe(
       Effect.provide(SqliteClient.layer({ storage: this.ctx.storage }))
     ))
@@ -475,6 +476,7 @@ export class ThreadDO extends DurableObject<Env> {
 
   async init(name: string, instance: string, thread: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
+    if (!Schema.is(ActorInstanceId)(instance)) throw new Error("invalid actor instance id")
     this.schema ??= Effect.runPromise(initializeCloudflareThreadSchema.pipe(
       Effect.provide(SqliteClient.layer({ storage: this.ctx.storage }))
     ))
@@ -925,7 +927,8 @@ const routes = [
   HttpRouter.route("PUT", "/v1/actors/:id", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.id ?? "")
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, true))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       return json({ actor: instance, definition: deployedActor })
@@ -934,7 +937,8 @@ const routes = [
   HttpRouter.route("GET", "/v1/actors/:id", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.id ?? "")
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       return stub === undefined
         ? json({ error: "unknown actor" }, 404)
@@ -945,10 +949,11 @@ const routes = [
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.id ?? "")
-      const thread = decodeURIComponent(params.thread ?? "")
-      const methodName = decodeURIComponent(params.method ?? "")
-      const call = decodeURIComponent(params.call ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const methodName = params.method ?? ""
+      const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const input = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
@@ -966,10 +971,11 @@ const routes = [
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.id ?? "")
-      const thread = decodeURIComponent(params.thread ?? "")
-      const methodName = decodeURIComponent(params.method ?? "")
-      const call = decodeURIComponent(params.call ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const methodName = params.method ?? ""
+      const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, false))
@@ -984,7 +990,8 @@ const routes = [
   HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.id ?? "")
+      const instance = params.id ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       if (stub === undefined) return json({ error: "unknown actor" }, 404)
       return json(yield* Effect.promise(() => stub.threads()))
@@ -994,8 +1001,9 @@ const routes = [
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.id ?? "")
-      const thread = decodeURIComponent(params.thread ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       yield* Effect.promise(() => actorStub(env, actor, instance, true))
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, true))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
@@ -1011,8 +1019,9 @@ const routes = [
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.id ?? "")
-      const thread = decodeURIComponent(params.thread ?? "")
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, false))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const url = new URL(request.url, "http://worker")

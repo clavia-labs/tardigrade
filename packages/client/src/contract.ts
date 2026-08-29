@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Event } from "@clavia/tardigrade-core/log/event"
+import { ActorInstanceId } from "@clavia/tardigrade-core/communication/endpoint"
 
 // The API as a value. Every JSON route is an HttpApiEndpoint with its path params, query, success
 // schema, and error schemas, so the router, the OpenAPI document, and the derived client all read
@@ -431,7 +432,7 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-const RuntimeActorParams = { id: Schema.String }
+const RuntimeActorParams = { id: ActorInstanceId }
 
 const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 

@@ -29,6 +29,23 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 }
 
 describe("cloudflare actor", () => {
+  test("an ambiguous actor instance id is refused", async () => {
+    const invalidActor = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
+      method: "PUT",
+      headers: authorization
+    })
+    expect(invalidActor.status).toBe(400)
+  })
+
+  test("actor instance path parameters are decoded once", async () => {
+    const response = await SELF.fetch("http://test/v1/actors/tenant%252Fwest", {
+      method: "PUT",
+      headers: authorization
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ actor: "tenant%2Fwest", definition: "echo" })
+  })
+
   test("actor storage persists model catalog snapshots", async () => {
     const snapshot: ModelCatalog = {
       source: "models.dev",
