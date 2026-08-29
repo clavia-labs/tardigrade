@@ -646,6 +646,7 @@ const GuidePage = (): ReactElement => (
             <li><code>worker.ts</code><span /><p>Worker runtime entry</p></li>
             <li><code>wrangler.jsonc</code><span /><p>Worker and Durable Object config</p></li>
             <li><code>celld.jsonc</code><span /><p>Self-hosted Celld config</p></li>
+            <li><code>models.lock.json</code><span /><p>Resolved deployment model scope</p></li>
             <li><code>package.json</code><span /><p>Dependencies and module metadata</p></li>
           </ul>
         </div>
@@ -742,7 +743,8 @@ const cliCommands = [
   ["tdg ls", "List threads"],
   ["tdg events <thread>", "Print a thread's event log"],
   ["tdg providers", "List provider protocols and setup requirements"],
-  ["tdg models", "Search the model catalog"]
+  ["tdg models", "Search and page the public model catalog"],
+  ["tdg models lock", "Resolve configured models into the deployment lock"]
 ] as const
 
 const CliPage = (): ReactElement => (
