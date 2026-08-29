@@ -1,6 +1,7 @@
 import { mkdir, rm, writeFile } from "node:fs/promises"
 import { relative, resolve } from "node:path"
 import { DEFAULT_PROJECT_CONFIG_PATH } from "@clavia/tardigrade-server/config"
+import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
 import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
@@ -8,10 +9,13 @@ import { actorTemplate } from "./template"
 import type { SetupAnswers, SetupFiles } from "./setup"
 import { versionIn } from "./version"
 import { callCommand, shellWord } from "./workflow"
+import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_WORKER_ENTRY = "worker.ts"
 export const DEFAULT_PACKAGE_MANIFEST = "package.json"
+export const DEFAULT_MODEL_LOCK = MODEL_LOCK_FILE
+export const DEFAULT_CATALOG_MIGRATION = "migrations/0001_catalog.sql"
 export const DISCORD_INVITE_URL = "https://discord.gg/Z74jwRxz4k"
 
 export interface InitActorOptions {
@@ -20,6 +24,7 @@ export interface InitActorOptions {
   readonly now?: Date
   readonly packageVersion?: string
   readonly modelProtocol?: ModelProtocol
+  readonly modelLock?: ModelLock
 }
 
 export interface InitializedActor {
@@ -30,6 +35,8 @@ export interface InitializedActor {
   readonly manifest: string
   readonly celldManifest: string
   readonly packageManifest: string
+  readonly modelLock: string
+  readonly catalogMigration: string
 }
 
 export const defaultInitDirectory = (name: string): string => name
@@ -48,6 +55,11 @@ const manifestTemplate = (name: string, now: Date): string => `${JSON.stringify(
   },
   worker_loaders: [{ binding: "LOADER" }],
   migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }],
+  d1_databases: [{
+    binding: "CATALOG_DB",
+    database_name: `${name}-catalog`,
+    migrations_dir: "migrations"
+  }],
   observability: { enabled: true },
   limits: { cpu_ms: 300_000 },
   vars: {
@@ -77,13 +89,15 @@ const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly 
 const workerTemplate = (protocol: ModelProtocol): string => {
   const adapter = adapterFor(protocol)
   return `import definition from "./actor"
-import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker, modelScopeFrom } from "tardie/cloudflare"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
+import modelLock from "./models.lock.json"
 
 export { ActorDO, ThreadDO }
 export default cloudflareWorker(definition, {
-  modelAdapters: modelAdapters(${adapter.name})
+  modelAdapters: modelAdapters(${adapter.name}),
+  modelScope: modelScopeFrom(modelLock)
 })
 `
 }
@@ -102,6 +116,8 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
   const celldManifest = resolve(directory, CELLD_PROJECT_CONFIG_PATH)
   const packageManifest = resolve(directory, DEFAULT_PACKAGE_MANIFEST)
+  const modelLock = resolve(directory, DEFAULT_MODEL_LOCK)
+  const catalogMigration = resolve(directory, DEFAULT_CATALOG_MIGRATION)
   const source = await actorTemplate({ name })
   const manifestSource = manifestTemplate(name, options.now ?? new Date())
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
@@ -116,12 +132,15 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
     await writeFile(packageManifest, packageTemplate(packageVersion), "utf8")
+    await writeFile(modelLock, `${JSON.stringify(options.modelLock ?? emptyModelLock(), null, 2)}\n`, "utf8")
+    await mkdir(resolve(directory, "migrations"))
+    await writeFile(catalogMigration, CLOUDFLARE_MODEL_CATALOG_MIGRATION, "utf8")
   } catch (error) {
     await rm(directory, { recursive: true, force: true })
     throw error
   }
 
-  return { name, directory, entry, worker, manifest, celldManifest, packageManifest }
+  return { name, directory, entry, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -165,6 +184,8 @@ export const initSummary = (
     summaryField("", shownPath(actor.directory, actor.manifest), colors),
     summaryField("", shownPath(actor.directory, actor.celldManifest), colors),
     summaryField("", shownPath(actor.directory, actor.packageManifest), colors),
+    summaryField("", shownPath(actor.directory, actor.modelLock), colors),
+    summaryField("", shownPath(actor.directory, actor.catalogMigration), colors),
     summaryField("credential", credential, colors),
     ...(answers.region === undefined ? [] : [summaryField("region", answers.region, colors)]),
     "",

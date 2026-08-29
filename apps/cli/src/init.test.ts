@@ -4,7 +4,8 @@ import { join } from "node:path"
 
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
 afterEach(async () => {
@@ -26,6 +27,8 @@ describe("initActor", () => {
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>
     const celldManifest = JSON.parse(await readFile(initialized.celldManifest, "utf8")) as Record<string, unknown>
     const packageManifest = JSON.parse(await readFile(initialized.packageManifest, "utf8")) as Record<string, unknown>
+    const modelLock = JSON.parse(await readFile(initialized.modelLock, "utf8")) as Record<string, unknown>
+    const catalogMigration = await readFile(initialized.catalogMigration, "utf8")
     const built = await buildActor(initialized.entry, { cwd: initialized.directory, out: "output" })
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
@@ -33,6 +36,8 @@ describe("initActor", () => {
     expect(initialized.worker).toBe(join(cwd, "reviewer", DEFAULT_WORKER_ENTRY))
     expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
     expect(initialized.packageManifest).toBe(join(cwd, "reviewer", DEFAULT_PACKAGE_MANIFEST))
+    expect(initialized.modelLock).toBe(join(cwd, "reviewer", DEFAULT_MODEL_LOCK))
+    expect(initialized.catalogMigration).toBe(join(cwd, "reviewer", DEFAULT_CATALOG_MIGRATION))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("infer([")
     expect(worker).toContain('import definition from "./actor"')
@@ -40,6 +45,8 @@ describe("initActor", () => {
     expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
     expect(worker).toContain('import { openAICompatibleAdapter } from "tardie/model/openai"')
     expect(worker).toContain("modelAdapters: modelAdapters(openAICompatibleAdapter)")
+    expect(worker).toContain('import modelLock from "./models.lock.json"')
+    expect(worker).toContain("modelScope: modelScopeFrom(modelLock)")
     expect(manifest).toMatchObject({
       name: "reviewer",
       main: "worker.ts",
@@ -51,11 +58,16 @@ describe("initActor", () => {
       worker_loaders: [{ binding: "LOADER" }],
       migrations: [{ tag: "v1", new_sqlite_classes: ["ActorDO", "ThreadDO"] }]
     })
-    expect(manifest).not.toHaveProperty("d1_databases")
+    expect(manifest).toMatchObject({ d1_databases: [{
+      binding: "CATALOG_DB",
+      database_name: "reviewer-catalog",
+      migrations_dir: "migrations"
+    }] })
     expect(Object.keys(celldManifest).sort()).toEqual([
       "$schema",
       "compatibility_date",
       "compatibility_flags",
+      "d1_databases",
       "durable_objects",
       "main",
       "migrations",
@@ -66,6 +78,8 @@ describe("initActor", () => {
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_BACKGROUND_TASK_OWNER"]).toBe("request")
     expect(packageManifest).toEqual({ private: true, type: "module", dependencies: { tardie: "0.7.1-test" } })
+    expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "empty", providers: [] } })
+    expect(catalogMigration).toBe(CLOUDFLARE_MODEL_CATALOG_MIGRATION)
     expect(built.manifest.name).toBe("reviewer")
   })
 
@@ -113,6 +127,8 @@ describe("initSummary", () => {
                 wrangler.jsonc
                 celld.jsonc
                 package.json
+                models.lock.json
+                migrations/0001_catalog.sql
     credential  OPENROUTER_API_KEY (.dev.vars)
 
   → next

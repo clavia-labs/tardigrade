@@ -10,6 +10,9 @@
       { "name": "THREADS", "class_name": "ThreadDO" }
     ]
   },
+  "d1_databases": [
+    { "binding": "CATALOG_DB", "database_name": "tardigrade-catalog", "migrations_dir": "migrations" }
+  ],
   "worker_loaders": [{ "binding": "LOADER" }],
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }],
   "observability": { "enabled": true },

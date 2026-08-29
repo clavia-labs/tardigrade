@@ -1,6 +1,6 @@
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime } from "effect"
-import { describe, expect, test } from "vitest"
+import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
@@ -8,6 +8,8 @@ import { actorFromReactors } from "@clavia/tardigrade-core/reconciliation"
 import {
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
+  modelCatalogForConfig,
+  modelScopeFrom,
   retainBackgroundTask,
   type Env
 } from "../src/worker"
@@ -18,7 +20,6 @@ const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
 const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", "main", `ag.${thread}`])
 const controlStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "main"]))
-const catalogStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "$catalog"]))
 const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
 const alarm = (thread: string) =>
   runInDurableObject(threadStub(thread), (_instance, state) => state.storage.getAlarm())
@@ -43,7 +44,62 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
   return undefined
 }
 
+beforeAll(async () => {
+  const db = (env as Env).CATALOG_DB
+  const statements = (env as Env & { readonly CATALOG_MIGRATION: string }).CATALOG_MIGRATION
+    .split(";")
+    .map((statement) => statement.trim())
+    .filter((statement) => statement.length > 0)
+    .map((statement) => db.prepare(statement))
+  await db.batch(statements)
+  const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db))
+  const repository = await runtime.runPromise(ModelCatalogRepository)
+  await Effect.runPromise(repository.write("https://models.test/catalog.json", {
+    source: "models.dev",
+    revision: "workers-catalog-test",
+    refreshedAt: 1,
+    status: "fresh",
+    providers: [{
+      id: "openai",
+      name: "OpenAI",
+      env: ["OPENAI_API_KEY"],
+      models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+    }]
+  }))
+  await runtime.dispose()
+})
+
 describe("cloudflare actor", () => {
+  test("a deployment lock supplies only its matching model scope", async () => {
+    const scope = modelScopeFrom({
+      schema: 1,
+      configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
+      catalog: {
+        source: "models.dev",
+        revision: "bundled",
+        refreshedAt: 1,
+        status: "cached",
+        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: {} }] }]
+      }
+    })
+    const config = {
+      default: { provider: "openai", model_id: "gpt-test" },
+      allow: "*" as const,
+      providers: {
+        openai: {
+          baseUrl: "https://api.openai.test/v1",
+          protocol: "openai-chat-completions" as const,
+          env: ["OPENAI_API_KEY"]
+        }
+      }
+    }
+    expect(await modelCatalogForConfig(config, scope)).toMatchObject({ revision: "bundled", providers: [{ id: "openai" }] })
+    await expect(modelCatalogForConfig({ ...config, default: { provider: "openai", model_id: "changed" } }, scope))
+      .rejects.toThrow("does not match model configuration")
+    expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
+    expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+  })
+
   test("commit observers see only published durable heads", async () => {
     const commits = await runInDurableObject(threadStub("commit-observer"), async (_instance, state) => {
       const seen: Array<number> = []
@@ -119,26 +175,115 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    await runInDurableObject(catalogStub(), async (_instance, state) => {
-      const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(state.storage))
-      try {
-        const repository = await runtime.runPromise(ModelCatalogRepository)
-        await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
-        expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
-          ...snapshot,
-          status: "cached"
-        })
-        expect(await Effect.runPromise(repository.read("https://other.test/catalog.json"))).toBeUndefined()
-      } finally {
-        await runtime.dispose()
-      }
-    })
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    try {
+      const repository = await runtime.runPromise(ModelCatalogRepository)
+      await Effect.runPromise(repository.write("https://models.test/catalog.json", snapshot))
+      expect(await Effect.runPromise(repository.read("https://models.test/catalog.json"))).toEqual({
+        ...snapshot,
+        status: "cached"
+      })
+      expect(await Effect.runPromise(repository.read("https://other.test/catalog.json"))).toBeUndefined()
+    } finally {
+      await runtime.dispose()
+    }
     const providers = await SELF.fetch("http://test/v1/providers?search=open&limit=1")
     expect(providers.status).toBe(200)
     expect(await providers.json()).toEqual(expect.objectContaining({
       total: 2,
       items: [expect.objectContaining({ id: "openai" })]
     }))
+  })
+
+  test("D1 persists a catalog larger than one SQLite value", async () => {
+    const padding = "catalog-metadata".repeat(512)
+    const snapshot: ModelCatalog = {
+      source: "models.dev",
+      revision: "workers-large-catalog",
+      refreshedAt: 2,
+      status: "fresh",
+      providers: [{
+        id: "bulk",
+        name: "Bulk",
+        env: ["BULK_API_KEY"],
+        models: Array.from({ length: 600 }, (_, index) => ({
+          id: `model-${index}`,
+          name: `${index}:${padding}`,
+          metadata: { contextWindowTokens: 128_000 }
+        }))
+      }]
+    }
+    expect(new TextEncoder().encode(JSON.stringify(snapshot)).byteLength).toBeGreaterThan(4_425_714)
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository((env as Env).CATALOG_DB))
+    try {
+      const repository = await runtime.runPromise(ModelCatalogRepository)
+      await Effect.runPromise(repository.write("https://models.test/large.json", snapshot))
+      const stored = await Effect.runPromise(repository.readScope("https://models.test/large.json", {
+        providers: ["bulk"],
+        policy: { allow: [{ provider: "bulk", model_ids: ["model-599"] }] }
+      }))
+      expect(stored).toEqual({
+        ...snapshot,
+        status: "cached",
+        providers: [{ ...snapshot.providers[0]!, models: [snapshot.providers[0]!.models[599]!] }]
+      })
+    } finally {
+      await runtime.dispose()
+    }
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+  test("a failed D1 generation leaves the active catalog unchanged", async () => {
+    const sourceUrl = "https://models.test/atomic.json"
+    const catalog = (revision: string, model: string): ModelCatalog => ({
+      source: "models.dev",
+      revision,
+      refreshedAt: revision === "old" ? 1 : 2,
+      status: "fresh",
+      providers: [{
+        id: "openai",
+        name: "OpenAI",
+        env: ["OPENAI_API_KEY"],
+        models: [{ id: model, metadata: { contextWindowTokens: 128_000 } }]
+      }]
+    })
+    const db = (env as Env).CATALOG_DB
+    const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(db, { writeBatchSize: 1 }))
+    try {
+      const repository = await runtime.runPromise(ModelCatalogRepository)
+      await Effect.runPromise(repository.write(sourceUrl, catalog("old", "working")))
+      await db.prepare(
+        `CREATE TRIGGER refuse_catalog_generation BEFORE INSERT ON catalog_models
+         WHEN NEW.source_url = '${sourceUrl}' AND NEW.model_id = 'refused'
+         BEGIN SELECT RAISE(FAIL, 'refused catalog generation'); END`
+      ).run()
+      const refused = catalog("new", "refused")
+      refused.providers[0]!.models.unshift({ id: "staged", metadata: { contextWindowTokens: 128_000 } })
+      await expect(Effect.runPromise(repository.write(sourceUrl, refused))).rejects.toThrow()
+      expect(await Effect.runPromise(repository.read(sourceUrl))).toEqual({ ...catalog("old", "working"), status: "cached" })
+      const [providers, models] = await Promise.all([
+        db.prepare(
+          "SELECT COUNT(*) AS count FROM catalog_providers WHERE source_url = ? AND generation != (SELECT active_generation FROM catalog_sources WHERE source_url = ?)"
+        ).bind(sourceUrl, sourceUrl).first<{ count: number }>(),
+        db.prepare(
+          "SELECT COUNT(*) AS count FROM catalog_models WHERE source_url = ? AND generation != (SELECT active_generation FROM catalog_sources WHERE source_url = ?)"
+        ).bind(sourceUrl, sourceUrl).first<{ count: number }>()
+      ])
+      expect([providers?.count, models?.count]).toEqual([0, 0])
+    } finally {
+      await db.prepare("DROP TRIGGER IF EXISTS refuse_catalog_generation").run()
+      await runtime.dispose()
+    }
+  })
+
+  test("actor storage contains no catalog tables", async () => {
+    const response = await SELF.fetch("http://test/v1/actors/main", { method: "PUT", headers: authorization })
+    expect(response.status).toBe(200)
+    const catalogTables = await runInDurableObject(controlStub(), (_instance, durable) =>
+      durable.storage.sql.exec<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name LIKE 'catalog_%'"
+      ).toArray().map((row) => row.name)
+    )
+    expect(catalogTables).toEqual([])
   })
 
   test("a mounted actor exposes durable methods", async () => {
@@ -456,4 +601,5 @@ describe("cloudflare actor", () => {
     }))
     expect(await alarm("timeout")).toBeNull()
   })
+
 })

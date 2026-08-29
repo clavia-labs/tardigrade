@@ -33,6 +33,27 @@ const events: ReadonlyArray<EventRow> = [
   { seq: 2, event: { type: "TurnCompleted", output: "ok" } }
 ]
 
+const catalogSource = {
+  openrouter: {
+    id: "openrouter",
+    name: "OpenRouter",
+    env: ["OPENROUTER_API_KEY"],
+    models: {
+      "anthropic/claude-sonnet-4-6": {
+        id: "anthropic/claude-sonnet-4-6",
+        limit: { context: 200_000, output: 64_000 }
+      },
+      "anthropic/claude-sonnet-4.6": {
+        id: "anthropic/claude-sonnet-4.6",
+        limit: { context: 200_000, output: 64_000 }
+      }
+    }
+  }
+}
+
+const catalogFetch = (): typeof fetch =>
+  (async () => Response.json(catalogSource, { headers: { etag: "catalog-test" } })) as unknown as typeof fetch
+
 interface Recorded {
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly asked: Array<{ thread: string; options: unknown }>
@@ -142,6 +163,7 @@ const drive = async (
     readonly env?: Record<string, string | undefined>
     readonly ids?: ReadonlyArray<string>
     readonly cwd?: string
+    readonly fetch?: typeof globalThis.fetch
     readonly installProject?: (directory: string) => Promise<void>
   } = {}
 ): Promise<Ran> => {
@@ -152,6 +174,7 @@ const drive = async (
     env: options.env ?? {},
     cwd: options.cwd ?? process.cwd(),
     openClient: () => clientOf(recorded, options.answers ?? {}),
+    fetch: options.fetch ?? catalogFetch(),
     installProject: (directory) => {
       recorded.installed.push(directory)
       return options.installProject?.(directory) ?? Promise.resolve()
@@ -261,8 +284,45 @@ describe("parsing", () => {
       expect(configured.failed).toBe(false)
       await expect(readFile(join(cwd, ".dev.vars"), "utf8")).rejects.toThrow()
       const config = await readFile(join(cwd, "wrangler.jsonc"), "utf8")
+      const modelLock = JSON.parse(await readFile(join(cwd, "models.lock.json"), "utf8")) as Record<string, unknown>
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
+      expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "catalog-test" } })
+      expect(configured.lines.join("\n")).toContain("models.lock.json")
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test("setup keeps configuration and lock when resolution fails", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-setup-lock-failure-"))
+    try {
+      const initial = await drive([
+        "setup",
+        "--provider",
+        "openrouter",
+        "--provider-config",
+        '{"env":["OPENROUTER_API_KEY"]}',
+        "--default-model",
+        "anthropic/claude-sonnet-4-6"
+      ], { cwd })
+      expect(initial.failed).toBe(false)
+      const configPath = join(cwd, "wrangler.jsonc")
+      const lockPath = join(cwd, "models.lock.json")
+      const before = await Promise.all([readFile(configPath, "utf8"), readFile(lockPath, "utf8")])
+
+      const failed = await drive([
+        "setup",
+        "default",
+        "--provider",
+        "openrouter",
+        "--model",
+        "missing-model"
+      ], { cwd })
+
+      expect(failed.failed).toBe(true)
+      expect(failureText(failed)).toContain("missing-model is absent")
+      expect(await Promise.all([readFile(configPath, "utf8"), readFile(lockPath, "utf8")])).toEqual(before)
     } finally {
       await rm(cwd, { recursive: true, force: true })
     }
