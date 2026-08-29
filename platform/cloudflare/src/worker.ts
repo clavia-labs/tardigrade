@@ -587,6 +587,10 @@ export class ActorHost extends DurableObject<Env> {
       }
     })()
     this.driving = driving
+    // Runtimes without facets (self-hosted workerd hosts such as celld) retire the request once its
+    // handler settles, which starves a detached drive; workerd runs it to completion, and registering
+    // the whole drive there holds the event open for its duration, so retain it only where needed.
+    if (this.ctx.facets === undefined) this.ctx.waitUntil(driving)
     void driving.finally(() => {
       if (this.driving === driving) this.driving = undefined
       if (!failed && host.work() > 0) this.kick(host)
