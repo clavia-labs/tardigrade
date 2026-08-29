@@ -292,7 +292,7 @@ const start = (name: string): ReadonlyArray<CodeLine> => [
   { tokens: [token("  name: "), token("\"" + name + "\"", "blue"), token(",")] },
   plain("  methods: agentMethods,"),
   { tokens: [token("  components: ["), token("infer", "purple"), token("([")] },
-  { tokens: [token("    system", "purple"), token("("), token("\"Follow the evidence.\"", "blue"), token("),")] }
+  { tokens: [token("    system", "purple"), token("("), token("\"You are a friendly research assistant.\"", "blue"), token("),")] }
 ]
 
 const end: ReadonlyArray<CodeLine> = [plain("  ])]"), plain("})")]
@@ -1100,8 +1100,8 @@ export const App = (): ReactElement => {
         <PuzzlePiece />
         <div className="hero-inner">
           <div className="hero-copy">
-            <h1><span>Build complex agents</span><span>from simple components.</span></h1>
-            <p>Tardigrade is a TypeScript framework for building modular agents around a durable event log.</p>
+            <h1><span>Build stateful agents</span><span>from simple components.</span></h1>
+            <p>Tardigrade is a TypeScript framework for building modular agents around an immutable event log.</p>
             <div className="hero-cta-stack">
               <div className="hero-actions">
                 <CopyPromptButton />
