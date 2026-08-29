@@ -118,7 +118,7 @@ describe("cloudflare actor", () => {
     expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
     const threads = await SELF.fetch("http://test/v1/actors/main/threads", { headers: authorization })
     expect(threads.status).toBe(200)
-    expect(await threads.json()).toEqual([expect.objectContaining({ id: "root" })])
+    expect(await threads.json()).toEqual([{ id: "root", depth: 0, children: [] }])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   })
@@ -221,9 +221,10 @@ describe("cloudflare actor", () => {
     expect(raw.every((row) => !row.key?.includes("sealed-call"))).toBe(true)
   })
 
-  test("actor directory registration keeps child lineage", async () => {
+  test("actor directory owns the thread tree", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
+    await directory.registerThread("ag.directory-parent")
     await directory.registerThread("ag.directory-child", {
       parent: { actor: "echo", instance: "main", thread: "ag.directory-parent" },
       depth: 1,
@@ -244,6 +245,18 @@ describe("cloudflare actor", () => {
       depth: 1,
       placement: "independent"
     }])
+    const tree = await directory.threadTree()
+    expect(tree.find((node) => node.id === "directory-parent")).toEqual({
+      id: "directory-parent",
+      depth: 0,
+      children: [{
+        id: "directory-child",
+        parent: "directory-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
   })
 
   test("a durable object alarm terminates an overdue method call", async () => {

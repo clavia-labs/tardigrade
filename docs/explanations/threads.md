@@ -31,7 +31,7 @@ A spawn may request `placement: "colocated" | "independent"`. The host uses `def
 
 The Bun actor database is a directory and routing index. Thread databases live beside it under `<actor>.sqlite.threads/`. Each thread database contains that thread's event log and workspace. The model-facing workspace SQL surface remains separate from the event log. Effect SQL records migrations in `effect_sql_migrations` inside each physical database.
 
-Cloudflare uses one Actor DO for the actor directory and one Thread DO per thread. Each Thread DO has its own SQLite database, heap, driver, and alarm lifecycle. The Actor DO reads its directory and asks each Thread DO for its log when it builds an actor-wide tree. Effect SQL applies each DO's pending schema migrations before the DO records its identity or opens its event store.
+Cloudflare uses one Actor DO for the actor directory and one Thread DO per thread. Each Thread DO has its own SQLite database, heap, driver, and alarm lifecycle. The Actor DO builds the actor-wide thread tree from its directory without reading any thread event log. Each tree node contains its id, parent, depth, placement, and children. Effect SQL applies each DO's pending schema migrations before the DO records its identity or opens its event store.
 
 ## Encrypted event stores
 

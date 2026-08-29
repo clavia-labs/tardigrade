@@ -24,7 +24,6 @@ import {
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-server/catalog-availability"
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
 import { modelConfigOf, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
-import { treeOf, type ThreadNode, type ThreadSummary } from "@clavia/tardigrade-server/projections"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
@@ -79,8 +78,55 @@ const actorThreadOf = (thread: string): string => thread.startsWith(THREAD_PREFI
 const threadIdOf = (thread: string): string | undefined =>
   thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
 
-const flattenThreads = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
-  nodes.flatMap(({ children, ...summary }) => [summary, ...flattenThreads(children)])
+export interface ActorThreadNode {
+  readonly id: string
+  readonly parent?: string
+  readonly depth: number
+  readonly placement?: ChildPlacement
+  readonly children: ReadonlyArray<ActorThreadNode>
+}
+
+interface ThreadDirectoryRow {
+  readonly [key: string]: string | number | null
+  readonly thread: string
+  readonly parent_thread: string | null
+  readonly depth: number
+  readonly placement: ChildPlacement | null
+}
+
+const threadTreeOf = (rows: ReadonlyArray<ThreadDirectoryRow>): ReadonlyArray<ActorThreadNode> => {
+  const entries = new Map<string, Omit<ActorThreadNode, "children">>()
+  const children = new Map<string, string[]>()
+  const roots: string[] = []
+  for (const row of rows) {
+    const id = threadIdOf(row.thread)
+    if (id === undefined) continue
+    const parent = row.parent_thread === null ? undefined : threadIdOf(row.parent_thread)
+    entries.set(id, {
+      id,
+      ...(parent === undefined ? {} : { parent }),
+      depth: row.depth,
+      ...(row.placement === null ? {} : { placement: row.placement })
+    })
+    if (parent === undefined) roots.push(id)
+    else children.set(parent, [...children.get(parent) ?? [], id])
+  }
+  const visited = new Set<string>()
+  const node = (id: string, ancestors: ReadonlySet<string>): ActorThreadNode => {
+    if (ancestors.has(id)) throw new Error(`thread directory contains a cycle at ${JSON.stringify(id)}`)
+    const entry = entries.get(id)
+    if (entry === undefined) throw new Error(`thread directory is missing ${JSON.stringify(id)}`)
+    visited.add(id)
+    const next = new Set(ancestors).add(id)
+    return {
+      ...entry,
+      children: [...children.get(id) ?? []].sort().map((child) => node(child, next))
+    }
+  }
+  const tree = roots.sort().map((root) => node(root, new Set()))
+  if (visited.size !== entries.size) throw new Error("thread directory contains an orphan or cycle")
+  return tree
+}
 const actorObjectNameOf = (actor: string, instance: string): string => JSON.stringify([actor, instance])
 const threadObjectNameOf = (actor: string, instance: string, thread: string): string => JSON.stringify([actor, instance, thread])
 
@@ -442,18 +488,11 @@ export class ActorDO extends DurableObject<Env> {
     return this.catalogState
   }
 
-  async threads(): Promise<ReadonlyArray<ThreadSummary>> {
-    const logs = new Map<string, ReadonlyArray<Event>>()
-    const entries = this.ctx.storage.sql.exec<{ thread: string }>("SELECT thread FROM thread_directory ORDER BY thread").toArray()
-    for (const entry of entries) {
-      const id = threadIdOf(entry.thread)
-      if (id === undefined) continue
-      const identity = this.identity()
-      const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, entry.thread))
-      await stub.init(identity.actor, identity.instance, entry.thread)
-      logs.set(id, await stub.events(entry.thread))
-    }
-    return flattenThreads(treeOf(logs))
+  async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
+    const entries = this.ctx.storage.sql.exec<ThreadDirectoryRow>(
+      "SELECT thread, parent_thread, depth, placement FROM thread_directory ORDER BY thread"
+    ).toArray()
+    return threadTreeOf(entries)
   }
 }
 
@@ -1027,7 +1066,7 @@ const routes = [
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       if (stub === undefined) return json({ error: "unknown actor" }, 404)
-      return json(yield* Effect.promise(() => stub.threads()))
+      return json(yield* Effect.promise(() => stub.threadTree()))
     })
   )),
   HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>

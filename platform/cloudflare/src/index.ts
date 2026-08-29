@@ -6,6 +6,7 @@ export {
   DEFAULT_CLOUDFLARE_CHILD_PLACEMENT,
   DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY,
   DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS,
+  type ActorThreadNode,
   type CloudflareWorkerLayerContext,
   type CloudflareWorkerOptions,
   type CloudflareWorkerStoreFor,
