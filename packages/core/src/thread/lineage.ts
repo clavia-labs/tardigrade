@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ThreadAddress, type ThreadAddress as ThreadAddressType } from "../communication/endpoint"
+import { formatThreadAddress, isThreadAddress, ThreadAddress, type ThreadAddress as ThreadAddressType } from "../communication/endpoint"
 import type { Event } from "../log/event"
 import type { KeyFragment } from "../log/keys"
 
@@ -66,6 +66,35 @@ export const isThreadCreated = (event: Event | undefined): event is ThreadCreate
 // threadCreatedOf reads the identity record only from the first log position.
 export const threadCreatedOf = (events: ReadonlyArray<Event>): ThreadCreated | undefined =>
   isThreadCreated(events[0]) ? events[0] : undefined
+
+// threadCreatedForDelivery validates a target's stored identity and an incoming creation claim before a host appends the delivery.
+export const threadCreatedForDelivery = (
+  events: ReadonlyArray<Event>,
+  target: ThreadAddressType,
+  lineage: ThreadLineage | undefined,
+  source?: unknown
+): ThreadCreated | undefined => {
+  const address = formatThreadAddress(target)
+  const created = threadCreatedOf(events)
+  if (events.length > 0 && created === undefined) throw new Error(`thread ${address} has no ThreadCreated first event`)
+  if (created !== undefined && !sameThreadAddress(created.address, target)) {
+    throw new Error(`thread ${address} creation address does not match its target`)
+  }
+  if (lineage !== undefined) {
+    if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) {
+      throw new Error(`thread ${address} has invalid child lineage`)
+    }
+    if (!isThreadAddress(source) || !sameThreadAddress(lineage.parent, source)) {
+      throw new Error(`thread ${address} lineage parent does not match its delivery source`)
+    }
+    if (created !== undefined && !sameThreadLineage(created, lineage)) {
+      throw new Error(`thread ${address} already has different lineage`)
+    }
+  } else if (created === undefined && isThreadAddress(source)) {
+    throw new Error(`initial actor delivery to ${address} must carry lineage`)
+  }
+  return created
+}
 
 // childLineageOf derives a child's claim from its parent's durable identity.
 export const childLineageOf = (parent: ThreadCreated, placement?: ChildPlacement): ThreadLineage => ({

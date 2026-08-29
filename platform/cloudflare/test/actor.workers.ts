@@ -4,7 +4,12 @@ import { describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
-import type { Env } from "../src/worker"
+import {
+  backgroundTaskOwnerOf,
+  DEFAULT_BACKGROUND_TASK_OWNER,
+  retainBackgroundTask,
+  type Env
+} from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
@@ -37,6 +42,18 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 }
 
 describe("cloudflare actor", () => {
+  test("background tasks belong to the configured owner", () => {
+    expect(backgroundTaskOwnerOf(undefined)).toBe(DEFAULT_BACKGROUND_TASK_OWNER)
+    expect(backgroundTaskOwnerOf("request", "host")).toBe("request")
+    expect(() => backgroundTaskOwnerOf("detached")).toThrow("must be \"host\" or \"request\"")
+    const retained: Array<Promise<unknown>> = []
+    const task = Promise.resolve()
+    const scope = { waitUntil: (value: Promise<unknown>) => retained.push(value) }
+    retainBackgroundTask(scope, "host", task)
+    retainBackgroundTask(scope, "request", task)
+    expect(retained).toEqual([task])
+  })
+
   test("an ambiguous actor instance id is refused", async () => {
     const invalidActor = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
       method: "PUT",

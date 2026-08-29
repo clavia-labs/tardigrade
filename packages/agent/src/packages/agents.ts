@@ -8,7 +8,15 @@ import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { boundaryId } from "@clavia/tardigrade-core/communication/message"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import { ChildCreated, childCreated, childLineageOf, ChildPlacement, threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import {
+  ChildCreated,
+  childCreated,
+  childLineageOf,
+  ChildPlacement,
+  threadCreatedOf,
+  type ThreadCreated,
+  type ThreadLineage
+} from "@clavia/tardigrade-core/thread"
 import {
   threadAddressOf,
   formatThreadAddress,
@@ -247,6 +255,36 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
 const sibling = (callId: string, self: ThreadAddress): ThreadAddress =>
   threadAddressOf(self.actor, self.instance, `ag.${callId}`)
 
+const childClaimOf = (
+  placement: unknown,
+  events: ReadonlyArray<{ readonly type: string }>,
+  parent: ThreadCreated,
+  callId: string,
+  source: ThreadAddress
+) => {
+  if (placement !== undefined && !Schema.is(ChildPlacement)(placement)) {
+    return { error: "agents.run placement must be colocated or independent" }
+  }
+  const recorded = events.find(
+    (event) => event.type === "ChildCreated" && (event as { readonly callId?: unknown }).callId === callId
+  )
+  if (recorded !== undefined && !Schema.is(ChildCreated)(recorded)) {
+    throw new Error(`child ${callId} has an invalid creation record`)
+  }
+  const lineage: ThreadLineage = recorded === undefined
+    ? childLineageOf(parent, placement as ChildPlacement | undefined)
+    : {
+        parent: parent.address,
+        depth: recorded.depth,
+        ...(recorded.placement === undefined ? {} : { placement: recorded.placement })
+      }
+  return {
+    recorded,
+    target: recorded?.address ?? sibling(callId, source),
+    lineage
+  }
+}
+
 const inheritedModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy => {
   const resolved = [...events].reverse().find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
   return resolved?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(resolved.models)
@@ -405,22 +443,9 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             | undefined
           const text = String(a?.text ?? "")
           if (text === "") return { error: "agents.run needs { text }" }
-          if (a?.placement !== undefined && !Schema.is(ChildPlacement)(a.placement)) {
-            return { error: "agents.run placement must be colocated or independent" }
-          }
-          const recordedChild = events.find(
-            (event) => event.type === "ChildCreated" && (event as { readonly callId?: unknown }).callId === ctx.callId
-          )
-          if (recordedChild !== undefined && !Schema.is(ChildCreated)(recordedChild)) {
-            return yield* Effect.die(new Error(`child ${ctx.callId} has an invalid creation record`))
-          }
-          const lineage = recordedChild === undefined
-            ? childLineageOf(created, a?.placement as ChildPlacement | undefined)
-            : {
-                parent: created.address,
-                depth: recordedChild.depth,
-                ...(recordedChild.placement === undefined ? {} : { placement: recordedChild.placement })
-              }
+          const child = childClaimOf(a?.placement, events, created, ctx.callId, source)
+          if ("error" in child) return child
+          const { lineage, recorded: recordedChild, target } = child
           // The contract parameter is `output`, and a near-miss spelling fails silently: no
           // contract means a prose answer, so the caller's field reads come back undefined and
           // the run returns something plausible and wrong. Say so instead.
@@ -464,11 +489,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          const target = recordedChild?.address ?? sibling(ctx.callId, source)
-          if (a?.background === true) {
-            // A background run uses the same actor protocol. Its budget request can be served while
-            // no code body awaits it, and its terminal is collected later by agents.result.
-            const at = yield* Clock.currentTimeMillis
+          const dispatch = (at: number) => Effect.gen(function* () {
             if (recordedChild === undefined) yield* log.append([childCreated(ctx.callId, target, lineage, at)])
             yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
               type: "MessageReceived",
@@ -485,6 +506,12 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               from: self,
               at
             }, lineage))
+          })
+          if (a?.background === true) {
+            // A background run uses the same actor protocol. Its budget request can be served while
+            // no code body awaits it, and its terminal is collected later by agents.result.
+            const at = yield* Clock.currentTimeMillis
+            yield* dispatch(at)
             return { dispatched: true, callId: ctx.callId }
           }
           // Foreground runs park on their terminal response. A replay reads that response
@@ -492,22 +519,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           const already = yield* awaitedBoundary(ctx.callId)
           if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
-          if (recordedChild === undefined) yield* log.append([childCreated(ctx.callId, target, lineage, at)])
-          yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
-            type: "MessageReceived",
-            id: ctx.callId,
-            text,
-            ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-            ...(selectedModel === undefined ? {} : { model: selectedModel }),
-            models,
-            budget,
-            ...(a?.escalatable === true ? { escalatable: true } : {}),
-            ...(actor === undefined ? {} : { actor }),
-            ...(shadow ? { shadow: true } : {}),
-            ...(world === undefined ? {} : { world }),
-            from: self,
-            at
-          }, lineage))
+          yield* dispatch(at)
           return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
         }),
       // Await a run already fired in the background: no delivery, the same reply-or-park read the

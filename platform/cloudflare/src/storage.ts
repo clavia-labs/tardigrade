@@ -59,10 +59,6 @@ const createThreadIdentity = Effect.gen(function* () {
   )`)
 })
 
-const threadIdentityMigrations = SqliteMigrator.fromRecord({
-  "0001_thread_identity": createThreadIdentity
-})
-
 const threadMigrations = SqliteMigrator.fromRecord({
   "0001_thread_identity": createThreadIdentity,
   "0002_thread_events": Effect.gen(function* () {
@@ -84,7 +80,7 @@ export const initializeCloudflareActorSchema: Effect.Effect<void, never, SqlClie
   initializeDatabase(actorMigrations)
 
 export const initializeCloudflareThreadSchema: Effect.Effect<void, never, SqlClient.SqlClient> =
-  initializeDatabase(threadIdentityMigrations)
+  initializeDatabase(threadMigrations)
 
 // CloudflareEventStore binds the event-log guarantees to an Effect SQL client over one Durable Object database.
 export class CloudflareEventStore implements ThreadEventStore {

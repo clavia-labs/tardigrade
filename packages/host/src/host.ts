@@ -13,7 +13,6 @@ import {
 } from "@clavia/tardigrade-core/communication/envelope"
 import {
   formatThreadAddress,
-  isThreadAddress,
   parseThreadAddress,
   type ThreadAddress,
   type ProviderEndpoint
@@ -24,14 +23,7 @@ import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { providerTransportFrom, type Provider } from "./communication/provider"
 import { createThreadDriver, type DriverPolicy } from "./driver"
-import {
-  sameThreadAddress,
-  sameThreadLineage,
-  threadCreated,
-  threadCreatedOf,
-  threadKeys,
-  type ThreadLineage
-} from "@clavia/tardigrade-core/thread"
+import { threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 
 // A host runs the emergent graph: many threads, one router, one driver.
 // This is the default binding: in-process and volatile, semantics only.
@@ -177,26 +169,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     }
     const thread = threadOf(address)
     const current = read(thread)
-    const created = threadCreatedOf(current)
-    if (current.length > 0 && created === undefined) {
-      throw new Error(`thread ${address} has no ThreadCreated first event`)
-    }
-    if (created !== undefined && !sameThreadAddress(created.address, target)) {
-      throw new Error(`thread ${address} creation address does not match its target`)
-    }
-    if (lineage !== undefined) {
-      if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) {
-        throw new Error(`thread ${address} has invalid child lineage`)
-      }
-      if (link === undefined || !isThreadAddress(link.source) || !sameThreadAddress(lineage.parent, link.source)) {
-        throw new Error(`thread ${address} lineage parent does not match its delivery source`)
-      }
-      if (created !== undefined && !sameThreadLineage(created, lineage)) {
-        throw new Error(`thread ${address} already has different lineage`)
-      }
-    } else if (created === undefined && link !== undefined && isThreadAddress(link.source)) {
-      throw new Error(`initial actor delivery to ${address} must carry lineage`)
-    }
+    const created = threadCreatedForDelivery(current, target, lineage, link?.source)
     const landed = link !== undefined && (event.type === "MessageReceived" || call !== undefined)
       ? linkedEventOf({ link, event, ...(call === undefined ? {} : { call }) })
       : event

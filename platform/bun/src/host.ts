@@ -10,11 +10,11 @@ import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
-import { formatThreadAddress, isThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
-import { sameThreadAddress, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
+import { threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -140,10 +140,44 @@ const threadMigrations = SqliteMigrator.fromRecord({
 const initializeDatabase = (loader: SqliteMigrator.Loader): Effect.Effect<void, never, SqlClient.SqlClient> =>
   SqliteMigrator.run({ loader }).pipe(Effect.asVoid, Effect.orDie)
 
+// openActorDirectory initializes one actor database and recovers directory entries from its thread files.
+const openActorDirectory = async (
+  options: Pick<BunHostOptions<never>, "database" | "threadDatabase" | "telemetry">,
+  actorName: string,
+  actorInstance: string
+) => {
+  if (options.database !== "" && options.database !== ":memory:") await mkdir(dirname(options.database), { recursive: true })
+  const runtime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.database }), options.telemetry ?? Layer.empty))
+  const sql = await runtime.runPromise(SqlClient.SqlClient)
+  try {
+    await runtime.runPromise(initializeDatabase(actorMigrations))
+    await runtime.runPromise(sql`
+      INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ${actorName}, ${actorInstance})
+    `.pipe(Effect.orDie))
+    const identities = await runtime.runPromise(sql<{ actor: string; instance: string }>`
+      SELECT actor, instance FROM actor_identity WHERE singleton = 1
+    `.pipe(Effect.orDie))
+    if (identities[0]?.actor !== actorName || identities[0]?.instance !== actorInstance) {
+      throw new Error("actor identity does not match its database")
+    }
+    if (options.database !== ":memory:" && options.threadDatabase === undefined) {
+      const directory = `${options.database}.threads`
+      await mkdir(directory, { recursive: true })
+      for (const file of await readdir(directory)) {
+        const thread = threadFromDatabase(basename(file))
+        if (thread !== undefined) await runtime.runPromise(sql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.orDie))
+      }
+    }
+    return { runtime, sql }
+  } catch (cause) {
+    await runtime.dispose()
+    throw cause
+  }
+}
+
 // createBunHost runs an actor definition over isolated thread databases in one Bun process.
 export const createBunHost = async <R = never>(options: BunHostOptions<R>): Promise<BunHost> => {
   assertSupportedBun()
-  if (options.database !== "" && options.database !== ":memory:") await mkdir(dirname(options.database), { recursive: true })
   const actorName = options.actorName ?? "bun"
   const actorInstance = options.actorInstance ?? "default"
   const defaultChildPlacement = options.defaultChildPlacement ?? DEFAULT_BUN_CHILD_PLACEMENT
@@ -151,32 +185,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     throw new Error(`Bun host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
   }
   const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
-  const directoryRuntime = ManagedRuntime.make(Layer.mergeAll(SqliteClient.layer({ filename: options.database }), options.telemetry ?? Layer.empty))
-  const directorySql = await directoryRuntime.runPromise(SqlClient.SqlClient)
-  try {
-    await directoryRuntime.runPromise(initializeDatabase(actorMigrations))
-    await directoryRuntime.runPromise(directorySql`
-      INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ${actorName}, ${actorInstance})
-    `.pipe(Effect.orDie))
-    const identities = await directoryRuntime.runPromise(directorySql<{ actor: string; instance: string }>`
-      SELECT actor, instance FROM actor_identity WHERE singleton = 1
-    `.pipe(Effect.orDie))
-    if (identities[0]?.actor !== actorName || identities[0]?.instance !== actorInstance) {
-      throw new Error("actor identity does not match its database")
-    }
-  } catch (cause) {
-    await directoryRuntime.dispose()
-    throw cause
-  }
-
-  if (options.database !== ":memory:" && options.threadDatabase === undefined) {
-    const directory = `${options.database}.threads`
-    await mkdir(directory, { recursive: true })
-    for (const file of await readdir(directory)) {
-      const thread = threadFromDatabase(basename(file))
-      if (thread !== undefined) await directoryRuntime.runPromise(directorySql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.orDie))
-    }
-  }
+  const { runtime: directoryRuntime, sql: directorySql } = await openActorDirectory(options, actorName, actorInstance)
 
   const register = (thread: string, lineage?: ThreadLineage): Promise<void> => {
     if (lineage !== undefined && (
@@ -317,16 +326,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
         : event
       const current = yield* threadRuntime.store.read
-      const created = threadCreatedOf(current)
-      if (current.length > 0 && created === undefined) return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
-      if (created !== undefined && !sameThreadAddress(created.address, target)) return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
-      if (lineage !== undefined) {
-        if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
-        if (link === undefined || !isThreadAddress(link.source) || !sameThreadAddress(lineage.parent, link.source)) return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
-        if (created !== undefined && !sameThreadLineage(created, lineage)) return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
-      } else if (created === undefined && link !== undefined && isThreadAddress(link.source)) {
-        return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
-      }
+      const created = threadCreatedForDelivery(current, target, lineage, link?.source)
       const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
         ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
         : stamped

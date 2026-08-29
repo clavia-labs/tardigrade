@@ -7,12 +7,12 @@ import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
-import { formatThreadAddress, isThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
 import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
-import { sameThreadAddress, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
+import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
 import { createThreadDriver } from "@clavia/tardigrade-host/driver"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
@@ -95,24 +95,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
           ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
           : event
       const current = yield* readEffect
-      const created = threadCreatedOf(current)
-      if (current.length > 0 && created === undefined) return yield* Effect.die(new Error(`thread ${address} has no ThreadCreated first event`))
-      if (created !== undefined && !sameThreadAddress(created.address, target)) {
-        return yield* Effect.die(new Error(`thread ${address} creation address does not match its target`))
-      }
-      if (lineage !== undefined) {
-        if (lineage.depth <= 0 || sameThreadAddress(lineage.parent, target)) {
-          return yield* Effect.die(new Error(`thread ${address} has invalid child lineage`))
-        }
-        if (link === undefined || !isThreadAddress(link.source) || !sameThreadAddress(lineage.parent, link.source)) {
-          return yield* Effect.die(new Error(`thread ${address} lineage parent does not match its delivery source`))
-        }
-        if (created !== undefined && !sameThreadLineage(created, lineage)) {
-          return yield* Effect.die(new Error(`thread ${address} already has different lineage`))
-        }
-      } else if (created === undefined && link !== undefined && isThreadAddress(link.source)) {
-        return yield* Effect.die(new Error(`initial actor delivery to ${address} must carry lineage`))
-      }
+      const created = threadCreatedForDelivery(current, target, lineage, link?.source)
       const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
         ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
         : stamped

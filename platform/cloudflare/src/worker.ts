@@ -54,7 +54,6 @@ import {
 } from "./host"
 import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
-import { backgroundTaskOwnerOf, DEFAULT_BACKGROUND_TASK_OWNER, retainBackgroundTask, type BackgroundTaskOwner } from "./background-task"
 
 export interface Env {
   readonly ACTORS: DurableObjectNamespace<ActorDO>
@@ -136,6 +135,29 @@ const DEFAULT_ACTOR_NAME = "default"
 export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const satisfies ReadonlyArray<ChildPlacement>
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT: ChildPlacement = "independent"
+
+export const BACKGROUND_TASK_OWNERS = ["host", "request"] as const
+export type BackgroundTaskOwner = typeof BACKGROUND_TASK_OWNERS[number]
+export const DEFAULT_BACKGROUND_TASK_OWNER: BackgroundTaskOwner = "host"
+
+// backgroundTaskOwnerOf validates which execution scope retains work after a Durable Object RPC returns.
+export const backgroundTaskOwnerOf = (
+  raw: string | undefined,
+  fallback: BackgroundTaskOwner = DEFAULT_BACKGROUND_TASK_OWNER
+): BackgroundTaskOwner => {
+  if (raw === undefined) return fallback
+  if (raw === "host" || raw === "request") return raw
+  throw new Error(`TARDIGRADE_BACKGROUND_TASK_OWNER must be "host" or "request", got ${JSON.stringify(raw)}`)
+}
+
+// retainBackgroundTask assigns the task to the request when the host does not retain ongoing work after an RPC returns.
+export const retainBackgroundTask = (
+  scope: { waitUntil(task: Promise<unknown>): void },
+  owner: BackgroundTaskOwner,
+  task: Promise<unknown>
+): void => {
+  if (owner === "request") scope.waitUntil(task)
+}
 
 type DefaultAssembly = ReturnType<typeof defaultAssemblyOf>
 
@@ -1184,25 +1206,20 @@ type CloudflareWorkerLayersFor<R, WorkerEnv extends Env> = (
 export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
   context: CloudflareWorkerLayerContext<WorkerEnv>
 ) => CloudflareThreadStorePolicy
+
+interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
+  readonly modelAdapters?: ModelAdapterRegistry
+  readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
+  readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
+  readonly defaultChildPlacement?: ChildPlacement
+  readonly backgroundTaskOwner?: BackgroundTaskOwner
+}
+
 // CloudflareWorkerOptions supplies every actor requirement the Worker does not bind itself.
 export type CloudflareWorkerOptions<R, WorkerEnv extends Env = Env> =
-  ([CloudflareApplicationRequirements<R>] extends [never]
-    ? {
-        readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv>
-        readonly modelAdapters?: ModelAdapterRegistry
-        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
-        readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
-        readonly defaultChildPlacement?: ChildPlacement
-        readonly backgroundTaskOwner?: BackgroundTaskOwner
-      }
-    : {
-        readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv>
-        readonly modelAdapters?: ModelAdapterRegistry
-        readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
-        readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
-        readonly defaultChildPlacement?: ChildPlacement
-        readonly backgroundTaskOwner?: BackgroundTaskOwner
-      })
+  CloudflareWorkerBaseOptions<WorkerEnv> & ([CloudflareApplicationRequirements<R>] extends [never]
+    ? { readonly layersFor?: CloudflareWorkerLayersFor<R, WorkerEnv> }
+    : { readonly layersFor: CloudflareWorkerLayersFor<R, WorkerEnv> })
 
 type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
   [CloudflareApplicationRequirements<R>] extends [never]
