@@ -56,6 +56,8 @@ export const checks: ReadonlyArray<Check> = [
   pass("runtime", "Coherence", "Coherence.cfg"),
   counterexample("runtime", "Coherence", "CoherenceBatch.cfg", "Invariant NoSuppressedCommit is violated"),
   counterexample("runtime", "Coherence", "CoherenceRevalidate.cfg", "Invariant NoSuppressedCommit is violated"),
+  pass("runtime", "CommitTail", "CommitTail.cfg"),
+  counterexample("runtime", "CommitTail", "CommitTailDrop.cfg", "CommittedEventuallyRead was violated"),
   pass("runtime", "Child", "Child.cfg"),
   pass("runtime", "Child", "ChildLive.cfg"),
   counterexample("runtime", "Child", "ChildEarly.cfg", "Invariant DeliveryFollowsParent is violated"),

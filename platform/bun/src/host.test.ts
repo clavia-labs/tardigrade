@@ -104,6 +104,27 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("a committed head wakes a thread follower", async () => {
+    const commits: Array<{ readonly thread: string; readonly head: number }> = []
+    const h = await createBunHost({
+      ...options(freshPath()),
+      commitObserverFor: () => ({
+        onCommit: ({ thread, head }) => Effect.sync(() => { commits.push({ thread, head }) })
+      })
+    })
+    const waiting = h.awaitHead("followed", 0)
+
+    await h.commitRoot("bun:default:followed", { type: "MessageReceived", id: "followed", at: 1 } as Event)
+
+    expect(await waiting).toBe(2)
+    expect(await h.readPage("followed", 0, 1)).toEqual([
+      { seq: 1, event: expect.objectContaining({ type: "ThreadCreated" }) }
+    ])
+    await h.commitRoot("bun:default:followed", { type: "MessageReceived", id: "followed", at: 2 } as Event)
+    await h.close()
+    expect(commits).toEqual([{ thread: "followed", head: 2 }])
+  })
+
   test("runs actor code in its process sandbox", async () => {
     const actor: Actor = {
       keyOf,

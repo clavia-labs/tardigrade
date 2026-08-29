@@ -6,10 +6,15 @@ export interface ThreadEventRow {
   readonly event: Event
 }
 
+export interface AppendResult {
+  readonly appended: number
+  readonly head: number
+}
+
 // ThreadEventStore is the durable boundary for one thread's event log. A host and its reactors
 // share this object, so every read and append observes the same application policy.
 export interface ThreadEventStore {
-  readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<number>
+  readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
   readonly read: Effect.Effect<ReadonlyArray<Event>>
   readonly head: Effect.Effect<number>
   readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>

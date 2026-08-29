@@ -33,6 +33,7 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
+import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { actorFromReactors, effect, restingActor, settleActor } from "@clavia/tardigrade-core/reconciliation"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
@@ -252,6 +253,7 @@ interface MountedActor {
   readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
+  readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => CommitObserver
   readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
   readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
   readonly defaultChildPlacement: ChildPlacement
@@ -880,6 +882,10 @@ export class ThreadDO extends DurableObject<Env> {
       actorInstance,
       thread: currentThread,
       actor: selectedAssembly,
+      ...(mountedActor?.commitObserverFor === undefined ? {} : {
+        commitObserver: mountedActor.commitObserverFor({ env: this.env, actorInstance, thread: currentThread }),
+        retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task)
+      }),
       layers: (() => {
         const thread = currentThread
         const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
@@ -936,6 +942,7 @@ export class ThreadDO extends DurableObject<Env> {
     )
     if (at !== null && current !== at) await this.ctx.storage.setAlarm(at)
     await this.commitTurn()
+    host.publishStaged()
     this.kick(host)
   }
 
@@ -999,6 +1006,7 @@ export class ThreadDO extends DurableObject<Env> {
     const host = await this.host()
     await this.arm()
     await this.commitTurn()
+    host.publishStaged()
     this.kick(host)
   }
 
@@ -1387,6 +1395,7 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
   readonly modelAdapters?: ModelAdapterRegistry
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
+  readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => CommitObserver
   readonly storeFor?: CloudflareWorkerStoreFor<WorkerEnv>
   readonly defaultChildPlacement?: ChildPlacement
   readonly backgroundTaskOwner?: BackgroundTaskOwner
@@ -1425,6 +1434,9 @@ export const cloudflareWorker = <
     backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER,
     ...(options?.inferenceObserverFor === undefined ? {} : {
       inferenceObserverFor: options.inferenceObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
+    }),
+    ...(options?.commitObserverFor === undefined ? {} : {
+      commitObserverFor: options.commitObserverFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CommitObserver
     }),
     ...(options?.layersFor === undefined ? {} : {
       layersFor: options.layersFor as unknown as (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>

@@ -36,7 +36,7 @@ const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   sqlite: ":memory:",
   instances: Effect.succeed([]),
-  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), list: Effect.succeed([]), settled: Effect.void }),
+  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
   instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),

@@ -7,6 +7,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { Directory } from "@clavia/tardigrade-core/communication/directory"
 import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
@@ -100,6 +101,8 @@ export interface ActorThreads {
   readonly sqlite: string
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
+  readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
+  readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
   readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
@@ -441,6 +444,10 @@ const runtimeOf = async (
   )
   await host.recover()
   const read = (id: string) => Effect.promise(() => host.read(threadOf(id)))
+  const readPage = (id: string, mark: number, limit: number) =>
+    Effect.promise(() => host.readPage(threadOf(id), mark, limit))
+  const awaitHead = (id: string, mark: number) =>
+    Effect.promise((signal) => host.awaitHead(threadOf(id), mark, signal))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
@@ -471,6 +478,8 @@ const runtimeOf = async (
         request()
       }),
     events: read,
+    eventsPage: readPage,
+    awaitHead,
     list: Effect.gen(function*() {
       const threads = yield* Effect.promise(() => host.threads())
       const ids = threads.flatMap((candidate) => {

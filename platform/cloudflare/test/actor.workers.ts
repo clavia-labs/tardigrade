@@ -4,6 +4,7 @@ import { describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
+import { actorFromReactors } from "@clavia/tardigrade-core/reconciliation"
 import {
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
@@ -11,6 +12,7 @@ import {
   type Env
 } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
+import { createCloudflareThreadHost } from "../src/host"
 
 const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
@@ -42,6 +44,39 @@ const methodState = async (thread: string, call: string): Promise<unknown> => {
 }
 
 describe("cloudflare actor", () => {
+  test("commit observers see only published durable heads", async () => {
+    const commits = await runInDurableObject(threadStub("commit-observer"), async (_instance, state) => {
+      const seen: Array<number> = []
+      let observed = () => {}
+      const firstObserved = new Promise<void>((resolve) => { observed = resolve })
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.commit-observer",
+        actor: actorFromReactors([]),
+        commitObserver: {
+          onCommit: ({ head }) => Effect.sync(() => {
+            seen.push(head)
+            if (head === 2) observed()
+          })
+        },
+        retainCommitTask: (task) => state.waitUntil(task)
+      })
+
+      await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
+      await firstObserved
+      await host.stageRoot({ type: "MessageReceived", id: "second", at: 2 })
+      await state.storage.sync()
+      expect(seen).toEqual([2])
+      host.publishStaged()
+      await host.close()
+      return seen
+    })
+
+    expect(commits).toEqual([2, 3])
+  })
+
   test("background tasks belong to the configured owner", () => {
     expect(backgroundTaskOwnerOf(undefined)).toBe(DEFAULT_BACKGROUND_TASK_OWNER)
     expect(backgroundTaskOwnerOf("request", "host")).toBe("request")
