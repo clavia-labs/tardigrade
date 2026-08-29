@@ -10,6 +10,7 @@ export interface CliServices {
   readonly env: Env
   readonly cwd: string
   readonly openClient: (options: ActorClientOptions) => ActorClient
+  readonly fetch: typeof globalThis.fetch
   readonly installProject: (directory: string) => Promise<void>
   // mintId supplies the durable thread and call ids used when a caller states neither.
   readonly mintId: () => string
@@ -36,6 +37,7 @@ export const layerCli: Layer.Layer<Cli> = Layer.succeed(Cli)({
   env: process.env,
   cwd: process.cwd(),
   openClient: (options) => makeActorClient(options),
+  fetch: globalThis.fetch,
   installProject,
   mintId: () => crypto.randomUUID()
 })

@@ -63,6 +63,15 @@ export interface ModelConfig extends ModelPolicy {
   readonly providers: Readonly<Record<string, ModelProviderConfig>>
 }
 
+const canonical = (value: unknown): unknown => {
+  if (Array.isArray(value)) return value.map(canonical)
+  if (typeof value !== "object" || value === null) return value
+  return Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)).map(([key, entry]) => [key, canonical(entry)]))
+}
+
+// canonicalModelConfig serializes model configuration deterministically for deployment lock verification.
+export const canonicalModelConfig = (config: ModelConfig): string => JSON.stringify(canonical(config))
+
 // ProjectConfig holds Tardigrade configuration loaded from the Wrangler manifest.
 export interface ProjectConfig {
   readonly models: ModelConfig

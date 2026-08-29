@@ -17,13 +17,14 @@ import {
 
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
-import { modelCatalogConfigOf } from "@clavia/tardigrade-server/config"
+import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActor } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
 import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
+import { resolveModelLock, writeModelLock } from "./model-lock"
 import {
   defaultModelFrom,
   defaultSetupJson,
@@ -41,6 +42,7 @@ import {
   setupPrompt,
   setupProviderPrompt,
   setupSummary,
+  type ProviderAnswers,
   writeDefaultSetup,
   writeProviderSetup,
   writeSetup,
@@ -56,7 +58,7 @@ import {
   providersTable,
   threadsTable
 } from "./render"
-import { Cli } from "./services"
+import { Cli, type CliServices } from "./services"
 import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
@@ -258,6 +260,56 @@ export const NON_INTERACTIVE_INIT =
 export const NON_INTERACTIVE_INIT_NAME =
   "tdg init needs <name> when stdin is not interactive; see `tdg init --help`"
 
+const configuredModels = (
+  current: ModelConfig,
+  providers: ReadonlyArray<ProviderAnswers>,
+  selected: ModelConfig["default"] = current.default
+): ModelConfig => ({
+  allow: current.allow,
+  ...(selected === undefined ? {} : { default: selected }),
+  providers: {
+    ...current.providers,
+    ...Object.fromEntries(providers.map((provider) => [provider.provider, {
+      baseUrl: provider.baseUrl,
+      protocol: provider.protocol,
+      env: provider.env,
+      ...(provider.region === undefined ? {} : { region: provider.region })
+    }]))
+  }
+})
+
+const resolveConfiguredModelLock = (cli: CliServices, models: ModelConfig) => Effect.gen(function*() {
+  const catalog = modelCatalogConfigOf(cli.env)
+  return yield* Effect.tryPromise({
+    try: () => resolveModelLock(models, {
+      sourceUrl: catalog.sourceUrl,
+      cachePath: resolve(cli.cwd, catalog.cachePath),
+      timeoutMillis: catalog.timeoutMillis,
+      fetch: cli.fetch
+    }),
+    catch: userErrorOf
+  })
+})
+
+const persistModelLock = (cli: CliServices, lock: Awaited<ReturnType<typeof resolveModelLock>>) =>
+  Effect.tryPromise({
+    try: () => writeModelLock(cli.cwd, lock),
+    catch: userErrorOf
+  })
+
+const writeSetupWithLock = <A, E, R>(
+  cli: CliServices,
+  models: ModelConfig,
+  write: Effect.Effect<A, E, R>
+) => Effect.gen(function*() {
+  const lock = yield* resolveConfiguredModelLock(cli, models)
+  const files = yield* write
+  return [files, yield* persistModelLock(cli, lock)] as const
+})
+
+const setupOutput = (asJson: boolean, value: object, summary: string, modelLock: string): string =>
+  asJson ? jsonOf({ ...value, modelLock }) : `${summary}\nwrote ${modelLock}`
+
 export const setupProviderCommand = Command.make("provider", {
   provider: Argument.string("provider").pipe(
     Argument.withDescription("The provider name used by actor model references."),
@@ -285,10 +337,17 @@ export const setupProviderCommand = Command.make("provider", {
     const answers = declared ?? (canAsk()
       ? yield* Effect.mapError(setupProviderPrompt(setupPromptOptionsIn(cli.cwd, cli.env)), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_PROVIDER_SETUP))
-    const files = yield* Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
-    yield* Console.log(flags.json
-      ? jsonOf(providerSetupJson(files, [answers]))
-      : providerSetupSummary(files, [answers]))
+    const [files, modelLock] = yield* writeSetupWithLock(
+      cli,
+      configuredModels(project.models, [answers]),
+      Effect.mapError(writeProviderSetup(cli.cwd, [answers], cli.env), userErrorOf)
+    )
+    yield* Console.log(setupOutput(
+      flags.json,
+      providerSetupJson(files, [answers]),
+      providerSetupSummary(files, [answers]),
+      modelLock
+    ))
   })).pipe(
     Command.withDescription(
       "Add or update one provider connection after the host default is configured."
@@ -322,8 +381,12 @@ export const setupDefaultCommand = Command.make("default", {
   if (project.models.providers[selected.provider] === undefined) {
     return yield* userErrorOf(`provider ${JSON.stringify(selected.provider)} is not configured; run \`tdg setup provider\``)
   }
-  const files = yield* Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
-  yield* Console.log(flags.json ? jsonOf(defaultSetupJson(files, selected)) : defaultSetupSummary(files, selected))
+  const [files, modelLock] = yield* writeSetupWithLock(
+    cli,
+    configuredModels(project.models, [], selected),
+    Effect.mapError(writeDefaultSetup(cli.cwd, selected, cli.env), userErrorOf)
+  )
+  yield* Console.log(setupOutput(flags.json, defaultSetupJson(files, selected), defaultSetupSummary(files, selected), modelLock))
 })).pipe(
   Command.withDescription("Choose the default model from configured provider connections."),
   Command.withExamples([
@@ -348,8 +411,14 @@ export const setupCommand = Command.make("setup", {
   })
   if (declared !== undefined) {
     const cli = yield* Cli
-    const files = yield* Effect.mapError(writeSetup(cli.cwd, declared, cli.env), userErrorOf)
-    yield* Console.log(flags.json ? jsonOf(setupJson(files, declared)) : setupSummary(files, declared))
+    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+    const selected = { provider: declared.provider, model_id: declared.model_id }
+    const [files, modelLock] = yield* writeSetupWithLock(
+      cli,
+      configuredModels(project.models, [declared], selected),
+      Effect.mapError(writeSetup(cli.cwd, declared, cli.env), userErrorOf)
+    )
+    yield* Console.log(setupOutput(flags.json, setupJson(files, declared), setupSummary(files, declared), modelLock))
     return
   }
   if (!canAsk()) return yield* userErrorOf(NON_INTERACTIVE_SETUP)
@@ -363,8 +432,12 @@ export const setupCommand = Command.make("setup", {
     yield* Console.log("setup cancelled")
     return
   }
-  const files = yield* Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
-  yield* Console.log(setupPlanSummary(files, plan))
+  const [files, modelLock] = yield* writeSetupWithLock(
+    cli,
+    configuredModels(project.models, plan.providers, plan.default),
+    Effect.mapError(writeSetupPlan(cli.cwd, plan, cli.env), userErrorOf)
+  )
+  yield* Console.log(setupOutput(false, {}, setupPlanSummary(files, plan), modelLock))
 })).pipe(
   Command.withDescription("Configure project providers and a default model in the platform manifests. Entered credentials are stored in .dev.vars at 0600."),
   Command.withExamples([{
@@ -418,11 +491,14 @@ export const initCommand = Command.make("init", {
     const answers = declared ?? (canAsk()
       ? yield* Effect.mapError(setupPromptIn(cli.cwd, cli.env), userErrorOf)
       : yield* userErrorOf(NON_INTERACTIVE_INIT))
+    const selected = { provider: answers.provider, model_id: answers.model_id }
+    const modelLock = yield* resolveConfiguredModelLock(cli, configuredModels({ allow: "*", providers: {} }, [answers], selected))
     const initialized = yield* Effect.tryPromise({
       try: () => initActor(name, {
         cwd: cli.cwd,
         ...(directory === undefined ? {} : { directory }),
-        modelProtocol: answers.protocol
+        modelProtocol: answers.protocol,
+        modelLock
       }),
       catch: userErrorOf
     })
@@ -543,8 +619,12 @@ export const devCommand = Command.make("dev", {
       : canAsk()
       ? Effect.gen(function*() {
         const answers = yield* Effect.mapError(setupPromptIn(cli.cwd, runtimeEnv), userErrorOf)
-        const files = yield* Effect.mapError(writeSetup(cli.cwd, answers, runtimeEnv), userErrorOf)
-        yield* Console.log(setupSummary(files, answers))
+        const [files, modelLock] = yield* writeSetupWithLock(
+          { ...cli, env: runtimeEnv },
+          configuredModels(project.models, [answers], { provider: answers.provider, model_id: answers.model_id }),
+          Effect.mapError(writeSetup(cli.cwd, answers, runtimeEnv), userErrorOf)
+        )
+        yield* Console.log(setupOutput(false, {}, setupSummary(files, answers), modelLock))
         const written = yield* readSetupEnv(cli.cwd)
         const writtenProject = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
         return yield* Effect.try({
@@ -695,6 +775,30 @@ export const providersCommand = Command.make("providers", {
     ])
   )
 
+export const modelLockCommand = Command.make("lock", { json }, (flags) =>
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const project = yield* Effect.mapError(readProjectConfig(cli.cwd, cli.env), userErrorOf)
+    const catalog = modelCatalogConfigOf(cli.env)
+    const lock = yield* Effect.tryPromise({
+      try: () => resolveModelLock(project.models, {
+        sourceUrl: catalog.sourceUrl,
+        cachePath: resolve(cli.cwd, catalog.cachePath),
+        timeoutMillis: catalog.timeoutMillis,
+        fetch: cli.fetch
+      }),
+      catch: userErrorOf
+    })
+    const path = yield* Effect.tryPromise({
+      try: () => writeModelLock(cli.cwd, lock),
+      catch: userErrorOf
+    })
+    yield* Console.log(flags.json ? jsonOf({ path, ...lock }) : `locked ${lock.catalog.providers.length} providers at ${path}`)
+  })).pipe(
+    Command.withDescription("Resolve configured models from the public catalog into the deployment lock."),
+    Command.withExamples([{ command: "tdg models lock", description: "Update the deployment model lock" }])
+  )
+
 export const modelsCommand = Command.make("models", {
   provider: Flag.string("provider").pipe(
     Flag.withDescription("Keep models from this provider."),
@@ -737,7 +841,8 @@ export const modelsCommand = Command.make("models", {
       { command: "tdg models --provider openrouter --search claude", description: "Search OpenRouter models" },
       { command: "tdg models --sort completionUsdPerToken --order asc", description: "List the cheapest completion prices first" },
       { command: "tdg models --cursor <cursor> --json", description: "Read the next page as JSON" }
-    ])
+    ]),
+    Command.withSubcommands([modelLockCommand])
   )
 
 export const eventsCommand = Command.make("events", {
