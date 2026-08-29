@@ -70,7 +70,7 @@ describe("handleWebhook", () => {
     const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
-        target: { actor: "support", thread: "incident" }
+        target: { actor: "support", instance: "main", thread: "incident" }
       },
       event: { type: "MessageReceived", id: "m1", text: "hello", at: 42 }
     }
@@ -110,7 +110,7 @@ describe("handleWebhook", () => {
     const delivery: ActorEnvelope<MessageReceived> = {
       link: {
         source: { provider: "example" },
-        target: { actor: "missing", thread: "incident" }
+        target: { actor: "missing", instance: "main", thread: "incident" }
       },
       event: { type: "MessageReceived", id: "m1", text: "hello", at: 42 }
     }

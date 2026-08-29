@@ -24,8 +24,8 @@ describe("actor", () => {
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
     expect(definition.reactors).toHaveLength(3)
-    expect(actorRef(definition, "shared")).toEqual({
-      address: { actor: "release-analyst", thread: "shared" },
+    expect(actorRef(definition, "main", "shared")).toEqual({
+      address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })
   })
@@ -80,7 +80,7 @@ describe("actor", () => {
     const dependent = actor({
       name: "dependent",
       methods: {},
-      components: [calls(actorRef(remote, "shared"), methods.inspect, component)]
+      components: [calls(actorRef(remote, "main", "shared"), methods.inspect, component)]
     })
     expect(() => validateActor(dependent)).toThrow('actor "remote" does not declare the called method')
   })

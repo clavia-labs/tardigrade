@@ -55,7 +55,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
             const router = yield* Router
             // Answer whoever awaits me, then settle.
             yield* router.send(envelopeOf(
-              linkOf(parseThreadAddress(`mem:${me}`), parseThreadAddress(`mem:${input.partner}`)),
+              linkOf(parseThreadAddress(`mem:main:${me}`), parseThreadAddress(`mem:main:${input.partner}`)),
               {
               type: "MessageReceived",
               id: `${input.partner}.await.reply`,
@@ -97,8 +97,8 @@ const brief: Event = { type: "MessageReceived", id: "brief", text: "go", at: 0 }
 describe("the deadlock sentinel", () => {
   test("without it, the knot rests forever, honestly", async () => {
     const h = knot(false)
-    h.commitRoot("mem:p", brief)
-    h.commitRoot("mem:c", brief)
+    h.commitRoot("mem:main:p", brief)
+    h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(h.resting()).toBe(true)
     expect(has(h.read("p"), "Settled")).toBe(false)
@@ -107,8 +107,8 @@ describe("the deadlock sentinel", () => {
 
   test("with it, one victim fails and the whole knot settles", async () => {
     const h = knot(true)
-    h.commitRoot("mem:p", brief)
-    h.commitRoot("mem:c", brief)
+    h.commitRoot("mem:main:p", brief)
+    h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(has(h.read("p"), "Settled")).toBe(true)
     expect(has(h.read("c"), "Settled")).toBe(true)

@@ -26,12 +26,12 @@ describe("summaryOf", () => {
   const cases: ReadonlyArray<readonly [Event, string]> = [
     [{ type: "MessageReceived", id: "m1", text: "spawn survey", at }, "spawn survey"],
     [
-      { type: "MessageReceived", id: "survey.0.reply", text: "ok", outcome: "completed", from: "bun:ag.survey.0", at },
-      "reply · outcome: completed · from bun:ag.survey.0"
+      { type: "MessageReceived", id: "survey.0.reply", text: "ok", outcome: "completed", from: "bun:main:ag.survey.0", at },
+      "reply · outcome: completed · from bun:main:ag.survey.0"
     ],
     [
-      { type: "ResponseReceived", id: "survey.0.reply", method: "message", call: "survey.0", status: "completed", output: "ok", from: "bun:ag.survey.0", at },
-      "response · status: completed · bun:ag.survey.0"
+      { type: "ResponseReceived", id: "survey.0.reply", method: "message", call: "survey.0", status: "completed", output: "ok", from: "bun:main:ag.survey.0", at },
+      "response · status: completed · bun:main:ag.survey.0"
     ],
     [{ type: "ModelCalled", callId: "m1/infer/1", ordinal: 1, turn: "m1", at }, "attempt 2 · m1"],
     [{ type: "TextReturned", text: "thinking it over", at }, "thinking it over"],
@@ -145,7 +145,7 @@ describe("fieldsOf", () => {
       id: "survey.0.reply",
       text: "ok",
       outcome: "completed",
-      from: "bun:ag.survey.0",
+      from: "bun:main:ag.survey.0",
       at: stamped
     }
     expect(keysOf(event)).toEqual(["id", "from", "outcome", "at", "text"])

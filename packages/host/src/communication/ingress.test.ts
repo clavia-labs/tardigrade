@@ -16,7 +16,7 @@ const message = (id: string): MessageReceived => ({
 const delivery = (actor: string, thread: string, id: string): ActorEnvelope<MessageReceived> => ({
   link: {
     source: { provider: "example" },
-    target: { actor, thread }
+    target: { actor, instance: "main", thread }
   },
   event: message(id)
 })

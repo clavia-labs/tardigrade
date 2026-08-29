@@ -234,7 +234,7 @@ describe("tdg dev", () => {
       const waitFor = async (digest: string) => {
         let listed: ReadonlyArray<{ readonly name: string; readonly builtIn: boolean; readonly digest?: string }> = []
         for (let attempt = 0; attempt < 100; attempt++) {
-          listed = await (await fetch(`${baseUrl}/v1/actors`)).json() as typeof listed
+          listed = await (await fetch(`${baseUrl}/v1/definitions`)).json() as typeof listed
           if (listed.some((actor) => actor.name === "reviewer" && actor.digest === digest)) return listed
           await Bun.sleep(10)
         }
@@ -255,7 +255,7 @@ describe("tdg dev", () => {
   // the token set (docs/how-to/server.md).
   test("the API answers without a token, on loopback", async () => {
     const seen = await booted(async (baseUrl, hostname) => {
-      const listed = await fetch(`${baseUrl}/v1/threads`)
+      const listed = await fetch(`${baseUrl}/v1/actors`)
       const index = await fetch(`${baseUrl}/`, { headers: { accept: "text/html" } })
       return {
         hostname,

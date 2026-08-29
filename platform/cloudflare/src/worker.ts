@@ -78,7 +78,8 @@ const threadIdOf = (thread: string): string | undefined =>
 
 const flattenThreads = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
   nodes.flatMap(({ children, ...summary }) => [summary, ...flattenThreads(children)])
-const threadObjectNameOf = (actor: string, thread: string): string => JSON.stringify([actor, thread])
+const actorObjectNameOf = (actor: string, instance: string): string => JSON.stringify([actor, instance])
+const threadObjectNameOf = (actor: string, instance: string, thread: string): string => JSON.stringify([actor, instance, thread])
 
 const DEFAULT_ACTOR_NAME = "default"
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const satisfies ReadonlyArray<ChildPlacement>
@@ -356,22 +357,39 @@ export class ActorDO extends DurableObject<Env> {
   private schema: Promise<void> | undefined
   private catalogState: Promise<ModelCatalogState> | undefined
   private actorName: string | undefined
+  private actorInstance: string | undefined
 
-  async init(name: string): Promise<void> {
+  async init(name: string, instance: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
     this.schema ??= Effect.runPromise(initializeCloudflareActorSchema.pipe(
       Effect.provide(SqliteClient.layer({ storage: this.ctx.storage }))
     ))
     await this.schema
-    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_identity (singleton, actor) VALUES (1, ?)", name)
-    const actorName = this.name()
-    if (actorName !== name) throw new Error("actor definition does not match the durable host identity")
+    this.ctx.storage.sql.exec("INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ?, ?)", name, instance)
+    const identity = this.identity()
+    if (identity.actor !== name) throw new Error("actor definition does not match the durable host identity")
+    if (identity.instance !== instance) throw new Error("actor instance does not match the durable host identity")
   }
 
-  private name(): string {
-    const row = this.ctx.storage.sql.exec<{ actor: string }>("SELECT actor FROM actor_identity WHERE singleton = 1").toArray()[0]
+  async exists(name: string, instance: string): Promise<boolean> {
+    const table = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'actor_identity'"
+    ).toArray()[0]
+    if (table === undefined) return false
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string }>(
+      "SELECT actor, instance FROM actor_identity WHERE singleton = 1"
+    ).toArray()[0]
+    return row?.actor === name && row.instance === instance
+  }
+
+  private identity(): { readonly actor: string; readonly instance: string } {
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string }>(
+      "SELECT actor, instance FROM actor_identity WHERE singleton = 1"
+    ).toArray()[0]
     if (row === undefined) throw new Error("Actor DO has not been initialized")
-    return this.actorName ??= row.actor
+    this.actorName ??= row.actor
+    this.actorInstance ??= row.instance
+    return row
   }
 
   async registerThread(thread: string, lineage?: ThreadLineage): Promise<void> {
@@ -382,7 +400,10 @@ export class ActorDO extends DurableObject<Env> {
       )
       return
     }
-    if (lineage.parent.actor !== this.name()) throw new Error("a child thread must inherit its actor")
+    const identity = this.identity()
+    if (lineage.parent.actor !== identity.actor || lineage.parent.instance !== identity.instance) {
+      throw new Error("a child thread must inherit its actor instance")
+    }
     this.ctx.storage.sql.exec(
       `INSERT INTO thread_directory (thread, parent_thread, depth, placement)
        VALUES (?, ?, ?, ?)
@@ -422,8 +443,9 @@ export class ActorDO extends DurableObject<Env> {
     for (const entry of entries) {
       const id = threadIdOf(entry.thread)
       if (id === undefined) continue
-      const stub = this.env.THREADS.getByName(threadObjectNameOf(this.name(), entry.thread))
-      await stub.init(this.name(), entry.thread)
+      const identity = this.identity()
+      const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, entry.thread))
+      await stub.init(identity.actor, identity.instance, entry.thread)
       logs.set(id, await stub.events(entry.thread))
     }
     return flattenThreads(treeOf(logs))
@@ -436,6 +458,7 @@ export class ThreadDO extends DurableObject<Env> {
   private runtime: Promise<CloudflareThreadHost> | undefined
   private driving: Promise<void> | undefined
   private actorName: string | undefined
+  private actorInstance: string | undefined
   private threadId: string | undefined
   private readonly alarmPolicy: AlarmPolicy
   private readonly sandboxCalls = new Map<
@@ -450,28 +473,42 @@ export class ThreadDO extends DurableObject<Env> {
       : { recoveryDelayMillis: nonNegativeInteger(env.TARDIGRADE_ALARM_DELAY_MILLIS, 0, "TARDIGRADE_ALARM_DELAY_MILLIS") })
   }
 
-  async init(name: string, thread: string): Promise<void> {
+  async init(name: string, instance: string, thread: string): Promise<void> {
     if (!deployed(name)) throw new Error(`actor ${JSON.stringify(name)} is not deployed`)
     this.schema ??= Effect.runPromise(initializeCloudflareThreadSchema.pipe(
       Effect.provide(SqliteClient.layer({ storage: this.ctx.storage }))
     ))
     await this.schema
     this.ctx.storage.sql.exec(
-      "INSERT OR IGNORE INTO thread_identity (singleton, actor, thread) VALUES (1, ?, ?)",
+      "INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread) VALUES (1, ?, ?, ?)",
       name,
+      instance,
       thread
     )
     const identity = this.identity()
     if (identity.actor !== name) throw new Error("actor definition does not match the Thread DO identity")
+    if (identity.instance !== instance) throw new Error("actor instance does not match the Thread DO identity")
     if (identity.thread !== thread) throw new Error("thread does not match the Thread DO identity")
   }
 
-  private identity(): { readonly actor: string; readonly thread: string } {
-    const row = this.ctx.storage.sql.exec<{ actor: string; thread: string }>(
-      "SELECT actor, thread FROM thread_identity WHERE singleton = 1"
+  async exists(name: string, instance: string, thread: string): Promise<boolean> {
+    const table = this.ctx.storage.sql.exec<{ present: number }>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'thread_identity'"
+    ).toArray()[0]
+    if (table === undefined) return false
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string; thread: string }>(
+      "SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1"
+    ).toArray()[0]
+    return row?.actor === name && row.instance === instance && row.thread === thread
+  }
+
+  private identity(): { readonly actor: string; readonly instance: string; readonly thread: string } {
+    const row = this.ctx.storage.sql.exec<{ actor: string; instance: string; thread: string }>(
+      "SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1"
     ).toArray()[0]
     if (row === undefined) throw new Error("Thread DO has not been initialized")
     this.actorName ??= row.actor
+    this.actorInstance ??= row.instance
     this.threadId ??= row.thread
     return row
   }
@@ -480,19 +517,23 @@ export class ThreadDO extends DurableObject<Env> {
     return this.actorName ?? this.identity().actor
   }
 
+  private instance(): string {
+    return this.actorInstance ?? this.identity().instance
+  }
+
   private thread(): string {
     return this.threadId ?? this.identity().thread
   }
 
   private async registerOwnedThread(lineage?: ThreadLineage): Promise<void> {
-    const directory = this.env.ACTORS.getByName(this.name())
-    await directory.init(this.name())
+    const directory = this.env.ACTORS.getByName(actorObjectNameOf(this.name(), this.instance()))
+    await directory.init(this.name(), this.instance())
     await directory.registerThread(this.thread(), lineage)
   }
 
   private async catalog(): Promise<ModelCatalogState> {
-    const directory = this.env.ACTORS.getByName(this.name())
-    await directory.init(this.name())
+    const directory = this.env.ACTORS.getByName(actorObjectNameOf(this.name(), this.instance()))
+    await directory.init(this.name(), this.instance())
     return directory.catalog()
   }
 
@@ -513,6 +554,7 @@ export class ThreadDO extends DurableObject<Env> {
       ? { refreshError: "no model is configured" }
       : await this.catalog()
     const actorName = this.name()
+    const actorInstance = this.instance()
     const selectedAssembly = assemblyOf(actorName, this.env, models, catalog)
     if (selectedAssembly === undefined) throw new Error(`actor ${JSON.stringify(actorName)} is not deployed`)
     const currentThread = this.thread()
@@ -560,8 +602,8 @@ export class ThreadDO extends DurableObject<Env> {
             const placement = envelope.lineage?.placement ?? mountedActor?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
             if (placement !== "independent") throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(placement)} thread placement`)
             if (!deployed(destination.actor)) throw new Error(`actor ${JSON.stringify(destination.actor)} is not deployed`)
-            const stub = this.env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.thread))
-            await stub.init(destination.actor, destination.thread)
+            const stub = this.env.THREADS.getByName(threadObjectNameOf(destination.actor, destination.instance, destination.thread))
+            await stub.init(destination.actor, destination.instance, destination.thread)
             await stub.deliver({
               ...envelope,
               event,
@@ -574,7 +616,7 @@ export class ThreadDO extends DurableObject<Env> {
     const independentRoute = directoryRoute(
       independentTransport,
       mappedDirectory((id: ThreadAddress) => {
-        return id.actor === actorName && id.thread === currentThread ? undefined : id
+        return id.actor === actorName && id.instance === actorInstance && id.thread === currentThread ? undefined : id
       }),
       isActorEnvelope,
       (envelope) => envelope.link.target
@@ -582,17 +624,18 @@ export class ThreadDO extends DurableObject<Env> {
     return createCloudflareThreadHost({
       storage: this.ctx.storage,
       actorName,
+      actorInstance,
       thread: currentThread,
       actor: selectedAssembly,
       layers: (() => {
         const thread = currentThread
-        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, thread })
+        const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
         const framework = Layer.mergeAll(modelLayer(models, catalog, adapters, observer), FetchHttpClient.layer, sandboxLayer)
-        const application = mountedActor?.layersFor?.({ env: this.env, thread })
+        const application = mountedActor?.layersFor?.({ env: this.env, actorInstance, thread })
         return application === undefined ? framework : Layer.mergeAll(framework, application)
       })(),
       routes: [independentRoute],
-      ...(mountedActor?.storeFor === undefined ? {} : { storeFor: mountedActor.storeFor({ env: this.env, thread: currentThread }) }),
+      ...(mountedActor?.storeFor === undefined ? {} : { storeFor: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
       keyOf: selectedAssembly.keyOf
     })
   }
@@ -677,8 +720,12 @@ export class ThreadDO extends DurableObject<Env> {
 
   async deliver(envelope: ActorEnvelope): Promise<void> {
     if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
-    if (envelope.lineage !== undefined && envelope.lineage.parent.actor !== envelope.link.target.actor) {
-      throw new Error("a child thread must inherit its actor")
+    if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")
+    if (envelope.lineage !== undefined && (
+      envelope.lineage.parent.actor !== envelope.link.target.actor ||
+      envelope.lineage.parent.instance !== envelope.link.target.instance
+    )) {
+      throw new Error("a child thread must inherit its actor instance")
     }
     const ownedThread = this.thread()
     if (envelope.link.target.thread !== ownedThread) {
@@ -716,23 +763,32 @@ export class ThreadDO extends DurableObject<Env> {
 
 const actorStub = async (
   env: Env,
-  name: string
+  name: string,
+  instance: string,
+  create: boolean
 ): Promise<DurableObjectStub<ActorDO> | undefined> => {
   if (!deployed(name)) return undefined
-  const stub = env.ACTORS.getByName(name)
-  await stub.init(name)
+  const stub = env.ACTORS.getByName(actorObjectNameOf(name, instance))
+  if (!create && !(await stub.exists(name, instance))) return undefined
+  if (create) await stub.init(name, instance)
   return stub
 }
+
+const catalogStub = (env: Env, name: string): DurableObjectStub<ActorDO> =>
+  env.ACTORS.getByName(JSON.stringify([name, "$catalog"]))
 
 const threadStub = async (
   env: Env,
   name: string,
-  thread: string
+  instance: string,
+  thread: string,
+  create: boolean
 ): Promise<DurableObjectStub<ThreadDO> | undefined> => {
   if (!deployed(name)) return undefined
   const targetThread = actorThreadOf(thread)
-  const stub = env.THREADS.getByName(threadObjectNameOf(name, targetThread))
-  await stub.init(name, targetThread)
+  const stub = env.THREADS.getByName(threadObjectNameOf(name, instance, targetThread))
+  if (!create && !(await stub.exists(name, instance, targetThread))) return undefined
+  if (create) await stub.init(name, instance, targetThread)
   return stub
 }
 
@@ -810,8 +866,7 @@ const routes = [
     const env = yield* WorkerEnv
     return yield* Effect.tryPromise({
       try: async () => {
-        const stub = await actorStub(env, deployedActor)
-        if (stub === undefined) throw new Error("no actor is deployed")
+        const stub = catalogStub(env, deployedActor)
         const catalog = await stub.catalog()
         if (catalog.snapshot === undefined) {
           throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
@@ -832,8 +887,7 @@ const routes = [
     const env = yield* WorkerEnv
     return yield* Effect.tryPromise({
       try: async () => {
-        const stub = await actorStub(env, deployedActor)
-        if (stub === undefined) throw new Error("no actor is deployed")
+        const stub = catalogStub(env, deployedActor)
         const catalog = await stub.catalog()
         if (catalog.snapshot === undefined) {
           throw new Error(catalog.refreshError ?? catalog.cacheError ?? "no validated model catalog is available")
@@ -868,10 +922,30 @@ const routes = [
       })))
     })
   )),
-  HttpRouter.route("PUT", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:instance", protectedRoute((_request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = decodeURIComponent(params.instance ?? "")
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, true))
+      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      return json({ actor: instance, definition: deployedActor })
+    })
+  )),
+  HttpRouter.route("GET", "/v1/actors/:instance", protectedRoute((_request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = decodeURIComponent(params.instance ?? "")
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      return stub === undefined
+        ? json({ error: "unknown actor" }, 404)
+        : json({ actor: instance, definition: deployedActor })
+    })
+  )),
+  HttpRouter.route("PUT", "/v1/actors/:instance/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
+      const instance = decodeURIComponent(params.instance ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
@@ -881,23 +955,25 @@ const routes = [
       const at = yield* Clock.currentTimeMillis
       const decoded = methodEventOf(method, { id: call, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const stub = yield* Effect.promise(() => threadStub(env, actor, thread))
+      yield* Effect.promise(() => actorStub(env, actor, instance, true))
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, true))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       yield* Effect.promise(() => stub.append(thread, decoded.event))
-      return json({ thread, method: methodName, call }, 202)
+      return json({ actor: instance, thread, method: methodName, call }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:instance/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
+      const instance = decodeURIComponent(params.instance ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
-      const stub = yield* Effect.promise(() => threadStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, false))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
@@ -905,35 +981,40 @@ const routes = [
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:instance/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
-      const stub = yield* Effect.promise(() => actorStub(env, deployedActor))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const params = yield* HttpRouter.params
+      const instance = decodeURIComponent(params.instance ?? "")
+      const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      if (stub === undefined) return json({ error: "unknown actor" }, 404)
       return json(yield* Effect.promise(() => stub.threads()))
     })
   )),
-  HttpRouter.route("POST", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("POST", "/v1/actors/:instance/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
+      const instance = decodeURIComponent(params.instance ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => threadStub(env, actor, thread))
+      yield* Effect.promise(() => actorStub(env, actor, instance, true))
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, true))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
         return json({ error: "event type is required" }, 400)
       }
       yield* Effect.promise(() => stub.append(thread, event))
-      return json({ thread }, 202)
+      return json({ actor: instance, thread }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:instance/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
+      const instance = decodeURIComponent(params.instance ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
-      const stub = yield* Effect.promise(() => threadStub(env, actor, thread))
-      if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, false))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const url = new URL(request.url, "http://worker")
       const after = Number(url.searchParams.get("after") ?? 0)
       const limit = Number(url.searchParams.get("limit") ?? 200)
@@ -975,6 +1056,7 @@ type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
 // CloudflareWorkerLayerContext exposes the Worker bindings and thread identity used to construct application services.
 export interface CloudflareWorkerLayerContext<WorkerEnv extends Env = Env> {
   readonly env: WorkerEnv
+  readonly actorInstance: string
   readonly thread: string
 }
 

@@ -61,6 +61,9 @@ const clientOf = (
   return {
     baseUrl: "http://localhost:0",
     metadata: () => Promise.resolve({ name: "test", storage: { kind: "sqlite", location: "/work/.tardigrade/actor.sqlite" } }),
+    actors: () => Promise.resolve([]),
+    ensureActor: (actor) => Promise.resolve({ id: actor, definition: "test" }),
+    actor: (actor) => Promise.resolve({ id: actor, definition: "test" }),
     providers: (options) => {
       recorded.catalog.push({ kind: "providers", options })
       return Promise.resolve(answers.providers ?? {
@@ -87,7 +90,7 @@ const clientOf = (
     },
     list: () => (answers.fail === undefined ? Promise.resolve(answers.list ?? []) : Promise.reject(answers.fail)),
     methods: () => answers.fail === undefined ? Promise.resolve(answers.methods ?? []) : Promise.reject(answers.fail),
-    events: (thread, options) => {
+    events: (_actor, thread, options) => {
       recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
     },
@@ -97,7 +100,7 @@ const clientOf = (
       const state = states[Math.min(read++, states.length - 1)]
       return state === undefined ? refuse() : Promise.resolve(state)
     },
-    invoke: (thread, name, invocation) => {
+    invoke: (actor, thread, name, invocation) => {
       recorded.invoked.push({
         thread,
         method: name,
@@ -106,6 +109,7 @@ const clientOf = (
       })
       return answers.fail === undefined
         ? Promise.resolve({
+          actor,
           thread,
           method: name,
           call: invocation.id
@@ -591,6 +595,7 @@ describe("call", () => {
       answers: { states: [{ status: "completed", output: "done" }] }
     })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual({
+      actor: "main",
       thread: "root",
       method: "message",
       call: "m1",

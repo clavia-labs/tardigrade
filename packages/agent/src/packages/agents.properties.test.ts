@@ -30,7 +30,7 @@ const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLen
 // childProtocol runs the implementation against the transitions in Child.tla. The parent log is
 // durable across attempts, while the router may fail on either side of the child commit.
 const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
-  const parent = threadAddressOf("property", "ag.root")
+  const parent = threadAddressOf("property", "main", "ag.root")
   const host = createHost({ actorName: parent.actor, actorFor: () => undefined })
   const parentLog: Event[] = [threadCreated(parent, undefined, 0)]
   const actions: Array<{ readonly kind: "append" | "send"; readonly callId: string; readonly target?: ThreadAddress }> = []

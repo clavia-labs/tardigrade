@@ -243,9 +243,9 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// sibling is the default address: the child uses the parent's actorName and the name `ag.<callId>`. Thread placement remains a separate host decision (spawn.test.ts, "the default address is the host's own sibling"; tla/runtime/Thread.tla, CreationFirst).
+// sibling is the default address: the child inherits the parent's actor instance and uses the name `ag.<callId>`. Thread placement remains a separate host decision (spawn.test.ts, "the default address is the host's own sibling"; tla/runtime/Thread.tla, CreationFirst).
 const sibling = (callId: string, self: ThreadAddress): ThreadAddress =>
-  threadAddressOf(self.actor, `ag.${callId}`)
+  threadAddressOf(self.actor, self.instance, `ag.${callId}`)
 
 const inheritedModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy => {
   const resolved = [...events].reverse().find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined

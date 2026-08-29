@@ -58,6 +58,7 @@ type LayersFor<R> = [Exclude<R, HostPorts>] extends [never]
 // binds EventLog, Router, and Self. A missing Infer is a type error.
 export type HostOptions<R> = {
   readonly actorName?: string
+  readonly actorInstance?: string
   readonly actorFor: (thread: string) => Actor<R> | undefined
   readonly providers?: ReadonlyArray<Provider>
   // routes extends this host's local and provider directories with platform-owned destinations.
@@ -105,10 +106,7 @@ export interface Host {
   readonly self: (thread: string) => string
 }
 
-const threadOf = (address: string): string => {
-  const i = address.indexOf(":")
-  return i === -1 ? address : address.slice(i + 1)
-}
+const threadOf = (address: string): string => parseThreadAddress(address).thread
 
 const seen = (events: ReadonlyArray<Event>, event: Event): boolean => {
   if (event.type !== "MessageReceived") return false
@@ -126,6 +124,7 @@ const eventAt = (event: Event): number => {
 
 export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const actorName = options.actorName ?? "mem"
+  const actorInstance = options.actorInstance ?? "main"
   const threads = new Map<string, ReadonlyArray<Event>>()
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
@@ -219,7 +218,9 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const routes = [
     directoryRoute(
       localTransport,
-      mappedDirectory((id: ThreadAddress) => id.actor === actorName ? id : undefined),
+      mappedDirectory((id: ThreadAddress) =>
+        id.actor === actorName && id.instance === actorInstance ? id : undefined
+      ),
       isActorEnvelope,
       (envelope) => envelope.link.target
     ),
@@ -235,7 +236,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     send: (envelope) => sendThrough(routes, envelope)
   })
 
-  const self = (thread: string): string => `${actorName}:${thread}`
+  const self = (thread: string): string => `${actorName}:${actorInstance}:${thread}`
 
   const portsOf = (thread: string) =>
     Layer.mergeAll(

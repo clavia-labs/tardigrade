@@ -9,15 +9,16 @@ import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
-const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
-const controlStub = () => (env as Env).ACTORS.getByName("echo")
+const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", "main", `ag.${thread}`])
+const controlStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "main"]))
+const catalogStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "$catalog"]))
 const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
 const alarm = (thread: string) =>
   runInDurableObject(threadStub(thread), (_instance, state) => state.storage.getAlarm())
 
 const methodState = async (thread: string, call: string): Promise<unknown> => {
   for (let attempt = 0; attempt < 100; attempt++) {
-    const response = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
+    const response = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
       headers: authorization
     })
     const state = await response.json() as { readonly status?: unknown }
@@ -41,7 +42,7 @@ describe("cloudflare actor", () => {
         models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
       }]
     }
-    await runInDurableObject(controlStub(), async (_instance, state) => {
+    await runInDurableObject(catalogStub(), async (_instance, state) => {
       const runtime = ManagedRuntime.make(layerCloudflareModelCatalogRepository(state.storage))
       try {
         const repository = await runtime.runPromise(ModelCatalogRepository)
@@ -72,13 +73,13 @@ describe("cloudflare actor", () => {
       inputSchema: expect.objectContaining({ type: "object" }),
       outputSchema: expect.objectContaining({ type: "string" })
     })])
-    const accepted = await SELF.fetch("http://test/v1/threads/root/methods/echo/calls/workers-smoke", {
+    const accepted = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
       body: JSON.stringify({ text: "Run in workerd." })
     })
     expect(accepted.status).toBe(202)
-    expect(await accepted.json()).toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
+    expect(await accepted.json()).toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
@@ -86,11 +87,11 @@ describe("cloudflare actor", () => {
       token: "workers-test-token",
       fetch: (input, init) => SELF.fetch(input, init)
     })
-    expect(await client.invoke("root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
-      .toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
-    expect(await client.methodState("root", "echo", "workers-smoke"))
+    expect(await client.invoke("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
+      .toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
+    expect(await client.methodState("main", "root", "echo", "workers-smoke"))
       .toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
-    const events = await SELF.fetch("http://test/v1/threads/root/events", { headers: authorization })
+    const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",
       "EchoRequested",
@@ -98,7 +99,7 @@ describe("cloudflare actor", () => {
     ])
     const health = await SELF.fetch("http://test/healthz")
     expect(await health.json()).toEqual({ status: "ready", actor: "echo" })
-    const threads = await SELF.fetch("http://test/v1/threads", { headers: authorization })
+    const threads = await SELF.fetch("http://test/v1/actors/main/threads", { headers: authorization })
     expect(threads.status).toBe(200)
     expect(await threads.json()).toEqual([expect.objectContaining({ id: "root" })])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
@@ -107,7 +108,7 @@ describe("cloudflare actor", () => {
 
   test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
-      const accepted = await SELF.fetch(`http://test/v1/threads/${thread}/methods/echo/calls/${call}`, {
+      const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
         method: "PUT",
         headers: { ...authorization, "content-type": "application/json" },
         body: JSON.stringify({ text })
@@ -150,7 +151,7 @@ describe("cloudflare actor", () => {
 
   test("a thread store wrapper covers method ingress, reactors, and API reads", async () => {
     const prompt = "classified prompt"
-    const accepted = await SELF.fetch("http://test/v1/threads/sealed/methods/echo/calls/sealed-call", {
+    const accepted = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
       method: "PUT",
       headers: { ...authorization, "content-type": "application/json" },
       body: JSON.stringify({ text: prompt })
@@ -161,7 +162,7 @@ describe("cloudflare actor", () => {
       output: "workers:ag.sealed:1:classified prompt"
     })
 
-    const response = await SELF.fetch("http://test/v1/threads/sealed/events", { headers: authorization })
+    const response = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", { headers: authorization })
     const visible = await response.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly text?: string } }>
     expect(visible.map((row) => row.event.type)).toEqual(["ThreadCreated", "EchoRequested", "EchoCompleted"])
     expect(visible.some((row) => row.event.text?.includes(prompt))).toBe(true)
@@ -179,9 +180,9 @@ describe("cloudflare actor", () => {
 
   test("actor directory registration keeps child lineage", async () => {
     const directory = controlStub()
-    await directory.init("echo")
+    await directory.init("echo", "main")
     await directory.registerThread("ag.directory-child", {
-      parent: { actor: "echo", thread: "ag.directory-parent" },
+      parent: { actor: "echo", instance: "main", thread: "ag.directory-parent" },
       depth: 1,
       placement: "independent"
     })
@@ -205,12 +206,12 @@ describe("cloudflare actor", () => {
   test("a durable object alarm terminates an overdue method call", async () => {
     const deadlineAt = Date.now() - 1
     const stub = threadStub("timeout")
-    await stub.init("echo", "ag.timeout")
+    await stub.init("echo", "main", "ag.timeout")
     await stub.append("timeout", {
       type: "CallDispatched",
       id: "overdue-1",
       method: "inspect",
-      target: "remote:shared",
+      target: "remote:main:shared",
       input: {},
       timeoutMs: 10,
       deadlineAt,

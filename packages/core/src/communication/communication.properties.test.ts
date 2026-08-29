@@ -58,7 +58,7 @@ const graphArbitrary: fc.Arbitrary<GraphSpec> = fc.uniqueArray(
   }))
 })
 
-const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", `participant-${id}`)
+const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", "main", `participant-${id}`)
 
 const routingFor = (participants: ReadonlyArray<ParticipantSpec>): {
   readonly routes: ReadonlyArray<TransportRoute>

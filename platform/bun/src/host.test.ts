@@ -61,7 +61,7 @@ const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
 const freshPath = (): string => join(dir, `host-${n++}.sqlite`)
 
-const created = (thread: string, at = 0): Event => threadCreated({ actor: "bun", thread: thread }, undefined, at)
+const created = (thread: string, at = 0): Event => threadCreated({ actor: "bun", instance: "default", thread }, undefined, at)
 
 const signal = (): { readonly promise: Promise<void>; readonly send: () => void } => {
   let send!: () => void
@@ -129,7 +129,7 @@ describe("the bun host", () => {
       layersFor: () => Layer.succeed(Sandbox, jsSandboxService)
     })
 
-    await h.commitRoot("bun:isolated", { type: "MessageReceived", id: "isolated", at: 0 } as Event)
+    await h.commitRoot("bun:default:isolated", { type: "MessageReceived", id: "isolated", at: 0 } as Event)
     await h.drive()
 
     expect(await h.read("isolated")).toContainEqual({
@@ -176,7 +176,7 @@ describe("the bun host", () => {
       driver: { maxConcurrentThreads: 2 }
     })
     for (const thread of ["a", "b", "c"]) {
-      await h.commitRoot(`bun:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
+      await h.commitRoot(`bun:default:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
     const driving = h.drive()
@@ -202,15 +202,15 @@ describe("the bun host", () => {
 
   test("delivers, settles, and a keyed redelivery absorbs", async () => {
     const h = await createBunHost(options(freshPath()))
-    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     expect((await h.read("echo")).map((e) => e.type)).toEqual(["ThreadCreated", "MessageReceived", "Done"])
     // The same keyed event again: absorbed inside the append transaction, the log does not grow.
-    await h.commitRoot("bun:echo", { type: "Done", id: "m1", at: 2 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "Done", id: "m1", at: 2 } as Event)
     await h.drive()
     expect(await h.read("echo")).toHaveLength(3)
     // The same message id again: receiver dedup.
-    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 3 } as Event)
     expect(await h.read("echo")).toHaveLength(3)
     expect(await h.resting()).toBe(true)
     await h.close()
@@ -218,14 +218,14 @@ describe("the bun host", () => {
 
   test("refuses an unkeyed cross-thread event, identically to the reference host", async () => {
     const h = await createBunHost(options(freshPath()))
-    expect(h.commitRoot("bun:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-thread event")
+    expect(h.commitRoot("bun:default:echo", { type: "Mystery", at: 1 } as Event)).rejects.toThrow("unkeyed cross-thread event")
     await h.close()
   })
 
   test("a reopened database keeps the log byte for byte", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
-    await first.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await first.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await first.drive()
     const before = await first.read("echo")
     await first.close()
@@ -313,7 +313,7 @@ describe("the bun host", () => {
   test("threads names every thread the log holds", async () => {
     const h = await createBunHost(options(freshPath()))
     expect(await h.threads()).toEqual([])
-    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.seed("other", [created("other"), { type: "MessageReceived", id: "m2", text: "go", at: 2 } as Event])
     await h.drive()
     expect(await h.threads()).toEqual(["echo", "other"])
@@ -333,10 +333,12 @@ describe("the bun host", () => {
     const actor = new Database(path)
     const thread = new Database(bunThreadDatabasePath(path, "first"))
     expect(actor.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
-      { migration_id: 1, name: "actor_directory" }
+      { migration_id: 1, name: "actor_identity" },
+      { migration_id: 2, name: "actor_directory" }
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
-      { migration_id: 1, name: "thread_events" }
+      { migration_id: 1, name: "thread_identity" },
+      { migration_id: 2, name: "thread_events" }
     ])
     actor.close()
     thread.close()
@@ -356,8 +358,8 @@ describe("the bun host", () => {
 
   test("a child creation and its first delivery commit together", async () => {
     const h = await createBunHost(options(freshPath()))
-    const parent = parseThreadAddress("bun:parent")
-    const target = parseThreadAddress("bun:child")
+    const parent = parseThreadAddress("bun:default:parent")
+    const target = parseThreadAddress("bun:default:child")
     const first = envelopeOf(
       linkOf(parent, target),
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
@@ -370,9 +372,9 @@ describe("the bun host", () => {
       expect.objectContaining({ type: "MessageReceived", id: "m1", link: first.link })
     ])
     await expect(h.commit(envelopeOf(
-      linkOf(parseThreadAddress("bun:other"), target),
+      linkOf(parseThreadAddress("bun:default:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
-      { parent: parseThreadAddress("bun:other"), depth: 1 }
+      { parent: parseThreadAddress("bun:default:other"), depth: 1 }
     ))).rejects.toThrow("already has different lineage")
     await h.close()
   })
@@ -380,7 +382,7 @@ describe("the bun host", () => {
   test("a refused initial actor delivery leaves no partial creation", async () => {
     const h = await createBunHost(options(freshPath()))
     await expect(h.commit(envelopeOf(
-      linkOf(parseThreadAddress("bun:parent"), parseThreadAddress("bun:child")),
+      linkOf(parseThreadAddress("bun:default:parent"), parseThreadAddress("bun:default:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
     ))).rejects.toThrow("must carry lineage")
     expect(await h.read("child")).toEqual([])
@@ -510,7 +512,7 @@ describe("telemetry seam", () => {
       })
     )
     const h = await createBunHost({ ...options(freshPath()), telemetry: capture })
-    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     expect(names.some((s) => s.name === "commit" && s.type === "MessageReceived")).toBe(true)
     expect(names.some((s) => s.name === "transition.fire" && s.key === "dn:m1")).toBe(true)
@@ -525,7 +527,7 @@ describe("telemetry seam", () => {
   test("fileTelemetry lands queryable rows: the fire carries its outcome and links to the commit", async () => {
     const path = join(dir, `spans-${n++}.ndjson`)
     const h = await createBunHost({ ...options(freshPath()), telemetry: fileTelemetry(path) })
-    await h.commitRoot("bun:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
+    await h.commitRoot("bun:default:echo", { type: "MessageReceived", id: "m1", text: "go", at: 1 } as Event)
     await h.drive()
     await h.close()
     const rows = readFileSync(path, "utf8")

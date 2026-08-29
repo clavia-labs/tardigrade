@@ -3,7 +3,7 @@ import { X } from "@phosphor-icons/react"
 
 import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
 
-import { client } from "./client"
+import { actorInstance, client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
 import { navigate, useRoute, type Route } from "./nav"
 import { BOTTOM_SLACK_PX, COPY_CONFIRM_MS, EVENT_INSPECTOR_WIDTH, EVENT_STAMP_WIDTH, FIELD_COLLAPSED_HEIGHT, FIELD_WIDTH, ICON_SIZE, LOG_POLL_MS, PANE_HEADER_HEIGHT } from "./policy"
@@ -38,14 +38,14 @@ const useLog = (id: string, pollMs: number) => {
     setLoaded(false)
     const read = async () => {
       try {
-        const first = await client.events(id)
+        const first = await client.events(actorInstance(), id)
         if (!attached) return
         seen.current = lastSeq(first)
         setRows(first)
         setProblem(undefined)
         setLoaded(true)
         setDropped(false)
-        unsubscribe = client.follow(id, {
+        unsubscribe = client.follow(actorInstance(), id, {
           after: seen.current,
           onEvent: (row) => {
             seen.current = Math.max(seen.current, row.seq)
@@ -69,7 +69,7 @@ const useLog = (id: string, pollMs: number) => {
   useEffect(() => {
     if (!dropped) return
     const timer = setInterval(() => {
-      void client.events(id, { after: seen.current })
+      void client.events(actorInstance(), id, { after: seen.current })
         .then((batch) => {
           seen.current = Math.max(seen.current, lastSeq(batch))
           setRows((held) => merged(held, batch))

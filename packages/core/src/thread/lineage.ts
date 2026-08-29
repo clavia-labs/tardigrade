@@ -90,7 +90,7 @@ export const threadCreated = (
 
 // sameThreadAddress compares thread addresses without serializing them.
 export const sameThreadAddress = (left: ThreadAddressType, right: ThreadAddressType): boolean =>
-  left.actor === right.actor && left.thread === right.thread
+  left.actor === right.actor && left.instance === right.instance && left.thread === right.thread
 
 // sameThreadLineage reports whether a creation claim matches a stored identity.
 export const sameThreadLineage = (created: ThreadCreated, lineage: ThreadLineage): boolean =>

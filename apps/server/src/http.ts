@@ -4,6 +4,7 @@ import { HttpApiBuilder, HttpApiScalar } from "effect/unstable/httpapi"
 
 import {
   layerActorsGroup,
+  layerDefinitionsGroup,
   layerMethodsGroup,
   layerModelsGroup,
   layerProjectionsGroup,
@@ -184,6 +185,7 @@ export const layerApp = (options: ApiOptions = {}) =>
     Layer.provide(
       Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
         layerActorsGroup,
+        layerDefinitionsGroup,
         layerModelsGroup,
         layerRuntimeGroup,
         layerThreadsGroup(options),

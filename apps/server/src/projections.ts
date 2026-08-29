@@ -128,9 +128,9 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
       if (event.type !== "ChildCreated") continue
       const address = (event as { readonly address?: unknown }).address
       if (typeof address !== "object" || address === null) continue
-      const value = address as { readonly actor?: unknown; readonly thread?: unknown }
-      if (typeof value.actor !== "string" || typeof value.thread !== "string") continue
-      const child = idsByAddress.get(formatThreadAddress({ actor: value.actor, thread: value.thread }))
+      const value = address as { readonly actor?: unknown; readonly instance?: unknown; readonly thread?: unknown }
+      if (typeof value.actor !== "string" || typeof value.instance !== "string" || typeof value.thread !== "string") continue
+      const child = idsByAddress.get(formatThreadAddress({ actor: value.actor, instance: value.instance, thread: value.thread }))
       if (child !== undefined && child !== parent) parents.set(child, parent)
     }
   }

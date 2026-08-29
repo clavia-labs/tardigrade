@@ -45,14 +45,14 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
             const router = yield* Router
             if (input.n < RALLY) {
               yield* router.send(envelopeOf(
-                linkOf(parseThreadAddress(`mem:${me}`), parseThreadAddress(`mem:${opponent}`)),
+                linkOf(parseThreadAddress(`mem:main:${me}`), parseThreadAddress(`mem:main:${opponent}`)),
                 {
                 type: "MessageReceived",
                 id: `${me}-${input.n + 1}`,
                 n: input.n + 1,
                 at: input.n + 1
                 } as Event
-              , me === "a" || me === "b" ? { parent: parseThreadAddress(`mem:${me}`), depth: 1 } : undefined))
+              , me === "a" || me === "b" ? { parent: parseThreadAddress(`mem:main:${me}`), depth: 1 } : undefined))
             }
             return [{ type: "Answered", id: input.id, at: input.n } as Event]
           })
@@ -74,8 +74,8 @@ const scenario = (pick: HostOptions<Router>["pick"]) => {
     },
     ...(pick === undefined ? {} : { pick })
   })
-  host.commitRoot("mem:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
-  host.commitRoot("mem:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
+  host.commitRoot("mem:main:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host
 }
 

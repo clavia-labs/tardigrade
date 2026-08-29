@@ -129,20 +129,20 @@ describe("an assembled agent", () => {
     expect(answer.output).toBe('"4,6"')
     expect(threadCreatedOf(mind.host.read(ROOT_THREAD))).toEqual({
       type: "ThreadCreated",
-      address: { actor: "mem", thread: ROOT_THREAD },
+      address: { actor: "mem", instance: "main", thread: ROOT_THREAD },
       depth: 0,
       at: 1
     })
     expect(mind.host.read(ROOT_THREAD).filter((event) => event.type === "ChildCreated")).toEqual([
-      expect.objectContaining({ callId: "t1.0", address: { actor: "mem", thread: "ag.t1.0" }, depth: 1 }),
-      expect.objectContaining({ callId: "t1.1", address: { actor: "mem", thread: "ag.t1.1" }, depth: 1 })
+      expect.objectContaining({ callId: "t1.0", address: { actor: "mem", instance: "main", thread: "ag.t1.0" }, depth: 1 }),
+      expect.objectContaining({ callId: "t1.1", address: { actor: "mem", instance: "main", thread: "ag.t1.1" }, depth: 1 })
     ])
     // The graph existed: two child threads, each with a served turn.
     const children = ["ag.t1.0", "ag.t1.1"].map((thread) => mind.host.read(thread))
     for (const log of children) {
       expect(threadCreatedOf(log)).toMatchObject({
         address: { actor: "mem" },
-        parent: { actor: "mem", thread: ROOT_THREAD },
+        parent: { actor: "mem", instance: "main", thread: ROOT_THREAD },
         depth: 1
       })
       expect(log.some((e) => e.type === "TurnCompleted")).toBe(true)

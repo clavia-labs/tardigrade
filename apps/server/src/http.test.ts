@@ -14,7 +14,7 @@ import {
   readConfig,
   type ServerConfigValue
 } from "./config"
-import { Threads } from "./host"
+import { Threads, type ActorThreads } from "./host"
 import { layerModelCatalogUnavailable } from "./catalog"
 import { ALLOWED_HEADERS, serve, PROBLEM_CONTENT_TYPE, type Health } from "./http"
 import { DriverGauge, layerGaugeResting } from "./driver-gauge"
@@ -35,10 +35,13 @@ setDefaultTimeout(BOOT_MS)
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   sqlite: ":memory:",
+  instances: Effect.succeed([]),
+  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), list: Effect.succeed([]), settled: Effect.void }),
+  instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
-  list: Effect.succeed([]),
-  settled: Effect.void
+  list: () => Effect.succeed([]),
+  settled: () => Effect.void
 })
 
 const configOf = (overrides: Partial<ServerConfigValue> = {}): ServerConfigValue => ({
@@ -232,7 +235,7 @@ describe("auth", () => {
 
     const anonymous = await serving({ config }, (client) =>
       Effect.gen(function*() {
-        const response = yield* client.get("/v1/threads")
+        const response = yield* client.get("/v1/actors/main/threads")
         return { status: response.status, contentType: response.headers["content-type"], body: yield* response.json }
       }))
     expect(anonymous.status).toBe(401)
@@ -240,11 +243,11 @@ describe("auth", () => {
     expect(anonymous.body).toMatchObject({ status: 401, title: "Unauthorized" })
 
     const wrong = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/threads"), "guess")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/definitions"), "guess")))
     expect(wrong.status).toBe(403)
 
     const right = await serving({ config }, (client) =>
-      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/threads"), "secret")))
+      client.execute(HttpClientRequest.bearerToken(HttpClientRequest.get("/v1/definitions"), "secret")))
     expect(right.status).toBe(200)
 
     const health = await serving({ config }, (client) => client.get("/healthz"))
@@ -263,7 +266,7 @@ describe("cors", () => {
     const allowed = await serving({}, (client) =>
       Effect.map(
         client.execute(
-          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/threads"), {
+          HttpClientRequest.setHeaders(HttpClientRequest.options("/v1/actors/main/threads"), {
             origin: "http://localhost:5173",
             "access-control-request-method": "GET",
             "access-control-request-headers": ALLOWED_HEADERS.join(",")

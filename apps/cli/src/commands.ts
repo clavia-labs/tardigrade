@@ -150,7 +150,12 @@ const callId = Flag.string("id").pipe(
   Flag.optional
 )
 
-const remote = { url, token, json }
+const actorInstance = Flag.string("actor").pipe(
+  Flag.withDescription("The actor instance id."),
+  Flag.withDefault("main")
+)
+
+const remote = { url, token, json, actor: actorInstance }
 const catalogRemote = { url, token, json }
 
 const catalogSearch = Flag.string("search").pipe(
@@ -196,6 +201,7 @@ const methodInput = (source: string): Effect.Effect<unknown, CliError.UserError>
 
 const settle = (
   client: ActorClient,
+  actor: string,
   thread: string,
   method: string,
   callId: string,
@@ -205,7 +211,7 @@ const settle = (
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      const state = yield* call(() => client.methodState(thread, method, callId))
+      const state = yield* call(() => client.methodState(actor, thread, method, callId))
       if (state.status !== "pending") return state
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* userErrorOf(
@@ -631,12 +637,12 @@ export const callCommand = Command.make("call", {
     const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
     const input = yield* methodInput(flags.input)
-    const accepted = yield* call(() => client.invoke(thread, flags.method, { id, input }))
+    const accepted = yield* call(() => client.invoke(flags.actor, thread, flags.method, { id, input }))
     if (!flags.wait) {
       yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.call} accepted`)
       return
     }
-    const state = yield* settle(client, accepted.thread, accepted.method, accepted.call, flags.poll, flags.timeout)
+    const state = yield* settle(client, accepted.actor, accepted.thread, accepted.method, accepted.call, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
         ? jsonOf({ ...accepted, ...state })
@@ -658,7 +664,7 @@ export const callCommand = Command.make("call", {
 export const lsCommand = Command.make("ls", remote, (flags) =>
   Effect.gen(function*() {
     const client = yield* clientOf(flags)
-    const threads = yield* call(() => client.list())
+    const threads = yield* call(() => client.list(flags.actor))
     yield* Console.log(flags.json ? jsonOf(threads) : threadsTable(threads))
   })).pipe(
     Command.withDescription("List every thread a store holds, parent before child. An execution that spawned nine children lists ten rows."),
@@ -758,7 +764,7 @@ export const eventsCommand = Command.make("events", {
     const client = yield* clientOf(flags)
     const types = stated(flags.types)?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
     const rows = yield* call(() =>
-      client.events(flags.thread, {
+      client.events(flags.actor, flags.thread, {
         after: Option.getOrUndefined(flags.after),
         limit: Option.getOrUndefined(flags.limit),
         types

@@ -15,9 +15,9 @@ const inspect = actorMethod({
   state: () => ({ status: "pending" })
 })
 
-const source = threadAddressOf("caller", "root")
+const source = threadAddressOf("caller", "main", "root")
 const target = {
-  address: threadAddressOf("inspector", "shared"),
+  address: threadAddressOf("inspector", "main", "shared"),
   methods: { inspect }
 }
 
@@ -51,7 +51,7 @@ describe("actorCall", () => {
       type: "CallDispatched",
       id: "inspect-1",
       method: "inspect",
-      target: "inspector:shared",
+      target: "inspector:main:shared",
       input: { value: "release" }
     })])
     const dispatch = returned[0] as unknown as { readonly at: number; readonly deadlineAt: number; readonly timeoutMs: number }
@@ -76,7 +76,7 @@ describe("actorCall", () => {
         call: "inspect-1",
         status: "completed",
         output: "safe",
-        from: "inspector:shared",
+        from: "inspector:main:shared",
         at: 2
       } as Event
     ], {
@@ -97,7 +97,7 @@ describe("actorCall", () => {
       call: "inspect-1",
       status: "failed",
       error: "unavailable",
-      from: "inspector:shared",
+      from: "inspector:main:shared",
       at: 2
     } as Event], {
       id: "inspect-1",
@@ -115,7 +115,7 @@ describe("actorCall", () => {
       type: "CallTimedOut",
       call: "inspect-1",
       method: "inspect",
-      target: "inspector:shared",
+      target: "inspector:main:shared",
       timeoutMs: 25,
       deadlineAt: 26,
       at: 27
@@ -154,7 +154,7 @@ describe("actorCall", () => {
       call: "inspect-1",
       status: "completed",
       output: 42,
-      from: "inspector:shared",
+      from: "inspector:main:shared",
       at: 2
     } as Event], {
       id: "inspect-1",
@@ -175,7 +175,7 @@ describe("actorCall", () => {
       type: "CallDispatched",
       id: "inspect-1",
       method: "inspect",
-      target: "inspector:shared",
+      target: "inspector:main:shared",
       input: { value: "release" },
       at: 1
     } as Event]

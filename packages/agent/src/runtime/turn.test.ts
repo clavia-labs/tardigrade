@@ -104,7 +104,7 @@ const noRouter = Layer.mergeAll(
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
-  Layer.succeed(Self, parseThreadAddress("test-agent")),
+  Layer.succeed(Self, parseThreadAddress("test-agent:main:main")),
   Layer.succeed(NativeOutputSupport, { withTools: true })
 )
 

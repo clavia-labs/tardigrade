@@ -9,8 +9,8 @@ import type { MessageReceived } from "./message"
 import { directoryRoute, sendThrough } from "./router"
 import type { Transport } from "./transport"
 
-const source: ThreadAddress = { actor: "agent", thread: "root" }
-const localTarget: ThreadAddress = { actor: "agent", thread: "child" }
+const source: ThreadAddress = { actor: "agent", instance: "main", thread: "root" }
+const localTarget: ThreadAddress = { actor: "agent", instance: "main", thread: "child" }
 const providerTarget: ProviderEndpoint = { provider: "slack", channel: "C1" }
 const message = { type: "MessageReceived", id: "m1", text: "hello", at: 1 } as Event
 

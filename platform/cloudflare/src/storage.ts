@@ -15,7 +15,8 @@ const actorMigrations = SqliteMigrator.fromRecord({
     const sql = yield* SqlClient.SqlClient
     yield* sql.unsafe(`CREATE TABLE actor_identity (
       singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-      actor TEXT NOT NULL
+      actor TEXT NOT NULL,
+      instance TEXT NOT NULL
     )`)
     yield* sql.unsafe(`CREATE TABLE thread_directory (
       thread TEXT PRIMARY KEY,
@@ -31,6 +32,7 @@ const createThreadIdentity = Effect.gen(function* () {
   yield* sql.unsafe(`CREATE TABLE thread_identity (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
     actor TEXT NOT NULL,
+    instance TEXT NOT NULL,
     thread TEXT NOT NULL
   )`)
 })

@@ -27,7 +27,7 @@ const graphArbitrary: fc.Arbitrary<GraphSpec> = fc.uniqueArray(fc.integer({ min:
   }))
 })
 
-const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", `participant-${id}`)
+const identityOf = (id: number): ThreadAddress => threadAddressOf("graph", "main", `participant-${id}`)
 
 describe("host communication over participant graphs", () => {
   test("redelivering every graph edge commits each linked message once", async () => {

@@ -11,8 +11,9 @@ export interface ActorRef<Methods extends ActorMethods = ActorMethods> {
 // actorRef binds an actor definition to one durable thread identity.
 export const actorRef = <Methods extends ActorMethods>(
   actor: Pick<Actor<never, Methods>, "name" | "methods">,
+  instance: string,
   thread: string
 ): ActorRef<Methods> => ({
-  address: threadAddressOf(actor.name, thread),
+  address: threadAddressOf(actor.name, instance, thread),
   methods: actor.methods
 })

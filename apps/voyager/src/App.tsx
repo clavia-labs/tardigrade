@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement } from "react"
 import { Thread } from "./Thread"
 import { NO_ANSWER, ProblemError, type ActorMetadata, type ThreadSummary } from "@clavia/tardigrade-client"
 
-import { client } from "./client"
+import { actorInstance, client } from "./client"
 import { navigate, useRoute } from "./nav"
 import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
@@ -47,7 +47,7 @@ const useRoster = (intervalMs: number) => {
     let live = true
     const read = async () => {
       try {
-        const all = await client.list()
+        const all = await client.list(actorInstance())
         if (!live) return
         setSummaries(all)
         setReading({ roster: rosterOf(all), at: Date.now() })

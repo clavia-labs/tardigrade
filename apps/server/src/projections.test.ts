@@ -14,16 +14,16 @@ const at = () => ++clock
 
 const created = (id: string, parent?: string, depth = 0): Event =>
   threadCreated(
-    { actor: "default", thread: id },
-    parent === undefined ? undefined : { parent: { actor: "default", thread: parent }, depth },
+    { actor: "default", instance: "main", thread: id },
+    parent === undefined ? undefined : { parent: { actor: "default", instance: "main", thread: parent }, depth },
     at()
   )
 
 const spawned = (id: string, parent: string, depth: number): Event =>
   childCreated(
     `create-${id}`,
-    { actor: "default", thread: id },
-    { parent: { actor: "default", thread: parent }, depth },
+    { actor: "default", instance: "main", thread: id },
+    { parent: { actor: "default", instance: "main", thread: parent }, depth },
     at()
   )
 

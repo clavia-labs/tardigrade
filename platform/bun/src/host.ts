@@ -50,6 +50,7 @@ export type BunHostOptions<R> = {
   readonly workspaceSql?: false | Layer.Layer<never, never, SqlClient.SqlClient>
   readonly sandbox?: Partial<BunSandboxPolicy>
   readonly actorName?: string
+  readonly actorInstance?: string
   readonly actorFor: (thread: string) => Actor<R> | undefined
   readonly providers?: ReadonlyArray<Provider>
   readonly routes?: ReadonlyArray<TransportRoute>
@@ -83,8 +84,7 @@ interface BunThreadRuntime {
 }
 
 const threadOf = (address: string): string => {
-  const separator = address.indexOf(":")
-  return separator === -1 ? address : address.slice(separator + 1)
+  return parseThreadAddress(address).thread
 }
 
 const threadFromDatabase = (file: string): string | undefined => {
@@ -97,7 +97,15 @@ const threadFromDatabase = (file: string): string | undefined => {
 }
 
 const actorMigrations = SqliteMigrator.fromRecord({
-  "0001_actor_directory": Effect.gen(function* () {
+  "0001_actor_identity": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE actor_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      actor TEXT NOT NULL,
+      instance TEXT NOT NULL
+    )`
+  }),
+  "0002_actor_directory": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE thread_directory (
       thread TEXT PRIMARY KEY,
@@ -109,7 +117,16 @@ const actorMigrations = SqliteMigrator.fromRecord({
 })
 
 const threadMigrations = SqliteMigrator.fromRecord({
-  "0001_thread_events": Effect.gen(function* () {
+  "0001_thread_identity": Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient
+    yield* sql`CREATE TABLE thread_identity (
+      singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+      actor TEXT NOT NULL,
+      instance TEXT NOT NULL,
+      thread TEXT NOT NULL
+    )`
+  }),
+  "0002_thread_events": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
     yield* sql`CREATE TABLE events (
       seq INTEGER NOT NULL PRIMARY KEY,
@@ -128,6 +145,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   assertSupportedBun()
   if (options.database !== "" && options.database !== ":memory:") await mkdir(dirname(options.database), { recursive: true })
   const actorName = options.actorName ?? "bun"
+  const actorInstance = options.actorInstance ?? "default"
   const defaultChildPlacement = options.defaultChildPlacement ?? DEFAULT_BUN_CHILD_PLACEMENT
   if (!BUN_CHILD_PLACEMENTS.includes(defaultChildPlacement as "colocated")) {
     throw new Error(`Bun host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
@@ -137,6 +155,15 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const directorySql = await directoryRuntime.runPromise(SqlClient.SqlClient)
   try {
     await directoryRuntime.runPromise(initializeDatabase(actorMigrations))
+    await directoryRuntime.runPromise(directorySql`
+      INSERT OR IGNORE INTO actor_identity (singleton, actor, instance) VALUES (1, ${actorName}, ${actorInstance})
+    `.pipe(Effect.orDie))
+    const identities = await directoryRuntime.runPromise(directorySql<{ actor: string; instance: string }>`
+      SELECT actor, instance FROM actor_identity WHERE singleton = 1
+    `.pipe(Effect.orDie))
+    if (identities[0]?.actor !== actorName || identities[0]?.instance !== actorInstance) {
+      throw new Error("actor identity does not match its database")
+    }
   } catch (cause) {
     await directoryRuntime.dispose()
     throw cause
@@ -152,8 +179,10 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   }
 
   const register = (thread: string, lineage?: ThreadLineage): Promise<void> => {
-    if (lineage !== undefined && lineage.parent.actor !== actorName) {
-      return Promise.reject(new Error("a child thread must inherit its actor"))
+    if (lineage !== undefined && (
+      lineage.parent.actor !== actorName || lineage.parent.instance !== actorInstance
+    )) {
+      return Promise.reject(new Error("a child thread must inherit its actor instance"))
     }
     return directoryRuntime.runPromise(lineage === undefined
       ? directorySql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.asVoid, Effect.orDie)
@@ -190,6 +219,18 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     try {
       sql = await runtime.runPromise(SqlClient.SqlClient)
       await runtime.runPromise(initializeDatabase(threadMigrations))
+      await runtime.runPromise(sql`
+        INSERT OR IGNORE INTO thread_identity (singleton, actor, instance, thread)
+        VALUES (1, ${actorName}, ${actorInstance}, ${thread})
+      `.pipe(Effect.orDie))
+      const identities = await runtime.runPromise(sql<{ actor: string; instance: string; thread: string }>`
+        SELECT actor, instance, thread FROM thread_identity WHERE singleton = 1
+      `.pipe(Effect.orDie))
+      if (
+        identities[0]?.actor !== actorName ||
+        identities[0]?.instance !== actorInstance ||
+        identities[0]?.thread !== thread
+      ) throw new Error("thread identity does not match its database")
       workspace = await runtime.runPromise(KeyValueStore.KeyValueStore)
     } catch (cause) {
       await runtime.dispose()
@@ -254,8 +295,10 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     call?: ActorMethodInvocation
   ): Effect.Effect<void, never> => Effect.promise(async () => {
     const address = formatThreadAddress(target)
-    if (lineage !== undefined && lineage.parent.actor !== target.actor) {
-      throw new Error("a child thread must inherit its actor")
+    if (lineage !== undefined && (
+      lineage.parent.actor !== target.actor || lineage.parent.instance !== target.instance
+    )) {
+      throw new Error("a child thread must inherit its actor instance")
     }
     if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
       throw new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
@@ -305,12 +348,14 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }
   }
   const routes = [
-    directoryRoute(colocatedTransport, mappedDirectory((id: ThreadAddress) => id.actor === actorName ? id : undefined), isActorEnvelope, (envelope) => envelope.link.target),
+    directoryRoute(colocatedTransport, mappedDirectory((id: ThreadAddress) =>
+      id.actor === actorName && id.instance === actorInstance ? id : undefined
+    ), isActorEnvelope, (envelope) => envelope.link.target),
     directoryRoute(providerTransport, mappedDirectory<ProviderEndpoint, ProviderEndpoint>((endpoint) => endpoint), isProviderEnvelope, (envelope) => envelope.link.target),
     ...(options.routes ?? [])
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
-  const self = (thread: string): string => `${actorName}:${thread}`
+  const self = (thread: string): string => `${actorName}:${actorInstance}:${thread}`
 
   const layersOf = async (thread: string): Promise<Layer.Layer<R | EventLog>> => {
     const threadRuntime = await runtimeOf(thread)

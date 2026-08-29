@@ -59,7 +59,7 @@ const response = (
   ...(status === "completed" ? { output: value } : {}),
   ...(status === "failed" ? { error: value } : {}),
   ...(options.data === undefined ? {} : { data: options.data }),
-  from: `mem:ag.${turn}`,
+  from: `mem:main:ag.${turn}`,
   at: options.at ?? 1
 })
 
@@ -115,7 +115,7 @@ describe("agentsPackage", () => {
     })
     const sent: Array<Sent> = []
     const providers = await Effect.runPromise(
-      pkg.methods.providers!({ search: "router", limit: 10 }, { callId: "providers" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.providers!({ search: "router", limit: 10 }, { callId: "providers" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     const models = await Effect.runPromise(
       pkg.methods.models!({
@@ -125,7 +125,7 @@ describe("agentsPackage", () => {
         sort: "completionUsdPerToken",
         order: "asc",
         unpriced: "last"
-      }, { callId: "models" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      }, { callId: "models" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(providerQueries).toEqual([{
       search: "router",
@@ -156,7 +156,7 @@ describe("agentsPackage", () => {
     )
     // Parity with the closure the in-process host used to pass: same actorName, `ag.<callId>`
     // for the thread.
-    expect(sent[0]?.link.target).toEqual({ actor: "mem", thread: "ag.c1" })
+    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: "ag.c1" })
     expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
@@ -165,7 +165,7 @@ describe("agentsPackage", () => {
     const pkg = agentsPackage()
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true, placement: "independent" }, { callId: "independent-child" })
-        .pipe(Effect.provide(env("mem:ag.root", sent)))
+        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(sent[0]?.lineage?.placement).toBe("independent")
   })
@@ -173,7 +173,7 @@ describe("agentsPackage", () => {
   test("a run refuses an unknown thread placement", async () => {
     const result = await Effect.runPromise(
       agentsPackage().methods.run!({ text: "scout", background: true, placement: "nearby" }, { callId: "bad-placement" })
-        .pipe(Effect.provide(env("mem:ag.root", [])))
+        .pipe(Effect.provide(env("mem:main:ag.root", [])))
     )
     expect(result).toEqual({ error: "agents.run placement must be colocated or independent" })
   })
@@ -182,14 +182,14 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(answer).toEqual({ dispatched: true, callId: "c3" })
     const brief = sent[0]!.event as { id?: unknown }
     expect(brief.id).toBe("c3")
     expect(sent[0]!.link).toEqual({
-      source: { actor: "mem", thread: "ag.root" },
-      target: { actor: "mem", thread: "ag.c3" }
+      source: { actor: "mem", instance: "main", thread: "ag.root" },
+      target: { actor: "mem", instance: "main", thread: "ag.c3" }
     })
   })
 
@@ -200,15 +200,15 @@ describe("agentsPackage", () => {
     const inherited = agentsPackage()
     const fixed = agentsPackage({ models: { default: selected, allow: "*" } })
     await Effect.runPromise(
-      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     await Effect.runPromise(
-      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(sent[0]!.event).not.toHaveProperty("model")
     expect(sent[1]!.event).toMatchObject({ model: selected })
     await Effect.runPromise(
-      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(sent[2]!.event).toMatchObject({ model: overridden })
     expect(sent).toHaveLength(3)
@@ -238,7 +238,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true }, { callId: "narrow" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -262,7 +262,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       agentsPackage().methods.run!({ text: "scout", background: true }, { callId: "inherit" }).pipe(
-        Effect.provide(env("mem:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -281,7 +281,7 @@ describe("agentsPackage", () => {
       "ag.root": [response("c4", "completed", "4")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:ag.root", sent, threads)))
+      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ output: "4" })
     // The durable response answered, so nothing was re-delivered.
@@ -295,14 +295,14 @@ describe("agentsPackage", () => {
       // flip then orDie: the call must park, and a success is a defect rather than a failure
       // typed as the method's own result.
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c5" }).pipe(
-        Effect.provide(env("mem:ag.root", sent)),
+        Effect.provide(env("mem:main:ag.root", sent)),
         Effect.flip,
         Effect.orDie
       )
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
-    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:ag.c5")
+    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.c5")
   })
 
   test("result reads the response from its own log", async () => {
@@ -314,7 +314,7 @@ describe("agentsPackage", () => {
       ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
-      pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:ag.root", sent, threads)))
+      pkg.methods.result!({ id: "c6" }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
     )
     expect(answer).toEqual({ error: "nope" })
   })
@@ -331,7 +331,7 @@ describe("agentsPackage", () => {
       }
     })
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:ag.root", sent)))
+      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     expect(answer).toEqual({ error: "agents.run takes budget as a whole number of tool calls, at least 1; got 0.7" })
     expect(draws.length).toBe(0)
@@ -361,7 +361,7 @@ describe("the output a spawn asks for", () => {
     const answer = await Effect.runPromise(
       pkg.methods
         .run!({ text: "scout", background: true, output: asked }, { callId: "o1" })
-        .pipe(Effect.provide(env("mem:ag.root", sent)))
+        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
     )
     return { answer, brief: sent[0]?.event as { output?: unknown } | undefined }
   }
@@ -435,7 +435,7 @@ describe("a run stays bound to the schema it was started under", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage({ outputs })
     return Effect.runPromise(
-      pkg.methods.result!({ id: "b1" }, { callId: "later" }).pipe(Effect.provide(env("mem:ag.root", sent, threadsFor)))
+      pkg.methods.result!({ id: "b1" }, { callId: "later" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threadsFor)))
     )
   }
 

@@ -9,8 +9,8 @@ import { actorMethod, actorMethodsOf } from "./definition"
 import { methodResponseReactor } from "./response"
 import { EventLog, withWatermark } from "../../log"
 
-const source = threadAddressOf("parent", "root")
-const target = threadAddressOf("child", "worker")
+const source = threadAddressOf("parent", "main", "root")
+const target = threadAddressOf("child", "main", "worker")
 
 const call = {
   type: "Asked",

@@ -28,6 +28,7 @@ type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
 export type CloudflareThreadHostOptions<R> = {
   readonly storage: DurableObjectStorage
   readonly actorName: string
+  readonly actorInstance: string
   readonly thread: string
   readonly actor: Actor<R>
   readonly providers?: ReadonlyArray<Provider>
@@ -55,7 +56,7 @@ export interface CloudflareThreadHost {
 
 // createCloudflareThreadHost binds one actor thread to Effect SQL over its Durable Object storage.
 export async function createCloudflareThreadHost<R = never>(options: CloudflareThreadHostOptions<R>): Promise<CloudflareThreadHost> {
-  const identity = { actor: options.actorName, thread: options.thread }
+  const identity = { actor: options.actorName, instance: options.actorInstance, thread: options.thread }
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))

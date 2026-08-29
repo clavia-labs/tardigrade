@@ -1,8 +1,9 @@
 import { Schema } from "effect"
 
-// ThreadAddress identifies one durable thread under one actor definition independently of its activation and placement.
+// ThreadAddress identifies one durable thread under one actor instance independently of its activation and placement.
 export const ThreadAddress = Schema.Struct({
   actor: Schema.String,
+  instance: Schema.String,
   thread: Schema.String
 }).annotate({ identifier: "ThreadAddress" })
 
@@ -14,6 +15,8 @@ export const isThreadAddress = (endpoint: unknown): endpoint is ThreadAddress =>
   endpoint !== null &&
   "actor" in endpoint &&
   typeof endpoint.actor === "string" &&
+  "instance" in endpoint &&
+  typeof endpoint.instance === "string" &&
   "thread" in endpoint &&
   typeof endpoint.thread === "string"
 
@@ -34,15 +37,21 @@ export const isProviderEndpoint = (endpoint: unknown): endpoint is ProviderEndpo
 export type Endpoint = ThreadAddress | ProviderEndpoint
 
 // threadAddressOf constructs one thread address without applying placement.
-export const threadAddressOf = (actor: string, thread: string): ThreadAddress => ({ actor, thread })
+export const threadAddressOf = (actor: string, instance: string, thread: string): ThreadAddress => ({ actor, instance, thread })
 
-// formatThreadAddress encodes a thread address in the actor:thread wire form.
-export const formatThreadAddress = (id: ThreadAddress): string => `${id.actor}:${id.thread}`
+// formatThreadAddress encodes a thread address in the actor:instance:thread wire form.
+export const formatThreadAddress = (id: ThreadAddress): string => `${id.actor}:${id.instance}:${id.thread}`
 
-// parseThreadAddress decodes the first segment as actor and defaults an absent thread to main.
+// parseThreadAddress decodes an actor:instance:thread wire address.
 export const parseThreadAddress = (value: string): ThreadAddress => {
-  const separator = value.indexOf(":")
-  return separator === -1
-    ? { actor: value, thread: "main" }
-    : { actor: value.slice(0, separator), thread: value.slice(separator + 1) }
+  const actorEnd = value.indexOf(":")
+  const instanceEnd = value.indexOf(":", actorEnd + 1)
+  if (actorEnd <= 0 || instanceEnd <= actorEnd + 1 || instanceEnd === value.length - 1) {
+    throw new Error(`invalid thread address ${JSON.stringify(value)}`)
+  }
+  return {
+    actor: value.slice(0, actorEnd),
+    instance: value.slice(actorEnd + 1, instanceEnd),
+    thread: value.slice(instanceEnd + 1)
+  }
 }

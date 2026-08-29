@@ -121,7 +121,7 @@ describe("the compaction pass", () => {
           return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
         }
       }),
-      Layer.succeed(Self, { actor: "test", thread: "compaction" })
+      Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
     await Effect.runPromise(
       send(mailbox, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
@@ -223,7 +223,7 @@ describe("a projected repair is invisible to compaction as well as to the render
                 return Effect.succeed({ kind: "complete" as const, output: "summarized" })
               }
             }),
-            Layer.succeed(Self, { actor: "test", thread: "compaction" })
+            Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
           )
         )
       ) as unknown as Effect.Effect<ReadonlyArray<ReadonlyArray<Event>>>

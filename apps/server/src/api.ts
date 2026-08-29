@@ -1,4 +1,4 @@
-import { Clock, Duration, Effect, Schema, Stream } from "effect"
+import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -13,6 +13,7 @@ import {
   unacceptableField,
   UnknownMethod,
   UnknownMethodCall,
+  UnknownActor,
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
@@ -68,6 +69,11 @@ const integerOf = (raw: string | undefined): number | undefined => {
 }
 
 const unknownThreadDetail = (id: string) => `No thread named ${JSON.stringify(id)} has ever existed.`
+const unknownActorDetail = (id: string) => `No actor instance named ${JSON.stringify(id)} has ever existed.`
+
+const actorOf = (threads: Context.Service.Shape<typeof Threads>, id: string) =>
+  Effect.flatMap(threads.instance(id), (actor) =>
+    actor === undefined ? Effect.fail(UnknownActor.of(unknownActorDetail(id))) : Effect.succeed(actor))
 
 const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unknown>>): string => {
   const declared = Object.keys(methods)
@@ -198,10 +204,12 @@ export const layerStream = (options: ApiOptions = {}) => {
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
   return HttpRouter.add(
     "GET",
-    "/v1/threads/:id/events/stream",
+    "/v1/actors/:actor/threads/:id/events/stream",
     Effect.gen(function*() {
       const params = yield* HttpRouter.params
-      return yield* streamResponse(yield* Threads, paramOf(params, "id"), poll, heartbeat)
+      const service = yield* Threads
+      const threads = yield* actorOf(service, paramOf(params, "actor"))
+      return yield* streamResponse(threads, paramOf(params, "id"), poll, heartbeat)
     })
   )
 }
@@ -219,18 +227,19 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       // layerRequestProblems), so the handler only ever sees an event.
       .handle("append", ({ params, payload }) =>
         Effect.gen(function*() {
-          const threads = yield* Threads
+          const service = yield* Threads
+          const threads = yield* service.ensure(params.actor)
           yield* threads.append(params.id, payload)
-          return { thread: params.id }
+          return { actor: params.actor, thread: params.id }
         }))
-      .handle("list", () =>
+      .handle("list", ({ params }) =>
         Effect.gen(function*() {
-          const threads = yield* Threads
+          const threads = yield* actorOf(yield* Threads, params.actor)
           return flatten(treeOf(logsOf(yield* threads.list)))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
-          const threads = yield* Threads
+          const threads = yield* actorOf(yield* Threads, params.actor)
           const log = yield* logOf(threads.events, params.id)
           const { after, limit: page } = query
           // The comma list is the one rule the query Schema does not state: every value it could
@@ -243,7 +252,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {
-          const threads = yield* Threads
+          const threads = yield* actorOf(yield* Threads, params.actor)
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
           const node = findNode(treeOf(logsOf(yield* threads.list)), params.id)
@@ -292,7 +301,8 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         }))))
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
-        const threads = yield* Threads
+        const service = yield* Threads
+        const threads = yield* service.ensure(params.actor)
         const method = yield* methodOf(threads, params.method)
         const at = yield* Clock.currentTimeMillis
         const event = yield* Effect.try({
@@ -302,11 +312,11 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
           )
         })
         yield* threads.append(params.id, event)
-        return { thread: params.id, method: params.method, call: params.call }
+        return { actor: params.actor, thread: params.id, method: params.method, call: params.call }
       }))
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
-        const threads = yield* Threads
+        const threads = yield* actorOf(yield* Threads, params.actor)
         const method = yield* methodOf(threads, params.method)
         const log = yield* logOf(threads.events, params.id)
         const state = method.state(log, params.call)
@@ -328,11 +338,11 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
 // projection means reaches this module; the actor holds all of it (actor.ts, agentProjections).
 const readOf = (declaration: ProjectionDeclaration) =>
 (request: {
-  readonly params: { readonly id: string }
+  readonly params: { readonly actor: string; readonly id: string }
   readonly query: never
 }) =>
   Effect.gen(function*() {
-    const threads = yield* Threads
+    const threads = yield* actorOf(yield* Threads, request.params.actor)
     const log = yield* logOf(threads.events, request.params.id)
     return declaration.run(log, request.query)
   })
@@ -365,7 +375,7 @@ const declaredDetail = declaredProjections.length === 0
 
 export const layerUnknownProjection = HttpRouter.add(
   "GET",
-  "/v1/threads/:id/projections/:name",
+  "/v1/actors/:actor/threads/:id/projections/:name",
   Effect.gen(function*() {
     const params = yield* HttpRouter.params
     const name = paramOf(params, "name")
@@ -375,18 +385,34 @@ export const layerUnknownProjection = HttpRouter.add(
   })
 )
 
-export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handlers) =>
+export const layerDefinitionsGroup = HttpApiBuilder.group(ServerApi, "definitions", (handlers) =>
   handlers
-    .handle("actors", () =>
+    .handle("definitions", () =>
       Effect.flatMap(Threads, (threads): Effect.Effect<ReadonlyArray<ActorSummary>> =>
-        threads.actors ?? Effect.succeed([{ name: RESERVED_ACTOR, builtIn: true }])))
-    .handle("pushActor", ({ payload }) =>
+        threads.definitions ?? Effect.succeed([{ name: RESERVED_ACTOR, builtIn: true }])))
+    .handle("pushDefinition", ({ payload }) =>
       Effect.gen(function*() {
         const threads = yield* Threads
-        if (threads.push === undefined) {
+        if (threads.pushDefinition === undefined) {
           return yield* Effect.fail(InvalidRequest.of("This server does not accept actor pushes."))
         }
-        return yield* Effect.mapError(threads.push(payload), (error) => InvalidRequest.of(error.message))
+        return yield* Effect.mapError(threads.pushDefinition(payload), (error) => InvalidRequest.of(error.message))
+      })))
+
+export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handlers) =>
+  handlers
+    .handle("actors", () => Effect.flatMap(Threads, (threads) => threads.instances))
+    .handle("ensureActor", ({ params }) =>
+      Effect.gen(function*() {
+        const threads = yield* Threads
+        yield* threads.ensure(params.actor)
+        return { id: params.actor, definition: threads.actorName ?? RESERVED_ACTOR }
+      }))
+    .handle("actor", ({ params }) =>
+      Effect.gen(function*() {
+        const threads = yield* Threads
+        yield* actorOf(threads, params.actor)
+        return { id: params.actor, definition: threads.actorName ?? RESERVED_ACTOR }
       })))
 
 const catalogSnapshot = Effect.flatMap(ModelCatalogStore, (catalog) =>

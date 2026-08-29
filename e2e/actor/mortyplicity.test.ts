@@ -233,7 +233,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     const byKey = new Map(missions.map((mission) => [mission.key, mission]))
     const humanThread = "ag.president-morty"
     const human = {
-      address: threadAddressOf("mem", humanThread),
+      address: threadAddressOf("mem", "main", humanThread),
       methods: { requestPermission: requestPermissionMethod }
     }
     const assembled = validateActor(actor({
@@ -290,7 +290,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         return threads[choice % threads.length]!
       }
     })
-    scenario.host.seed(humanThread, [threadCreated(threadAddressOf("mem", humanThread), undefined, 0)])
+    scenario.host.seed(humanThread, [threadCreated(threadAddressOf("mem", "main", humanThread), undefined, 0)])
     const turn = scenario.enqueue("Rick opens every portal")
     await scenario.drive()
     expect(scenario.host.resting()).toBe(true)
@@ -420,7 +420,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       expect(child.filter((event) => event.type === "CallDispatched").length).toBeGreaterThanOrEqual(1)
       const created = child[0] as { readonly type?: unknown; readonly parent?: unknown }
       expect(created.type).toBe("ThreadCreated")
-      expect(created.parent).toEqual(threadAddressOf("mem", ROOT_THREAD))
+      expect(created.parent).toEqual(threadAddressOf("mem", "main", ROOT_THREAD))
     }
     expect(scenario.host.resting()).toBe(true)
   }), { numRuns: 40 })
