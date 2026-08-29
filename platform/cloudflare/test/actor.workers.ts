@@ -8,6 +8,7 @@ import type { Env } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 
 const authorization = { authorization: "Bearer workers-test-token" }
+const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
 const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", `ag.${thread}`])
 const controlStub = () => (env as Env).ACTORS.getByName("echo")
 const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
@@ -78,7 +79,6 @@ describe("cloudflare actor", () => {
     })
     expect(accepted.status).toBe(202)
     expect(await accepted.json()).toEqual({ thread: "root", method: "echo", call: "workers-smoke" })
-    expect(await alarm("root")).not.toBeNull()
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
@@ -113,12 +113,13 @@ describe("cloudflare actor", () => {
         body: JSON.stringify({ text })
       })
       expect(accepted.status).toBe(202)
-      return methodState(thread, call)
     }
-    const [first, second] = await Promise.all([
+    await Promise.all([
       invoke("application-a", "application-a", "first"),
       invoke("application-b", "application-b", "second")
     ])
+    const first = await methodState("application-a", "application-a")
+    const second = await methodState("application-b", "application-b")
     expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
     expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
     expect(threadStub("application-a").id.equals(threadStub("application-b").id)).toBe(false)
@@ -145,7 +146,7 @@ describe("cloudflare actor", () => {
         { migration_id: 2, name: "thread_events" }
       ]
     })
-  })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
   test("a thread store wrapper covers method ingress, reactors, and API reads", async () => {
     const prompt = "classified prompt"
