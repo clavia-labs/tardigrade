@@ -153,7 +153,7 @@ describe("cloudflare actor", () => {
     expect(await threads.json()).toEqual([{ id: "root", depth: 0, children: [] }])
     expect(await client.methods()).toEqual([expect.objectContaining({ name: "echo" })])
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
-  })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
   test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
