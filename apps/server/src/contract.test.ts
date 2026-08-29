@@ -65,17 +65,17 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/definitions"],
   ["put", "/v1/definitions"],
   ["get", "/v1/actors"],
-  ["get", "/v1/actors/{actor}"],
-  ["put", "/v1/actors/{actor}"],
+  ["get", "/v1/actors/{id}"],
+  ["put", "/v1/actors/{id}"],
   ["get", "/v1/metadata"],
   ["get", "/v1/methods"],
-  ["post", "/v1/actors/{actor}/threads/{id}/events"],
-  ["put", "/v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}"],
-  ["get", "/v1/actors/{actor}/threads"],
-  ["get", "/v1/actors/{actor}/threads/{id}/events"],
-  ["get", "/v1/actors/{actor}/threads/{id}/methods/{method}/calls/{call}"],
-  ["get", "/v1/actors/{actor}/threads/{id}/projections/turns"],
-  ["get", "/v1/actors/{actor}/threads/{id}/tree"],
+  ["post", "/v1/actors/{id}/threads/{thread}/events"],
+  ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
+  ["get", "/v1/actors/{id}/threads"],
+  ["get", "/v1/actors/{id}/threads/{thread}/events"],
+  ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
+  ["get", "/v1/actors/{id}/threads/{thread}/projections/turns"],
+  ["get", "/v1/actors/{id}/threads/{thread}/tree"],
   ["get", "/healthz"]
 ]
 
@@ -96,7 +96,7 @@ describe("the OpenAPI document", () => {
         readonly content?: Record<string, unknown>
       }> }>>
     }
-    const responses = spec.paths["/v1/actors/{actor}/threads/{id}/events"]!["get"]!.responses
+    const responses = spec.paths["/v1/actors/{id}/threads/{thread}/events"]!["get"]!.responses
     expect(Object.keys(responses).sort()).toEqual(["200", "400", "404"])
     expect(Object.keys(responses["404"]!.content!)).toEqual([PROBLEM_CONTENT_TYPE])
   })

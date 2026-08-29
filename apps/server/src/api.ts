@@ -204,12 +204,12 @@ export const layerStream = (options: ApiOptions = {}) => {
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
   return HttpRouter.add(
     "GET",
-    "/v1/actors/:actor/threads/:id/events/stream",
+    "/v1/actors/:id/threads/:thread/events/stream",
     Effect.gen(function*() {
       const params = yield* HttpRouter.params
       const service = yield* Threads
-      const threads = yield* actorOf(service, paramOf(params, "actor"))
-      return yield* streamResponse(threads, paramOf(params, "id"), poll, heartbeat)
+      const threads = yield* actorOf(service, paramOf(params, "id"))
+      return yield* streamResponse(threads, paramOf(params, "thread"), poll, heartbeat)
     })
   )
 }
@@ -228,19 +228,19 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("append", ({ params, payload }) =>
         Effect.gen(function*() {
           const service = yield* Threads
-          const threads = yield* service.ensure(params.actor)
-          yield* threads.append(params.id, payload)
-          return { actor: params.actor, thread: params.id }
+          const threads = yield* service.ensure(params.id)
+          yield* threads.append(params.thread, payload)
+          return { actor: params.id, thread: params.thread }
         }))
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(yield* Threads, params.actor)
+          const threads = yield* actorOf(yield* Threads, params.id)
           return flatten(treeOf(logsOf(yield* threads.list)))
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(yield* Threads, params.actor)
-          const log = yield* logOf(threads.events, params.id)
+          const threads = yield* actorOf(yield* Threads, params.id)
+          const log = yield* logOf(threads.events, params.thread)
           const { after, limit: page } = query
           // The comma list is the one rule the query Schema does not state: every value it could
           // hold is a valid event type, including ones this build has never seen.
@@ -252,12 +252,12 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
         }))
       .handle("tree", ({ params }) =>
         Effect.gen(function*() {
-          const threads = yield* actorOf(yield* Threads, params.actor)
+          const threads = yield* actorOf(yield* Threads, params.id)
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
-          const node = findNode(treeOf(logsOf(yield* threads.list)), params.id)
+          const node = findNode(treeOf(logsOf(yield* threads.list)), params.thread)
           if (node === undefined) {
-            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.id)))
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
           }
           return node
         })))
@@ -302,7 +302,7 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
     .handle("invoke", ({ params, payload }) =>
       Effect.gen(function*() {
         const service = yield* Threads
-        const threads = yield* service.ensure(params.actor)
+        const threads = yield* service.ensure(params.id)
         const method = yield* methodOf(threads, params.method)
         const at = yield* Clock.currentTimeMillis
         const event = yield* Effect.try({
@@ -311,14 +311,14 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
             `The input for method ${JSON.stringify(params.method)} is invalid. ${failureMessage(failure)}`
           )
         })
-        yield* threads.append(params.id, event)
-        return { actor: params.actor, thread: params.id, method: params.method, call: params.call }
+        yield* threads.append(params.thread, event)
+        return { actor: params.id, thread: params.thread, method: params.method, call: params.call }
       }))
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
-        const threads = yield* actorOf(yield* Threads, params.actor)
+        const threads = yield* actorOf(yield* Threads, params.id)
         const method = yield* methodOf(threads, params.method)
-        const log = yield* logOf(threads.events, params.id)
+        const log = yield* logOf(threads.events, params.thread)
         const state = method.state(log, params.call)
         if (state === undefined) {
           return yield* Effect.fail(
@@ -338,12 +338,12 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
 // projection means reaches this module; the actor holds all of it (actor.ts, agentProjections).
 const readOf = (declaration: ProjectionDeclaration) =>
 (request: {
-  readonly params: { readonly actor: string; readonly id: string }
+  readonly params: { readonly id: string; readonly thread: string }
   readonly query: never
 }) =>
   Effect.gen(function*() {
-    const threads = yield* actorOf(yield* Threads, request.params.actor)
-    const log = yield* logOf(threads.events, request.params.id)
+    const threads = yield* actorOf(yield* Threads, request.params.id)
+    const log = yield* logOf(threads.events, request.params.thread)
     return declaration.run(log, request.query)
   })
 
@@ -375,7 +375,7 @@ const declaredDetail = declaredProjections.length === 0
 
 export const layerUnknownProjection = HttpRouter.add(
   "GET",
-  "/v1/actors/:actor/threads/:id/projections/:name",
+  "/v1/actors/:id/threads/:thread/projections/:name",
   Effect.gen(function*() {
     const params = yield* HttpRouter.params
     const name = paramOf(params, "name")
@@ -405,14 +405,14 @@ export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handl
     .handle("ensureActor", ({ params }) =>
       Effect.gen(function*() {
         const threads = yield* Threads
-        yield* threads.ensure(params.actor)
-        return { id: params.actor, definition: threads.actorName ?? RESERVED_ACTOR }
+        yield* threads.ensure(params.id)
+        return { id: params.id, definition: threads.actorName ?? RESERVED_ACTOR }
       }))
     .handle("actor", ({ params }) =>
       Effect.gen(function*() {
         const threads = yield* Threads
-        yield* actorOf(threads, params.actor)
-        return { id: params.actor, definition: threads.actorName ?? RESERVED_ACTOR }
+        yield* actorOf(threads, params.id)
+        return { id: params.id, definition: threads.actorName ?? RESERVED_ACTOR }
       })))
 
 const catalogSnapshot = Effect.flatMap(ModelCatalogStore, (catalog) =>

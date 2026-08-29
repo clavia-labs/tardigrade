@@ -922,30 +922,30 @@ const routes = [
       })))
     })
   )),
-  HttpRouter.route("PUT", "/v1/actors/:instance", protectedRoute((_request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:id", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, true))
       if (stub === undefined) return json({ error: "actor is not deployed" }, 503)
       return json({ actor: instance, definition: deployedActor })
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:instance", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       return stub === undefined
         ? json({ error: "unknown actor" }, 404)
         : json({ actor: instance, definition: deployedActor })
     })
   )),
-  HttpRouter.route("PUT", "/v1/actors/:instance/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
@@ -962,11 +962,11 @@ const routes = [
       return json({ actor: instance, thread, method: methodName, call }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:instance/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const methodName = decodeURIComponent(params.method ?? "")
       const call = decodeURIComponent(params.call ?? "")
@@ -981,20 +981,20 @@ const routes = [
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:instance/threads", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       if (stub === undefined) return json({ error: "unknown actor" }, 404)
       return json(yield* Effect.promise(() => stub.threads()))
     })
   )),
-  HttpRouter.route("POST", "/v1/actors/:instance/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       yield* Effect.promise(() => actorStub(env, actor, instance, true))
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, true))
@@ -1007,11 +1007,11 @@ const routes = [
       return json({ actor: instance, thread }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:instance/threads/:thread/events", protectedRoute((request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
-      const instance = decodeURIComponent(params.instance ?? "")
+      const instance = decodeURIComponent(params.id ?? "")
       const thread = decodeURIComponent(params.thread ?? "")
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread, false))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)

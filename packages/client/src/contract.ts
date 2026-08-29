@@ -431,9 +431,9 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
-const RuntimeActorParams = { actor: Schema.String }
+const RuntimeActorParams = { id: Schema.String }
 
-const RuntimeThreadParams = { ...RuntimeActorParams, id: Schema.String }
+const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 
 const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
@@ -446,24 +446,24 @@ export const runtimeGroup = HttpApiGroup.make("runtime").add(
 export const threadsGroup = HttpApiGroup.make("threads").add(
   // Envelope is an append: a message is an event, and the log is where it lands, so the write side
   // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
-  HttpApiEndpoint.post("append", "/v1/actors/:actor/threads/:id/events", {
+  HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     payload: Append,
     success: Accepted
   }),
-  HttpApiEndpoint.get("list", "/v1/actors/:actor/threads", {
+  HttpApiEndpoint.get("list", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
     success: Schema.Array(ThreadSummary),
     error: [UnknownActor.schema]
   }),
-  HttpApiEndpoint.get("events", "/v1/actors/:actor/threads/:id/events", {
+  HttpApiEndpoint.get("events", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     query: { after: SeqQuery, limit: SeqQuery, types: Schema.optionalKey(Schema.String) },
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
   }),
   // The tree reads the whole family because each thread owns its identity while parent addresses resolve against the other ThreadCreated records in the actor's listing.
-  HttpApiEndpoint.get("tree", "/v1/actors/:actor/threads/:id/tree", {
+  HttpApiEndpoint.get("tree", "/v1/actors/:id/threads/:thread/tree", {
     params: RuntimeThreadParams,
     success: ThreadNode,
     error: [UnknownActor.schema, UnknownThread.schema]
@@ -475,13 +475,13 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
   HttpApiEndpoint.get("methods", "/v1/methods", {
     success: Schema.Array(MethodSummary)
   }),
-  HttpApiEndpoint.put("invoke", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
+  HttpApiEndpoint.put("invoke", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
     payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownMethod.schema]
   }),
-  HttpApiEndpoint.get("methodState", "/v1/actors/:actor/threads/:id/methods/:method/calls/:call", {
+  HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
     success: MethodState,
     error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
@@ -503,11 +503,11 @@ export const definitionsGroup = HttpApiGroup.make("definitions").add(
 
 export const actorsGroup = HttpApiGroup.make("actors").add(
   HttpApiEndpoint.get("actors", "/v1/actors", { success: Schema.Array(ActorInstanceSummary) }),
-  HttpApiEndpoint.put("ensureActor", "/v1/actors/:actor", {
+  HttpApiEndpoint.put("ensureActor", "/v1/actors/:id", {
     params: RuntimeActorParams,
     success: ActorInstanceSummary
   }),
-  HttpApiEndpoint.get("actor", "/v1/actors/:actor", {
+  HttpApiEndpoint.get("actor", "/v1/actors/:id", {
     params: RuntimeActorParams,
     success: ActorInstanceSummary,
     error: [UnknownActor.schema]
@@ -578,7 +578,7 @@ const projectionEndpoint = <
   Params extends Schema.Struct.Fields,
   Result extends Schema.Top
 >(name: Name, params: Params, result: Result) =>
-  HttpApiEndpoint.get(name, `/v1/actors/:actor/threads/:id/projections/${name}` as const, {
+  HttpApiEndpoint.get(name, `/v1/actors/:id/threads/:thread/projections/${name}` as const, {
     params: RuntimeThreadParams,
     query: params,
     success: result,

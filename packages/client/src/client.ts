@@ -68,7 +68,7 @@ type DerivedActorApi<P extends Projections> = HttpApiClient.Client<GroupsOf<Retu
 type DerivedControlApi = HttpApiClient.Client<GroupsOf<typeof controlApi>>
 
 type ProjectionCall = (request: {
-  readonly params: { readonly actor: string; readonly id: string }
+  readonly params: { readonly id: string; readonly thread: string }
   readonly query: unknown
 }) => Effect.Effect<unknown, unknown>
 
@@ -286,7 +286,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
   const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
   const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
-    run(api.threads.append({ params: { actor, id: thread }, payload: event }))
+    run(api.threads.append({ params: { id: actor, thread }, payload: event }))
 
   // turnsOf reads the `turns` projection through the derivation, which is where the resume
   // convenience gets the epoch it has to stamp. It is spelled by name rather than through
@@ -303,7 +303,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     }
     // call erases the selected endpoint failure before run converts it to ProblemError.
     // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-    return await run(call({ params: { actor, id: thread }, query: { turn } })) as ReadonlyArray<TurnView>
+    return await run(call({ params: { id: actor, thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
   return {
@@ -312,22 +312,22 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     providers: (options = {}) => run(api.models.providers({ query: catalogQuery(options) })),
     models: (options = {}) => run(api.models.models({ query: catalogQuery(options) })),
     actors: () => run(api.actors.actors({})),
-    ensureActor: (actor) => run(api.actors.ensureActor({ params: { actor } })),
-    actor: (actor) => run(api.actors.actor({ params: { actor } })),
-    list: (actor) => run(api.threads.list({ params: { actor } })),
-    tree: (actor, thread) => run(api.threads.tree({ params: { actor, id: thread } })),
+    ensureActor: (actor) => run(api.actors.ensureActor({ params: { id: actor } })),
+    actor: (actor) => run(api.actors.actor({ params: { id: actor } })),
+    list: (actor) => run(api.threads.list({ params: { id: actor } })),
+    tree: (actor, thread) => run(api.threads.tree({ params: { id: actor, thread } })),
     events: (actor, thread, events = {}) =>
-      run(api.threads.events({ params: { actor, id: thread }, query: eventsQuery(events) })),
+      run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
     methods: () => run(api.methods.methods({})),
     invoke: (actor, thread, name, call) =>
       run(api.methods.invoke({
-        params: { actor, id: thread, method: name, call: call.id },
+        params: { id: actor, thread, method: name, call: call.id },
         payload: call.input
       })),
     methodState: (actor, thread, name, call) =>
       run(api.methods.methodState({
-        params: { actor, id: thread, method: name, call }
+        params: { id: actor, thread, method: name, call }
       })) as never,
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
@@ -368,7 +368,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       // ProjectionCall erases the selected endpoint failure before run converts it to ProblemError.
       // @effect-diagnostics-next-line anyUnknownInErrorContext:off
       run((api.projections as Record<string, ProjectionCall>)[name]!({
-        params: { actor, id: thread },
+        params: { id: actor, thread },
         query: query ?? {}
       })) as never,
     follow: (actor, thread, follow) =>
