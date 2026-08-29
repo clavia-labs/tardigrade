@@ -6,6 +6,7 @@ import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/t
 import {
   ModelCatalogRepository,
   ModelCatalogRepositoryError,
+  modelCatalogScopeOf,
   type ModelCatalogRepositoryService
 } from "./catalog-store"
 
@@ -38,6 +39,18 @@ export const layerFileModelCatalogRepository = (cachePath: string): Layer.Layer<
             : Effect.fail(repositoryError(`could not read model catalog cache ${JSON.stringify(cachePath)}`, error))),
           Effect.flatMap((raw) => Effect.try({
             try: () => raw === undefined ? undefined : decoded(raw, sourceUrl),
+            catch: (cause) => repositoryError(`model catalog cache ${JSON.stringify(cachePath)} is invalid`, cause)
+          }))
+        ),
+        readScope: (sourceUrl, scope) => fs.readFileString(cachePath).pipe(
+          Effect.catch((error) => error.reason._tag === "NotFound"
+            ? Effect.void
+            : Effect.fail(repositoryError(`could not read model catalog cache ${JSON.stringify(cachePath)}`, error))),
+          Effect.flatMap((raw) => Effect.try({
+            try: () => {
+              const snapshot = raw === undefined ? undefined : decoded(raw, sourceUrl)
+              return snapshot === undefined ? undefined : modelCatalogScopeOf(snapshot, scope)
+            },
             catch: (cause) => repositoryError(`model catalog cache ${JSON.stringify(cachePath)} is invalid`, cause)
           }))
         ),

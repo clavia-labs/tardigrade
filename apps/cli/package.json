@@ -23,6 +23,7 @@
   },
   "dependencies": {
     "@clavia/tardigrade-bun": "workspace:*",
+    "@clavia/tardigrade-cloudflare": "workspace:*",
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
     "@clavia/tardigrade-server": "workspace:*",

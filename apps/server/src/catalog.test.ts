@@ -86,6 +86,20 @@ describe("loadModelCatalog", () => {
     expect(cached.refreshError).toBeUndefined()
   })
 
+  test("cache-first reads only the actor model scope", async () => {
+    const snapshot = modelCatalogOf(source, "catalog-scoped", 1)
+    const repository = layerMemoryModelCatalogRepository([["https://models.dev/api.json", snapshot]])
+    const refused = (async () => { throw new Error("source should not be called") }) as unknown as typeof fetch
+    const loaded = await run(loadModelCatalog({
+      ...options(refused, "cache-first"),
+      scope: {
+        providers: ["openai"],
+        policy: { allow: [{ provider: "openai", model_ids: [] }] }
+      }
+    }), repository)
+    expect(loaded.snapshot).toEqual({ ...snapshot, status: "cached", providers: [] })
+  })
+
   test("a failed refresh serves the last valid snapshot", async () => {
     const repository = layerMemoryModelCatalogRepository()
     await run(loadModelCatalog(options(answering(source, { etag: "catalog-7" }))), repository)

@@ -6,7 +6,11 @@ import {
 import { modelsDevCatalogOf, type ModelMetadata } from "@clavia/tardigrade-model/metadata"
 
 import { ServerConfig } from "./config"
-import { ModelCatalogRepository } from "./catalog-store"
+import {
+  ModelCatalogRepository,
+  modelCatalogScopeOf,
+  type ModelCatalogScope
+} from "./catalog-store"
 
 export interface ModelCatalogState {
   readonly snapshot?: ModelCatalog
@@ -30,6 +34,7 @@ export interface ModelCatalogLoadOptions {
   readonly sourceUrl: string
   readonly timeoutMillis: number
   readonly policy: ModelCatalogLoadPolicy
+  readonly scope?: ModelCatalogScope
   readonly fetch?: typeof globalThis.fetch
   readonly now?: () => number
 }
@@ -123,8 +128,8 @@ const refreshed = async (options: ModelCatalogLoadOptions): Promise<ModelCatalog
   return modelCatalogOf(JSON.parse(text) as unknown, revision, (options.now ?? Date.now)())
 }
 
-const cacheRead = (sourceUrl: string) => Effect.flatMap(ModelCatalogRepository, (repository) =>
-  repository.read(sourceUrl).pipe(Effect.match({
+const cacheRead = (sourceUrl: string, scope: ModelCatalogScope | undefined) => Effect.flatMap(ModelCatalogRepository, (repository) =>
+  (scope === undefined ? repository.read(sourceUrl) : repository.readScope(sourceUrl, scope)).pipe(Effect.match({
     onFailure: (error) => ({ cacheError: error.message }),
     onSuccess: (snapshot) => snapshot === undefined ? {} : { snapshot }
   })))
@@ -134,7 +139,7 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
   Effect.gen(function*() {
     let cached: ModelCatalogState | undefined
     if (options.policy === "cache-first") {
-      cached = yield* cacheRead(options.sourceUrl)
+      cached = yield* cacheRead(options.sourceUrl, options.scope)
       if (cached.snapshot !== undefined) return cached
     }
 
@@ -153,14 +158,16 @@ export const loadModelCatalog = (options: ModelCatalogLoadOptions): Effect.Effec
         onSuccess: () => undefined
       }))
       return {
-        snapshot: refreshedState.snapshot,
+        snapshot: options.scope === undefined
+          ? refreshedState.snapshot
+          : modelCatalogScopeOf(refreshedState.snapshot, options.scope),
         ...(cached?.cacheError === undefined && cacheError === undefined
           ? {}
           : { cacheError: [cached?.cacheError, cacheError].filter((message) => message !== undefined).join("; ") })
       }
     }
 
-    cached ??= yield* cacheRead(options.sourceUrl)
+    cached ??= yield* cacheRead(options.sourceUrl, options.scope)
     return {
       ...(cached.snapshot === undefined ? {} : { snapshot: cached.snapshot }),
       refreshError: refreshedState.refreshError,

@@ -1,5 +1,7 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
 import { actor, actorMethod } from "tardie"
+import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { effect } from "@clavia/tardigrade-core/reconciliation"
 import {
@@ -18,6 +20,7 @@ import {
 
 interface FixtureEnv extends Env {
   readonly APPLICATION_PREFIX: string
+  readonly CATALOG_MIGRATION: string
 }
 
 class ThreadApplication extends Context.Service<
@@ -156,6 +159,19 @@ const worker = cloudflareWorker(actor({
     }) })
   }]
 }), {
+  modelAdapters: modelAdapters(openAICompatibleAdapter),
+  modelScope: {
+    source: "models.dev",
+    revision: "workers-bundled-test",
+    refreshedAt: 1,
+    status: "cached",
+    providers: [{
+      id: "openai",
+      name: "OpenAI",
+      env: ["OPENAI_API_KEY"],
+      models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
+    }]
+  },
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
   storeFor: ({ thread }) => thread === "ag.sealed"

@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, model catalog, lifecycle log, and thread tree. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, lifecycle log, and thread tree. D1 stores the public model catalog. The Worker bundle carries the model scope resolved for its deployment. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
@@ -18,6 +18,19 @@ export default cloudflareWorker(definition)
 The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
 
 The Actor DO projects each thread's parent, depth, and placement from its lifecycle log. `GET /v1/threads` reads this projection without fetching Thread DO logs. Thread-specific method and event routes select the matching Thread DO.
+
+## Model catalog storage
+
+The `CATALOG_DB` D1 binding stores one normalized catalog for the deployment. Provider and model rows belong to an unpublished generation until one source-row update makes that generation active. A failed refresh leaves the prior generation readable. Actor and Thread DO databases contain no catalog tables or catalog events.
+
+Create the database, copy its identifier into the `CATALOG_DB` entry in `wrangler.jsonc`, and apply the included migrations before deployment:
+
+```sh
+bunx wrangler d1 create tardigrade-catalog
+bunx wrangler d1 migrations apply CATALOG_DB --remote
+```
+
+Every successful `tdg setup` command refreshes the public catalog, applies the configured providers and model policy, and writes `models.lock.json`. Run `tdg models lock` directly to refresh the lock without changing configuration. The generated Worker imports that file, validates its schema, and gives the resolved snapshot to every Thread DO runtime. Thread activation and turns resolve models from bundle memory without a D1 request. A selected model records the lock's catalog revision in the thread log.
 
 
 ## Application services
@@ -165,11 +178,11 @@ Set `TARDIGRADE_CONFIG.models` under `vars` in `wrangler.jsonc`. The visible con
 }
 ```
 
-A host without model configuration records a failed turn that names the missing configuration. The Worker validates the public catalog from models.dev, stores the last valid snapshot in the actor object, and loads it into isolate memory. Provider connections and secrets stay outside the catalog.
+A host without model configuration records a failed turn that names the missing configuration. `tdg models lock` validates the public catalog from models.dev and writes the deployment model scope to `models.lock.json`. Provider connections and secrets stay outside the lock.
 
 ## HTTP shapes
 
-`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public. The catalog routes return paginated views of the validated snapshot from isolate memory.
+`GET /healthz`, `GET /v1/providers`, and `GET /v1/models` are public. The catalog routes return paginated views of the validated snapshot loaded from D1 into isolate memory. These routes expose the public catalog. Thread inference uses the model scope embedded in the Worker bundle.
 
 ```json
 { "status": "resting", "dirty": 0 }
@@ -215,7 +228,7 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
 | `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |
-| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the actor snapshot |
+| `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the D1 catalog |
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds a catalog refresh request |
 | `TARDIGRADE_SANDBOX_LOG_CAP_BYTES` | `8192` | Limits the captured console output returned to code mode |
 | `TARDIGRADE_SANDBOX_CPU_MILLIS` | Cloudflare default | Sets the Dynamic Worker CPU limit |
@@ -223,4 +236,4 @@ The response has status `202` and identifies the accepted destination.
 | `TARDIGRADE_CONFIG` | `{}` | Supplies provider connections and the default model reference as visible JSON configuration in `wrangler.jsonc` |
 | `TARDIGRADE_SANDBOX_TRANSPORT` | `capability` | Selects direct capability calls or deterministic JSON `replay` for loaded Workers |
 
-`wrangler.jsonc` also makes the Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_WORKER_LOADER_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerWorkerLoaderSandbox` accepts overrides for each value.
+`wrangler.jsonc` also makes the catalog D1 binding, Dynamic Worker Loader binding, Worker CPU limit, and Durable Object migration visible. Change those values in the deployment configuration when the account or workload requires a different policy. `DEFAULT_WORKER_LOADER_SANDBOX_POLICY` exposes the Dynamic Worker compatibility date, compatibility flags, console cap, outbound policy, and transport. `layerWorkerLoaderSandbox` accepts overrides for each value.
