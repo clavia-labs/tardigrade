@@ -90,7 +90,9 @@ const threadOf = (address: string): string => {
 const threadFromDatabase = (file: string): string | undefined => {
   if (!file.endsWith(".sqlite")) return undefined
   try {
-    return Buffer.from(file.slice(0, -7), "base64url").toString("utf8")
+    const encoded = file.slice(0, -7)
+    const thread = Buffer.from(encoded, "base64url").toString("utf8")
+    return Buffer.from(thread, "utf8").toString("base64url") === encoded ? thread : undefined
   } catch {
     return undefined
   }

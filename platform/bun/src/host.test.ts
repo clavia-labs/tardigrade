@@ -232,6 +232,7 @@ describe("the bun host", () => {
 
     const second = await createBunHost(options(path))
     expect(await second.read("echo")).toEqual(before)
+    expect(await second.threads()).toEqual(["echo"])
     expect(await second.resting()).toBe(true)
     await second.close()
   })
