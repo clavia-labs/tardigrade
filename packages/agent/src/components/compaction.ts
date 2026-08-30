@@ -62,6 +62,7 @@ export interface CompactionPolicy {
   readonly fireRatio: number
   readonly keepRatio: number
   readonly summaryLineCap: number
+  readonly model?: ModelRef
 }
 
 export const DEFAULT_COMPACTION_POLICY: CompactionPolicy = {
@@ -334,7 +335,7 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
 export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer | Self> => (log) => {
-  const model = selectedModelOf(log)
+  const model = policy.model ?? selectedModelOf(log)
   const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
@@ -352,6 +353,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
         keepFrom: cut.keepFrom,
         summary: prior.summary,
         span,
+        ...(model === undefined ? {} : { model }),
         contextWindowTokens: resolved.contextWindowTokens,
         fireTokens: resolved.fireTokens,
         keepTokens: resolved.keepTokens
@@ -377,11 +379,15 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
             lines.join("\n")
           ].join("\n\n")
           // A summarize attempt offers no tools: the only sane action is a completion.
-          const action = yield* (yield* Infer).react(
+          const infer = yield* Infer
+          const summaryModel = input.model === undefined
+            ? undefined
+            : infer.resolve?.(input.model).model ?? input.model
+          const action = yield* infer.react(
             {
               trajectory: [{ type: "MessageReceived", id: `compact-${input.keepFrom}`, text: brief, at }],
               identity: { ...self, turn: `compact-${input.keepFrom}` },
-              ...(model === undefined ? {} : { model }),
+              ...(summaryModel === undefined ? {} : { model: summaryModel }),
               system: "",
               tools: []
             },
@@ -394,6 +400,7 @@ export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): React
             contextWindowTokens: input.contextWindowTokens,
             fireTokens: input.fireTokens,
             keepTokens: input.keepTokens,
+            ...(summaryModel === undefined ? {} : { model: summaryModel }),
             at
           })]
         })
