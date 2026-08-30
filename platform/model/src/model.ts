@@ -52,7 +52,7 @@ const randomPhysicalAttemptId = (logicalAttempt: string): string =>
 // attempt count, so the turn records one resumable `TurnFailed` terminal.
 
 // StreamBounds is time to first chunk, idle between chunks, and the whole stream. Each timeout
-// enters the bounded provider retry policy (model.test.ts, "throttle-shaped retry").
+// enters the bounded provider retry policy (model.test.ts, "transient retry").
 export const DEFAULT_STREAM_BOUNDS: StreamBounds = {
   firstChunkMs: 90_000,
   idleMs: 90_000,
@@ -178,24 +178,21 @@ type NativeOutputProvided<C extends ModelConfig> = [C] extends [
   ? NativeOutputSupport
   : never
 
-// Throttle-shaped failures need delayed retries because fan-out can trip a gateway's rate limit.
-// The reactor has no timer vocabulary, so the model binding owns these waits inside one act.
-// The configured delay list bounds the retries. Exhaustion returns a failed action with the
-// effective policy, which lets the turn record a resumable terminal.
-//
-// The openai SDK client `chatStream` runs on (`@tanstack/openai-base`) throws its `APIError`
-// subclasses with a numeric `.status`: 429 is the gateway's rate limit, 5xx is its own upstream
-// trouble. `bounded()` below throws plain `Error`s for the same shape of failure (a stream that
-// never starts or stalls), so the message is checked too.
+// DEFAULT_THROTTLE_RETRY_DELAYS_MS supplies the backoff bases for transient provider failures.
+// Its length bounds the retry count, and callers can replace it through ModelConfig.
 export const DEFAULT_THROTTLE_RETRY_DELAYS_MS: ReadonlyArray<number> = [2_000, 8_000, 30_000]
+
+// DEFAULT_RETRY_AFTER_JITTER_MS supplies the jitter base added to a provider's stated wait.
 export const DEFAULT_RETRY_AFTER_JITTER_MS = 1_000
 
-const isThrottleShaped = (e: unknown): boolean => {
+// isRetryableFailure recognizes status-bearing provider failures and flattened transport errors.
+// The latter have no HTTP response metadata (model.test.ts, "infer: transient retry").
+const isRetryableFailure = (e: unknown): boolean => {
   const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
   const status = typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined
   if (status === 429 || (status !== undefined && status >= 500)) return true
   const message = String(err.message ?? e)
-  return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|timed?\s*out|idle beyond bound|exceeded its total bound|no first chunk within bound|ECONNRESET|ETIMEDOUT|EAI_AGAIN/i.test(
+  return /\b429\b|rate.?limit|too many requests|\b5\d\d\b|timeout|timed?\s*out|idle beyond bound|exceeded its total bound|no first chunk within bound|connection (?:error|failed|failure|reset|refused|closed|lost)|network.?error|network request failed|network connection (?:was )?lost|fetch failed|failed to fetch|load failed|socket (?:hang up|closed|disconnected)|dns(?: lookup)? (?:error|failed|failure)|getaddrinfo|ECONN(?:RESET|REFUSED|ABORTED)|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EHOSTUNREACH|ENETUNREACH|UND_ERR_(?:CONNECT_TIMEOUT|HEADERS_TIMEOUT|BODY_TIMEOUT|SOCKET)/i.test(
     message
   )
 }
@@ -712,7 +709,7 @@ export const infer = <const C extends ModelConfig>(
     })(function* (request: InferRequest, key?: string, signal?: AbortSignal) {
       // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it
       // reads it from the Clock the caller supplied rather than the global one, so a test drives
-      // the ladder without waiting on real time (model.test.ts, "infer: throttle-shaped retry").
+      // the ladder without waiting on real time (model.test.ts, "infer: transient retry").
       const clock = yield* Clock.Clock
       const random = yield* Random.Random
       const ladder = ladderOf(config.maxOutputTokens, config.maxTokensLadder)
@@ -809,7 +806,7 @@ export const infer = <const C extends ModelConfig>(
                 failure: { cause: "output_contract_violation", attempts: stats.attempts }
               })
             }
-            if (!isThrottleShaped(e)) {
+            if (!isRetryableFailure(e)) {
               const message = e instanceof Error ? e.message : String(e)
               return ends({
                 kind: "fail",

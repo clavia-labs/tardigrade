@@ -816,10 +816,10 @@ describe("infer: cost provenance", () => {
   })
 })
 
-// A throttle-shaped failure (429, 5xx, a stream timeout) retries inside the one act. Exhaustion
+// A transient failure (429, 5xx, a connection error, or a stream timeout) retries inside the one act. Exhaustion
 // returns a failed action that the agent records as a resumable terminal. `sleep` is the test seam
 // that swaps the real backoff wait for an instant one, so these run in milliseconds.
-describe("infer: throttle-shaped retry", () => {
+describe("infer: transient retry", () => {
   const okStream = () =>
     sse([
       { id: "r1", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
@@ -1000,6 +1000,29 @@ describe("infer: throttle-shaped retry", () => {
       kind: "fail",
       failure: { cause: "inference_attempts_exhausted", attempts: 2 }
     })
+    expect(calls).toBe(2)
+  })
+
+  test("a flattened connection error enters the bounded retry policy", async () => {
+    let calls = 0
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "test-model",
+      fetch: (() => {
+        calls += 1
+        return calls === 1 ? Promise.reject(new Error("socket closed")) : Promise.resolve(okStream())
+      }) as unknown as typeof globalThis.fetch,
+      throttleRetryDelaysMs: [0],
+      sleep: () => Promise.resolve()
+    })
+
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+        Effect.provide(layer)
+      ) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
     expect(calls).toBe(2)
   })
 })
