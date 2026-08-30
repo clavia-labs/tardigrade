@@ -570,6 +570,7 @@ export const compactionCompleted = (
     readonly contextWindowTokens: number
     readonly fireTokens: number
     readonly keepTokens: number
+    readonly model?: ModelRefType
     readonly at: number
   }
 ): Event => ({ type: "CompactionCompleted", ...fields }) as Event

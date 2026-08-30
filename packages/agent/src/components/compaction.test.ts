@@ -15,7 +15,8 @@ import {
   contextPolicyOf,
   estimateTokens,
   keepFromIndex,
-  suffixOf
+  suffixOf,
+  type CompactionPolicy
 } from "./compaction"
 
 // Compaction is a pure machine: a guard fires at a resolved tool round when the rendered suffix
@@ -101,12 +102,12 @@ describe("the compaction measure and guard", () => {
   })
 })
 
-const mailbox = actorFromReactors<Infer | EventLog | Self>([reactor], agentActorKeys)
-
 describe("the compaction pass", () => {
-  const run = async (initial: ReadonlyArray<Event>) => {
+  const run = async (initial: ReadonlyArray<Event>, policy: Partial<CompactionPolicy> = TEST_POLICY) => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
+    let model: unknown
+    const actor = actorFromReactors<Infer | EventLog | Self>([compactionReactor(policy)], agentActorKeys)
     const layers = Layer.mergeAll(
       Layer.succeed(
         EventLog,
@@ -116,17 +117,18 @@ describe("the compaction pass", () => {
         })
       ),
       Layer.succeed(Infer, {
-        react: ({ trajectory }: { trajectory: ReadonlyArray<Event> }) => {
+        react: ({ trajectory, model: selected }: { trajectory: ReadonlyArray<Event>; model?: unknown }) => {
           briefed = String((trajectory[0] as { text?: unknown }).text ?? "")
+          model = selected
           return Effect.succeed({ kind: "complete" as const, output: "covenants 1 through 13 extracted" })
         }
       }),
       Layer.succeed(Self, { actor: "test", instance: "main", thread: "compaction" })
     )
     await Effect.runPromise(
-      send(mailbox, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
+      send(actor, { type: "CompactionFired", at: 999 }).pipe(Effect.provide(layers)) as Effect.Effect<void>
     )
-    return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed }
+    return { log: await Effect.runPromise(Ref.get(ref)), briefed: () => briefed, model: () => model }
   }
 
   test("a fire summarizes and checkpoints down to a KEEP-token tail, mid-turn", async () => {
@@ -144,6 +146,13 @@ describe("the compaction pass", () => {
     expect(estimateTokens(suffixOf(log))).toBeLessThanOrEqual(TEST_CONTEXT.keepTokens + 2 * roundTokens)
     expect(briefed()).toContain("extract the covenants")
     expect(briefed()).toContain("run 1")
+  })
+
+  test("a pass can select its model", async () => {
+    const selected = { provider: "test", model_id: "compact" } as const
+    const { log, model } = await run(openTurn(16), { ...TEST_POLICY, model: selected })
+    expect(model()).toEqual(selected)
+    expect(log.find((event) => event.type === "CompactionCompleted")).toMatchObject({ model: selected })
   })
 
   test("the cut lands on a boundary: a kept tail opens with a call, its return beside it", async () => {
