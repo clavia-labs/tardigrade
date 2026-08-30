@@ -1,7 +1,7 @@
 import { Cause, Clock, Context, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { intent, effect, Self, type Reactor } from "@clavia/tardigrade-core/reconciliation"
-import { modelCalled, modelResolved, outputRejected, textReturned, turnFailed } from "../log/events"
+import { modelCalled, outputRejected, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Action } from "../log/events"
 import { trajectoryOf, turnEpochOf, turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -66,10 +66,8 @@ export interface InferRequest {
 
 export interface ModelResolution {
   readonly model: ModelRef
+  // models is the interpreter's current authority for validating this call. It is not recorded.
   readonly models?: ModelPolicy
-  readonly contextWindowTokens?: number
-  readonly maxOutputTokens?: number
-  readonly catalogRevision?: string
 }
 
 // selectedModelOf applies the visible model-selection order for one turn. Message and policy references carry both provider and model identity (runtime/composition.test.ts, "the actor owns model selection").
@@ -81,17 +79,31 @@ export const selectedModelOf = (
   return selected === undefined ? policy : modelRefOf(selected)
 }
 
-const resolvedModelOf = (events: ReadonlyArray<Event>): ModelRef | undefined => {
-  const resolved = events.find((event) => event.type === "ModelResolved") as { readonly model?: unknown } | undefined
-  return modelRefOf(resolved?.model)
-}
-
-const resolvedPolicyOf = (events: ReadonlyArray<Event>): ModelPolicy | undefined => {
-  const resolved = events.find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
-  return resolved?.models === undefined ? undefined : modelPolicyOf(resolved.models)
-}
-
 class ModelSelectionError extends Error {}
+
+const resolvedModelFor = (
+  resolve: ((reference?: ModelRef) => ModelResolution) | undefined,
+  reference: ModelRef | undefined,
+  models: ModelPolicy,
+  policyError: string | undefined
+): ModelRef => {
+  if (policyError !== undefined) throw new ModelSelectionError(policyError)
+  if (reference !== undefined && !modelAllowedBy(models, reference)) {
+    throw new ModelSelectionError(`model ${reference.provider}/${reference.model_id} is excluded by the effective model policy`)
+  }
+  const resolved = resolve?.(reference)
+  if (resolved === undefined) {
+    if (reference === undefined) {
+      throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
+    }
+    return reference
+  }
+  const allowed = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, models)
+  if (!modelAllowedBy(allowed, resolved.model)) {
+    throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
+  }
+  return resolved.model
+}
 
 const epochStamp = (epoch: number): { readonly epoch?: number } =>
   epoch === 0 ? {} : { epoch }
@@ -274,7 +286,6 @@ const diedAttempts = (turn: ReadonlyArray<Event>, epoch: number): number => {
   for (let i = turn.length - 1; i >= 0; i--) {
     const event = turn[i]!
     if (event.type === "ModelCalled" && Number((event as { epoch?: unknown }).epoch ?? 0) === epoch) n += 1
-    else if (event.type === "ModelResolved") continue
     else break
   }
   return n
@@ -328,72 +339,20 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
   const epoch = turnEpochOf(log, turn)
-  const resolvedModel = resolvedModelOf(slice)
   const inheritedModels = modelPolicyOf((head as { readonly models?: unknown }).models)
-  const resolvedPolicy = resolvedPolicyOf(slice)
   let policyError: string | undefined
-  let models = resolvedPolicy ?? inheritedModels
-  if (resolvedPolicy === undefined) {
-    try {
-      models = applyModelPolicy(inheritedModels, policy.models ?? DEFAULT_INFER_POLICY.models)
-    } catch (error) {
-      policyError = error instanceof Error ? error.message : String(error)
-    }
-  }
-  const trajectory = trajectoryOf(log)
-  const model = resolvedModel ?? selectedModelOf(head, models.default)
-  if (resolvedModel === undefined) {
-    return [
-      effect({
-        key: `mr:${turn}`,
-        invocation: { method: "message", id: turn, epoch },
-        input: { turn, model, models, policyError },
-        act: (input) =>
-          Effect.gen(function* () {
-            const at = yield* Clock.currentTimeMillis
-            const binding = yield* Infer
-            return yield* Effect.try({
-              try: () => {
-                if (input.policyError !== undefined) throw new ModelSelectionError(input.policyError)
-                if (input.model !== undefined && !modelAllowedBy(input.models, input.model)) {
-                  throw new ModelSelectionError(`model ${input.model.provider}/${input.model.model_id} is excluded by the effective model policy`)
-                }
-                const resolved = binding.resolve?.(input.model)
-                if (resolved === undefined) {
-                  if (input.model === undefined) {
-                    throw new ModelSelectionError("no model was selected; supply { provider, model_id } or configure a default")
-                  }
-                  return { model: input.model, models: input.models }
-                }
-                const models = applyModelPolicy(resolved.models ?? DEFAULT_MODEL_POLICY, input.models)
-                if (!modelAllowedBy(models, resolved.model)) {
-                  throw new ModelSelectionError(`model ${resolved.model.provider}/${resolved.model.model_id} is excluded by the effective model policy`)
-                }
-                return { ...resolved, models }
-              },
-              catch: (error) => ({
-                message: error instanceof Error ? error.message : String(error),
-                cause: error instanceof ModelSelectionError ? "model_selection" as const : "inference_error" as const
-              })
-            }).pipe(Effect.match({
-              onSuccess: (resolved) => [modelResolved({ turn: input.turn, ...resolved, models: resolved.models, at })],
-              onFailure: (failure) => [
-                turnFailed({
-                  error: failure.message,
-                  cause: failure.cause,
-                  attempts: 0,
-                  attemptKey: `${input.turn}/model`,
-                  policy: { ...(input.model === undefined ? {} : { model: input.model }), models: input.models },
-                  turn: input.turn,
-                  at
-                })
-              ]
-            }))
-          })
-      })
-    ]
+  let models = inheritedModels
+  try {
+    models = applyModelPolicy(inheritedModels, policy.models ?? DEFAULT_INFER_POLICY.models)
+  } catch (error) {
+    policyError = error instanceof Error ? error.message : String(error)
   }
   const died = diedAttempts(slice, epoch)
+  const prior = died === 0
+    ? undefined
+    : [...slice].reverse().find((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
+  const trajectory = trajectoryOf(log)
+  const model = modelRefOf(prior?.model) ?? selectedModelOf(head, models.default)
   const marks = slice.filter((e) => e.type === "ModelCalled").length
   const modelFailures = log.filter(
     (event) =>
@@ -503,7 +462,9 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
         ordinal: marks,
         trajectory,
         model,
-        render: rendered,
+        models,
+        policyError,
+        log,
         // The declared policy, stamped on the ask: the contract's identity and the fallback the
         // assembly mounted. The mode the attempt actually ran in is the binding's to report, and
         // it lands on the consequence (events.ts, OutputPolicy; completionOf above).
@@ -522,27 +483,53 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
           const events = yield* EventLog
           const self = yield* Self
           const at = yield* Clock.currentTimeMillis
+          const binding = yield* Infer
+          const selection = yield* Effect.try({
+            try: () => resolvedModelFor(binding.resolve, input.model, input.models, input.policyError),
+            catch: (error) => ({
+              message: error instanceof Error ? error.message : String(error),
+              cause: error instanceof ModelSelectionError ? "model_selection" as const : "inference_error" as const
+            })
+          }).pipe(Effect.match({
+            onFailure: (failure) => ({ failure }),
+            onSuccess: (selected) => ({ selected })
+          }))
+          if ("failure" in selection) {
+            return [
+              turnFailed({
+                error: selection.failure.message,
+                cause: selection.failure.cause,
+                attempts: 0,
+                attemptKey: `${input.turn}/model`,
+                policy: input.model === undefined ? null : { model: input.model },
+                turn: input.turn,
+                ...epochStamp(input.epoch),
+                at
+              })
+            ]
+          }
+          const selected = selection.selected
           // The mark records the attempt BEFORE the inference, appended by the act itself: a
           // died attempt leaves its mark, the next derivation counts it, the bound holds.
           // callId is the provider idempotency key (shared across retries of one logical
           // attempt); ordinal is the occurrence the dedup key reads.
-          yield* events.append([
-            modelCalled({
-              callId: input.attempt,
-              ...(input.model === undefined ? {} : { model: input.model }),
-              ordinal: input.ordinal,
-              ...(input.stamp === undefined ? {} : { output: input.stamp }),
-              turn: input.turn,
-              ...epochStamp(input.epoch),
-              at
-            })
-          ])
-          const action = yield* (yield* Infer)
+          const mark = modelCalled({
+            callId: input.attempt,
+            model: selected,
+            ordinal: input.ordinal,
+            ...(input.stamp === undefined ? {} : { output: input.stamp }),
+            turn: input.turn,
+            ...epochStamp(input.epoch),
+            at
+          })
+          yield* events.append([mark])
+          const actualRender = render([...input.log, mark])
+          const action = yield* binding
             .react({
               trajectory: input.trajectory,
               identity: { ...self, turn: input.turn },
-              ...(input.model === undefined ? {} : { model: input.model }),
-              ...input.render
+              model: selected,
+              ...actualRender
             }, input.attempt, signal)
             .pipe(
               Effect.catchCause((cause) =>

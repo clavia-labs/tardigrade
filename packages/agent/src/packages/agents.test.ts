@@ -253,9 +253,9 @@ describe("agentsPackage", () => {
   test("a child receives the parent and package model intersection", async () => {
     const selected = { provider: "openai", model_id: "small" } as const
     const parent: Event = {
-      type: "ModelResolved",
-      turn: "parent",
-      model: selected,
+      type: "MessageReceived",
+      id: "parent",
+      text: "delegate",
       models: {
         allow: [{ provider: "openai", model_ids: ["large", "small"] }]
       },
@@ -285,9 +285,9 @@ describe("agentsPackage", () => {
   test("a package with no model override inherits the parent default", async () => {
     const selected = { provider: "openai", model_id: "small" } as const
     const parent: Event = {
-      type: "ModelResolved",
-      turn: "parent",
-      model: selected,
+      type: "MessageReceived",
+      id: "parent",
+      text: "delegate",
       models: {
         default: selected,
         allow: [{ provider: "openai", model_ids: ["large", "small"] }]

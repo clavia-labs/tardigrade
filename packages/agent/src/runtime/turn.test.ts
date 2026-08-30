@@ -151,7 +151,6 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "CodeDispatched",
@@ -164,8 +163,8 @@ describe("the agent with execute as the only tool", () => {
       "ModelCalled",
       "TurnCompleted"
     ])
-    expect(events[5]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
-    expect(events[9]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
+    expect(events[4]).toMatchObject({ callId: "t1.0", name: "zohorecruit.insert_record" })
+    expect(events[8]).toMatchObject({ result: { jd_record_id: "jd-91", hits: 3 } })
     expect(spies).toEqual({ insert: 1, search: 1 })
     expect(count.calls).toBe(2)
     expect(rootReactor(events)).toHaveLength(0)
@@ -372,7 +371,6 @@ describe("the agent with execute as the only tool", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelResolved",
       "ModelCalled",
       "TurnCompleted"
     ])
@@ -934,7 +932,6 @@ describe("the mind on a native surface", () => {
     )
     expect(events.map((e) => e.type)).toEqual([
       "MessageReceived",
-      "ModelResolved",
       "ModelCalled",
       "ToolCalled",
       "ToolReturned",

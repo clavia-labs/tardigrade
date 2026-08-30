@@ -83,21 +83,12 @@ const ratio = (value: number, name: string): number => {
   return value
 }
 
-// modelResolutionOf returns the latest model facts recorded by infer for the open thread.
-const modelResolutionOf = (log: ReadonlyArray<Event>): {
-  readonly model: ModelRef | undefined
-  readonly contextWindowTokens: number | undefined
-} => {
-  let model: ModelRef | undefined
-  let contextWindowTokens: number | undefined
-  for (const event of log) {
-    if (event.type !== "ModelResolved") continue
-    const selected = modelRefOf((event as { readonly model?: unknown }).model)
-    if (selected !== undefined) model = selected
-    const window = (event as { readonly contextWindowTokens?: unknown }).contextWindowTokens
-    if (typeof window === "number") contextWindowTokens = window
-  }
-  return { model, contextWindowTokens }
+// selectedModelOf returns the open turn's explicit selection or the latest model actually called.
+const selectedModelOf = (log: ReadonlyArray<Event>): ModelRef | undefined => {
+  const open = turnView(log)
+  if (open.length > 0) return modelRefOf((open[0] as { readonly model?: unknown }).model)
+  const called = [...log].reverse().find((event) => event.type === "ModelCalled") as { readonly model?: unknown } | undefined
+  return modelRefOf(called?.model)
 }
 
 // contextPolicyOf resolves the model-relative policy into the absolute thresholds used by the
@@ -139,15 +130,7 @@ export const contextPolicyOf = (
 const contextPolicyFrom = (
   log: ReadonlyArray<Event>,
   policy: Partial<CompactionPolicy>
-): ContextPolicy => {
-  const selection = modelResolutionOf(log)
-  return contextPolicyOf(
-    selection.contextWindowTokens === undefined
-      ? policy
-      : { ...policy, contextWindowTokens: selection.contextWindowTokens },
-    selection.model
-  )
-}
+): ContextPolicy => contextPolicyOf(policy, selectedModelOf(log))
 
 // resolvedContextPolicyOf fills a partial absolute policy at the render boundary. Components
 // normally contribute every field after resolving their model-relative policy.
@@ -351,7 +334,7 @@ const firedUncovered = (log: ReadonlyArray<Event>): boolean => {
 // The policy this takes must be the one the render takes, or the guard measures a request the
 // model never sees (ContextPolicy above).
 export const compactionReactor = (policy: Partial<CompactionPolicy> = {}): Reactor<Infer | Self> => (log) => {
-  const model = modelResolutionOf(log).model
+  const model = selectedModelOf(log)
   const resolved = contextPolicyFrom(log, policy)
   // The projection runs first, so the guard, the cut, and the brief all read the history the
   // model reads. A corrected exchange the render hides can neither trigger a paid pass nor leak
