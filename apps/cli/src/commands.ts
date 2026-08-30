@@ -742,9 +742,10 @@ export const callCancelCommand = Command.make("cancel", {
     const client = yield* clientOf(flags)
     const invocation = invocationRefOf(flags)
     const reason = stated(flags.reason)
-    const cancellation = yield* call(() => client.cancel(invocation, {
-      ...(reason === undefined ? {} : { reason })
-    }))
+    const cancellation = yield* call(() => client.cancel(
+      invocation,
+      reason === undefined ? undefined : { reason }
+    ))
     yield* Console.log(
       flags.json
         ? jsonOf(cancellation)
