@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.17.0](https://github.com/clavia-labs/tardigrade/compare/v0.16.0...v0.17.0) (2026-08-30)
+
+
+### Features
+
+* **core:** cancel method invocations ([#309](https://github.com/clavia-labs/tardigrade/issues/309)) ([6525116](https://github.com/clavia-labs/tardigrade/commit/65251161906cddbb4cb284ba21e9f0281e022dd1))
+
+
+### Bug Fixes
+
+* **ci:** ignore web releases ([#308](https://github.com/clavia-labs/tardigrade/issues/308)) ([f3f5d97](https://github.com/clavia-labs/tardigrade/commit/f3f5d97803a0db0a6119495c4287c16b0b3cadfc))
+* **model:** retry connection errors ([#310](https://github.com/clavia-labs/tardigrade/issues/310)) ([4f068a7](https://github.com/clavia-labs/tardigrade/commit/4f068a78d7a3d2cc370ca6e997ead95cbbdf3fd7))
+
 ## [0.16.0](https://github.com/clavia-labs/tardigrade/compare/v0.15.0...v0.16.0) (2026-08-29)
 
 
