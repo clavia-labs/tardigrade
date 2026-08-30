@@ -5,14 +5,17 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
 import {
   actorMethodTimeoutOf,
+  actorInvocationContextFrom,
   cancellationRequested,
-  cancellationRequestedOf
+  cancellationDispositionOf,
+  cancellationRequestIdOf
 } from "@clavia/tardigrade-core/actor/method"
 
 import {
   Api,
   apiOf,
   InvalidRequest,
+  InvocationSettled,
   invalidRequest,
   ModelCatalogUnavailable,
   RESERVED_ACTOR,
@@ -302,22 +305,6 @@ const methodOf = (threads: ActorThreads, name: string) => {
     : Effect.succeed(method)
 }
 
-const invocationContextOf = (event: Event) => {
-  const call = (event as { readonly call?: unknown }).call
-  if (typeof call !== "object" || call === null) return undefined
-  const context = call as {
-    readonly invocation?: { readonly method?: unknown; readonly id?: unknown; readonly epoch?: unknown }
-    readonly deadlineAt?: unknown
-  }
-  const invocation = context.invocation
-  if (invocation === undefined || typeof invocation.method !== "string" || typeof invocation.id !== "string" ||
-    typeof invocation.epoch !== "number" || typeof context.deadlineAt !== "number") return undefined
-  return {
-    invocation: { method: invocation.method, id: invocation.id, epoch: invocation.epoch },
-    deadlineAt: context.deadlineAt
-  }
-}
-
 // layerMethodsGroup invokes and reads the method declarations carried by the mounted actor runtime.
 export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
   handlers
@@ -336,10 +323,10 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         const threads = yield* service.ensure(params.id)
         const method = yield* methodOf(threads, params.method)
         const existing = (yield* threads.events(params.thread))
-          .map(invocationContextOf)
+          .map(actorInvocationContextFrom)
           .find((context) => context?.invocation.method === params.method &&
-            context.invocation.id === params.call && context.invocation.epoch === 0)
-        if (existing !== undefined) {
+            context.invocation.id === params.call && context.invocation.epoch === 0 && context.deadlineAt !== undefined)
+        if (existing?.deadlineAt !== undefined) {
           return {
             actor: params.id,
             thread: params.thread,
@@ -414,24 +401,29 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
             `Method ${JSON.stringify(params.method)} does not declare cancellation.`
           ))
         }
-        const requested = log.some((event) => {
-          const cancellation = cancellationRequestedOf(event)
-          return cancellation?.invocation.method === invocation.method &&
-            cancellation.invocation.id === invocation.id && cancellation.invocation.epoch === invocation.epoch
-        })
-        if (requested) {
+        const disposition = cancellationDispositionOf(log, method, invocation)
+        if (disposition === undefined) {
+          return yield* Effect.fail(UnknownMethodCall.of(
+            `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
+          ))
+        }
+        if (disposition === "settled") {
+          return yield* Effect.fail(InvocationSettled.of(
+            `Invocation ${JSON.stringify(params.call)} has settled and cannot be cancelled.`
+          ))
+        }
+        if (disposition !== "requestable") {
           return {
             actor: params.id,
             thread: params.thread,
             method: params.method,
             call: params.call,
-            request: params.request,
-            status: "already-requested" as const
+            status: disposition
           }
         }
         const at = yield* Clock.currentTimeMillis
         yield* threads.append(params.thread, cancellationRequested({
-          request: params.request,
+          request: cancellationRequestIdOf(invocation),
           invocation,
           cause: "requested",
           ...(payload.reason === undefined ? {} : { reason: payload.reason }),
@@ -442,8 +434,7 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
           thread: params.thread,
           method: params.method,
           call: params.call,
-          request: params.request,
-          status: "accepted" as const
+          status: "requested" as const
         }
       })))
 

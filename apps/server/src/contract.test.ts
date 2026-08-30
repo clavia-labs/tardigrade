@@ -71,7 +71,7 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/methods"],
   ["post", "/v1/actors/{id}/threads/{thread}/events"],
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
-  ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellations/{request}"],
+  ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"],
   ["get", "/v1/actors/{id}/threads"],
   ["get", "/v1/actors/{id}/threads/{thread}/events"],
   ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
@@ -100,6 +100,16 @@ describe("the OpenAPI document", () => {
     const responses = spec.paths["/v1/actors/{id}/threads/{thread}/events"]!["get"]!.responses
     expect(Object.keys(responses).sort()).toEqual(["200", "400", "404"])
     expect(Object.keys(responses["404"]!.content!)).toEqual([PROBLEM_CONTENT_TYPE])
+  })
+
+  test("describes every cancellation resource outcome", () => {
+    const spec = OpenApi.fromApi(ServerApi) as never as {
+      readonly paths: Record<string, Record<string, { readonly responses: Record<string, unknown> }>>
+    }
+    const responses = spec.paths[
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"
+    ]!["put"]!.responses
+    expect(Object.keys(responses).sort()).toEqual(["200", "202", "400", "404", "409"])
   })
 
   test("is served where the constant says, and renders at the docs path", async () => {

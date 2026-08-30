@@ -9,7 +9,19 @@ import { effect, intent, Self, type Transition } from "../../reconciliation"
 import type { ThreadLineage } from "../../thread"
 import type { Component } from "../component"
 import { ActorInvocationSchema, type ActorInvocation } from "./call"
-import { actorMethod, type ActorMethods } from "./definition"
+import { actorMethod, type ActorMethodDeclaration, type ActorMethods } from "./definition"
+
+// DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS bounds how long a parent waits for a child cancellation response.
+export const DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS = 30_000
+
+// childCancellationTimeoutOf resolves and validates the actor's child cancellation timeout.
+export const childCancellationTimeoutOf = (timeoutMs: number | undefined): number => {
+  const resolved = timeoutMs ?? DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS
+  if (!Number.isSafeInteger(resolved) || resolved < 1) {
+    throw new Error("child cancellation timeoutMs must be a positive safe integer")
+  }
+  return resolved
+}
 
 export const InvocationCancellationCause = Schema.Literals(["requested", "deadline"])
 export type InvocationCancellationCause = typeof InvocationCancellationCause.Type
@@ -39,11 +51,15 @@ export type CancellationResult = typeof CancellationResult.Type
 
 export const CANCELLATION_CONTROL_METHOD = "$cancel"
 
+export type CancellationDisposition = "requestable" | "requested" | "cancelled" | "settled"
+
 export interface CancellationDispatched extends Event {
   readonly type: "CancellationDispatched"
   readonly request: string
   readonly invocation: ActorInvocation
   readonly target: string
+  readonly timeoutMs: number
+  readonly deadlineAt: number
   readonly at: number
 }
 
@@ -99,11 +115,28 @@ export const cancelsInvocation = (event: Event, invocation: ActorInvocation): bo
     cancellation.invocation.epoch === invocation.epoch
 }
 
+// cancellationDispositionOf reports how cancellation applies to the current invocation state.
+export const cancellationDispositionOf = (
+  events: ReadonlyArray<Event>,
+  method: ActorMethodDeclaration,
+  invocation: ActorInvocation
+): CancellationDisposition | undefined => {
+  const state = method.cancellation?.state(events, invocation)
+  if (state === undefined) return undefined
+  if (state === "cancelled") return "cancelled"
+  if (state === "terminal") return "settled"
+  return events.some((event) => cancelsInvocation(event, invocation)) ? "requested" : "requestable"
+}
+
 const methodCancellationOf = (methods: ActorMethods, cancellation: InvocationCancellation) =>
   methods[cancellation.invocation.method]?.cancellation
 
 const invocationKeyOf = (invocation: ActorInvocation): string =>
   JSON.stringify([invocation.method, invocation.id, invocation.epoch])
+
+// cancellationRequestIdOf derives the durable cancellation identity from its target invocation.
+export const cancellationRequestIdOf = (invocation: ActorInvocation): string =>
+  `cancel:${invocationKeyOf(invocation)}`
 
 const pendingCancellationsOf = (
   events: ReadonlyArray<Event>,
@@ -185,7 +218,8 @@ const callSettled = (events: ReadonlyArray<Event>, invocation: ActorInvocation):
 
 const childCancellationTransitionsOf = <R>(
   events: ReadonlyArray<Event>,
-  cancellation: InvocationCancellation
+  cancellation: InvocationCancellation,
+  timeoutMs: number
 ): ReadonlyArray<Transition<never, R | Router | Self>> => childLinksOf(events, cancellation.invocation)
   .flatMap(({ child, target, lineage }) => {
     if (callSettled(events, child)) return []
@@ -214,6 +248,10 @@ const childCancellationTransitionsOf = <R>(
         const router = yield* Router
         const self = yield* Self
         const at = yield* Clock.currentTimeMillis
+        const deadlineAt = at + timeoutMs
+        if (!Number.isSafeInteger(deadlineAt)) {
+          throw new Error("child cancellation deadlineAt must be a safe integer")
+        }
         yield* router.send(methodEnvelopeOf(
           linkOf(self, parseThreadAddress(input.target)),
           { invocation: { method: CANCELLATION_CONTROL_METHOD, id: input.request, epoch: 0 } },
@@ -232,6 +270,8 @@ const childCancellationTransitionsOf = <R>(
           request: input.request,
           invocation: input.child,
           target: input.target,
+          timeoutMs,
+          deadlineAt,
           at
         } satisfies CancellationDispatched]
       })
@@ -243,8 +283,10 @@ export const cancellationTransitionsOf = <R>(
   events: ReadonlyArray<Event>,
   methods: ActorMethods,
   components: ReadonlyArray<Component<unknown, R>>,
-  keyOf: (event: Event) => string | undefined
+  keyOf: (event: Event) => string | undefined,
+  childTimeoutMs = DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS
 ): ReadonlyArray<Transition<never, R | Router | Self>> | undefined => {
+  const timeoutMs = childCancellationTimeoutOf(childTimeoutMs)
   const cancellations = pendingCancellationsOf(events, methods)
   if (cancellations.length === 0) return undefined
   const recorded = new Set(events.flatMap((event) => {
@@ -255,7 +297,7 @@ export const cancellationTransitionsOf = <R>(
   const obligations: Array<Transition<never, R | Router | Self>> = []
   for (const cancellation of cancellations) {
     const pending = [
-      ...childCancellationTransitionsOf<R>(events, cancellation),
+      ...childCancellationTransitionsOf<R>(events, cancellation, timeoutMs),
       ...components
       .flatMap((component) => component.cancel?.(events, cancellation) ?? [])
     ]

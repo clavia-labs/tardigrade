@@ -10,7 +10,7 @@ import {
   ProblemError,
   type ActorClient,
   type ActorCallRef,
-  type CancellationAccepted,
+  type CancellationResult,
   type EventRow,
   type MethodState,
   type MethodSummary,
@@ -58,7 +58,7 @@ const catalogFetch = (): typeof fetch =>
 interface Recorded {
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly stateRefs: Array<ActorCallRef>
-  readonly cancelled: Array<{ invocation: ActorCallRef; id: string; reason?: string }>
+  readonly cancelled: Array<{ invocation: ActorCallRef; reason?: string }>
   readonly asked: Array<{ thread: string; options: unknown }>
   readonly catalog: Array<{ kind: "models" | "providers"; options: unknown }>
   readonly installed: Array<string>
@@ -78,7 +78,7 @@ const clientOf = (
     readonly models?: ModelCatalogPage
     readonly providers?: ProviderCatalogPage
     readonly states?: ReadonlyArray<MethodState>
-    readonly cancellation?: CancellationAccepted
+    readonly cancellation?: CancellationResult
     readonly fail?: ProblemError
   }
 ): ActorClient => {
@@ -148,10 +148,9 @@ const clientOf = (
         : Promise.reject(answers.fail)
     },
     append: refuse,
-    cancel: (invocation, cancellation) => {
+    cancel: (invocation, cancellation = {}) => {
       recorded.cancelled.push({
         invocation,
-        id: cancellation.id,
         ...(cancellation.reason === undefined ? {} : { reason: cancellation.reason })
       })
       if (answers.fail !== undefined) return Promise.reject(answers.fail)
@@ -160,8 +159,7 @@ const clientOf = (
         thread: invocation.thread,
         method: invocation.method,
         call: invocation.id,
-        request: cancellation.id,
-        status: "accepted"
+        status: "requested"
       })
     },
     projection: refuse as ActorClient["projection"],
@@ -753,12 +751,12 @@ describe("call", () => {
     })
   })
 
-  test("cancel mints a request id and prints the acknowledgement", async () => {
+  test("cancel requests the singleton cancellation resource", async () => {
     const ran = await drive([
       "call", "cancel", "message", "m1", "--thread", "root", "--reason", "operator stopped it"
-    ], { ids: ["stop-1"] })
+    ])
     expect(ran.failed).toBe(false)
-    expect(ran.lines).toEqual(["root m1 cancellation accepted"])
+    expect(ran.lines).toEqual(["root m1 cancellation requested"])
     expect(ran.recorded.cancelled).toEqual([{
       invocation: {
         actor: "main",
@@ -766,22 +764,20 @@ describe("call", () => {
         method: "message",
         id: "m1"
       },
-      id: "stop-1",
       reason: "operator stopped it"
     }])
   })
 
-  test("cancel JSON keeps an explicit idempotency response", async () => {
+  test("cancel JSON renders the cancellation resource", async () => {
     const cancellation = {
       actor: "main",
       thread: "root",
       method: "message",
       call: "m1",
-      request: "stop-2",
-      status: "already-requested" as const
+      status: "cancelled" as const
     }
     const ran = await drive([
-      "call", "cancel", "message", "m1", "--thread", "root", "--id", "stop-2", "--json"
+      "call", "cancel", "message", "m1", "--thread", "root", "--json"
     ], { answers: { cancellation } })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual(cancellation)
   })

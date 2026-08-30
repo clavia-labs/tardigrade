@@ -728,16 +728,10 @@ export const callStateCommand = Command.make("state", {
     }])
   )
 
-const cancellationId = Flag.string("id").pipe(
-  Flag.withDescription("The cancellation request id. A fresh id is minted unless stated."),
-  Flag.optional
-)
-
 export const callCancelCommand = Command.make("cancel", {
   method: Argument.string("method").pipe(Argument.withDescription("The invoked method")),
   invocation: Argument.string("invocation").pipe(Argument.withDescription("The invocation id")),
   thread: invocationThread,
-  id: cancellationId,
   reason: Flag.string("reason").pipe(
     Flag.withDescription("Why the invocation should stop."),
     Flag.optional
@@ -745,18 +739,16 @@ export const callCancelCommand = Command.make("cancel", {
   ...remote
 }, (flags) =>
   Effect.gen(function*() {
-    const cli = yield* Cli
     const client = yield* clientOf(flags)
     const invocation = invocationRefOf(flags)
     const reason = stated(flags.reason)
-    const accepted = yield* call(() => client.cancel(invocation, {
-      id: stated(flags.id) ?? cli.mintId(),
+    const cancellation = yield* call(() => client.cancel(invocation, {
       ...(reason === undefined ? {} : { reason })
     }))
     yield* Console.log(
       flags.json
-        ? jsonOf(accepted)
-        : `${accepted.thread} ${accepted.call} cancellation ${accepted.status.replace("-", " ")}`
+        ? jsonOf(cancellation)
+        : `${cancellation.thread} ${cancellation.call} cancellation ${cancellation.status}`
     )
   })).pipe(
     Command.withDescription("Request cancellation of one method invocation."),

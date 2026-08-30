@@ -13,7 +13,12 @@ import {
   cancellationMethodFor
 } from "./cancellation"
 import type { ActorRef } from "../reference"
-import type { ActorInvocation, ActorInvocationContext } from "./call"
+import {
+  ActorInvocationSchema,
+  decodeActorInvocationContext,
+  type ActorInvocation,
+  type ActorInvocationContext
+} from "./call"
 import type {
   ActorMethodCancellation,
   ActorMethodDeclaration,
@@ -214,6 +219,10 @@ export const actorCall = <
     method: options.method,
     id: options.id,
     epoch: options.epoch ?? 0
+  }
+  Schema.decodeSync(ActorInvocationSchema)(invocation)
+  if (options.context !== undefined) {
+    decodeActorInvocationContext(options.context)
   }
   const result = (
     call: Omit<ActorCall<ActorMethodOutput<Methods[Name]>, Router | Self>, "invocation">

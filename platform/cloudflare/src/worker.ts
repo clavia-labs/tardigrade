@@ -10,7 +10,8 @@ import {
   MODEL_CATALOG_PRICE_SORTS,
   MODEL_CATALOG_SORT_ORDERS,
   MODEL_CATALOG_UNPRICED_ORDERS,
-  type ModelCatalog
+  type ModelCatalog,
+  InvocationSettled
 } from "@clavia/tardigrade-client/contract"
 import { infer } from "@clavia/tardigrade-model/model"
 import {
@@ -34,7 +35,13 @@ import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { invokedEventOf, isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { actorMethodTimeoutOf, cancellationRequested, cancellationRequestedOf } from "@clavia/tardigrade-core/actor/method"
+import {
+  actorInvocationContextFrom,
+  actorMethodTimeoutOf,
+  cancellationDispositionOf,
+  cancellationRequested,
+  cancellationRequestIdOf
+} from "@clavia/tardigrade-core/actor/method"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { actorFromReactors, effect, restingActor, settleActor } from "@clavia/tardigrade-core/reconciliation"
@@ -1168,22 +1175,6 @@ const methodEventOf = (
   }
 }
 
-const invocationContextOf = (event: Event) => {
-  const call = (event as { readonly call?: unknown }).call
-  if (typeof call !== "object" || call === null) return undefined
-  const context = call as {
-    readonly invocation?: { readonly method?: unknown; readonly id?: unknown; readonly epoch?: unknown }
-    readonly deadlineAt?: unknown
-  }
-  const invocation = context.invocation
-  if (invocation === undefined || typeof invocation.method !== "string" || typeof invocation.id !== "string" ||
-    typeof invocation.epoch !== "number" || typeof context.deadlineAt !== "number") return undefined
-  return {
-    invocation: { method: invocation.method, id: invocation.id, epoch: invocation.epoch },
-    deadlineAt: context.deadlineAt
-  }
-}
-
 const selectedMethodTimeoutOf = (raw: string | null): { readonly timeoutMs: number } | { readonly error: string } => {
   try {
     return { timeoutMs: actorMethodTimeoutOf(raw === null ? undefined : Number(raw)) }
@@ -1349,9 +1340,10 @@ const routes = [
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
-      const existing = events.map(invocationContextOf).find((context) =>
-        context?.invocation.method === methodName && context.invocation.id === call && context.invocation.epoch === 0)
-      if (existing !== undefined) {
+      const existing = events.map(actorInvocationContextFrom).find((context) =>
+        context?.invocation.method === methodName && context.invocation.id === call &&
+        context.invocation.epoch === 0 && context.deadlineAt !== undefined)
+      if (existing?.deadlineAt !== undefined) {
         return json({ actor: instance, thread, method: methodName, call, deadlineAt: existing.deadlineAt }, 202)
       }
       const requestedTimeout = new URL(request.url, "http://worker").searchParams.get("timeoutMs")
@@ -1397,7 +1389,7 @@ const routes = [
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
-  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellations/:request", protectedRoute((request, env) =>
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellation", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
@@ -1406,7 +1398,6 @@ const routes = [
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const methodName = params.method ?? ""
       const call = params.call ?? ""
-      const requestId = params.request ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
       if (method.cancellation === undefined) return json({ error: "method does not declare cancellation" }, 400)
@@ -1418,26 +1409,27 @@ const routes = [
       const epoch = method.currentEpoch(events, call)
       const invocation = { method: methodName, id: call, epoch }
       if (method.state(events, invocation) === undefined) return json({ error: "unknown method call" }, 404)
-      const requested = events.some((event) => {
-        const cancellation = cancellationRequestedOf(event)
-        return cancellation?.invocation.method === invocation.method &&
-          cancellation.invocation.id === invocation.id && cancellation.invocation.epoch === invocation.epoch
-      })
-      if (requested) {
-        return json({ actor: instance, thread, method: methodName, call, request: requestId, status: "already-requested" }, 202)
+      const disposition = cancellationDispositionOf(events, method, invocation)
+      if (disposition === undefined) return json({ error: "unknown method call" }, 404)
+      if (disposition === "settled") {
+        return json(InvocationSettled.of(`Invocation ${JSON.stringify(call)} has settled and cannot be cancelled.`), 409)
+      }
+      if (disposition !== "requestable") {
+        return json({ actor: instance, thread, method: methodName, call, status: disposition },
+          disposition === "cancelled" ? 200 : 202)
       }
       const payload = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as { readonly reason?: unknown }
       if (payload.reason !== undefined && typeof payload.reason !== "string") return json({ error: "reason must be a string" }, 400)
       const at = yield* Clock.currentTimeMillis
       const appended = yield* Effect.promise(() => stub.append(thread, cancellationRequested({
-        request: requestId,
+        request: cancellationRequestIdOf(invocation),
         invocation,
         cause: "requested",
         ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
         at
       })))
       if (!appended) return json({ error: "unknown thread" }, 404)
-      return json({ actor: instance, thread, method: methodName, call, request: requestId, status: "accepted" }, 202)
+      return json({ actor: instance, thread, method: methodName, call, status: "requested" }, 202)
     })
   )),
   HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>

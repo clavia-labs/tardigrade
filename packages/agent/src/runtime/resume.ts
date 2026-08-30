@@ -1,4 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { actorInvocationContextOf } from "@clavia/tardigrade-core/actor/method"
+import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { boundaryOf, type Boundary } from "../output/boundary"
 import { turnResumed } from "../log/events"
@@ -30,9 +32,16 @@ export const resumeTurn = async (
     throw new Error(`turn "${turn}" cannot resume because its active epoch is not failed`)
   }
   const failedEpoch = turnEpochOf(before, turn)
+  const failed = { method: "message", id: turn, epoch: failedEpoch }
+  const previous = actorInvocationContextOf(before, failed)
+  const context = {
+    invocation: { ...failed, epoch: failedEpoch + 1 },
+    ...(previous?.parent === undefined ? {} : { parent: previous.parent }),
+    ...(previous?.deadlineAt === undefined ? {} : { deadlineAt: previous.deadlineAt })
+  }
   await host.commitRoot(
     host.self(thread),
-    turnResumed({ turn, failedEpoch, epoch: failedEpoch + 1, at: options.at ?? Date.now() })
+    invokedEventOf(context, turnResumed({ turn, failedEpoch, epoch: failedEpoch + 1, at: options.at ?? Date.now() }))
   )
   await host.drive()
   return boundaryOf(await host.read(thread), turn)

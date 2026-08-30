@@ -20,7 +20,7 @@ import {
   type ActorSummary,
   type Append,
   type CatalogAvailabilityFilter,
-  type CancellationAccepted,
+  type CancellationResult,
   type ThreadNode,
   type ThreadSummary,
   type EventRow,
@@ -153,7 +153,6 @@ export type ActorCallHandle<Name extends string = string> = ActorCallRef<Name> &
   Omit<MethodAccepted, "actor" | "thread" | "method" | "call">
 
 export interface CancellationOptions {
-  readonly id: string
   readonly reason?: string
 }
 
@@ -204,11 +203,11 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
     name: Name,
     call: string
   ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
-  // cancel commits one idempotent request against a cancellable logical call.
+  // cancel ensures the singleton cancellation resource for a cancellable logical call.
   readonly cancel: <const Name extends CancellableMethod<M>>(
     call: ActorCallRef<Name>,
-    options: CancellationOptions
-  ) => Promise<CancellationAccepted>
+    options?: CancellationOptions
+  ) => Promise<CancellationResult>
   // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
   // SDK's convenience rather than a route: the platform has no resume, because a resume is an
   // append like any other (resume, below).
@@ -392,14 +391,13 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         params: { id: actor, thread, method: name, call },
         query: {}
       })) as never,
-    cancel: (call, cancellation) =>
+    cancel: (call, cancellation = {}) =>
       run(api.methods.cancel({
         params: {
           id: call.actor,
           thread: call.thread,
           method: call.method,
-          call: call.id,
-          request: cancellation.id
+          call: call.id
         },
         payload: cancellation.reason === undefined ? {} : { reason: cancellation.reason }
       })),

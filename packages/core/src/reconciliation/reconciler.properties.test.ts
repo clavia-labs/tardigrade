@@ -58,6 +58,67 @@ describe("actor reconciliation", () => {
       .map((transition) => transition.key)).toEqual(["ordinary"])
   })
 
+  test("independent cancellation effects start before either peer finishes", async () => {
+    let started = 0
+    let announceStarted: () => void = () => {}
+    let release: () => void = () => {}
+    const allStarted = new Promise<void>((resolve) => { announceStarted = resolve })
+    const released = new Promise<void>((resolve) => { release = resolve })
+    const cleanup = (id: string) => effect({
+      key: `cleanup:${id}`,
+      input: id,
+      act: (input) => Effect.promise(async () => {
+        started += 1
+        if (started === 2) announceStarted()
+        await released
+        return [{ type: "CleanupFinished", id: input } as Event]
+      })
+    })
+    const runtime = actorFromReactors(
+      [],
+      (event) => event.type === "CleanupFinished"
+        ? `cleanup:${String((event as { readonly id?: unknown }).id)}`
+        : undefined,
+      undefined,
+      () => [cleanup("one"), cleanup("two")]
+    )
+    const settling = Effect.runPromise(settleActor(runtime).pipe(Effect.provide(memoryLog())))
+    try {
+      await Promise.race([
+        allStarted,
+        new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error("cleanup effects started serially")), 1_000))
+      ])
+    } finally {
+      release()
+    }
+    await settling
+    expect(started).toBe(2)
+  })
+
+  test("a concurrent cancellation commit does not hide a wedged peer", async () => {
+    const runtime = actorFromReactors(
+      [],
+      (event) => event.type === "CleanupFinished"
+        ? `cleanup:${String((event as { readonly id?: unknown }).id)}`
+        : undefined,
+      undefined,
+      () => [
+        effect({
+          key: "cleanup:good",
+          input: undefined,
+          act: () => Effect.succeed([{ type: "CleanupFinished", id: "good" } as Event])
+        }),
+        effect({
+          key: "cleanup:missing",
+          input: undefined,
+          act: () => Effect.succeed([{ type: "UnkeyedCleanup" } as Event])
+        })
+      ]
+    )
+    await expect(Effect.runPromise(settleActor(runtime).pipe(Effect.provide(memoryLog()))))
+      .rejects.toThrow('effect "cleanup:missing" wedged')
+  })
+
   test("a committed intent invalidates every remaining transition from its snapshot", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 20 }), async (siblings) => {

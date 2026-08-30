@@ -106,6 +106,9 @@ export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", 
 // SDK's convenience rather than the server's rule (client.ts, resume).
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
+// InvocationSettled reports that cancellation cannot change a completed or failed invocation.
+export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
+
 // The parts of a request a declaration can refuse, named the way the framework names them
 // (HttpApiError.HttpApiSchemaError, kind). `Body` and `ResponseHeaders` are absent because those
 // are the server encoding its own answer: a failure there is a defect of the server's, not a bad
@@ -215,17 +218,24 @@ export const CancellationRequest = Schema.Struct({
 
 export type CancellationRequest = typeof CancellationRequest.Type
 
-// CancellationAccepted identifies the durable cancellation request committed for one invocation.
-export const CancellationAccepted = Schema.Struct({
+const CancellationFields = {
   actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
-  call: Schema.String,
-  request: Schema.String,
-  status: Schema.Literals(["accepted", "already-requested"])
-}).annotate({ identifier: "CancellationAccepted" }).pipe(HttpApiSchema.status(202))
+  call: Schema.String
+}
 
-export type CancellationAccepted = typeof CancellationAccepted.Type
+const CancellationRequestedResult = Schema.Struct({
+  ...CancellationFields,
+  status: Schema.Literal("requested")
+}).annotate({ identifier: "CancellationRequestedResult" }).pipe(HttpApiSchema.status(202))
+
+const CancellationCancelledResult = Schema.Struct({
+  ...CancellationFields,
+  status: Schema.Literal("cancelled")
+}).annotate({ identifier: "CancellationCancelledResult" }).pipe(HttpApiSchema.status(200))
+
+export type CancellationResult = typeof CancellationRequestedResult.Type | typeof CancellationCancelledResult.Type
 
 // MethodState is the durable state any declared actor method can expose on the wire.
 export const MethodState = Schema.Union([
@@ -467,11 +477,6 @@ const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 
 const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
-const RuntimeCancellationParams = {
-  ...RuntimeMethodCallParams,
-  request: Schema.String
-}
-
 // runtimeGroup describes the actor mounted at this runtime origin.
 export const runtimeGroup = HttpApiGroup.make("runtime").add(
   HttpApiEndpoint.get("metadata", "/v1/metadata", { success: ActorMetadata })
@@ -523,11 +528,18 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
     success: MethodState,
     error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   }),
-  HttpApiEndpoint.put("cancel", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellations/:request", {
-    params: RuntimeCancellationParams,
+  HttpApiEndpoint.put("cancel", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellation", {
+    params: RuntimeMethodCallParams,
     payload: CancellationRequest,
-    success: CancellationAccepted,
-    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+    success: [CancellationRequestedResult, CancellationCancelledResult],
+    error: [
+      InvalidRequest.schema,
+      UnknownActor.schema,
+      UnknownThread.schema,
+      UnknownMethod.schema,
+      UnknownMethodCall.schema,
+      InvocationSettled.schema
+    ]
   })
 )
 

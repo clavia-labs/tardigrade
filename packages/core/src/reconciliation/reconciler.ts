@@ -131,7 +131,9 @@ export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Event>): ReadonlyA
         a.cancellationOf?.(events, transition.invocation!) === "running")
     )
   )
-  const residuals = a.cancellationResiduals?.(events) ?? []
+  const residuals = (a.cancellationResiduals?.(events) ?? []).map((transition) =>
+    transition.kind === "effect" ? { ...transition, concurrent: true } : transition
+  )
   return [...continuations, ...residuals].filter((transition) => !recorded.has(transition.key))
 }
 
@@ -154,41 +156,66 @@ export const settleActor = <R>(a: Actor<R>): Effect.Effect<void, never, EventLog
       if (fires.length === 0) return
       const trigger = triggerOf(events)
       let moved = false
-      for (const t of fires) {
+      const fire = (t: Transition<never, R>, sharedSnapshot = false) => Effect.gen(function* () {
         const before = yield* log.head
-        const fired = yield* Effect.gen(function* () {
-          const effectMark = t.kind === "effect" ? before : undefined
-          const cancellable = t.invocation !== undefined &&
-            a.cancellationOf?.(events, t.invocation) === "running"
-          const attempted = t.kind === "intent"
-            ? t.events(t.input, yield* Clock.currentTimeMillis)
-            : yield* runExternalEffect(t, cancellable)
-          const interrupts = t.kind === "effect" ? interruptionOf(t, cancellable) : undefined
-          const returned = t.kind === "effect" && interrupts !== undefined &&
-            (yield* log.readFrom(effectMark!)).some(interrupts)
-            ? []
-            : attempted
-          if (returned.length > 0) yield* log.append(returned)
-          const committed = recordedKeys(yield* log.read, a.keyOf).has(t.key)
-          const outcome = committed
-            ? "committed"
+        const effectMark = t.kind === "effect" ? before : undefined
+        const cancellable = t.invocation !== undefined &&
+          a.cancellationOf?.(events, t.invocation) === "running"
+        const attempted = t.kind === "intent"
+          ? t.events(t.input, yield* Clock.currentTimeMillis)
+          : yield* runExternalEffect(t, cancellable)
+        const interrupts = t.kind === "effect" ? interruptionOf(t, cancellable) : undefined
+        const returned = t.kind === "effect" && interrupts !== undefined &&
+          (yield* log.readFrom(effectMark!)).some(interrupts)
+          ? []
+          : attempted
+        if (returned.length > 0) yield* log.append(returned)
+        const committed = recordedKeys(yield* log.read, a.keyOf).has(t.key)
+        const outcome = committed
+          ? "committed"
+          : sharedSnapshot
+            ? returned.length === 0 ? "blocked" : "wedged"
             : (yield* log.head) > before
               ? "advanced"
               : returned.length === 0
                 ? "blocked"
                 : "wedged"
-          yield* Effect.annotateCurrentSpan("outcome", outcome)
-          return outcome
-        }).pipe(
-          Effect.withSpan("transition.fire", {
-            attributes: { key: t.key, kind: t.kind },
-            ...(trigger === undefined ? {} : { links: [{ span: trigger, attributes: {} }] })
-          })
-        )
-        if (fired === "committed" || fired === "advanced") {
+        yield* Effect.annotateCurrentSpan("outcome", outcome)
+        return { transition: t, outcome }
+      }).pipe(
+        Effect.withSpan("transition.fire", {
+          attributes: { key: t.key, kind: t.kind },
+          ...(trigger === undefined ? {} : { links: [{ span: trigger, attributes: {} }] })
+        })
+      )
+      const concurrent = fires.filter((transition) => transition.kind === "effect" && transition.concurrent === true)
+      let concurrentFired = false
+      for (const t of fires) {
+        if (t.kind === "effect" && t.concurrent === true) {
+          if (concurrentFired) continue
+          concurrentFired = true
+          const before = yield* log.head
+          const results = yield* Effect.all(
+            concurrent.map((transition) => fire(transition, true)),
+            { concurrency: "unbounded" }
+          )
+          const wedged = results.find((result) => result.outcome === "wedged")
+          if (wedged !== undefined) {
+            return yield* Effect.die(new Error(
+              `${wedged.transition.kind} "${wedged.transition.key}" wedged: its events carry no committing key and none landed`
+            ))
+          }
+          if (results.some((result) => result.outcome === "committed") || (yield* log.head) > before) {
+            moved = true
+            break
+          }
+          continue
+        }
+        const fired = yield* fire(t)
+        if (fired.outcome === "committed" || fired.outcome === "advanced") {
           moved = true
           break
-        } else if (fired === "wedged") {
+        } else if (fired.outcome === "wedged") {
           return yield* Effect.die(
             new Error(`${t.kind} "${t.key}" wedged: its events carry no committing key and none landed`)
           )

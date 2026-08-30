@@ -3,7 +3,7 @@ import type { ThreadLineage } from "../thread"
 import type { ThreadAddress, Endpoint, ProviderEndpoint } from "./endpoint"
 import type { Link } from "./link"
 import type { MessageReceived } from "./message"
-import type { ActorInvocationContext } from "../actor/method/call"
+import { decodeActorInvocationContext, type ActorInvocationContext } from "../actor/method/call"
 
 // Envelope carries one event through a logical link without interpreting placement or transport.
 export interface Envelope<Source = unknown, Event = MessageReceived, Target = ThreadAddress> {
@@ -51,18 +51,24 @@ export const methodEnvelopeOf = <Source, Target, Event>(
   call: ActorInvocationContext,
   event: Event,
   lineage?: ThreadLineage
-): Envelope<Source, Event, Target> => ({
-  link,
-  call,
-  event,
-  ...(lineage === undefined ? {} : { lineage })
-})
+): Envelope<Source, Event, Target> => {
+  const context = decodeActorInvocationContext(call)
+  return {
+    link,
+    call: context,
+    event,
+    ...(lineage === undefined ? {} : { lineage })
+  }
+}
 
 // invokedEventOf attaches the context required to identify and govern one accepted method invocation.
 export const invokedEventOf = <Event extends object>(
   call: ActorInvocationContext,
   event: Event
-): Event & { readonly call: ActorInvocationContext } => ({ ...event, call })
+): Event & { readonly call: ActorInvocationContext } => ({
+  ...event,
+  call: decodeActorInvocationContext(call)
+})
 
 // linkedEventOf attaches an accepted envelope's link to the event committed at its actor target.
 export const linkedEventOf = <Source, Event extends object>(

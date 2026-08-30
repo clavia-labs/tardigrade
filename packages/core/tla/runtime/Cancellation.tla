@@ -380,6 +380,24 @@ FairCleanupWithoutSettlement ==
 SpecWithoutSettlement ==
   Init /\ [][NextWithoutSettlement]_vars /\ FairCleanupWithoutSettlement
 
+(* A child that never acknowledges leaves its parent cancellation pending. *)
+NextWithoutChildAcknowledgement ==
+  \/ StartSomeEffect \/ FinishSomeEffect \/ OpenSomeCall \/ CompleteSomeCall
+  \/ LinkSomeChild \/ CompleteSomeChild \/ RequestSomeCancellation
+  \/ SignalSomeEffect \/ TerminateSomeCall \/ RequestSomeChild
+  \/ SettleSomeCancellation
+
+FairCleanupWithoutChildAcknowledgement ==
+  /\ WF_vars(RequestSomeCancellation)
+  /\ WF_vars(SignalSomeEffect)
+  /\ WF_vars(TerminateSomeCall)
+  /\ WF_vars(RequestSomeChild)
+  /\ WF_vars(SettleSomeCancellation)
+
+SpecWithoutChildAcknowledgement ==
+  Init /\ [][NextWithoutChildAcknowledgement]_vars
+    /\ FairCleanupWithoutChildAcknowledgement
+
 (* Matching only id leaks one request across method and epoch boundaries. *)
 RequestCancellationById(invocation, request) ==
   LET matching == {candidate \in Invocations : candidate.id = invocation.id}

@@ -20,6 +20,7 @@ export interface Intent<T = unknown> {
 export interface ExternalEffect<T = unknown, R = never> {
   readonly kind: "effect"
   readonly key: string
+  readonly concurrent?: boolean
   readonly invocation?: ActorInvocation
   readonly input: T
   readonly interrupts?: (input: T, event: Event) => boolean

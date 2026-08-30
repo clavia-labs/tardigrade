@@ -2,7 +2,12 @@ import type { Event } from "../../log/event"
 import type { KeyFragment } from "../../log"
 import { intent, type Reactor } from "../../reconciliation"
 import type { Component } from "../component"
-import { cancellationRequested, cancellationRequestedOf } from "./cancellation"
+import {
+  CANCELLATION_CONTROL_METHOD,
+  cancellationRequested,
+  cancellationRequestedOf,
+  type CancellationDispatched
+} from "./cancellation"
 import type { ActorInvocation, ActorInvocationContext } from "./call"
 import type { ActorMethods } from "./definition"
 
@@ -67,6 +72,18 @@ const terminalCalls = (log: ReadonlyArray<Event>): ReadonlySet<string> => new Se
 }))
 
 const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Dispatch> => log.flatMap((event) => {
+  if (event.type === "CancellationDispatched") {
+    const cancellation = event as CancellationDispatched
+    if (!Number.isSafeInteger(cancellation.timeoutMs) || cancellation.timeoutMs < 1 ||
+      !Number.isSafeInteger(cancellation.deadlineAt)) return []
+    return [{
+      call: cancellation.request,
+      method: CANCELLATION_CONTROL_METHOD,
+      target: cancellation.target,
+      timeoutMs: cancellation.timeoutMs,
+      deadlineAt: cancellation.deadlineAt
+    }]
+  }
   if (event.type !== "CallDispatched") return []
   const candidate = event as {
     readonly id?: unknown

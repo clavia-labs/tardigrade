@@ -240,14 +240,25 @@ describe("a declared actor method", () => {
       thread: "root",
       method: "message",
       call: "m1",
-      request: "stop-1",
-      status: "accepted"
+      status: "requested"
     }), { status: 202, headers: { "content-type": "application/json" } })
-    await client.cancel(invocation, { id: "stop-1", reason: "operator stopped it" })
+    expect(await client.cancel(invocation, { reason: "operator stopped it" })).toMatchObject({ status: "requested" })
     expect(lastUrl().pathname).toBe(
-      "/v1/actors/main/threads/root/methods/message/calls/m1/cancellations/stop-1"
+      "/v1/actors/main/threads/root/methods/message/calls/m1/cancellation"
     )
     expect(JSON.parse(calls.at(-1)!.body ?? "")).toEqual({ reason: "operator stopped it" })
+
+    answer = () => Response.json({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      call: "m1",
+      status: "cancelled"
+    })
+    expect(await client.cancel(invocation)).toMatchObject({ status: "cancelled" })
+    expect(lastUrl().pathname).toBe(
+      "/v1/actors/main/threads/root/methods/message/calls/m1/cancellation"
+    )
   })
 })
 

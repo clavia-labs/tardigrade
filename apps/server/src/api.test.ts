@@ -382,52 +382,38 @@ describe("actor methods", () => {
     expect(result.accepted.deadlineAt - result.message!.at!).toBe(25)
   })
 
-  test("cancellation requests are explicit and absorb by invocation", async () => {
+  test("cancelling a settled invocation returns a conflict", async () => {
     const result = await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")
-      const path = "/v1/actors/main/threads/alpha/methods/message/calls/m1/cancellations/"
-      const first = await put(base, `${path}stop-1`, { reason: "operator stopped it" })
-      const second = await put(base, `${path}stop-2`, { reason: "another caller stopped it" })
-      const events = await until("one cancellation request for m1", async () => {
-        const rows = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
-        const cancellations = rows.filter((row) => row.event.type === "CancellationRequested")
-        return cancellations.length === 0 ? undefined : cancellations
-      })
+      const path = "/v1/actors/main/threads/alpha/methods/message/calls/m1/cancellation"
+      const first = await put(base, path, { reason: "operator stopped it" })
+      const second = await put(base, path, { reason: "another caller stopped it" })
+      const rows = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
       return {
         first: { status: first.status, body: await first.json() },
         second: { status: second.status, body: await second.json() },
-        events
+        events: rows.filter((row) => row.event.type === "CancellationRequested")
       }
     })
     expect(result.first).toEqual({
-      status: 202,
+      status: 409,
       body: {
-        actor: "main",
-        thread: "alpha",
-        method: "message",
-        call: "m1",
-        request: "stop-1",
-        status: "accepted"
+        type: "https://tardigrade.dev/problems/invocation-settled",
+        title: "Invocation Settled",
+        status: 409,
+        detail: "Invocation \"m1\" has settled and cannot be cancelled."
       }
     })
     expect(result.second).toEqual({
-      status: 202,
+      status: 409,
       body: {
-        actor: "main",
-        thread: "alpha",
-        method: "message",
-        call: "m1",
-        request: "stop-2",
-        status: "already-requested"
+        type: "https://tardigrade.dev/problems/invocation-settled",
+        title: "Invocation Settled",
+        status: 409,
+        detail: "Invocation \"m1\" has settled and cannot be cancelled."
       }
     })
-    expect(result.events).toHaveLength(1)
-    expect(result.events[0]?.event).toMatchObject({
-      type: "CancellationRequested",
-      request: "stop-1",
-      invocation: { method: "message", id: "m1", epoch: 0 },
-      reason: "operator stopped it"
-    })
+    expect(result.events).toHaveLength(0)
   })
 
   test("a method without cancellation refuses the control request", async () => {
@@ -440,7 +426,7 @@ describe("actor methods", () => {
       expect(invoked.status).toBe(202)
       const response = await put(
         base,
-        "/v1/actors/main/threads/alpha/methods/requestBudget/calls/b1/cancellations/stop-1",
+        "/v1/actors/main/threads/alpha/methods/requestBudget/calls/b1/cancellation",
         {}
       )
       return { status: response.status, body: await response.json() as Record<string, unknown> }

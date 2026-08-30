@@ -19,6 +19,9 @@ export * from "./cancellation"
 export { methodInputValidationComponents, methodInputValidationTransitions } from "./validation"
 export {
   ActorInvocationSchema,
+  ActorInvocationContextSchema,
+  decodeActorInvocationContext,
+  actorInvocationContextFrom,
   actorInvocationContextOf,
   methodIngressKeyOf,
   type ActorInvocation,

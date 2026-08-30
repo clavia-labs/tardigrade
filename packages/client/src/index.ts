@@ -46,7 +46,7 @@ export type {
   ActorSummary,
   Append,
   CatalogAvailabilityFilter,
-  CancellationAccepted,
+  CancellationResult,
   CancellationRequest,
   EventRow,
   Health,

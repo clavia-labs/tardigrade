@@ -10,9 +10,12 @@ import {
   CancellationRequested,
   cancellationKeys,
   cancellationRequestedOf,
+  cancellationDispositionOf,
+  cancellationRequestIdOf,
   cancellationTransitionsOf,
   cancellationMethodFor
 } from "./cancellation"
+import { alarmFired, earliestDeadlineOf, methodTimeoutReactor } from "./timeout"
 
 const work = actorMethod({
   input: Schema.String,
@@ -65,6 +68,32 @@ describe("actor cancellation", () => {
     expect(cancel.state([head, request, { type: "WorkCancelled", id: "w1", at: 3 }], cancellation))
       .toEqual({ status: "completed", output: { cancelled: true } })
     expect(cancel.state([request], cancellation)).toEqual({ status: "failed", error: 'invocation "w1" does not exist' })
+  })
+
+  test("a cancellation request reports the invocation's current disposition", () => {
+    const invocation = { method: "work", id: "w1", epoch: 0 }
+    const started = { type: "WorkStarted", id: "w1", at: 1 } as Event
+    const requested = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation,
+      cause: "requested",
+      at: 2
+    } as Event
+
+    expect(cancellationDispositionOf([], work, invocation)).toBeUndefined()
+    expect(cancellationDispositionOf([started], work, invocation)).toBe("requestable")
+    expect(cancellationDispositionOf([started, requested], work, invocation)).toBe("requested")
+    expect(cancellationDispositionOf([
+      started,
+      requested,
+      { type: "WorkCancelled", id: "w1", at: 3 } as Event
+    ], work, invocation)).toBe("cancelled")
+    expect(cancellationDispositionOf([
+      started,
+      { type: "WorkCompleted", id: "w1", at: 3 } as Event
+    ], work, invocation)).toBe("settled")
+    expect(cancellationRequestIdOf(invocation)).toBe('cancel:["work","w1",0]')
   })
 
   test("core projects component obligations before the method terminal", () => {
@@ -176,7 +205,7 @@ describe("actor cancellation", () => {
     expect(transition?.kind).toBe("effect")
     if (transition?.kind !== "effect") throw new Error("expected a child cancellation effect")
     const sent: Array<{ readonly lineage?: unknown }> = []
-    await Effect.runPromise(transition.act(transition.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(
+    const dispatched = await Effect.runPromise(transition.act(transition.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(
       Layer.succeed(Self, { actor: "worker", instance: "main", thread: "parent" }),
       Layer.succeed(Router, { send: (envelope) => Effect.sync(() => void sent.push(envelope)) }),
       Layer.succeed(EventLog, withWatermark({ append: () => Effect.void, read: Effect.succeed([]) }))
@@ -184,6 +213,11 @@ describe("actor cancellation", () => {
     expect(sent[0]?.lineage).toEqual({
       parent: { actor: "worker", instance: "main", thread: "parent" },
       depth: 1
+    })
+    expect(dispatched[0]).toMatchObject({
+      type: "CancellationDispatched",
+      request: cancelCall,
+      timeoutMs: 30_000
     })
     expect(cancellationTransitionsOf([
       started,
@@ -212,6 +246,60 @@ describe("actor cancellation", () => {
         at: 3
       } as Event
     ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:parent"])
+  })
+
+  test("an unreachable child is discharged at the configured cancellation deadline", async () => {
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const link = {
+      type: "InvocationLinked",
+      parent: request.invocation,
+      child: {
+        invocation: { method: "work", id: "child", epoch: 0 },
+        parent: request.invocation
+      },
+      target: "worker:main:child",
+      at: 1
+    } as Event
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ??
+      (event.type === "WorkCancelled" ? `cancelled:${String((event as { readonly id?: unknown }).id)}` : undefined)
+    const send = cancellationTransitionsOf<never>([started, link, request], { work }, [], keyOf, 7)?.[0]
+    if (send?.kind !== "effect") throw new Error("expected a child cancellation effect")
+    const dispatched = await Effect.runPromise(send.act(send.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(
+      Layer.succeed(Self, { actor: "worker", instance: "main", thread: "parent" }),
+      Layer.succeed(Router, { send: () => Effect.void }),
+      Layer.succeed(EventLog, withWatermark({ append: () => Effect.void, read: Effect.succeed([]) }))
+    ))))
+    const dispatch = dispatched[0] as Event & { readonly deadlineAt: number; readonly at: number }
+    expect(dispatch.deadlineAt - dispatch.at).toBe(7)
+    expect(earliestDeadlineOf([...dispatched])).toBe(dispatch.deadlineAt)
+
+    const beforeDeadline = [started, link, request, ...dispatched]
+    expect(cancellationTransitionsOf(beforeDeadline, { work }, [], keyOf, 7)?.map((item) => item.key))
+      .toEqual(["cxwait:cancel/x1/work/child/0"])
+    const alarm = alarmFired({ scheduledFor: dispatch.deadlineAt, at: dispatch.deadlineAt })
+    const timeout = methodTimeoutReactor([...beforeDeadline, alarm])[0]
+    if (timeout?.kind !== "intent") throw new Error("expected the cancellation timeout intent")
+    const timedOut = timeout.events(timeout.input, dispatch.deadlineAt)
+    expect(timedOut[0]).toMatchObject({
+      type: "CallTimedOut",
+      call: "cancel/x1/work/child/0",
+      method: "$cancel",
+      timeoutMs: 7
+    })
+    expect(cancellationTransitionsOf(
+      [...beforeDeadline, alarm, ...timedOut],
+      { work },
+      [],
+      keyOf,
+      7
+    )?.map((item) => item.key)).toEqual(["cancelled:parent"])
   })
 
   test("core ignores unsupported and nonexistent cancellation targets", () => {
