@@ -1,5 +1,6 @@
 import {
   actorCall,
+  actorInvocationContextOf,
   calls,
   composeComponents,
   inheritComponentContract,
@@ -10,6 +11,7 @@ import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self, type Transition } from "@clavia/tardigrade-core/reconciliation"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
 import { requestPermissionMethod } from "../actor/permission"
+import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 
 export type PermissionAuthorityMethods = {
   readonly requestPermission: typeof requestPermissionMethod
@@ -49,10 +51,14 @@ const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentT
     })
     if (subject === undefined) return tool.serve(pending, log, answer)
     const turn = pending.turn ?? ""
+    const invocation = { method: "message", id: turn, epoch: turnEpochOf(log, turn) }
     const call = actorCall(log, {
       id: permissionCallId(turn, pending.callId),
       target: options.authority,
       method: "requestPermission",
+      ...(turn === "" ? {} : {
+        context: actorInvocationContextOf(log, invocation) ?? { invocation }
+      }),
       input: {
         request: pending.callId,
         turn,
@@ -67,6 +73,9 @@ const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentT
     if (call.state.status === "pending") return []
     if (call.state.status === "failed") {
       return [answer({ error: `Permission authority failed: ${call.state.error}` })]
+    }
+    if (call.state.status === "cancelled") {
+      return [answer({ error: `Permission authority cancelled: ${call.state.reason ?? call.state.cause}` })]
     }
     if ("denied" in call.state.output) {
       return [answer({
@@ -91,6 +100,7 @@ export const permissions = <
   return calls(options.authority, requestPermissionMethod, inheritComponentContract({
     name: "permissions",
     ...(combined.keys === undefined ? {} : { keys: combined.keys }),
+    cancel: (log, cancellation) => combined.cancel?.(log, cancellation) ?? [],
     derive: (log) => {
       const children = combined.derive(log)
       return {

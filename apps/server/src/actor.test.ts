@@ -20,6 +20,9 @@ const completed = (turn: string, output: string): Event =>
 const failed = (turn: string, error: string): Event =>
   ({ type: "TurnFailed", turn, error, at: at() }) as Event
 
+const cancelled = (turn: string, reason?: string): Event =>
+  ({ type: "TurnCancelled", request: `cancel-${turn}`, turn, cause: "requested", ...(reason === undefined ? {} : { reason }), at: at() }) as Event
+
 const requested = (turn: string, callId: string): Event =>
   ({ type: "BudgetRequested", turn, callId, reason: "more calls", amount: 5, at: at() }) as Event
 
@@ -58,6 +61,13 @@ describe("the turns projection", () => {
   test("an unanswered budget ask is parked", () => {
     const log = [inbound("m1"), requested("m1", "c1")]
     expect(turns.run(log, {})).toEqual([{ turn: "m1", status: "parked", epoch: 0 }])
+  })
+
+  test("a cancelled turn keeps its reason", () => {
+    const log = [inbound("m1"), cancelled("m1", "operator stopped it")]
+    expect(turns.run(log, {})).toEqual([
+      { turn: "m1", status: "cancelled", epoch: 0, reason: "operator stopped it" }
+    ])
   })
 
   // `at` is the projection's own declared parameter, so time travel is a query this actor accepts

@@ -2,14 +2,14 @@ import { Schema } from "effect"
 import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
+import { CancellationRequested } from "@clavia/tardigrade-core/actor/method"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 import { ModelPolicy, type ModelPolicy as ModelPolicyType } from "../inference/access"
 
-// The agent's domain events. This alphabet belongs to the agent, and core never learns it: core
-// sees only the open envelope. The model responds by acting: its recorded decision is the
-// consequence event it emits, and the prose it emits alongside is a `TextReturned`. The final
-// answer lives on `TurnCompleted` alone.
+// The agent's domain events compose with core actor input and control events. The model responds
+// by acting: its recorded decision is the consequence event it emits, and the prose it emits
+// alongside is a `TextReturned`. The final answer lives on `TurnCompleted` alone.
 //
 // The union projects onto OpenEnv RFC 005's HarnessEvent stream: `ModelCalled` -> LLM_REQUEST,
 // `TextReturned` -> LLM_RESPONSE, `ToolCalled` -> TOOL_CALL, `ToolReturned` -> TOOL_RESULT,
@@ -19,6 +19,7 @@ import { ModelPolicy, type ModelPolicy as ModelPolicyType } from "../inference/a
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
 export { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+export { CancellationRequested, cancellationRequested } from "@clavia/tardigrade-core/actor/method"
 
 // Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
 // `provider` and `model` are the configuration's own effective coordinates, so a replay reads
@@ -56,6 +57,7 @@ export const ToolCalled = Schema.Struct({
   // recorded here so replay does not decide how this attempt ran from a current capability
   // (inference/reactor.ts, consequenceOf).
   mode: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
 })
 
@@ -209,6 +211,18 @@ export const TurnFailed = Schema.Struct({
   at: Schema.Finite
 })
 
+// TurnCancelled is the cancellation terminal for one execution epoch.
+export const TurnCancelled = Schema.Struct({
+  type: Schema.Literal("TurnCancelled"),
+  request: Schema.String,
+  turn: Schema.String,
+  cause: Schema.Literals(["requested", "deadline"]),
+  reason: Schema.optional(Schema.String),
+  deadlineAt: Schema.optional(Schema.Finite),
+  epoch: Schema.optional(Schema.Finite),
+  at: Schema.Finite
+})
+
 // TurnResumed records the operator request that starts the next execution epoch.
 export const TurnResumed = Schema.Struct({
   type: Schema.Literal("TurnResumed"),
@@ -328,6 +342,8 @@ export const AgentEvent = Schema.Union([
   OutputRetryRequested,
   TurnCompleted,
   TurnFailed,
+  CancellationRequested,
+  TurnCancelled,
   TurnResumed,
   BudgetExhausted,
   BudgetRequested,
@@ -396,6 +412,7 @@ export const agentKeys: KeyFragment = {
         return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
       case "TurnCompleted":
       case "TurnFailed":
+      case "TurnCancelled":
         // One terminal per turn epoch, whichever kind: a duplicate of either absorbs.
         return `tn:${String(v.turn)}${epochSuffix(v.epoch)}`
       case "TurnResumed":
@@ -441,7 +458,7 @@ export const toolCalled = (
     readonly name: string
     readonly arguments?: unknown
     readonly mode?: unknown
-  } & Stamp
+  } & EpochStamp
 ): Event => ({ type: "ToolCalled", ...fields }) as Event
 
 export const toolReturned = (fields: { readonly callId: string; readonly result: unknown } & Stamp): Event =>
@@ -519,6 +536,15 @@ export const turnFailed = (
   } & EpochStamp
 ): Event =>
   ({ type: "TurnFailed", ...fields }) as Event
+
+export const turnCancelled = (
+  fields: {
+    readonly request: string
+    readonly cause: "requested" | "deadline"
+    readonly reason?: string
+    readonly deadlineAt?: number
+  } & EpochStamp
+): Event => ({ type: "TurnCancelled", ...fields }) as Event
 
 export const turnResumed = (fields: { readonly turn: string; readonly failedEpoch: number; readonly epoch: number; readonly at: number }): Event =>
   ({ type: "TurnResumed", ...fields }) as Event

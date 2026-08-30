@@ -36,7 +36,7 @@ describe("telegram", () => {
 
     expect(result).toEqual({
       envelopes: [{
-        call: { method: "message", id: "telegram:9001" },
+        call: { invocation: { method: "message", id: "telegram:9001", epoch: 0 } },
         link: {
           source: {
             provider: "telegram-support",

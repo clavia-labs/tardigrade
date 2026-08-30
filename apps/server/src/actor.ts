@@ -76,7 +76,7 @@ export type ServerR = ReturnType<typeof assemblyOf> extends Actor<infer R> ? R :
 
 // TurnStatus is this actor's turn vocabulary. `parked` is the budget ask nobody can answer over
 // HTTP (apps-server-spec.md, "Explicitly out of scope": budget escalation).
-export type TurnStatus = "pending" | "completed" | "failed" | "parked"
+export type TurnStatus = "pending" | "completed" | "failed" | "cancelled" | "parked"
 
 export interface TurnViewShape {
   readonly turn: string
@@ -86,6 +86,7 @@ export interface TurnViewShape {
   readonly epoch: number
   readonly output?: string
   readonly error?: string
+  readonly reason?: string
 }
 
 // turnsOf projects one turn per inbound message, in the order the messages arrived. `at` cuts the
@@ -112,6 +113,12 @@ const turnsOf = (
       if (boundary === undefined) return { turn, status: "pending", epoch }
       if (boundary.kind === "completed") return { turn, status: "completed", epoch, output: boundary.output }
       if (boundary.kind === "failed") return { turn, status: "failed", epoch, error: boundary.error }
+      if (boundary.kind === "cancelled") return {
+        turn,
+        status: "cancelled",
+        epoch,
+        ...(boundary.reason === undefined ? {} : { reason: boundary.reason })
+      }
       // A park is neither an output nor an error: the turn is alive and waiting on an answer the API
       // has no door for, so the status carries the whole of what a client can act on.
       return { turn, status: "parked", epoch }

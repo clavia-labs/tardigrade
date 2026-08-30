@@ -191,11 +191,12 @@ const callMessage = async (base: string, thread: string, call: string, text: str
     { text }
   )
   expect(response.status).toBe(202)
-  expect(await response.json()).toEqual({
+  expect(await response.json()).toMatchObject({
     actor: "main",
     thread,
     method: "message",
-    call
+    call,
+    deadlineAt: expect.any(Number)
   })
   return until(`method call ${call} of ${thread}`, async () => {
     const state = await get(base, `/v1/actors/main/threads/${thread}/methods/message/calls/${call}`)
@@ -292,12 +293,19 @@ describe("actor methods", () => {
     const methods = await serving(async (base) =>
       await (await get(base, "/v1/methods")).json() as ReadonlyArray<{
         readonly name: string
+        readonly cancellable: boolean
+        readonly timeoutMs: number
         readonly inputSchema: { readonly $ref?: unknown; readonly $defs?: Record<string, { readonly properties?: Record<string, unknown> }> }
         readonly outputSchema: { readonly type?: unknown }
       }>)
     expect(methods.map((method) => method.name)).toEqual(["message", "requestBudget"])
-    expect(methods[0]?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
-    expect(methods[0]?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
+    const message = methods.find((method) => method.name === "message")
+    const budget = methods.find((method) => method.name === "requestBudget")
+    expect(message?.cancellable).toBe(true)
+    expect(message?.timeoutMs).toBe(300_000)
+    expect(budget?.cancellable).toBe(false)
+    expect(message?.inputSchema.$ref).toBe("#/$defs/AgentMessageInput")
+    expect(message?.inputSchema.$defs?.["AgentMessageInput"]).toMatchObject({
       type: "object",
       required: ["text"],
       properties: {
@@ -311,8 +319,8 @@ describe("actor methods", () => {
         }
       }
     })
-    expect(methods[0]?.outputSchema).toMatchObject({ type: "string" })
-    expect(methods[1]?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
+    expect(message?.outputSchema).toMatchObject({ type: "string" })
+    expect(budget?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
   })
 
   test("an invocation births a thread and exposes its completed state", async () => {
@@ -346,12 +354,86 @@ describe("actor methods", () => {
       const state = await get(base, "/v1/actors/main/threads/alpha/methods/message/calls/m1")
       return { repeated: { status: repeated.status, body: await repeated.json() }, before, after, state: await state.json() }
     })
-    expect(read.repeated).toEqual({
-      status: 202,
-      body: { actor: "main", thread: "alpha", method: "message", call: "m1" }
+    expect(read.repeated.status).toBe(202)
+    expect(read.repeated.body).toMatchObject({
+      actor: "main",
+      thread: "alpha",
+      method: "message",
+      call: "m1",
+      deadlineAt: expect.any(Number)
     })
     expect(read.after).toEqual(read.before)
     expect(read.state).toEqual({ status: "completed", output: "ok: hello" })
+  })
+
+  test("an invocation exposes and honors its selected timeout", async () => {
+    const result = await serving(async (base) => {
+      const response = await put(
+        base,
+        "/v1/actors/main/threads/alpha/methods/message/calls/m1?timeoutMs=25",
+        { text: "hello" }
+      )
+      const accepted = await response.json() as { readonly deadlineAt: number }
+      const events = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const message = events.find((row) => row.event.type === "MessageReceived")?.event as { readonly at?: number } | undefined
+      return { status: response.status, accepted, message }
+    })
+    expect(result.status).toBe(202)
+    expect(result.accepted.deadlineAt - result.message!.at!).toBe(25)
+  })
+
+  test("cancelling a settled invocation returns a conflict", async () => {
+    const result = await serving(async (base) => {
+      await callMessage(base, "alpha", "m1", "hello")
+      const path = "/v1/actors/main/threads/alpha/methods/message/calls/m1/cancellation"
+      const first = await put(base, path, { reason: "operator stopped it" })
+      const second = await put(base, path, { reason: "another caller stopped it" })
+      const rows = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      return {
+        first: { status: first.status, body: await first.json() },
+        second: { status: second.status, body: await second.json() },
+        events: rows.filter((row) => row.event.type === "CancellationRequested")
+      }
+    })
+    expect(result.first).toEqual({
+      status: 409,
+      body: {
+        type: "https://tardigrade.dev/problems/invocation-settled",
+        title: "Invocation Settled",
+        status: 409,
+        detail: "Invocation \"m1\" has settled and cannot be cancelled."
+      }
+    })
+    expect(result.second).toEqual({
+      status: 409,
+      body: {
+        type: "https://tardigrade.dev/problems/invocation-settled",
+        title: "Invocation Settled",
+        status: 409,
+        detail: "Invocation \"m1\" has settled and cannot be cancelled."
+      }
+    })
+    expect(result.events).toHaveLength(0)
+  })
+
+  test("a method without cancellation refuses the control request", async () => {
+    const refusal = await serving(async (base) => {
+      const invoked = await put(
+        base,
+        "/v1/actors/main/threads/alpha/methods/requestBudget/calls/b1",
+        { request: "budget-1", turn: "m1", reason: "more work", amount: 1 }
+      )
+      expect(invoked.status).toBe(202)
+      const response = await put(
+        base,
+        "/v1/actors/main/threads/alpha/methods/requestBudget/calls/b1/cancellation",
+        {}
+      )
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(400)
+    expect(refusal.body).toMatchObject({ title: "Invalid Request", status: 400 })
+    expect(String(refusal.body["detail"])).toContain("does not declare cancellation")
   })
 
   test("an invalid input is refused before it reaches the log", async () => {

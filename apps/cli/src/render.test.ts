@@ -87,10 +87,12 @@ describe("methodsLines", () => {
   test("shows the root schemas for a method", () => {
     expect(methodsLines([{
       name: "message",
+      cancellable: true,
+      timeoutMs: 300_000,
       inputSchema: { type: "object", required: ["text"] },
       outputSchema: { type: "string" }
     }])).toBe(
-      "message\n  input  {\"type\":\"object\",\"required\":[\"text\"]}\n  output {\"type\":\"string\"}"
+      "message\n  cancellable yes\n  timeout 300000ms\n  input  {\"type\":\"object\",\"required\":[\"text\"]}\n  output {\"type\":\"string\"}"
     )
   })
 

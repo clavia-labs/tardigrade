@@ -133,5 +133,14 @@ import { agentMethods } from "tardie"
 import { makeActorClient } from "tardie/client"
 
 const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })
-await client.invoke("inv-81", "message", { id: "m1", input: { text: "audit the deploy" } })
+const invocation = await client.call("main", "inv-81", "message", {
+  id: "m1",
+  input: { text: "audit the deploy" },
+  timeoutMs: 30_000
+})
+
+await client.cancel(invocation, { id: "stop-m1", reason: "the deploy finished" })
+const state = await client.state(invocation)
 ```
+
+`invoke` returns the actor, thread, method, call ID, and absolute deadline as one durable handle. `state` and `cancel` accept that handle. Execution epochs remain an internal fence, and each operation resolves the active epoch for the logical call. `methods` reports whether each method is cancellable and the maximum timeout it declares.

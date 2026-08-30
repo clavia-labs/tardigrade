@@ -8,7 +8,7 @@ import type { AgentComponent, AgentTool } from "../runtime/composition"
 // NativeTool is one named tool whose effect returns its model-visible result.
 export interface NativeTool<R = never> {
   readonly spec: ToolSpec
-  readonly run: (input: unknown, context: { readonly callId: string; readonly turn?: string }) => Effect.Effect<unknown, never, R>
+  readonly run: (input: unknown, context: { readonly callId: string; readonly turn?: string; readonly signal: AbortSignal }) => Effect.Effect<unknown, never, R>
 }
 
 // toolList derives fixed tool bindings that pair every specification with its effect handler.
@@ -30,10 +30,17 @@ export const toolList = <R = never>(
           return [
             effect({
               key: `tr:${call.callId}`,
+              ...(call.turn === undefined
+                ? {}
+                : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),
               input: { callId: call.callId, arguments: call.arguments, turn: call.turn },
-              act: (input) =>
+              act: (input, signal) =>
                 Effect.gen(function* () {
-                  const result = yield* tool.run(input.arguments, { callId: input.callId, ...(input.turn === undefined ? {} : { turn: input.turn }) })
+                  const result = yield* tool.run(input.arguments, {
+                    callId: input.callId,
+                    ...(input.turn === undefined ? {} : { turn: input.turn }),
+                    signal
+                  })
                   const at = yield* Clock.currentTimeMillis
                   return [toolReturned({ callId: input.callId, result, ...stamp, at })]
                 })

@@ -191,6 +191,8 @@ const renderedChars = (e: Event, policy: ContextPolicy): number => {
       return String(v.output ?? "").length
     case "TurnFailed":
       return String(v.error ?? "").length
+    case "TurnCancelled":
+      return String(v.reason ?? "cancelled").length
     default:
       return 0
   }
@@ -319,6 +321,8 @@ const lineOf = (e: Event, policy: ContextPolicy): string | null => {
       return `agent: ${String(v.output ?? "")}`
     case "TurnFailed":
       return `failed: ${String(v.error ?? "")}`
+    case "TurnCancelled":
+      return `cancelled${v.reason === undefined ? "" : `: ${String(v.reason)}`}`
     default:
       return null
   }

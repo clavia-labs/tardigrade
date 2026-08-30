@@ -1,4 +1,5 @@
 import type { Actor as ReconciledActor } from "../reconciliation"
+import type { Event } from "../log/event"
 import { actorFromReactors, type Self } from "../reconciliation"
 import {
   reactorOf,
@@ -19,6 +20,14 @@ import {
   methodTimeoutKeys,
   type ActorMethods
 } from "./method/index"
+import type { ActorInvocation } from "./method"
+import {
+  CANCELLATION_CONTROL_METHOD,
+  childCancellationTimeoutOf,
+  cancellationKeys,
+  cancellationMethodFor,
+  cancellationTransitionsOf
+} from "./method/cancellation"
 
 export const ACTOR_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u
 
@@ -27,7 +36,13 @@ export interface Actor<R = never, Methods extends ActorMethods = ActorMethods> e
   readonly name: string
   readonly methods: Methods
   readonly components: ReadonlyArray<Component<unknown, unknown>>
+  readonly cancellation?: ActorCancellationPolicy
   readonly contract?: ActorContract
+}
+
+// ActorCancellationPolicy bounds cancellation coordination owned by the actor runtime.
+export interface ActorCancellationPolicy {
+  readonly childTimeoutMs: number
 }
 
 // ActorOptions declares the complete public and private shape of an actor.
@@ -38,12 +53,16 @@ export interface ActorOptions<
   readonly name: string
   readonly methods: Methods
   readonly components: Components
+  readonly cancellation?: Partial<ActorCancellationPolicy>
 }
 
 type ActorOf<
   Methods extends ActorMethods,
   Components extends ReadonlyArray<Component<unknown, never> | Component<unknown, unknown>>
-> = Actor<ComponentRequirements<Components[number]> | Router | Self, Methods> & { readonly contract: ActorContract }
+> = Actor<ComponentRequirements<Components[number]> | Router | Self, Methods> & {
+  readonly cancellation: ActorCancellationPolicy
+  readonly contract: ActorContract
+}
 
 const fromOptions = <
   const Methods extends ActorMethods,
@@ -53,13 +72,23 @@ const fromOptions = <
     throw new Error(`actor name must match ${String(ACTOR_NAME_PATTERN)}, got ${JSON.stringify(options.name)}`)
   }
   const methods = actorMethodsOf(options.methods)
+  const cancellation = {
+    childTimeoutMs: childCancellationTimeoutOf(options.cancellation?.childTimeoutMs)
+  }
   type R = ComponentRequirements<Components[number]> | Router | Self
   const components = options.components as ReadonlyArray<Component<unknown, R>>
   const inputValidation = methodInputValidationComponents(methods)
   const fragments = [...inputValidation, ...components].flatMap((component) => component.keys === undefined ? [] : [component.keys])
-  const responses = methodResponseComponent(methods)
+  const responses = methodResponseComponent({
+    ...methods,
+    [CANCELLATION_CONTROL_METHOD]: cancellationMethodFor(methods)
+  })
   const contract = actorContractOf(methods, options.components as ReadonlyArray<Component<unknown, unknown>>)
-  const keyOf = composeKeys(...fragments, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+  const keyOf = composeKeys(...fragments, cancellationKeys, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
+  const cancellationOf = (events: ReadonlyArray<Event>, invocation: ActorInvocation) =>
+    methods[invocation.method]?.cancellation?.state(events, invocation)
+  const cancellationResiduals = (events: ReadonlyArray<Event>) =>
+    cancellationTransitionsOf(events, methods, components, keyOf, cancellation.childTimeoutMs)
   const guarded = components.map((component) => {
     const derive = reactorOf(component)
     return (log: Parameters<typeof derive>[0]) => {
@@ -72,13 +101,16 @@ const fromOptions = <
     }
   })
   const runtime = actorFromReactors<R>(
-    [...guarded, ...inputValidation.map(reactorOf), reactorOf(methodTimeoutComponent), reactorOf(responses)],
-    keyOf
+    [...guarded, ...inputValidation.map(reactorOf), reactorOf(methodTimeoutComponent(methods)), reactorOf(responses)],
+    keyOf,
+    cancellationOf,
+    cancellationResiduals
   )
   return {
     ...runtime,
     name: options.name,
     methods,
+    cancellation,
     contract,
     components: options.components as ReadonlyArray<Component<unknown, unknown>>
   }

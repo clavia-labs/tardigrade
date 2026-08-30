@@ -14,7 +14,7 @@ import { budget, budgetOf, budgetPhase, budgetSpent, caller, canRequestBudget } 
 import { infer, renderOf } from "../runtime/composition"
 import { codeMode } from "./code"
 import { compaction } from "./compaction"
-import { agentMethods } from "../actor/message"
+import { agentMethods } from "../actor/methods"
 import { nativeOutput } from "./native-output"
 import { toolList } from "./tool-list"
 import { agentKeys } from "../log/events"
@@ -66,7 +66,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
       const out = transition.kind === "intent"
         ? transition.events(transition.input, 0)
         : await Effect.runPromise(
-            transition.act(transition.input).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
+            transition.act(transition.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(memory, rest)))
           )
       events.push(...out)
     }

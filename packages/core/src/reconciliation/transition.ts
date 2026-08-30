@@ -1,4 +1,5 @@
 import { Effect } from "effect"
+import type { ActorInvocation } from "../actor/method"
 import type { Event } from "../log/event"
 import { EventLog } from "../log"
 
@@ -8,6 +9,7 @@ import { EventLog } from "../log"
 export interface Intent<T = unknown> {
   readonly kind: "intent"
   readonly key: string
+  readonly invocation?: ActorInvocation
   readonly input: T
   readonly events: (input: T, at: number) => ReadonlyArray<Event>
 }
@@ -18,8 +20,11 @@ export interface Intent<T = unknown> {
 export interface ExternalEffect<T = unknown, R = never> {
   readonly kind: "effect"
   readonly key: string
+  readonly concurrent?: boolean
+  readonly invocation?: ActorInvocation
   readonly input: T
-  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
+  readonly interrupts?: (input: T, event: Event) => boolean
+  readonly act: (input: T, signal: AbortSignal) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
 }
 
 // Transition is an intent or external effect offered from one log snapshot.
@@ -28,6 +33,7 @@ export type Transition<T = unknown, R = never> = Intent<T> | ExternalEffect<T, R
 // intent constructs an event proposal and erases its input type for heterogeneous reactors.
 export const intent = <T>(proposal: {
   readonly key: string
+  readonly invocation?: ActorInvocation
   readonly input: T
   readonly events: (input: T, at: number) => ReadonlyArray<Event>
 }): Intent<never> => ({ kind: "intent", ...proposal }) as unknown as Intent<never>
@@ -36,6 +42,8 @@ export const intent = <T>(proposal: {
 // input from the same derivation.
 export const effect = <T, R = never>(work: {
   readonly key: string
+  readonly invocation?: ActorInvocation
   readonly input: T
-  readonly act: (input: T) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
+  readonly interrupts?: (input: T, event: Event) => boolean
+  readonly act: (input: T, signal: AbortSignal) => Effect.Effect<ReadonlyArray<Event>, never, EventLog | R>
 }): ExternalEffect<never, R> => ({ kind: "effect", ...work }) as unknown as ExternalEffect<never, R>

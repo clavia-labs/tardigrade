@@ -106,6 +106,9 @@ export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", 
 // SDK's convenience rather than the server's rule (client.ts, resume).
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
+// InvocationSettled reports that cancellation cannot change a completed or failed invocation.
+export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
+
 // The parts of a request a declaration can refuse, named the way the framework names them
 // (HttpApiError.HttpApiSchemaError, kind). `Body` and `ResponseHeaders` are absent because those
 // are the server encoding its own answer: a failure there is a defect of the server's, not a bad
@@ -156,7 +159,7 @@ export const ThreadNode = Schema.Struct({
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
 }).annotate({ identifier: "ThreadNode" })
 
-export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "parked"])
+export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "cancelled", "parked"])
 
 export type TurnStatus = typeof TurnStatus.Type
 
@@ -169,7 +172,8 @@ export const TurnView = Schema.Struct({
   status: TurnStatus,
   epoch: Schema.Finite,
   output: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(Schema.String)
+  error: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.String)
 }).annotate({ identifier: "TurnView" })
 
 export type TurnView = typeof TurnView.Type
@@ -201,23 +205,58 @@ export const MethodAccepted = Schema.Struct({
   actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
-  call: Schema.String
+  call: Schema.String,
+  deadlineAt: Schema.Finite
 }).annotate({ identifier: "MethodAccepted" }).pipe(HttpApiSchema.status(202))
 
 export type MethodAccepted = typeof MethodAccepted.Type
+
+// CancellationRequest carries the caller's reason for stopping an invocation.
+export const CancellationRequest = Schema.Struct({
+  reason: Schema.optionalKey(Schema.String)
+}).annotate({ identifier: "CancellationRequest" })
+
+export type CancellationRequest = typeof CancellationRequest.Type
+
+const CancellationFields = {
+  actor: Schema.String,
+  thread: Schema.String,
+  method: Schema.String,
+  call: Schema.String
+}
+
+const CancellationRequestedResult = Schema.Struct({
+  ...CancellationFields,
+  status: Schema.Literal("requested")
+}).annotate({ identifier: "CancellationRequestedResult" }).pipe(HttpApiSchema.status(202))
+
+const CancellationCancelledResult = Schema.Struct({
+  ...CancellationFields,
+  status: Schema.Literal("cancelled")
+}).annotate({ identifier: "CancellationCancelledResult" }).pipe(HttpApiSchema.status(200))
+
+export type CancellationResult = typeof CancellationRequestedResult.Type | typeof CancellationCancelledResult.Type
 
 // MethodState is the durable state any declared actor method can expose on the wire.
 export const MethodState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending") }),
   Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Unknown }),
-  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
+  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String }),
+  Schema.Struct({
+    status: Schema.Literal("cancelled"),
+    cause: Schema.Literals(["requested", "deadline"]),
+    reason: Schema.optionalKey(Schema.String),
+    deadlineAt: Schema.optionalKey(Schema.Finite)
+  })
 ]).annotate({ identifier: "MethodState" })
 
 export type MethodState = typeof MethodState.Type
 
-// MethodSummary exposes one declared method and standalone JSON Schemas for its input and output.
+// MethodSummary exposes one declared method, its cancellation capability, and standalone JSON Schemas for its input and output.
 export const MethodSummary = Schema.Struct({
   name: Schema.String,
+  cancellable: Schema.Boolean,
+  timeoutMs: Schema.Finite,
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown
 }).annotate({ identifier: "MethodSummary" })
@@ -478,14 +517,29 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
   }),
   HttpApiEndpoint.put("invoke", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
+    query: { timeoutMs: Schema.optionalKey(Seq) },
     payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownMethod.schema]
   }),
   HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
+    query: {},
     success: MethodState,
     error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+  }),
+  HttpApiEndpoint.put("cancel", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellation", {
+    params: RuntimeMethodCallParams,
+    payload: CancellationRequest,
+    success: [CancellationRequestedResult, CancellationCancelledResult],
+    error: [
+      InvalidRequest.schema,
+      UnknownActor.schema,
+      UnknownThread.schema,
+      UnknownMethod.schema,
+      UnknownMethodCall.schema,
+      InvocationSettled.schema
+    ]
   })
 )
 

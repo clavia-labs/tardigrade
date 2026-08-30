@@ -76,6 +76,58 @@ const rally = () => {
 }
 
 describe("the host", () => {
+  test("a committed interruption stops live external work", async () => {
+    const started = signal()
+    const release = signal()
+    let aborted = false
+    const actor: Actor = {
+      cancellationOf: (events, invocation) =>
+        invocation.method === "message" && invocation.id === "m1" && invocation.epoch === 0 &&
+        events.some((event) => event.type === "MessageReceived")
+          ? "running"
+          : undefined,
+      keyOf: (event) => event.type === "LateResult"
+        ? "late"
+        : event.type === "CancellationRequested"
+          ? "cancel:message/m1/0"
+          : undefined,
+      reactors: [(events) => {
+        if (events.some((event) => event.type === "CancellationRequested")) return []
+        if (!events.some((event) => event.type === "MessageReceived")) return []
+        return [effect({
+          key: "late",
+          invocation: { method: "message", id: "m1", epoch: 0 },
+          input: "m1",
+          act: (_turn, controllerSignal) => Effect.promise(async (runtimeSignal) => {
+            started.send()
+            controllerSignal?.addEventListener("abort", () => {
+              aborted = true
+            }, { once: true })
+            await release.promise
+            if (runtimeSignal.aborted) return []
+            return [{ type: "LateResult", at: 2 } as Event]
+          })
+        })]
+      }]
+    }
+    const host = createHost({ actorFor: () => actor, keyOf: actor.keyOf })
+    host.commitRoot("mem:main:root", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    const driving = host.drive()
+    await started.promise
+    host.commitRoot("mem:main:root", {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event)
+    await driving
+    release.send()
+
+    expect(aborted).toBe(true)
+    expect(host.read("root").some((event) => event.type === "LateResult")).toBe(false)
+  })
+
   test("settles distinct threads up to the configured capacity", async () => {
     const release = signal()
     const twoStarted = signal()

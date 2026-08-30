@@ -2,6 +2,14 @@ import type { Event } from "../../log/event"
 import type { KeyFragment } from "../../log"
 import { intent, type Reactor } from "../../reconciliation"
 import type { Component } from "../component"
+import {
+  CANCELLATION_CONTROL_METHOD,
+  cancellationRequested,
+  cancellationRequestedOf,
+  type CancellationDispatched
+} from "./cancellation"
+import type { ActorInvocation, ActorInvocationContext } from "./call"
+import type { ActorMethods } from "./definition"
 
 // AlarmFired records the platform alarm crossing in an actor's private log.
 export interface AlarmFired extends Event {
@@ -64,6 +72,18 @@ const terminalCalls = (log: ReadonlyArray<Event>): ReadonlySet<string> => new Se
 }))
 
 const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Dispatch> => log.flatMap((event) => {
+  if (event.type === "CancellationDispatched") {
+    const cancellation = event as CancellationDispatched
+    if (!Number.isSafeInteger(cancellation.timeoutMs) || cancellation.timeoutMs < 1 ||
+      !Number.isSafeInteger(cancellation.deadlineAt)) return []
+    return [{
+      call: cancellation.request,
+      method: CANCELLATION_CONTROL_METHOD,
+      target: cancellation.target,
+      timeoutMs: cancellation.timeoutMs,
+      deadlineAt: cancellation.deadlineAt
+    }]
+  }
   if (event.type !== "CallDispatched") return []
   const candidate = event as {
     readonly id?: unknown
@@ -88,13 +108,55 @@ const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Dispatch> => log
   }]
 })
 
+interface InvocationDeadline {
+  readonly invocation: ActorInvocation
+  readonly deadlineAt: number
+}
+
+const invocationDeadlinesOf = (log: ReadonlyArray<Event>): ReadonlyArray<InvocationDeadline> => {
+  const seen = new Set<string>()
+  return log.flatMap((event) => {
+    const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
+    if (context === undefined || context.invocation === undefined || typeof context.deadlineAt !== "number") return []
+    const invocation = context.invocation
+    const key = JSON.stringify([invocation.method, invocation.id, invocation.epoch])
+    if (seen.has(key)) return []
+    seen.add(key)
+    return [{ invocation, deadlineAt: context.deadlineAt }]
+  })
+}
+
+const deadlineAlreadyCrossed = (log: ReadonlyArray<Event>, deadlineAt: number): boolean =>
+  log.some((event) => event.type === "AlarmFired" && typeof event.at === "number" && event.at >= deadlineAt)
+
+const invocationSettled = (
+  log: ReadonlyArray<Event>,
+  invocation: ActorInvocation,
+  methods?: ActorMethods
+): boolean => {
+  if (log.some((event) =>
+    cancellationRequestedOf(event)?.invocation.method === invocation.method &&
+      cancellationRequestedOf(event)?.invocation.id === invocation.id &&
+      cancellationRequestedOf(event)?.invocation.epoch === invocation.epoch ||
+    event.type === "ResponseDelivered" &&
+      String((event as { readonly method?: unknown }).method) === invocation.method &&
+      String((event as { readonly call?: unknown }).call) === invocation.id
+  )) return true
+  const state = methods?.[invocation.method]?.state(log, invocation)
+  return state !== undefined && state.status !== "pending"
+}
+
 // earliestDeadlineOf projects the next physical wake from unresolved durable method calls.
-export const earliestDeadlineOf = (log: ReadonlyArray<Event>): number | undefined => {
+export const earliestDeadlineOf = (log: ReadonlyArray<Event>, methods?: ActorMethods): number | undefined => {
   const terminal = terminalCalls(log)
   let earliest: number | undefined
   for (const dispatch of dispatchesOf(log)) {
     if (terminal.has(dispatch.call)) continue
     earliest = earliest === undefined ? dispatch.deadlineAt : Math.min(earliest, dispatch.deadlineAt)
+  }
+  for (const deadline of invocationDeadlinesOf(log)) {
+    if (invocationSettled(log, deadline.invocation, methods) || deadlineAlreadyCrossed(log, deadline.deadlineAt)) continue
+    earliest = earliest === undefined ? deadline.deadlineAt : Math.min(earliest, deadline.deadlineAt)
   }
   return earliest
 }
@@ -130,9 +192,39 @@ export const methodTimeoutReactor: Reactor = (log) => {
   })
 }
 
+// methodDeadlineCancellationReactor turns an accepted invocation deadline into the same durable cancellation used by callers.
+export const methodDeadlineCancellationReactor = (methods: ActorMethods): Reactor => (log) =>
+  invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
+    const cancellation = methods[invocation.method]?.cancellation
+    if (cancellation === undefined || invocationSettled(log, invocation)) return []
+    const alarm = firingFor(log, {
+      call: invocation.id,
+      method: invocation.method,
+      target: "",
+      timeoutMs: 0,
+      deadlineAt
+    })
+    if (alarm === undefined || cancellation.state(log, invocation) !== "running") return []
+    const request = `deadline/${invocation.method}/${invocation.id}/${invocation.epoch}/${deadlineAt}`
+    return [intent({
+      key: `cx:${JSON.stringify([invocation.method, invocation.id, invocation.epoch])}`,
+      input: { request, invocation, deadlineAt },
+      events: (current, at) => [cancellationRequested({
+        request: current.request,
+        invocation: current.invocation,
+        cause: "deadline",
+        deadlineAt: current.deadlineAt,
+        at
+      })]
+    })]
+  })
+
 // methodTimeoutComponent mounts durable method deadlines on every actor.
-export const methodTimeoutComponent: Component<undefined> = {
+export const methodTimeoutComponent = (methods: ActorMethods): Component<undefined> => ({
   name: "actor.method-timeouts",
   keys: methodTimeoutKeys,
-  derive: (log) => ({ view: undefined, transitions: methodTimeoutReactor(log) })
-}
+  derive: (log) => ({
+    view: undefined,
+    transitions: [...methodTimeoutReactor(log), ...methodDeadlineCancellationReactor(methods)(log)]
+  })
+})

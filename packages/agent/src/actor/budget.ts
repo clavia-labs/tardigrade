@@ -26,8 +26,9 @@ export type BudgetDecision = typeof BudgetDecision.Type
 export const requestBudgetMethod = actorMethod({
   input: BudgetRequestInput,
   output: BudgetDecision,
-  event: ({ id, input, at }) => budgetRequestReceived({ id, ...input, at }),
-  state: (events, id) => {
+  event: ({ invocation, input, at }) => budgetRequestReceived({ id: invocation.id, ...input, at }),
+  state: (events, invocation) => {
+    const { id } = invocation
     const requested = events.some((event) =>
       event.type === "BudgetRequestReceived" && String((event as { readonly id?: unknown }).id) === id
     )

@@ -1,7 +1,19 @@
 import { Schema } from "effect"
 import type { Event } from "../../log/event"
-import type { ActorMethodCall } from "./call"
+import type { ActorInvocation, ActorMethodCall } from "./call"
 import type { ActorMethodState } from "./state"
+import type { InvocationCancellation } from "./cancellation"
+
+export type ActorMethodCancellationState = "running" | "cancelled" | "terminal"
+
+// ActorMethodCancellation declares how one method recognizes and terminates cancellable invocations.
+export interface ActorMethodCancellation {
+  readonly state: (
+    events: ReadonlyArray<Event>,
+    invocation: ActorInvocation
+  ) => ActorMethodCancellationState | undefined
+  readonly event: (cancellation: InvocationCancellation, at: number) => Event
+}
 
 export const ACTOR_METHOD_NAME_PATTERN = /^[a-z][A-Za-z0-9-]{0,62}$/u
 
@@ -36,8 +48,10 @@ export interface ActorMethodDeclaration {
   readonly output: Schema.ConstraintDecoder<unknown>
   readonly timeoutMs: number
   readonly durableInput?: DurableMethodInput
+  readonly cancellation?: ActorMethodCancellation
+  readonly currentEpoch: (events: ReadonlyArray<Event>, id: string) => number
   readonly eventOf: (call: ActorMethodCall<unknown>) => Event
-  readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<unknown> | undefined
+  readonly state: (events: ReadonlyArray<Event>, invocation: ActorInvocation) => ActorMethodState<unknown> | undefined
 }
 
 // ActorMethodDefinition declares one typed call as an input event and a result projection.
@@ -49,19 +63,22 @@ export interface ActorMethodDefinition<
   readonly output: Output
   readonly timeoutMs?: number
   readonly durableInput?: DurableMethodInput
+  readonly cancellation?: ActorMethodCancellation
+  readonly currentEpoch?: (events: ReadonlyArray<Event>, id: string) => number
   readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
-  readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<Output["Type"]> | undefined
+  readonly state: (events: ReadonlyArray<Event>, invocation: ActorInvocation) => ActorMethodState<Output["Type"]> | undefined
 }
 
 // ActorMethod carries a typed definition and its dynamically callable event builder.
-export interface ActorMethod<
+export type ActorMethod<
   Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
   Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>
-> extends ActorMethodDefinition<Input, Output>, ActorMethodDeclaration {
+> = Omit<ActorMethodDefinition<Input, Output>, "timeoutMs" | "currentEpoch"> & ActorMethodDeclaration & {
   readonly input: Input
   readonly output: Output
   readonly timeoutMs: number
-  readonly state: (events: ReadonlyArray<Event>, id: string) => ActorMethodState<Output["Type"]> | undefined
+  readonly currentEpoch: (events: ReadonlyArray<Event>, id: string) => number
+  readonly state: (events: ReadonlyArray<Event>, invocation: ActorInvocation) => ActorMethodState<Output["Type"]> | undefined
 }
 
 export type ActorMethods = Readonly<Record<string, ActorMethodDeclaration>>
@@ -71,16 +88,31 @@ export type ActorMethodInput<Method extends ActorMethodDeclaration> = Method["in
 export type ActorMethodOutput<Method extends ActorMethodDeclaration> = Method["output"]["Type"]
 
 // actorMethod preserves schema types and adds the validated event builder used after dynamic lookup.
-export const actorMethod = <Input extends Schema.ConstraintDecoder<unknown>, Output extends Schema.ConstraintDecoder<unknown>>(
-  definition: ActorMethodDefinition<Input, Output>
-): ActorMethod<Input, Output> => ({
+export function actorMethod<
+  Input extends Schema.ConstraintDecoder<unknown>,
+  Output extends Schema.ConstraintDecoder<unknown>
+>(definition: ActorMethodDefinition<Input, Output> & {
+  readonly cancellation: ActorMethodCancellation
+}): ActorMethod<Input, Output> & { readonly cancellation: ActorMethodCancellation }
+export function actorMethod<
+  Input extends Schema.ConstraintDecoder<unknown>,
+  Output extends Schema.ConstraintDecoder<unknown>
+>(definition: ActorMethodDefinition<Input, Output> & {
+  readonly cancellation?: undefined
+}): ActorMethod<Input, Output> & { readonly cancellation?: undefined }
+export function actorMethod(
+  definition: ActorMethodDefinition
+): ActorMethod {
+  return ({
   ...definition,
   timeoutMs: actorMethodTimeoutOf(definition.timeoutMs),
+  currentEpoch: definition.currentEpoch ?? (() => 0),
   eventOf: (call) => definition.event({
     ...call,
     input: Schema.decodeUnknownSync(definition.input)(call.input)
   })
-})
+  }) as ActorMethod
+}
 
 // actorMethodsOf validates names and declarations at the actor boundary.
 export const actorMethodsOf = <const Methods extends ActorMethods>(methods: Methods): Methods => {
@@ -97,8 +129,15 @@ export const actorMethodsOf = <const Methods extends ActorMethods>(methods: Meth
       throw new Error(`actor method ${JSON.stringify(name)} must declare input and output schemas`)
     }
     actorMethodTimeoutOf(candidate.timeoutMs)
-    if (typeof candidate.eventOf !== "function" || typeof candidate.state !== "function") {
-      throw new Error(`actor method ${JSON.stringify(name)} must declare eventOf and state functions`)
+    if (typeof candidate.eventOf !== "function" || typeof candidate.state !== "function" ||
+      typeof candidate.currentEpoch !== "function") {
+      throw new Error(`actor method ${JSON.stringify(name)} must declare eventOf, state, and currentEpoch functions`)
+    }
+    if (candidate.cancellation !== undefined && (
+      typeof candidate.cancellation !== "object" || candidate.cancellation === null ||
+      typeof candidate.cancellation.state !== "function" || typeof candidate.cancellation.event !== "function"
+    )) {
+      throw new Error(`actor method ${JSON.stringify(name)} cancellation must declare state and event functions`)
     }
     const previous = names.get(declaration)
     if (previous !== undefined) {

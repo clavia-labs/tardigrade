@@ -60,6 +60,18 @@ export const inheritComponentContract = <V, R>(
   })
 }
 
+// inheritComponent carries a child's method seams and cancellation obligations through a transparent wrapper.
+export const inheritComponent = <V, R>(
+  component: Component<V, R>,
+  child: Component<unknown, R>
+): Component<V, R> => inheritComponentContract({
+  ...component,
+  cancel: (log, cancellation) => [
+    ...(child.cancel?.(log, cancellation) ?? []),
+    ...(component.cancel?.(log, cancellation) ?? [])
+  ]
+}, child)
+
 // handles records that a component completes calls to a method locally.
 export const handles = <V, R>(
   method: ActorMethodDeclaration,

@@ -14,8 +14,8 @@ import type { ActorMethodState } from "./state"
 const inspect = actorMethod({
   input: Schema.Struct({ value: Schema.String }),
   output: Schema.Struct({ length: Schema.Finite }),
-  event: ({ id, input, at }): Event => ({ type: "Inspected", id, value: input.value, at }),
-  state: (_events, id) => ({ status: "completed", output: { length: id.length } })
+  event: ({ invocation, input, at }): Event => ({ type: "Inspected", id: invocation.id, value: input.value, at }),
+  state: (_events, invocation) => ({ status: "completed", output: { length: invocation.id.length } })
 })
 
 describe("actorMethod", () => {
@@ -27,26 +27,26 @@ describe("actorMethod", () => {
 
   test("preserves its decoded input and output types", () => {
     const call: ActorMethodCall<{ readonly value: string }> = {
-      id: "call-1",
+      invocation: { method: "inspect", id: "call-1", epoch: 0 },
       input: { value: "hello" },
       at: 7
     }
     const accepted: Parameters<typeof inspect.event>[0] = call
     const input: ActorMethodInput<typeof inspect> = call.input
     const output: ActorMethodOutput<typeof inspect> = { length: 6 }
-    const state: ActorMethodState<{ readonly length: number }> | undefined = inspect.state([], call.id)
+    const state: ActorMethodState<{ readonly length: number }> | undefined = inspect.state([], call.invocation)
     expect(accepted.input).toEqual(input)
     expect(state).toEqual({ status: "completed", output })
   })
 
   test("builds a durable event after validating dynamic input", () => {
-    expect(inspect.eventOf({ id: "call-1", input: { value: "hello" }, at: 7 })).toEqual({
+    expect(inspect.eventOf({ invocation: { method: "inspect", id: "call-1", epoch: 0 }, input: { value: "hello" }, at: 7 })).toEqual({
       type: "Inspected",
       id: "call-1",
       value: "hello",
       at: 7
     })
-    expect(() => inspect.eventOf({ id: "call-1", input: { value: 42 }, at: 7 })).toThrow()
+    expect(() => inspect.eventOf({ invocation: { method: "inspect", id: "call-1", epoch: 0 }, input: { value: 42 }, at: 7 })).toThrow()
   })
 })
 
@@ -65,7 +65,13 @@ describe("actorMethodsOf", () => {
       "must declare input and output schemas"
     )
     expect(() => actorMethodsOf({ broken: { ...inspect, eventOf: undefined as never } })).toThrow(
-      "must declare eventOf and state functions"
+      "must declare eventOf, state, and currentEpoch functions"
+    )
+    expect(() => actorMethodsOf({ broken: { ...inspect, currentEpoch: undefined as never } })).toThrow(
+      "must declare eventOf, state, and currentEpoch functions"
+    )
+    expect(() => actorMethodsOf({ broken: { ...inspect, cancellation: {} as never } })).toThrow(
+      "cancellation must declare state and event functions"
     )
   })
 

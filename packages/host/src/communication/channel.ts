@@ -48,7 +48,7 @@ export const channelOf = <Source extends ProviderEndpoint, R = never, E = never>
           envelopes: receipt.inbound.map((inbound) =>
             methodEnvelopeOf(
               linkOf(inbound.source, target(inbound.source)),
-              { method: options.method, id: inbound.event.id },
+              { invocation: { method: options.method, id: inbound.event.id, epoch: 0 } },
               inbound.event
             )
           ),

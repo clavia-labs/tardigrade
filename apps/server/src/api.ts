@@ -2,11 +2,20 @@ import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
+import {
+  actorMethodTimeoutOf,
+  actorInvocationContextFrom,
+  cancellationRequested,
+  cancellationDispositionOf,
+  cancellationRequestIdOf
+} from "@clavia/tardigrade-core/actor/method"
 
 import {
   Api,
   apiOf,
   InvalidRequest,
+  InvocationSettled,
   invalidRequest,
   ModelCatalogUnavailable,
   RESERVED_ACTOR,
@@ -303,30 +312,69 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
       Effect.map(Threads, (threads) =>
         Object.entries(threads.methods).map(([name, method]) => ({
           name,
+          cancellable: method.cancellation !== undefined,
+          timeoutMs: method.timeoutMs,
           inputSchema: jsonSchemaOf(method.input),
           outputSchema: jsonSchemaOf(method.output)
         }))))
-    .handle("invoke", ({ params, payload }) =>
+    .handle("invoke", ({ params, query, payload }) =>
       Effect.gen(function*() {
         const service = yield* Threads
         const threads = yield* service.ensure(params.id)
         const method = yield* methodOf(threads, params.method)
+        const existing = (yield* threads.events(params.thread))
+          .map(actorInvocationContextFrom)
+          .find((context) => context?.invocation.method === params.method &&
+            context.invocation.id === params.call && context.invocation.epoch === 0 && context.deadlineAt !== undefined)
+        if (existing?.deadlineAt !== undefined) {
+          return {
+            actor: params.id,
+            thread: params.thread,
+            method: params.method,
+            call: params.call,
+            deadlineAt: existing.deadlineAt
+          }
+        }
+        const timeoutMs = yield* Effect.try({
+          try: () => actorMethodTimeoutOf(query.timeoutMs),
+          catch: (failure) => InvalidRequest.of(failureMessage(failure))
+        })
+        if (timeoutMs > method.timeoutMs) {
+          return yield* Effect.fail(InvalidRequest.of(
+            `timeoutMs cannot exceed method ${JSON.stringify(params.method)}'s declared ${method.timeoutMs}ms.`
+          ))
+        }
         const at = yield* Clock.currentTimeMillis
+        const deadlineAt = at + timeoutMs
+        if (!Number.isSafeInteger(deadlineAt)) {
+          return yield* Effect.fail(InvalidRequest.of("timeoutMs produces a deadline outside the safe integer range."))
+        }
+        const context = {
+          invocation: { method: params.method, id: params.call, epoch: 0 },
+          deadlineAt
+        }
         const event = yield* Effect.try({
-          try: () => method.eventOf({ id: params.call, input: payload, at }),
+          try: () => invokedEventOf(context, method.eventOf({ ...context, input: payload, at })),
           catch: (failure) => InvalidRequest.of(
             `The input for method ${JSON.stringify(params.method)} is invalid. ${failureMessage(failure)}`
           )
         })
         yield* threads.append(params.thread, event)
-        return { actor: params.id, thread: params.thread, method: params.method, call: params.call }
+        return {
+          actor: params.id,
+          thread: params.thread,
+          method: params.method,
+          call: params.call,
+          deadlineAt
+        }
       }))
     .handle("methodState", ({ params }) =>
       Effect.gen(function*() {
         const threads = yield* actorOf(yield* Threads, params.id)
         const method = yield* methodOf(threads, params.method)
         const log = yield* logOf(threads.events, params.thread)
-        const state = method.state(log, params.call)
+        const invocation = { method: params.method, id: params.call, epoch: method.currentEpoch(log, params.call) }
+        const state = method.state(log, invocation)
         if (state === undefined) {
           return yield* Effect.fail(
             UnknownMethodCall.of(
@@ -335,6 +383,59 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
           )
         }
         return state
+      }))
+    .handle("cancel", ({ params, payload }) =>
+      Effect.gen(function*() {
+        const service = yield* Threads
+        const threads = yield* actorOf(service, params.id)
+        const method = yield* methodOf(threads, params.method)
+        const log = yield* logOf(threads.events, params.thread)
+        const invocation = { method: params.method, id: params.call, epoch: method.currentEpoch(log, params.call) }
+        if (method.state(log, invocation) === undefined) {
+          return yield* Effect.fail(UnknownMethodCall.of(
+            `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
+          ))
+        }
+        if (method.cancellation === undefined) {
+          return yield* Effect.fail(InvalidRequest.of(
+            `Method ${JSON.stringify(params.method)} does not declare cancellation.`
+          ))
+        }
+        const disposition = cancellationDispositionOf(log, method, invocation)
+        if (disposition === undefined) {
+          return yield* Effect.fail(UnknownMethodCall.of(
+            `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
+          ))
+        }
+        if (disposition === "settled") {
+          return yield* Effect.fail(InvocationSettled.of(
+            `Invocation ${JSON.stringify(params.call)} has settled and cannot be cancelled.`
+          ))
+        }
+        if (disposition !== "requestable") {
+          return {
+            actor: params.id,
+            thread: params.thread,
+            method: params.method,
+            call: params.call,
+            status: disposition
+          }
+        }
+        const at = yield* Clock.currentTimeMillis
+        yield* threads.append(params.thread, cancellationRequested({
+          request: cancellationRequestIdOf(invocation),
+          invocation,
+          cause: "requested",
+          ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+          at
+        }))
+        return {
+          actor: params.id,
+          thread: params.thread,
+          method: params.method,
+          call: params.call,
+          status: "requested" as const
+        }
       })))
 
 // layerProjectionsGroup implements every declared projection the same way, because there is only

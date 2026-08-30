@@ -395,11 +395,18 @@ const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
   timeoutMs: number,
-  sink: { promise: Promise<Wire | undefined>; reader?: BodyReader }
+  sink: { promise: Promise<Wire | undefined>; reader?: BodyReader },
+  signal?: AbortSignal
 ): FetchImpl => {
   const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
   return async (input, init) => {
-    const timed = { ...init, timeout: timeoutMs } as NonNullable<Parameters<FetchImpl>[1]>
+    const requestSignal = init?.signal
+    const combined = signal === undefined
+      ? requestSignal
+      : requestSignal === undefined || requestSignal === null
+        ? signal
+        : AbortSignal.any([requestSignal, signal])
+    const timed = { ...init, ...(combined === undefined ? {} : { signal: combined }), timeout: timeoutMs } as NonNullable<Parameters<FetchImpl>[1]>
     const res = await inner(input, timed)
     if (res.body === null) return res
     const [live, copy] = res.body.tee()
@@ -590,7 +597,8 @@ export const infer = <const C extends ModelConfig>(
     stats: { finish?: string },
     delivery: DeltaDelivery | undefined,
     identity: InferRequest["identity"],
-    physicalAttempt: string
+    physicalAttempt: string,
+    signal?: AbortSignal
   ): Promise<Action> => {
     // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
     // recorded fact rather than re-deciding from a capability that may have changed since
@@ -605,7 +613,7 @@ export const infer = <const C extends ModelConfig>(
       promise: Promise.resolve(undefined)
     }
     const held: { tokens?: TokenUsage } = {}
-    const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink)
+    const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink, signal)
     const fallbackSystem = fallbackSystemFor(req.output, mode)
     const attempt = selectedAdapter.start({
       config,
@@ -701,7 +709,7 @@ export const infer = <const C extends ModelConfig>(
         "gen_ai.request.model": config.model,
         "gen_ai.provider.name": config.protocol === "bedrock-converse" ? "aws.bedrock" : (config.provider ?? config.protocol)
       }
-    })(function* (request: InferRequest, key?: string) {
+    })(function* (request: InferRequest, key?: string, signal?: AbortSignal) {
       // The retry ladder reads the wall clock to honour a provider's `Retry-After` date, and it
       // reads it from the Clock the caller supplied rather than the global one, so a test drives
       // the ladder without waiting on real time (model.test.ts, "infer: throttle-shaped retry").
@@ -759,7 +767,7 @@ export const infer = <const C extends ModelConfig>(
             const physicalAttempt = delivery === undefined
               ? ""
               : options.physicalAttemptId?.(logicalAttempt) ?? randomPhysicalAttemptId(logicalAttempt)
-            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, request.identity, physicalAttempt)
+            const action = await attemptOnce(req, mode, key, ladder[rung]!, rung, stats, delivery, request.identity, physicalAttempt, signal)
             remember(action.usage, true)
             return served(withSpend(action, spentOf(parts, missed)), action.endpoint ?? endpointOf(config, undefined))
           } catch (e) {

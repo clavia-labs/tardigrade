@@ -3,6 +3,7 @@ export {
   actor,
   validateActor,
   type Actor,
+  type ActorCancellationPolicy,
   type ActorOptions
 } from "./definition"
 export * from "./contract"

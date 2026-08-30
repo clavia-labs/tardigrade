@@ -2,7 +2,7 @@ import type { Transition, Reactor } from "@clavia/tardigrade-core/reconciliation
 import {
   composeComponents,
   handles,
-  inheritComponentContract,
+  inheritComponent,
   type Component,
   type ComponentRequirements,
   type ViewAlgebra
@@ -15,7 +15,7 @@ import { fallbackOf, type OutputFallback } from "../output/contract"
 import { agentKeys } from "../log/events"
 import { inferReactorFor, type InferPolicy } from "../inference/reactor"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
-import { toolsReactorFrom, type Answer, type PendingCall } from "./tools"
+import { toolsComponentFrom, type Answer, type PendingCall } from "./tools"
 import type { ContextPolicy } from "../components/compaction"
 import type { AgentR } from "./turn"
 import { agentMessageMethod } from "../actor/message"
@@ -242,9 +242,18 @@ export const infer = <
   const { models: rawModels, ...policy } = options
   const models = modelPolicyOverrideOf(rawModels)
   const inference = inferReactorFor({ ...policy, models }, (log) => renderView(viewOf(log))) as Reactor<R>
-  const dispatch = toolsReactorFrom(serve, (log, call) => offeredTools(log, call).map((tool) => tool.spec))
+  const tools = toolsComponentFrom<AgentView, R>(
+    AGENT_VIEW_ALGEBRA.empty,
+    serve,
+    (log, call) => offeredTools(log, call).map((tool) => tool.spec)
+  )
+  const cancellable = composeComponents(
+    "infer.cancellable",
+    AGENT_VIEW_ALGEBRA,
+    [combined, tools]
+  ) as AgentComponent<R>
 
-  return handles(agentMessageMethod, inheritComponentContract({
+  return handles(agentMessageMethod, inheritComponent({
     name: "infer",
     keys: rootKeys(combined.keys),
     derive: (log) => {
@@ -255,10 +264,10 @@ export const infer = <
         view: children.view,
         transitions: resolvingModel ? inferred : [
           ...inferred,
-          ...dispatch(log),
+          ...tools.derive(log).transitions,
           ...children.transitions
         ]
       }
     }
-  }, combined))
+  }, cancellable))
 }

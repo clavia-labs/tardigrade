@@ -5,6 +5,8 @@ export {
   actorMethodTimeoutOf,
   actorMethodsOf,
   type ActorMethod,
+  type ActorMethodCancellation,
+  type ActorMethodCancellationState,
   type ActorMethodDeclaration,
   type ActorMethodDefinition,
   type ActorMethodInput,
@@ -13,14 +15,33 @@ export {
   type DurableMethodInput,
   type InvalidDurableMethodInput
 } from "./definition"
+export * from "./cancellation"
 export { methodInputValidationComponents, methodInputValidationTransitions } from "./validation"
-export type { ActorMethodCall, ActorMethodInvocation } from "./call"
+export {
+  ActorInvocationSchema,
+  ActorInvocationContextSchema,
+  decodeActorInvocationContext,
+  actorInvocationContextFrom,
+  actorInvocationContextOf,
+  methodIngressKeyOf,
+  type ActorInvocation,
+  type ActorInvocationContext,
+  type ActorMethodCall
+} from "./call"
 export {
   actorCall,
+  cancelInvocation,
+  invocationLinked,
   methodCallKeys,
   type ActorCall,
   type ActorCallOptions,
-  type CallDispatched
+  type ActorCancellationOptions,
+  type CancellableActorCall,
+  type CancelInvocationOptions,
+  type CallPlanned,
+  type CallSkipped,
+  type CallDispatched,
+  type InvocationLinked
 } from "./outgoing"
 export type { ActorMethodState } from "./state"
 export {
@@ -34,6 +55,7 @@ export {
 export {
   alarmFired,
   earliestDeadlineOf,
+  methodDeadlineCancellationReactor,
   methodTimeoutComponent,
   methodTimeoutKeys,
   methodTimeoutReactor,

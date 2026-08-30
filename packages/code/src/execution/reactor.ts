@@ -7,7 +7,7 @@ import { workOwed } from "./projections"
 import { annotationsOf, type Package, type PackageRequirements } from "../package/definition"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, sandboxParked, sandboxReturned, type Bindings, type SandboxCall } from "../sandbox/service"
-import { turnHead, turnOf } from "./turns"
+import { eventEpochOf, turnHead, turnOf } from "./turns"
 import {
   BARE_SPILL_NOTE,
   hydrate,
@@ -91,10 +91,11 @@ const executeRecorded = <R = never>(
   callPolicy: PackageCallPolicy,
   packages: ReadonlyArray<Package<R>>,
   turn?: string,
+  epoch = 0,
   dispatchedAt?: number
 ): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore | R> =>
   Effect.gen(function* () {
-    const stamp = turn === undefined ? {} : { turn }
+    const stamp = turn === undefined ? {} : { turn, ...(epoch === 0 ? {} : { epoch }) }
     const log = yield* EventLog
     const events = yield* log.read
     // The shadow reading rides the turn's own brief, folded once here: it never changes
@@ -414,19 +415,23 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     )
     if (dispatch === undefined) return []
     const d = dispatch as { code?: unknown; at?: unknown }
+    const turn = turnOf(dispatch)
+    const epoch = eventEpochOf(dispatch)
     return [
       effect<
-        { execId: string; code: string; turn: string | undefined; at: number | undefined },
+        { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
         KeyValueStore.KeyValueStore | R
       >({
         key: `cs:${owed.execId}`,
+        ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
         input: {
           execId: owed.execId,
           code: String(d.code ?? ""),
-          turn: turnOf(dispatch),
+          turn,
+          epoch,
           at: typeof d.at === "number" ? d.at : undefined
         },
-        act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.at)
+        act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
       })
     ]
   }

@@ -2,6 +2,9 @@ import type { Event } from "../log/event"
 import type { KeyFragment } from "../log/keys"
 import type { Reactor, Transition } from "../reconciliation"
 import type { COMPONENT_CONTRACT, ComponentContract } from "./contract"
+import type { InvocationCancellation } from "./method/cancellation"
+
+export type { InvocationCancellation } from "./method/cancellation"
 
 // Derivation contains one component's view and transition projections
 // (tla/runtime/Projection.tla, ViewFaithful; tla/runtime/Reconcile.tla, NoVoid).
@@ -16,6 +19,10 @@ export interface Component<V, R = never> {
   readonly keys?: KeyFragment
   readonly [COMPONENT_CONTRACT]?: ComponentContract
   readonly derive: (log: ReadonlyArray<Event>) => Derivation<V, R>
+  readonly cancel?: (
+    log: ReadonlyArray<Event>,
+    cancellation: InvocationCancellation
+  ) => ReadonlyArray<Transition<never, R>>
 }
 
 // ComponentRequirements extracts a component's service requirements.

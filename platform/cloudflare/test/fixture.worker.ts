@@ -113,14 +113,14 @@ const encryptedEventCodec = (thread: string, key: Promise<CryptoKey>): Cloudflar
 const echo = actorMethod({
   input: Schema.Struct({ text: Schema.String }),
   output: Schema.String,
-  event: ({ id, input, at }) => ({ type: "EchoRequested", id, text: input.text, at }),
-  state: (events, id) => {
+  event: ({ invocation, input, at }) => ({ type: "EchoRequested", id: invocation.id, text: input.text, at }),
+  state: (events, invocation) => {
     const event = events.find((candidate) =>
-      candidate.type === "EchoCompleted" && (candidate as { readonly id?: unknown }).id === id
+      candidate.type === "EchoCompleted" && (candidate as { readonly id?: unknown }).id === invocation.id
     ) as { readonly text?: unknown } | undefined
     if (event !== undefined) return { status: "completed" as const, output: String(event.text) }
     return events.some((candidate) =>
-      candidate.type === "EchoRequested" && (candidate as { readonly id?: unknown }).id === id
+      candidate.type === "EchoRequested" && (candidate as { readonly id?: unknown }).id === invocation.id
     ) ? { status: "pending" as const } : undefined
   }
 })

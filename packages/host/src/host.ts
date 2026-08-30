@@ -18,8 +18,15 @@ import {
   type ProviderEndpoint
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import type { ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import { methodIngressKeyOf, type ActorInvocationContext } from "@clavia/tardigrade-core/actor/method"
+import {
+  EffectInterruptions,
+  Self,
+  effectInterruptionRegistry,
+  restingActor,
+  settleActor,
+  type Actor
+} from "@clavia/tardigrade-core/reconciliation"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { providerTransportFrom, type Provider } from "./communication/provider"
 import { createThreadDriver, type DriverPolicy } from "./driver"
@@ -118,8 +125,17 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const actorName = options.actorName ?? "mem"
   const actorInstance = options.actorInstance ?? "main"
   const threads = new Map<string, ReadonlyArray<Event>>()
+  const interruptions = new Map<string, ReturnType<typeof effectInterruptionRegistry>>()
+  const interruptionsOf = (thread: string) => {
+    const current = interruptions.get(thread)
+    if (current !== undefined) return current
+    const created = effectInterruptionRegistry()
+    interruptions.set(thread, created)
+    return created
+  }
   const providerTransport = providerTransportFrom(options.providers ?? [])
-  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
+  const storeKeyOf = (event: Event): string | undefined =>
+    methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
 
   const read = (thread: string): ReadonlyArray<Event> => threads.get(thread) ?? []
   // append implements guarantee 5 of the log port (packages/core/src/log/service.ts): a keyed
@@ -130,6 +146,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     const current = read(thread)
     if (options.keyOf === undefined && events.every((event) => threadKeys.keyOf(event) === undefined)) {
       threads.set(thread, [...current, ...events])
+      interruptionsOf(thread).interrupt(events)
       return
     }
     const recorded = new Set<string>()
@@ -147,6 +164,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
       landing.push(e)
     }
     threads.set(thread, [...current, ...landing])
+    interruptionsOf(thread).interrupt(landing)
   }
   const seed = (thread: string, events: ReadonlyArray<Event>): void => append(thread, events)
 
@@ -155,7 +173,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     event: Event,
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ThreadAddress>,
-    call?: ActorMethodInvocation
+    call?: ActorInvocationContext
   ): void => {
     const address = formatThreadAddress(target)
     // The membrane: every cross-thread event names its occurrence, or it does not travel.
@@ -221,6 +239,7 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
         })
       ),
       router,
+      Layer.succeed(EffectInterruptions, interruptionsOf(thread)),
       Layer.succeed(Self, parseThreadAddress(self(thread)))
     )
 

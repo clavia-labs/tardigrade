@@ -16,7 +16,7 @@ const call = {
   type: "Asked",
   id: "call-1",
   input: "work",
-  call: { method: "ask", id: "call-1" },
+  call: { invocation: { method: "ask", id: "call-1", epoch: 0 } },
   link: linkOf(source, target),
   at: 1
 } as Event
@@ -25,8 +25,9 @@ const methods = actorMethodsOf({
   ask: actorMethod({
     input: Schema.String,
     output: Schema.String,
-    event: ({ id, input, at }): Event => ({ type: "Asked", id, input, at }),
-    state: (events, id) => {
+    event: ({ invocation, input, at }): Event => ({ type: "Asked", id: invocation.id, input, at }),
+    state: (events, invocation) => {
+      const { id } = invocation
       if (!events.some((event) => event.type === "Asked" && (event as { readonly id?: unknown }).id === id)) {
         return undefined
       }
@@ -49,7 +50,7 @@ describe("methodResponseReactor", () => {
     expect(transition.kind).toBe("effect")
     if (transition.kind !== "effect") return
 
-    const returned = await Effect.runPromise(transition.act(transition.input).pipe(Effect.provide(Layer.mergeAll(
+    const returned = await Effect.runPromise(transition.act(transition.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(
       Layer.succeed(Self, target),
       Layer.succeed(Router, { send: (envelope) => Effect.sync(() => void sent.push(envelope)) }),
       Layer.succeed(EventLog, withWatermark({ append: () => Effect.void, read: Effect.succeed([]) }))
@@ -91,7 +92,7 @@ describe("methodResponseReactor", () => {
       ask: actorMethod({
         input: Schema.String,
         output: Schema.String,
-        event: ({ id, input, at }): Event => ({ type: "Asked", id, input, at }),
+        event: ({ invocation, input, at }): Event => ({ type: "Asked", id: invocation.id, input, at }),
         state: () => ({ status: "completed", output: 42 as never })
       })
     })

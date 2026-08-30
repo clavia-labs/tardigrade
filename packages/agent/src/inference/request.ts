@@ -140,7 +140,7 @@ export const renderMessages = (
   const from = keepFromIndex(projected, checkpoint.keepFrom)
   const terminated = new Set(
     projected
-      .filter((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
+      .filter((e) => e.type === "TurnCompleted" || e.type === "TurnFailed" || e.type === "TurnCancelled")
       .map((e) => String((e as { turn?: unknown }).turn))
   )
   const decided = new Map(
@@ -198,6 +198,11 @@ export const renderMessages = (
       }
       case "TurnFailed": {
         messages.push({ role: "assistant", content: `the turn failed: ${String(v.error ?? "")}` })
+        break
+      }
+      case "TurnCancelled": {
+        const reason = String(v.reason ?? "")
+        messages.push({ role: "assistant", content: reason === "" ? "the turn was cancelled" : `the turn was cancelled: ${reason}` })
         break
       }
       default:

@@ -8,6 +8,6 @@ Place focused component, protocol, and package integration tests beside their so
 
 The actor graph journey covers concurrent foreground children, background work, structured output, budget exhaustion, grant and denial decisions, durable outgoing actor calls, response aggregation, and graph quiescence.
 
-The Mortyplicity journey generates parallel child missions, arbitrary scheduling and inference timing, human permission grants, denials, failures, and durable method timeouts, budget escalation outcomes, and foreground and background aggregation.
+The Mortyplicity journey generates parallel child missions, arbitrary scheduling and inference timing, human permission grants, denials, failures, durable method timeouts, budget escalation outcomes, foreground and background aggregation, and invocation cancellation across a live child graph.
 
 Run this workspace with `bun run e2e`. The repository gate runs it as `test:e2e`, type-checks it as `typecheck:e2e`, and applies the Effect rules as `lint:effect:e2e`.

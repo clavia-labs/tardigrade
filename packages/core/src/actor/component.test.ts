@@ -123,6 +123,21 @@ describe("components", () => {
     )
   })
 
+  test("composition preserves cancellation projections in component order", () => {
+    const cancellable = (name: string): Component<Facts> => ({
+      name,
+      derive: () => ({ view: facts.empty, transitions: [] }),
+      cancel: () => [intent({ key: `cancel:${name}`, input: undefined, events: () => [] })]
+    })
+    const composed = composeComponents("cancellable", facts, [cancellable("left"), cancellable("right")])
+
+    expect(composed.cancel?.([], {
+      request: "x1",
+      invocation: { method: "work", id: "w1", epoch: 2 },
+      cause: "requested"
+    }).map((transition) => transition.key)).toEqual(["cancel:left", "cancel:right"])
+  })
+
   test("the reactor adapter preserves the transition projection", () => {
     const source = component("ready", "Ready")
     const log: ReadonlyArray<Event> = [{ type: "Ready" }]

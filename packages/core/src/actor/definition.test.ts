@@ -4,6 +4,7 @@ import type { Event } from "../log/event"
 import { actor, validateActor } from "./definition"
 import { actorRef } from "./reference"
 import { actorMethod, actorMethodsOf } from "./method/definition"
+import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "./method/cancellation"
 import { alarmFired } from "./method/timeout"
 import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
@@ -12,7 +13,7 @@ const methods = actorMethodsOf({
   inspect: actorMethod({
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.String,
-    event: ({ id, input, at }): Event => ({ type: "Inspected", id, value: input.value, at }),
+    event: ({ invocation, input, at }): Event => ({ type: "Inspected", id: invocation.id, value: input.value, at }),
     state: () => ({ status: "pending" })
   })
 })
@@ -23,11 +24,27 @@ describe("actor", () => {
     expect(definition.name).toBe("release-analyst")
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
+    expect(definition.cancellation).toEqual({ childTimeoutMs: DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS })
     expect(definition.reactors).toHaveLength(3)
     expect(actorRef(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })
+  })
+
+  test("exposes and validates the child cancellation timeout", () => {
+    expect(actor({
+      name: "release-analyst",
+      methods,
+      components: [component],
+      cancellation: { childTimeoutMs: 25 }
+    }).cancellation).toEqual({ childTimeoutMs: 25 })
+    expect(() => actor({
+      name: "release-analyst",
+      methods,
+      components: [component],
+      cancellation: { childTimeoutMs: 0 }
+    })).toThrow("child cancellation timeoutMs must be a positive safe integer")
   })
 
   test("mounts durable method timeout behavior on every actor", () => {

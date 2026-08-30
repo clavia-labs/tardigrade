@@ -12,8 +12,21 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import {
+  alarmFired,
+  earliestDeadlineOf,
+  methodIngressKeyOf,
+  type ActorInvocationContext,
+  type ActorMethods
+} from "@clavia/tardigrade-core/actor/method"
+import {
+  EffectInterruptions,
+  Self,
+  effectInterruptionRegistry,
+  restingActor,
+  settleActor,
+  type Actor
+} from "@clavia/tardigrade-core/reconciliation"
 import { threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
@@ -86,6 +99,7 @@ interface BunThreadRuntime {
   readonly commits: PubSub.PubSub<number>
   readonly commitDispatcher?: CommitDispatcher
   readonly workspace: KeyValueStore.KeyValueStore
+  readonly interruptions: ReturnType<typeof effectInterruptionRegistry>
   alarm?: { readonly deadlineAt: number; readonly handle: BunAlarmHandle }
 }
 
@@ -214,7 +228,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const threads = (): Promise<ReadonlyArray<string>> => directoryRuntime.runPromise(
     directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)
   )
-  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
+  const storeKeyOf = (event: Event): string | undefined =>
+    methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
   const runtimes = new Map<string, Promise<BunThreadRuntime>>()
 
   const openThread = async (thread: string): Promise<BunThreadRuntime> => {
@@ -269,6 +284,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.orDie
     )
     const commits = await runtime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
+    const interruptions = effectInterruptionRegistry()
     const observer = options.commitObserverFor?.({ actorInstance, thread })
     const commitDispatcher = observer === undefined ? undefined : new CommitDispatcher(observer)
     {
@@ -307,6 +323,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       runtime,
       store: { append, read, head, readFrom, readPage },
       commits,
+      interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
       workspace
     }
@@ -328,6 +345,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const appendTo = async (thread: string, events: ReadonlyArray<Event>): Promise<AppendResult> => {
     const threadRuntime = await runtimeOf(thread)
     const result = await threadRuntime.runtime.runPromise(threadRuntime.store.append(events))
+    if (result.appended > 0) threadRuntime.interruptions.interrupt(events)
     if (result.appended > 0) await register(thread)
     return result
   }
@@ -337,7 +355,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     event: Event,
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ThreadAddress>,
-    call?: ActorMethodInvocation
+    call?: ActorInvocationContext
   ): Effect.Effect<void, never> => Effect.promise(async () => {
     const address = formatThreadAddress(target)
     if (lineage !== undefined && (
@@ -371,6 +389,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       return yield* threadRuntime.store.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } })))
     if (result.appended > 0) {
+      threadRuntime.interruptions.interrupt([event])
       await register(thread, lineage)
       driver.mark(thread)
     }
@@ -399,10 +418,16 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     const threadRuntime = await runtimeOf(thread)
     const store: ThreadEventStore = {
       ...threadRuntime.store,
-      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => result.appended > 0 ? Effect.promise(() => register(thread)) : Effect.void))
+      append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => result.appended > 0
+        ? Effect.all([
+            Effect.sync(() => threadRuntime.interruptions.interrupt(events)),
+            Effect.promise(() => register(thread))
+          ]).pipe(Effect.asVoid)
+        : Effect.void))
     }
     const ports = Layer.mergeAll(
       Layer.succeed(EventLog, eventLogFrom(store)), router,
+      Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
       Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {})
     )
@@ -417,7 +442,14 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   }
   const synchronizeAlarm = async (thread: string): Promise<void> => {
     const threadRuntime = await runtimeOf(thread)
-    const deadlineAt = earliestDeadlineOf(await threadRuntime.runtime.runPromise(threadRuntime.store.read))
+    const actor = options.actorFor(thread)
+    const methods = actor !== undefined && "methods" in actor
+      ? (actor as Actor<R> & { readonly methods: ActorMethods }).methods
+      : undefined
+    const deadlineAt = earliestDeadlineOf(
+      await threadRuntime.runtime.runPromise(threadRuntime.store.read),
+      methods
+    )
     if (threadRuntime.alarm?.deadlineAt === deadlineAt) return
     await cancelAlarm(thread)
     if (deadlineAt === undefined) return
