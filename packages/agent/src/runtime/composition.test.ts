@@ -150,13 +150,42 @@ describe("infer component", () => {
       Layer.mergeAll(memoryLog(), mind, noRouter, KeyValueStore.layerMemory)
     )
     expect(seen.map((request) => request.model)).toEqual([selected])
-    expect(events.find((event) => event.type === "ModelResolved")).toMatchObject({
-      model: selected,
-      models: {
-        default: selected,
-        allow: [{ provider: "openai", model_ids: ["large", "small"] }]
+    const called = events.find((event) => event.type === "ModelCalled")
+    expect(called).toMatchObject({ model: selected })
+    expect(called).not.toHaveProperty("models")
+  })
+
+  test("a died attempt retries the model recorded by ModelCalled", async () => {
+    const recorded = { provider: "openai", model_id: "small" } as const
+    const current = { provider: "openai", model_id: "large" } as const
+    const seen: InferRequest[] = []
+    const mind = Layer.succeed(Infer, {
+      resolve: (model) => ({ model: model ?? current, models: { default: current, allow: "*" } }),
+      react: (request: InferRequest) => {
+        seen.push(request)
+        return Effect.succeed({ kind: "complete" as const, output: "done" })
       }
     })
+    const agent = assembled(infer([nativeOutput], { models: { default: current, allow: "*" } }))
+    const events = await run(
+      Effect.gen(function* () {
+        yield* settleActor(agent)
+        return yield* readLog
+      }),
+      Layer.mergeAll(
+        memoryLog([
+          { type: "MessageReceived", id: "m1", text: "retry", at: 1 },
+          { type: "ModelCalled", callId: "m1/infer/0", model: recorded, ordinal: 0, turn: "m1", at: 2 }
+        ]),
+        mind,
+        noRouter,
+        KeyValueStore.layerMemory
+      )
+    )
+    expect(seen.map((request) => request.model)).toEqual([recorded])
+    expect(events.filter((event) => event.type === "ModelCalled").map((event) =>
+      (event as { readonly model?: unknown }).model
+    )).toEqual([recorded, recorded])
   })
 
   test("a historical model string durably fails its turn", async () => {
@@ -243,10 +272,6 @@ describe("infer component", () => {
     expect(seen[1]?.trajectory.filter((event) => event.type === "MessageReceived").map((event) =>
       (event as { readonly id?: unknown }).id
     )).toEqual(["m1", "m2"])
-    expect(events.filter((event) => event.type === "ModelResolved")).toMatchObject([
-      { turn: "m1", model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" } },
-      { turn: "m2", model: { provider: "openai", model_id: "gpt-5.6" } }
-    ])
     expect(events.filter((event) => event.type === "ModelCalled")).toMatchObject([
       { turn: "m1", model: { provider: "vercel", model_id: "anthropic/claude-sonnet-4-6" } },
       { turn: "m2", model: { provider: "openai", model_id: "gpt-5.6" } }

@@ -5,7 +5,6 @@ import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { CancellationRequested } from "@clavia/tardigrade-core/actor/method"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
-import { ModelPolicy, type ModelPolicy as ModelPolicyType } from "../inference/access"
 
 // The agent's domain events compose with core actor input and control events. The model responds
 // by acting: its recorded decision is the consequence event it emits, and the prose it emits
@@ -77,6 +76,7 @@ export const ToolReturned = Schema.Struct({
 export const ModelCalled = Schema.Struct({
   type: Schema.Literal("ModelCalled"),
   callId: Schema.String,
+  // model is the concrete selection for this provider effect. It remains optional for earlier logs.
   model: Schema.optional(ModelRef),
   // The occurrence: distinct per physical attempt, the dedup key's scope. callId stays the
   // provider idempotency key, shared across retries of one logical attempt.
@@ -86,18 +86,6 @@ export const ModelCalled = Schema.Struct({
   output: Schema.optional(OutputPolicy),
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
-  at: Schema.Finite
-})
-
-// ModelResolved records the model reference and catalog limits used by one turn.
-export const ModelResolved = Schema.Struct({
-  type: Schema.Literal("ModelResolved"),
-  turn: Schema.String,
-  model: ModelRef,
-  models: Schema.optional(ModelPolicy),
-  contextWindowTokens: Schema.optional(Schema.Finite),
-  maxOutputTokens: Schema.optional(Schema.Finite),
-  catalogRevision: Schema.optional(Schema.String),
   at: Schema.Finite
 })
 
@@ -333,7 +321,6 @@ export const BudgetDenied = Schema.Struct({
 
 export const AgentEvent = Schema.Union([
   MessageReceived,
-  ModelResolved,
   ModelCalled,
   TextReturned,
   ToolCalled,
@@ -422,8 +409,6 @@ export const agentKeys: KeyFragment = {
         // repetition that evidences died attempts is preserved. A mark predating the ordinal
         // lands unkeyed, which the folds tolerate.
         return v.ordinal === undefined ? undefined : `mc:${String(v.turn)}/${String(v.ordinal)}`
-      case "ModelResolved":
-        return `mr:${String(v.turn)}`
       case "BudgetExhausted":
         // The wall's occurrence is the ceiling it fired at: a grant raises it, so a second
         // crossing keys anew.
@@ -476,17 +461,6 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
-
-export const modelResolved = (fields: {
-  readonly turn: string
-  readonly model: ModelRefType
-  readonly models: ModelPolicyType
-  readonly contextWindowTokens?: number
-  readonly maxOutputTokens?: number
-  readonly catalogRevision?: string
-  readonly at: number
-}): Event =>
-  ({ type: "ModelResolved", ...fields }) as Event
 
 export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
   ({ type: "TextReturned", ...fields }) as Event

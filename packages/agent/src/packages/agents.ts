@@ -6,7 +6,9 @@ import {
   type ActorInvocationContext
 } from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/log"
+import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
+import { turnView } from "@clavia/tardigrade-code/execution/turns"
 import { budgetPolicyOf, type BudgetPolicy } from "../components/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { boundaryId } from "@clavia/tardigrade-core/communication/message"
@@ -289,9 +291,9 @@ const childClaimOf = (
   }
 }
 
-const inheritedModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy => {
-  const resolved = [...events].reverse().find((event) => event.type === "ModelResolved") as { readonly models?: unknown } | undefined
-  return resolved?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(resolved.models)
+const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
+  const head = turnView(events)[0] as { readonly models?: unknown } | undefined
+  return head?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(head.models)
 }
 
 export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog> => {
@@ -303,9 +305,9 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
   const outputs = options.outputs ?? {}
   const catalog = options.catalog
   const packageModels = modelPolicyOverrideOf(options.models)
-  const effectiveModelsOf = (events: ReadonlyArray<{ readonly type: string }>): ModelPolicy =>
+  const effectiveModelsOf = (events: ReadonlyArray<Event>): ModelPolicy =>
     applyModelPolicy(inheritedModelsOf(events), packageModels)
-  const effectiveModelsResultOf = (events: ReadonlyArray<{ readonly type: string }>):
+  const effectiveModelsResultOf = (events: ReadonlyArray<Event>):
     | { readonly models: ModelPolicy }
     | { readonly error: string } => {
     try {
