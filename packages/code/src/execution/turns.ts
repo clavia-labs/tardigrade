@@ -21,14 +21,24 @@ export const eventEpochOf = (event: Event): number => {
   return typeof epoch === "number" && Number.isSafeInteger(epoch) && epoch >= 0 ? epoch : 0
 }
 
-// turnEpochOf returns the latest execution epoch that an operator started for one turn.
-export const turnEpochOf = (log: ReadonlyArray<Event>, turn: string): number =>
-  log.reduce((epoch, event) => {
-    if (event.type !== "TurnResumed" || turnOf(event) !== turn) return epoch
-    return Math.max(epoch, eventEpochOf(event))
-  }, 0)
+// turnEpochOf returns the latest execution epoch reached through a failed predecessor. A resume
+// after another terminal is inert (turns.test.ts, "only a failed epoch can resume").
+export const turnEpochOf = (log: ReadonlyArray<Event>, turn: string): number => {
+  let epoch = 0
+  while (
+    log.some((event) => event.type === "TurnFailed" && turnOf(event) === turn && eventEpochOf(event) === epoch) &&
+    log.some((event) =>
+      event.type === "TurnResumed" &&
+      turnOf(event) === turn &&
+      Number((event as { readonly failedEpoch?: unknown }).failedEpoch ?? 0) === epoch &&
+      eventEpochOf(event) === epoch + 1
+    )
+  ) epoch += 1
+  return epoch
+}
 
-const isTerminal = (event: Event): boolean => event.type === "TurnCompleted" || event.type === "TurnFailed"
+const isTerminal = (event: Event): boolean =>
+  event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled"
 
 // turnTerminalOf returns the terminal in the active execution epoch.
 export const turnTerminalOf = (log: ReadonlyArray<Event>, turn: string): Event | undefined => {

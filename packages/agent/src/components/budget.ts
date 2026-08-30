@@ -1,6 +1,7 @@
 import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
 import {
   actorCall,
+  actorInvocationContextOf,
   calls,
   composeComponents,
   inheritComponentContract,
@@ -9,7 +10,7 @@ import {
 } from "@clavia/tardigrade-core/actor"
 import { budgetDenied, budgetExhausted, budgetGranted, budgetRequested } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
+import { turnEpochOf, turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool, type AgentView } from "../runtime/composition"
 import type { ToolSpec } from "../inference/request"
 import { Router } from "@clavia/tardigrade-core/communication/router"
@@ -117,9 +118,13 @@ const wallFor = (
   const budget = budgetOf(trajectory, policy)
   if (used <= budget) return undefined
   const head = turnHead(trajectory) as { id?: unknown } | undefined
+  const turn = head?.id === undefined ? undefined : String(head.id)
   return intent({
-    key: `bw:${String(head?.id ?? "")}/${budget}`,
-    input: { turn: head?.id === undefined ? undefined : String(head.id), budget, used },
+    key: `bw:${turn ?? ""}/${budget}`,
+    ...(turn === undefined ? {} : {
+      invocation: { method: "message", id: turn, epoch: turnEpochOf(trajectory, turn) }
+    }),
+    input: { turn, budget, used },
     events: (input, at) => [
       budgetExhausted({
         budget: input.budget,
@@ -187,6 +192,9 @@ const requestBudgetTool: AgentTool = {
     return [
       intent({
         key: `br:${call.callId}`,
+        ...(call.turn === undefined ? {} : {
+          invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 }
+        }),
         input: { callId: call.callId, reason: String(args?.reason ?? ""), amount },
         events: (input, at) => [budgetRequested({ ...input, ...stamp, at })]
       })
@@ -238,10 +246,12 @@ const budgetCommunication = (
   const source = sourceFor(log, turn)
   if (target === undefined || source === undefined) return []
   const callId = requestCallId(source, turn, request)
+  const invocation = { method: "message", id: turn, epoch: turnEpochOf(log, turn) }
   const call = actorCall(log, {
     id: callId,
     target,
     method: "requestBudget",
+    context: actorInvocationContextOf(log, invocation) ?? { invocation },
     input: {
       request,
       turn,
@@ -256,6 +266,7 @@ const budgetCommunication = (
   const reason = output !== undefined && "denied" in output ? output.reason : undefined
   return [intent({
     key: `bdec:${request}`,
+    invocation,
     input: { request, turn, grant, reason, state: call.state },
     events: (current, at) => Number.isSafeInteger(current.grant) && current.grant > 0
       ? [budgetGranted({ amount: current.grant, callId: current.request, turn: current.turn, at })]
@@ -311,6 +322,7 @@ export const budget = <
   const component = inheritComponentContract<AgentView, R | Router | Self>({
     name: "budget",
     ...(combined.keys === undefined ? {} : { keys: combined.keys }),
+    cancel: (log, cancellation) => combined.cancel?.(log, cancellation) ?? [],
     derive: (log) => {
       const children = combined.derive(log)
       const trajectory = turnView(log)

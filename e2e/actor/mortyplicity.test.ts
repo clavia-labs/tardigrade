@@ -404,24 +404,155 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     const expectedPermissionResponses = missions.reduce((count, mission) =>
       count + (mission.firstPermission === "timeout" ? 0 : 1) +
       (mission.firstPermission === "grant" && mission.budget === "grant" && mission.secondPermission !== "timeout" ? 1 : 0), 0)
+    const childEvents = runs.flatMap((run) => scenario.host.read(`ag.${String(field(run, "callId"))}`))
+    const dispatchedPermissions = childEvents.filter((event) =>
+      event.type === "CallDispatched" && field(event, "method") === "requestPermission"
+    )
+    const skippedPermissions = childEvents.filter((event) =>
+      event.type === "CallSkipped" && field(event, "method") === "requestPermission"
+    )
     const humanLog = scenario.host.read(humanThread)
-    expect(humanLog.filter((event) => event.type === "PermissionRequestReceived")).toHaveLength(expectedPermissions)
+    expect(dispatchedPermissions.length + skippedPermissions.length).toBe(expectedPermissions)
+    expect(humanLog.filter((event) => event.type === "PermissionRequestReceived")).toHaveLength(dispatchedPermissions.length)
     expect(humanLog.filter((event) => event.type === "ResponseDelivered" && field(event, "method") === "requestPermission")).toHaveLength(expectedPermissionResponses)
 
     const expectedTimeouts = expectedPermissions - expectedPermissionResponses
-    const timedOut = runs.flatMap((run) => scenario.host.read(`ag.${String(field(run, "callId"))}`))
-      .filter((event) => event.type === "CallTimedOut" && field(event, "method") === "requestPermission")
+    const timedOut = childEvents.filter((event) =>
+      event.type === "CallTimedOut" && field(event, "method") === "requestPermission"
+    )
     expect(timedOut).toHaveLength(expectedTimeouts)
 
     for (const run of runs) {
       const child = scenario.host.read(`ag.${String(field(run, "callId"))}`)
       expect(child.filter((event) => event.type === "TurnCompleted")).toHaveLength(1)
       expect(child.filter((event) => event.type === "TurnFailed")).toHaveLength(0)
-      expect(child.filter((event) => event.type === "CallDispatched").length).toBeGreaterThanOrEqual(1)
+      expect(child.filter((event) =>
+        event.type === "CallDispatched" || event.type === "CallSkipped"
+      ).length).toBeGreaterThanOrEqual(1)
       const created = child[0] as { readonly type?: unknown; readonly parent?: unknown }
       expect(created.type).toBe("ThreadCreated")
       expect(created.parent).toEqual(threadAddressOf("mem", "main", ROOT_THREAD))
     }
     expect(scenario.host.resting()).toBe(true)
   }), { numRuns: 40 })
+}, 60_000)
+
+test("Rick cancels every foreground Morty across generated schedules", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({
+    children: fc.integer({ min: 1, max: 6 }),
+    headroom: fc.integer({ min: 1, max: 3 }),
+    schedule: fc.array(fc.nat(), { minLength: 8, maxLength: 32 })
+  }), async ({ children, headroom, schedule }) => {
+    const concurrency = children + headroom
+    let startedChild!: () => void
+    const childStarted = new Promise<void>((resolve) => {
+      startedChild = resolve
+    })
+    let releaseChildren!: () => void
+    const childrenReleased = new Promise<void>((resolve) => {
+      releaseChildren = resolve
+    })
+    let observedChild = false
+    const mind: Mind = async ({ trajectory }) => {
+      const head = [...trajectory].reverse().find((event) => event.type === "MessageReceived")
+      const brief = String(field(head as Event, "text") ?? "")
+      if (brief === "cancel every Morty") {
+        const returned = trajectory.some((event) => event.type === "ToolReturned")
+        if (returned) return { kind: "complete", output: "too late" }
+        return {
+          kind: "call",
+          callId: "cancel-fanout",
+          name: "execute",
+          arguments: {
+            code: `return await Promise.all(Array.from({ length: ${children} }, (_, morty) =>
+              agents.run({ text: "held Morty " + morty })
+            ));`
+          }
+        }
+      }
+      if (!observedChild) {
+        observedChild = true
+        startedChild()
+      }
+      await childrenReleased
+      return { kind: "complete", output: `late:${brief}` }
+    }
+    const assembled = validateActor(actor({
+      name: "cancel-citadel",
+      methods: agentMethods,
+      components: [infer([
+        budget([permissions([codeMode([
+          agentsPackage({ budget: {} }),
+          workspacePackage({ policy: {} })
+        ])], {
+          authority: {
+            address: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+            methods: { requestPermission: requestPermissionMethod }
+          },
+          request: () => undefined
+        })]),
+        compaction(),
+        nativeOutput
+      ], TEST_MODEL), budgetAuthority({ decide: (request) => request.grant() })]
+    }))
+    let pickIndex = 0
+    const scenario = actorScenario(assembled, mind, {
+      driver: { maxConcurrentThreads: concurrency },
+      pick: (dirty) => {
+        const threads = [...dirty].sort()
+        const choice = schedule[pickIndex++ % schedule.length] ?? 0
+        return threads[choice % threads.length]!
+      }
+    })
+    const turn = scenario.enqueue("cancel every Morty")
+    const driving = scenario.drive()
+    await childStarted
+    const cancellation = {
+      type: "CancellationRequested",
+      request: "rick-cancelled",
+      invocation: { method: "message", id: turn, epoch: 0 },
+      cause: "requested",
+      reason: "Rick closed the portal",
+      at: 2
+    } as Event
+    scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), cancellation)
+    scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), {
+      ...cancellation,
+      request: "rick-cancelled-again",
+      at: 3
+    } as Event)
+    try {
+      await driving
+    } finally {
+      releaseChildren()
+    }
+
+    const root = scenario.host.read(ROOT_THREAD)
+    const requestAt = root.findIndex((event) => event.type === "CancellationRequested")
+    const codeSettledAt = root.findIndex((event) => event.type === "CodeSettled")
+    const toolReturnedAt = root.findIndex((event) => event.type === "ToolReturned")
+    const cancelledAt = root.findIndex((event) => event.type === "TurnCancelled")
+    expect(root.filter((event) => event.type === "CancellationRequested")).toEqual([
+      expect.objectContaining({ request: "rick-cancelled", invocation: { method: "message", id: turn, epoch: 0 } })
+    ])
+    expect(requestAt).toBeGreaterThanOrEqual(0)
+    expect(codeSettledAt).toBeGreaterThan(requestAt)
+    expect(toolReturnedAt).toBeGreaterThan(codeSettledAt)
+    expect(cancelledAt).toBeGreaterThan(toolReturnedAt)
+    expect(root.filter((event) => event.type === "TurnCancelled")).toEqual([
+      expect.objectContaining({ request: "rick-cancelled", turn, reason: "Rick closed the portal" })
+    ])
+    expect(root.some((event) => event.type === "TurnCompleted")).toBe(false)
+
+    const runs = root.filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
+    expect(runs).toHaveLength(children)
+    for (const run of runs) {
+      const child = scenario.host.read(`ag.${String(field(run, "callId"))}`)
+      expect(child.filter((event) => event.type === "CancellationRequested")).toHaveLength(1)
+      expect(child.filter((event) => event.type === "TurnCancelled")).toHaveLength(1)
+      expect(child.some((event) => event.type === "TurnCompleted")).toBe(false)
+      expect(child.some((event) => event.type === "TextReturned")).toBe(false)
+    }
+    expect(scenario.host.resting()).toBe(true)
+  }), { numRuns: 20 })
 }, 30_000)

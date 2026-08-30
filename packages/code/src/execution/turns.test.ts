@@ -81,4 +81,15 @@ describe("a resumed turn", () => {
     expect(turnHead(completed)).toBeUndefined()
     expect(turnTerminalOf(completed, "m1")).toMatchObject({ type: "TurnCompleted", output: "done" })
   })
+
+  test("only a failed epoch can resume", () => {
+    const cancelled: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "read", at: 1 },
+      { type: "TurnCancelled", request: "x1", turn: "m1", cause: "requested", at: 2 },
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 3 }
+    ]
+    expect(turnEpochOf(cancelled, "m1")).toBe(0)
+    expect(turnTerminalOf(cancelled, "m1")).toMatchObject({ type: "TurnCancelled" })
+    expect(turnHead(cancelled)).toBeUndefined()
+  })
 })

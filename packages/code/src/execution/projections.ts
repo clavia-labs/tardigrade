@@ -1,4 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { turnTerminalOf } from "./turns"
 
 // The code thread's projections: pure functions over the event SET, the TypeScript half of
 // tla/runtime/Reconcile.tla. Every answer comes from set membership, never event order (the bag law,
@@ -12,6 +13,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 // ExecFacts is one execution's facts, every field a set-membership question.
 export interface ExecFacts {
   readonly execId: string
+  readonly turn?: string
   // Calls one attempt recorded as blocked, with no recorded pair yet: still open.
   readonly open: ReadonlySet<string>
   // Open calls whose awaited reply is on the thread: harvestable now.
@@ -25,19 +27,22 @@ const str = (v: unknown): string => String(v ?? "")
 // factsOf derives in two phases, the sets then the questions, so no answer depends on event
 // order.
 export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> => {
-  const dispatched = new Map<string, number>()
+  const dispatched = new Map<string, { readonly at: number; readonly turn?: string }>()
   const settled = new Set<string>()
   const awaiting = new Map<string, string>()
   const calls = new Set<string>()
   const returned = new Set<string>()
   const replies = new Set<string>()
   for (const e of events) {
-    const v = e as { execId?: unknown; callId?: unknown; id?: unknown; at?: unknown; awaiting?: unknown }
+    const v = e as { execId?: unknown; callId?: unknown; id?: unknown; at?: unknown; awaiting?: unknown; turn?: unknown }
     switch (e.type) {
       case "CodeDispatched": {
         const id = str(v.execId)
         const at = typeof v.at === "number" ? v.at : 0
-        dispatched.set(id, Math.min(dispatched.get(id) ?? at, at))
+        const prior = dispatched.get(id)
+        if (prior === undefined || at < prior.at) {
+          dispatched.set(id, { at, ...(v.turn === undefined ? {} : { turn: str(v.turn) }) })
+        }
         break
       }
       case "CodeSettled":
@@ -71,7 +76,7 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
   }
   // FIFO by the dispatch's own timestamp, order as carried data. Ties
   // break on the id so the ordering is total and permutation-proof.
-  execIds.sort((a, b) => (dispatched.get(a)! - dispatched.get(b)!) || (a < b ? -1 : 1))
+  execIds.sort((a, b) => (dispatched.get(a)!.at - dispatched.get(b)!.at) || (a < b ? -1 : 1))
   return execIds.map((execId) => {
     const open = new Set<string>()
     const home = new Set<string>()
@@ -83,7 +88,8 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
       open.add(callId)
       if (replies.has(awaiting.get(callId)!)) home.add(callId)
     }
-    return { execId, open, home, called, settled: settled.has(execId) }
+    const turn = dispatched.get(execId)!.turn
+    return { execId, ...(turn === undefined ? {} : { turn }), open, home, called, settled: settled.has(execId) }
   })
 }
 
@@ -99,7 +105,9 @@ export const canProgress = (f: ExecFacts): boolean =>
 // head rests the whole thread (a later body may depend on an earlier
 // one's effects).
 export const workOwed = (events: ReadonlyArray<Event>): ExecFacts | undefined => {
-  const head = factsOf(events).find((f) => !f.settled)
+  const head = factsOf(events).find((f) =>
+    !f.settled && (f.turn === undefined || turnTerminalOf(events, f.turn) === undefined)
+  )
   return head !== undefined && canProgress(head) ? head : undefined
 }
 

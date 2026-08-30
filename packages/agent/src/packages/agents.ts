@@ -1,6 +1,10 @@
 import { Clock, Effect, Schema } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/reconciliation"
+import {
+  invocationLinked,
+  type ActorInvocationContext
+} from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { budgetPolicyOf, type BudgetPolicy } from "../components/budget"
@@ -489,9 +493,38 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
+          const packageCall = events.find((event) =>
+            event.type === "PackageCalled" &&
+            String((event as { readonly callId?: unknown }).callId) === ctx.callId
+          ) as { readonly turn?: unknown; readonly epoch?: unknown } | undefined
+          const parent = a?.background === true || packageCall === undefined
+            ? undefined
+            : { method: "message", id: String(packageCall.turn ?? ""), epoch: Number(packageCall.epoch ?? 0) }
+          const parentDeadline = parent === undefined
+            ? undefined
+            : events.find((event) => {
+                const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
+                return context?.invocation !== undefined &&
+                  context.invocation.method === parent.method &&
+                  context.invocation.id === parent.id &&
+                  context.invocation.epoch === parent.epoch
+              }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
+          const childContext: ActorInvocationContext = {
+            invocation: { method: "message", id: ctx.callId, epoch: 0 },
+            ...(parent === undefined ? {} : { parent }),
+            ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
+          }
           const dispatch = (at: number) => Effect.gen(function* () {
-            if (recordedChild === undefined) yield* log.append([childCreated(ctx.callId, target, lineage, at)])
-            yield* router.send(methodEnvelopeOf(linkOf(source, target), { method: "message", id: ctx.callId }, {
+            const linked = parent === undefined
+              ? []
+              : [invocationLinked({ parent, child: childContext, target: formatThreadAddress(target), lineage, at })]
+            if (recordedChild === undefined || linked.length > 0) {
+              yield* log.append([
+                ...(recordedChild === undefined ? [childCreated(ctx.callId, target, lineage, at)] : []),
+                ...linked
+              ])
+            }
+            yield* router.send(methodEnvelopeOf(linkOf(source, target), childContext, {
               type: "MessageReceived",
               id: ctx.callId,
               text,

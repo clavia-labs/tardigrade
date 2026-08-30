@@ -29,7 +29,8 @@ type Sent = Envelope<ThreadAddress, Event, SentLink["target"]>
 const env = (
   thread: string,
   sent: Array<Sent>,
-  threads: Readonly<Record<string, ReadonlyArray<Event>>> = {}
+  threads: Readonly<Record<string, ReadonlyArray<Event>>> = {},
+  appended: Array<Event> = []
 ) => {
   const self = parseThreadAddress(thread)
   const events = [threadCreated(self, undefined, 0), ...(threads[self.thread] ?? [])]
@@ -39,7 +40,7 @@ const env = (
     }),
     Layer.succeed(Self, self),
     Layer.succeed(EventLog, withWatermark({
-      append: () => Effect.void,
+      append: (committed) => Effect.sync(() => void appended.push(...committed)),
       read: Effect.succeed(events)
     }))
   )
@@ -64,6 +65,40 @@ const response = (
 })
 
 describe("agentsPackage", () => {
+  test("a foreground child records its invocation owner", async () => {
+    const sent: Array<Sent> = []
+    const appended: Array<Event> = []
+    const pkg = agentsPackage()
+    const events = [{
+      type: "PackageCalled",
+      callId: "child-1",
+      name: "agents.run",
+      arguments: {},
+      turn: "m1",
+      epoch: 2,
+      at: 1
+    } as Event]
+    const parked = await Effect.runPromise(
+      pkg.methods.run!({ text: "scout" }, { callId: "child-1" }).pipe(
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": events }, appended)),
+        Effect.flip,
+        Effect.orDie
+      )
+    )
+
+    expect(parked).toBeInstanceOf(Park)
+    expect(appended).toContainEqual(expect.objectContaining({
+      type: "InvocationLinked",
+      parent: { method: "message", id: "m1", epoch: 2 },
+      child: expect.objectContaining({ invocation: { method: "message", id: "child-1", epoch: 0 } }),
+      target: "mem:main:ag.child-1"
+    }))
+    expect(sent[0]?.call).toMatchObject({
+      parent: { method: "message", id: "m1", epoch: 2 },
+      invocation: { method: "message", id: "child-1", epoch: 0 }
+    })
+  })
+
   test("the code contract keeps run terminal while escalation stays internal", () => {
     const system = codeSystemFor([agentsPackage()])
     expect(system).not.toContain("agents.continue")

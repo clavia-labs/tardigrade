@@ -19,7 +19,7 @@ import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentV
 import { CODE_SYSTEM, codeMode, codeSystemFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction } from "../components/compaction"
-import { agentMethods } from "../actor/message"
+import { agentMethods } from "../actor/methods"
 import { toolList } from "../components/tool-list"
 import { nativeOutput } from "../components/native-output"
 import { system } from "../components/system"

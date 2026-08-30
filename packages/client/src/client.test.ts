@@ -179,6 +179,8 @@ describe("a declared actor method", () => {
   test("discovers method schemas at the actor", async () => {
     answer = () => new Response(JSON.stringify([{
       name: "message",
+      cancellable: true,
+      timeoutMs: 300_000,
       inputSchema: { type: "object" },
       outputSchema: { type: "string" }
     }]), { status: 200, headers: { "content-type": "application/json" } })
@@ -192,13 +194,19 @@ describe("a declared actor method", () => {
       actor: "main",
       thread: "root",
       method: "message",
-      call: "m1"
+      call: "m1",
+      deadlineAt: 301_000
     }), { status: 202, headers: { "content-type": "application/json" } })
     const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
-    const accepted = await client.invoke("main", "root", "message", { id: "m1", input: { text: "hello" } })
-    expect(accepted.call).toBe("m1")
+    const accepted = await client.call("main", "root", "message", {
+      id: "m1",
+      input: { text: "hello" },
+      timeoutMs: 1_000
+    })
+    expect(accepted.id).toBe("m1")
     expect(calls[0]?.method).toBe("PUT")
     expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message/calls/m1")
+    expect(lastUrl().searchParams.get("timeoutMs")).toBe("1000")
     expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
   })
 
@@ -211,6 +219,35 @@ describe("a declared actor method", () => {
     const state: ActorMethodState<string> = await client.methodState("main", "root", "message", "m1")
     expect(state).toEqual({ status: "completed", output: "done" })
     expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message/calls/m1")
+  })
+
+  test("reads state and requests cancellation through the invocation handle", async () => {
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const invocation = {
+      actor: "main",
+      thread: "root",
+      method: "message",
+      id: "m1",
+      deadlineAt: 301_000
+    } as const
+
+    answer = () => Response.json({ status: "pending" })
+    await client.state(invocation)
+    expect(lastUrl().searchParams.has("epoch")).toBe(false)
+
+    answer = () => new Response(JSON.stringify({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      call: "m1",
+      request: "stop-1",
+      status: "accepted"
+    }), { status: 202, headers: { "content-type": "application/json" } })
+    await client.cancel(invocation, { id: "stop-1", reason: "operator stopped it" })
+    expect(lastUrl().pathname).toBe(
+      "/v1/actors/main/threads/root/methods/message/calls/m1/cancellations/stop-1"
+    )
+    expect(JSON.parse(calls.at(-1)!.body ?? "")).toEqual({ reason: "operator stopped it" })
   })
 })
 

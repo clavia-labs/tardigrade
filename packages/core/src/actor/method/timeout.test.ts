@@ -3,9 +3,12 @@ import type { Event } from "../../log/event"
 import {
   alarmFired,
   earliestDeadlineOf,
+  methodDeadlineCancellationReactor,
   methodTimeoutKeys,
   methodTimeoutReactor
 } from "./timeout"
+import { actorMethod } from "./definition"
+import { Schema } from "effect"
 
 const dispatched = (
   id: string,
@@ -49,6 +52,47 @@ describe("method alarms", () => {
       }
     ]
     expect(earliestDeadlineOf(log)).toBe(20)
+  })
+
+  test("an accepted invocation deadline requests method cancellation", () => {
+    const work = actorMethod({
+      input: Schema.String,
+      output: Schema.String,
+      event: ({ invocation, at }) => ({
+        type: "WorkStarted",
+        id: invocation.id,
+        call: { invocation, deadlineAt: 40 },
+        at
+      }),
+      state: (events, invocation) => events.some((event) =>
+        event.type === "WorkCompleted" && String((event as { readonly id?: unknown }).id) === invocation.id
+      ) ? { status: "completed", output: "done" } : { status: "pending" },
+      cancellation: {
+        state: () => "running",
+        event: (request, at) => ({ type: "WorkCancelled", id: request.invocation.id, at })
+      }
+    })
+    const invocation = { method: "work", id: "work-1", epoch: 0 } as const
+    const log: ReadonlyArray<Event> = [
+      { type: "WorkStarted", id: "work-1", call: { invocation, deadlineAt: 40 }, at: 1 } as Event,
+      { type: "AlarmFired", scheduledFor: 40, at: 43 } as Event
+    ]
+    expect(earliestDeadlineOf(log.slice(0, 1))).toBe(40)
+    expect(earliestDeadlineOf([
+      log[0]!,
+      { type: "WorkCompleted", id: "work-1", at: 20 } as Event
+    ], { work })).toBeUndefined()
+    const transition = methodDeadlineCancellationReactor({ work })(log)[0]
+    expect(transition?.kind).toBe("intent")
+    if (transition?.kind !== "intent") return
+    expect(transition.events(transition.input, 43)).toEqual([{
+      type: "CancellationRequested",
+      request: "deadline/work/work-1/0/40",
+      invocation,
+      cause: "deadline",
+      deadlineAt: 40,
+      at: 43
+    }])
   })
 
   test("an alarm crossing produces one caller timeout without reading a clock", () => {

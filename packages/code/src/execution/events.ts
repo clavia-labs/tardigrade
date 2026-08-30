@@ -12,6 +12,7 @@ export const CodeDispatched = Schema.Struct({
   type: Schema.Literal("CodeDispatched"),
   execId: Schema.String,
   code: Schema.String,
+  epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
 })
 
@@ -100,7 +101,7 @@ export const codeKeys: KeyFragment = {
 // Event, so nothing downstream changes. `at` is a parameter, never a clock read, so an
 // emission stays a pure function of the log and the timestamp the runtime hands it.
 
-type Stamped = { readonly turn?: string; readonly at: number }
+type Stamped = { readonly turn?: string; readonly epoch?: number; readonly at: number }
 
 export const codeDispatched = (fields: { readonly execId: string; readonly code: string } & Stamped): Event =>
   ({ type: "CodeDispatched", ...fields }) as Event

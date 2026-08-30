@@ -17,7 +17,6 @@ import type { AgentComponent } from "./composition"
 import type { OutputFallback } from "../output/contract"
 import {
   actor,
-  agentMethods,
   budget,
   codeMode,
   compaction,
@@ -35,6 +34,7 @@ import {
   outputRetryRequested,
   toolList
 } from "../index"
+import { agentMethods } from "../actor/methods"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 

@@ -3,11 +3,13 @@ import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
 import {
   composeComponents,
   inheritComponentContract,
-  type ComponentRequirements
+  type ComponentRequirements,
+  type InvocationCancellation
 } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
-import { codeDispatched, codeKeys } from "@clavia/tardigrade-code/execution/events"
+import { codeDispatched, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"
+import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { codeReactorFor, type CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import { renderShape, renderSignature } from "@clavia/tardigrade-code/execution/contract"
 import {
@@ -74,7 +76,10 @@ const settleFor = (
 }
 
 const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer): ReadonlyArray<Transition<never>> => {
-  const stamp = call.turn === undefined ? {} : { turn: call.turn }
+  const stamp = {
+    ...(call.turn === undefined ? {} : { turn: call.turn }),
+    ...(call.epoch === undefined || call.epoch === 0 ? {} : { epoch: call.epoch })
+  }
   if (log.some((e) => e.type === "CodeDispatched" && String((e as { execId?: unknown }).execId) === call.callId)) {
     const outcome = settleFor(log, call.callId)
     return outcome === undefined ? [] : [answer(outcome)]
@@ -83,6 +88,9 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
   return [
     intent({
       key: `cd:${call.callId}`,
+      ...(call.turn === undefined
+        ? {}
+        : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),
       input: { execId: call.callId, code },
       events: (input, at) => [codeDispatched({ execId: input.execId, code: input.code, ...stamp, at })]
     })
@@ -129,6 +137,36 @@ export const codeMode = <
   return inheritComponentContract<AgentView, R>({
     name: "code",
     keys: rootKeys(combined.keys),
+    cancel: (log, cancellation: InvocationCancellation) => {
+      const child = combined.cancel?.(log, cancellation) ?? []
+      if (child.length > 0) return child as ReadonlyArray<Transition<never, R>>
+      if (cancellation.invocation.method !== "message") return []
+      const settled = new Set(
+        log.filter((event) => event.type === "CodeSettled")
+          .map((event) => String((event as { readonly execId?: unknown }).execId))
+      )
+      const dispatch = log.find((event) =>
+        event.type === "CodeDispatched" &&
+        String((event as { readonly turn?: unknown }).turn) === cancellation.invocation.id &&
+        eventEpochOf(event) === cancellation.invocation.epoch &&
+        !settled.has(String((event as { readonly execId?: unknown }).execId))
+      )
+      if (dispatch === undefined) return []
+      const execId = String((dispatch as { readonly execId?: unknown }).execId)
+      return [intent({
+        key: `cs:${execId}`,
+        input: { execId, cancellation },
+        events: (input, at) => [codeSettled({
+          execId: input.execId,
+          error: input.cancellation.reason === undefined
+            ? "cancelled"
+            : `cancelled: ${input.cancellation.reason}`,
+          turn: input.cancellation.invocation.id,
+          ...(input.cancellation.invocation.epoch === 0 ? {} : { epoch: input.cancellation.invocation.epoch }),
+          at
+        })]
+      })] as ReadonlyArray<Transition<never, R>>
+    },
     derive: (log) => {
       const children = combined.derive(log)
       const packages = children.view.packages

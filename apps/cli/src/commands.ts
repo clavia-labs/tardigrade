@@ -689,6 +689,83 @@ export const methodsCommand = Command.make("methods", remote, (flags) =>
     ])
   )
 
+const invocationThread = Flag.string("thread").pipe(
+  Flag.withDescription("The thread that owns the invocation.")
+)
+
+const invocationRefOf = (flags: {
+  readonly actor: string
+  readonly thread: string
+  readonly method: string
+  readonly invocation: string
+}) => ({
+  actor: flags.actor,
+  thread: flags.thread,
+  method: flags.method,
+  id: flags.invocation
+})
+
+export const callStateCommand = Command.make("state", {
+  method: Argument.string("method").pipe(Argument.withDescription("The invoked method")),
+  invocation: Argument.string("invocation").pipe(Argument.withDescription("The invocation id")),
+  thread: invocationThread,
+  ...remote
+}, (flags) =>
+  Effect.gen(function*() {
+    const client = yield* clientOf(flags)
+    const invocation = invocationRefOf(flags)
+    const state = yield* call(() => client.state(invocation))
+    yield* Console.log(
+      flags.json
+        ? jsonOf({ ...invocation, ...state })
+        : methodLines(flags.thread, flags.invocation, state)
+    )
+  })).pipe(
+    Command.withDescription("Read one method invocation's durable state."),
+    Command.withExamples([{
+      command: "tdg call state message m1 --thread root",
+      description: "Read invocation m1"
+    }])
+  )
+
+const cancellationId = Flag.string("id").pipe(
+  Flag.withDescription("The cancellation request id. A fresh id is minted unless stated."),
+  Flag.optional
+)
+
+export const callCancelCommand = Command.make("cancel", {
+  method: Argument.string("method").pipe(Argument.withDescription("The invoked method")),
+  invocation: Argument.string("invocation").pipe(Argument.withDescription("The invocation id")),
+  thread: invocationThread,
+  id: cancellationId,
+  reason: Flag.string("reason").pipe(
+    Flag.withDescription("Why the invocation should stop."),
+    Flag.optional
+  ),
+  ...remote
+}, (flags) =>
+  Effect.gen(function*() {
+    const cli = yield* Cli
+    const client = yield* clientOf(flags)
+    const invocation = invocationRefOf(flags)
+    const reason = stated(flags.reason)
+    const accepted = yield* call(() => client.cancel(invocation, {
+      id: stated(flags.id) ?? cli.mintId(),
+      ...(reason === undefined ? {} : { reason })
+    }))
+    yield* Console.log(
+      flags.json
+        ? jsonOf(accepted)
+        : `${accepted.thread} ${accepted.call} cancellation ${accepted.status.replace("-", " ")}`
+    )
+  })).pipe(
+    Command.withDescription("Request cancellation of one method invocation."),
+    Command.withExamples([{
+      command: "tdg call cancel message m1 --thread root --reason 'operator stopped it'",
+      description: "Cancel invocation m1"
+    }])
+  )
+
 export const callCommand = Command.make("call", {
   method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
   input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
@@ -717,28 +794,29 @@ export const callCommand = Command.make("call", {
     const thread = stated(flags.thread) ?? cli.mintId()
     const id = stated(flags.id) ?? cli.mintId()
     const input = yield* methodInput(flags.input)
-    const accepted = yield* call(() => client.invoke(flags.actor, thread, flags.method, { id, input }))
+    const accepted = yield* call(() => client.call(flags.actor, thread, flags.method, { id, input }))
     if (!flags.wait) {
-      yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.call} accepted`)
+      yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.id} accepted`)
       return
     }
-    const state = yield* settle(client, accepted.actor, accepted.thread, accepted.method, accepted.call, flags.poll, flags.timeout)
+    const state = yield* settle(client, accepted.actor, accepted.thread, accepted.method, accepted.id, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
         ? jsonOf({ ...accepted, ...state })
         : state.status === "completed"
-        ? `${methodLines(accepted.thread, accepted.call, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, accepted.thread)}`
-        : methodLines(accepted.thread, accepted.call, state)
+        ? `${methodLines(accepted.thread, accepted.id, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, accepted.thread)}`
+        : methodLines(accepted.thread, accepted.id, state)
     )
     if (state.status !== "completed") {
-      return yield* userErrorOf(`call ${accepted.call} on thread ${accepted.thread} is ${state.status}`)
+      return yield* userErrorOf(`call ${accepted.id} on thread ${accepted.thread} is ${state.status}`)
     }
   })).pipe(
     Command.withDescription("Call an actor method with JSON input. Waits by default and exits non-zero unless completed."),
     Command.withExamples([
       { command: "tdg call message '{\"text\":\"summarize the log\"}'", description: "Call message on a new thread and wait" },
       { command: "tdg call message '{\"text\":\"and again\"}' --thread surveyor", description: "Call message on an existing thread" }
-    ])
+    ]),
+    Command.withSubcommands([callStateCommand, callCancelCommand])
   )
 
 export const lsCommand = Command.make("ls", remote, (flags) =>

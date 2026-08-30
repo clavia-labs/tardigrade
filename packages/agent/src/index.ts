@@ -10,7 +10,10 @@ export {
   actorMethod,
   actorMethodTimeoutOf,
   actorMethodsOf,
+  type ActorInvocation,
   type ActorMethod,
+  type ActorMethodCancellation,
+  type ActorMethodCancellationState,
   type ActorMethodCall,
   type ActorMethodDeclaration,
   type ActorMethodDefinition,
@@ -19,7 +22,8 @@ export {
   type ActorMethods,
   type ActorMethodState
 } from "@clavia/tardigrade-core/actor/method"
-export { AgentMessageInput, agentMessageMethod, agentMethods } from "./actor/message"
+export { AgentMessageInput, agentMessageMethod } from "./actor/message"
+export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 

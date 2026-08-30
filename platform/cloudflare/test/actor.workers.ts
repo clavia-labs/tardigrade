@@ -308,7 +308,13 @@ describe("cloudflare actor", () => {
       body: JSON.stringify({ text: "Run in workerd." })
     })
     expect(accepted.status).toBe(202)
-    expect(await accepted.json()).toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
+    expect(await accepted.json()).toMatchObject({
+      actor: "main",
+      thread: "root",
+      method: "echo",
+      call: "workers-smoke",
+      deadlineAt: expect.any(Number)
+    })
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
@@ -316,8 +322,14 @@ describe("cloudflare actor", () => {
       token: "workers-test-token",
       fetch: (input, init) => SELF.fetch(input, init)
     })
-    expect(await client.invoke("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
-      .toEqual({ actor: "main", thread: "root", method: "echo", call: "workers-smoke" })
+    expect(await client.call("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
+      .toMatchObject({
+        actor: "main",
+        thread: "root",
+        method: "echo",
+        id: "workers-smoke",
+        deadlineAt: expect.any(Number)
+      })
     expect(await client.methodState("main", "root", "echo", "workers-smoke"))
       .toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
     const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })

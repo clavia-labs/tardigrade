@@ -12,7 +12,7 @@ const methods = actorMethodsOf({
   inspect: actorMethod({
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.String,
-    event: ({ id, input, at }): Event => ({ type: "Inspected", id, value: input.value, at }),
+    event: ({ invocation, input, at }): Event => ({ type: "Inspected", id: invocation.id, value: input.value, at }),
     state: () => ({ status: "pending" })
   })
 })

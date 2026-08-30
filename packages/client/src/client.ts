@@ -1,7 +1,13 @@
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
-import type { ActorMethodInput, ActorMethodOutput, ActorMethods, ActorMethodState } from "tardie"
+import type {
+  ActorMethodCancellation,
+  ActorMethodInput,
+  ActorMethodOutput,
+  ActorMethods,
+  ActorMethodState
+} from "tardie"
 
 import {
   actorApiOf,
@@ -14,6 +20,7 @@ import {
   type ActorSummary,
   type Append,
   type CatalogAvailabilityFilter,
+  type CancellationAccepted,
   type ThreadNode,
   type ThreadSummary,
   type EventRow,
@@ -130,7 +137,33 @@ export type ProjectionResult<P extends Projections, Name extends keyof P> = P[Na
 export type MethodCall<M extends ActorMethods, Name extends keyof M> = {
   readonly id: string
   readonly input: ActorMethodInput<M[Name]>
+  readonly timeoutMs?: number
 }
+
+// ActorCallRef addresses one logical method call across its control and state operations.
+export interface ActorCallRef<Name extends string = string> {
+  readonly actor: string
+  readonly thread: string
+  readonly method: Name
+  readonly id: string
+}
+
+// ActorCallHandle carries the durable deadline returned when a logical call is accepted.
+export type ActorCallHandle<Name extends string = string> = ActorCallRef<Name> &
+  Omit<MethodAccepted, "actor" | "thread" | "method" | "call">
+
+export interface CancellationOptions {
+  readonly id: string
+  readonly reason?: string
+}
+
+type DeclaredCancellableMethod<M extends ActorMethods> = {
+  [Name in keyof M & string]: M[Name] extends { readonly cancellation: ActorMethodCancellation } ? Name : never
+}[keyof M & string]
+
+export type CancellableMethod<M extends ActorMethods> = string extends keyof M
+  ? string
+  : DeclaredCancellableMethod<M>
 
 type SchemaStructType<Fields> = Fields extends Schema.Struct.Fields ? Schema.Struct<Fields>["Type"] : never
 
@@ -153,20 +186,29 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
-  // invoke commits one declared method call and returns its durable handle.
-  readonly invoke: <const Name extends keyof M & string>(
+  // call commits one declared method call and returns its durable handle.
+  readonly call: <const Name extends keyof M & string>(
     actor: string,
     thread: string,
     name: Name,
     call: MethodCall<M, Name>
-  ) => Promise<MethodAccepted>
-  // methodState reads the selected declaration's typed durable state.
+  ) => Promise<ActorCallHandle<Name>>
+  // state reads one logical call's typed durable state.
+  readonly state: <const Name extends keyof M & string>(
+    call: ActorCallRef<Name>
+  ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
+  // methodState preserves the positional state lookup for existing callers.
   readonly methodState: <const Name extends keyof M & string>(
     actor: string,
     thread: string,
     name: Name,
     call: string
   ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
+  // cancel commits one idempotent request against a cancellable logical call.
+  readonly cancel: <const Name extends CancellableMethod<M>>(
+    call: ActorCallRef<Name>,
+    options: CancellationOptions
+  ) => Promise<CancellationAccepted>
   // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
   // SDK's convenience rather than a route: the platform has no resume, because a resume is an
   // append like any other (resume, below).
@@ -287,6 +329,16 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
   const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
     run(api.threads.append({ params: { id: actor, thread }, payload: event }))
+  const invocationState = (handle: ActorCallRef) =>
+    run(api.methods.methodState({
+      params: {
+        id: handle.actor,
+        thread: handle.thread,
+        method: handle.method,
+        call: handle.id
+      },
+      query: {}
+    }))
 
   // turnsOf reads the `turns` projection through the derivation, which is where the resume
   // convenience gets the epoch it has to stamp. It is spelled by name rather than through
@@ -320,15 +372,37 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
     methods: () => run(api.methods.methods({})),
-    invoke: (actor, thread, name, call) =>
-      run(api.methods.invoke({
+    call: async (actor, thread, name, call) => {
+      const accepted = await run(api.methods.invoke({
         params: { id: actor, thread, method: name, call: call.id },
+        query: call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs },
         payload: call.input
-      })),
+      }))
+      return {
+        actor: accepted.actor,
+        thread: accepted.thread,
+        method: name,
+        id: accepted.call,
+        deadlineAt: accepted.deadlineAt
+      } as never
+    },
+    state: (invocation) => invocationState(invocation) as never,
     methodState: (actor, thread, name, call) =>
       run(api.methods.methodState({
-        params: { id: actor, thread, method: name, call }
+        params: { id: actor, thread, method: name, call },
+        query: {}
       })) as never,
+    cancel: (call, cancellation) =>
+      run(api.methods.cancel({
+        params: {
+          id: call.actor,
+          thread: call.thread,
+          method: call.method,
+          call: call.id,
+          request: cancellation.id
+        },
+        payload: cancellation.reason === undefined ? {} : { reason: cancellation.reason }
+      })),
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a

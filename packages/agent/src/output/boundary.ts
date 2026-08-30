@@ -9,6 +9,12 @@ import { canonicalOf, declarationForTurn, type OutputContract } from "./contract
 export type Boundary =
   | { readonly kind: "completed"; readonly output: string }
   | { readonly kind: "failed"; readonly error: string }
+  | {
+      readonly kind: "cancelled"
+      readonly cause: "requested" | "deadline"
+      readonly reason?: string
+      readonly deadlineAt?: number
+    }
   | { readonly kind: "requesting"; readonly callId: string; readonly reason: string; readonly amount: number }
 
 // boundaryOf returns the turn's boundary, or undefined while it still runs. A terminal wins
@@ -17,9 +23,19 @@ export type Boundary =
 export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | undefined => {
   const terminal = turnTerminalOf(log, turn)
   if (terminal !== undefined) {
-    return terminal.type === "TurnCompleted"
-      ? { kind: "completed", output: String((terminal as { output?: unknown }).output) }
-      : { kind: "failed", error: String((terminal as { error?: unknown }).error) }
+    if (terminal.type === "TurnCompleted") {
+      return { kind: "completed", output: String((terminal as { output?: unknown }).output) }
+    }
+    if (terminal.type === "TurnCancelled") {
+      const cancelled = terminal as { cause?: unknown; reason?: unknown; deadlineAt?: unknown }
+      return {
+        kind: "cancelled",
+        cause: cancelled.cause === "deadline" ? "deadline" : "requested",
+        ...(typeof cancelled.reason === "string" && cancelled.reason !== "" ? { reason: cancelled.reason } : {}),
+        ...(typeof cancelled.deadlineAt === "number" ? { deadlineAt: cancelled.deadlineAt } : {})
+      }
+    }
+    return { kind: "failed", error: String((terminal as { error?: unknown }).error) }
   }
   let pending: Event | undefined
   for (const e of log) {

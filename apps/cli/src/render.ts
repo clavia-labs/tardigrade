@@ -143,6 +143,8 @@ export const methodsLines = (methods: ReadonlyArray<MethodSummary>): string =>
     ? "no methods"
     : methods.map((method) => [
       method.name,
+      `  cancellable ${method.cancellable ? "yes" : "no"}`,
+      `  timeout ${method.timeoutMs}ms`,
       `  input  ${JSON.stringify(method.inputSchema)}`,
       `  output ${JSON.stringify(method.outputSchema)}`
     ].join("\n")).join("\n\n")

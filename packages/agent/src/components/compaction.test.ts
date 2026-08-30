@@ -213,7 +213,7 @@ describe("a projected repair is invisible to compaction as well as to the render
     const events = await Effect.runPromise(
       Effect.all(reactor(log).map((transition) => {
         if (transition.kind !== "effect") throw new Error("compaction must be an effect")
-        return transition.act(transition.input as never)
+        return transition.act(transition.input as never, new AbortController().signal)
       })).pipe(
         Effect.provide(
           Layer.mergeAll(

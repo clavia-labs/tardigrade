@@ -12,6 +12,10 @@ The specifications describe the runtime and communication contracts independentl
 | `communication/Link` | Directory resolution, target commit, and retry absorption | `Link.cfg`, `LinkLive.cfg` | `LinkMisroute.cfg`, `LinkStale.cfg` |
 | `communication/Method` | Durable method futures from request through dispatch, acceptance, terminal resolution, and reversed-link response | `Method.cfg`, `MethodLive.cfg` | `MethodHint.cfg` |
 | `runtime/Component` | A call remains routable through the view that offered it | `Component.cfg` | `ComponentCurrent.cfg` |
+| `runtime/Cancellation` | Requests keyed by actor invocation identity absorb retries, isolate method epochs, block new effects, signal admitted effects, close calls, cancel linked child invocations, and record each method terminal after its cleanup | `Cancellation.cfg` | `CancellationIdentity.cfg`, `CancellationEffectLeak.cfg`, `CancellationNoSignal.cfg`, `CancellationOpenCall.cfg`, `CancellationChild.cfg`, `CancellationNoSettle.cfg` |
+| `runtime/InvocationPublication` | Child ownership becomes durable before external publication | `InvocationPublication.cfg` | `InvocationPublicationEarly.cfg` |
+| `runtime/InvocationEpoch` | Each logical method call has at most one active execution owner | `InvocationEpoch.cfg` | `InvocationEpochOverlap.cfg` |
+| `runtime/InvocationDeadline` | A child deadline remains bounded by its parent deadline | `InvocationDeadline.cfg` | `InvocationDeadlineLocal.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
 | `runtime/CommitTail` | A durable head wakes a cursor after the read and subscribe race | `CommitTail.cfg` | `CommitTailDrop.cfg` |
 | `runtime/Child` | Parent-owned child identity, delivery ordering, initialization, and recovery | `Child.cfg`, `ChildLive.cfg` | `ChildEarly.cfg`, `ChildRecompute.cfg` |

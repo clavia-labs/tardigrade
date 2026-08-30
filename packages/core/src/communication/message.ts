@@ -14,7 +14,7 @@ export const MessageReceived = Schema.Struct({
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
   // outcome marks a method response. Method responses are not method calls because no declared method projects state for their ids (actor/method/response.test.ts, "returns a terminal through the accepted call link").
-  outcome: Schema.optional(Schema.Literals(["completed", "failed", "requesting"])),
+  outcome: Schema.optional(Schema.Literals(["completed", "failed", "cancelled", "requesting"])),
   input: Schema.optional(Schema.Unknown),
   // model carries consumer-owned selection data. The receiving actor defines its shape and meaning.
   model: Schema.optional(Schema.Unknown),
@@ -26,8 +26,10 @@ export type MessageReceived = typeof MessageReceived.Type
 // terminalReportOutcomeOf returns the terminal-report discriminator carried by a message.
 export const terminalReportOutcomeOf = (
   message: { readonly outcome?: unknown }
-): "completed" | "failed" | undefined =>
-  message.outcome === "completed" || message.outcome === "failed" ? message.outcome : undefined
+): "completed" | "failed" | "cancelled" | undefined =>
+  message.outcome === "completed" || message.outcome === "failed" || message.outcome === "cancelled"
+    ? message.outcome
+    : undefined
 
 // messageKeys derives the core's own dedup key: a MessageReceived names its occurrence by id. The fragment lives beside the event it keys, the owner of the derivation.
 export const messageKeys: KeyFragment = {
@@ -56,7 +58,7 @@ export const boundaryEvent = (args: {
   readonly turn: string
   readonly round: number
   readonly text: string
-  readonly outcome: "completed" | "failed" | "requesting"
+  readonly outcome: "completed" | "failed" | "cancelled" | "requesting"
   readonly from: string
   readonly data?: unknown
   readonly at: number

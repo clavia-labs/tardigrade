@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { Actor } from "@clavia/tardigrade-core/actor"
+import {
+  CANCELLATION_CONTROL_METHOD,
+  cancellationMethodFor,
+  type Actor
+} from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
@@ -11,7 +15,10 @@ import { Infer, NativeOutputSupport, type InferRequest } from "./inference/react
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
-import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
 import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput, toolList, type AgentComponent } from "./index"
 import type { AgentR } from "./runtime/turn"
 
@@ -122,6 +129,85 @@ const scripted = async ({ trajectory }: { trajectory: ReadonlyArray<Event> }): P
 }
 
 describe("an assembled agent", () => {
+  test("a running inference cancels without appending its late answer", async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const mind = rlm(async () => {
+      markStarted()
+      await held
+      return { kind: "complete", output: "late" }
+    })
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "MessageReceived",
+      id: "m1",
+      text: "wait",
+      at: 1
+    } as Event)
+    const driving = mind.host.drive()
+    await started
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested",
+      reason: "operator stopped it",
+      at: 2
+    } as Event)
+    await driving
+    release()
+
+    const log = mind.host.read(ROOT_THREAD)
+    expect(log.filter((event) => event.type === "TurnCancelled")).toEqual([
+      expect.objectContaining({ request: "x1", turn: "m1", reason: "operator stopped it" })
+    ])
+    expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
+  })
+
+  test("distinct cancel calls absorb into one terminal and both receive a response", async () => {
+    const mind = rlm(async () => {
+      throw new Error("a queued cancelled invocation must not infer")
+    })
+    const target = threadAddressOf("mem", "main", ROOT_THREAD)
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "MessageReceived",
+      id: "m1",
+      text: "wait",
+      at: 1
+    } as Event)
+    const cancellationMethod = cancellationMethodFor(agentMethods)
+    for (const [index, id] of ["x1", "x2"].entries()) {
+      const source = threadAddressOf("mem", "main", `caller-${index + 1}`)
+      mind.host.seed(source.thread, [threadCreated(source, undefined, 1)])
+      mind.host.commit(methodEnvelopeOf(
+        linkOf(source, target),
+        { invocation: { method: CANCELLATION_CONTROL_METHOD, id, epoch: 0 } },
+        cancellationMethod.event({
+          invocation: { method: CANCELLATION_CONTROL_METHOD, id, epoch: 0 },
+          input: { invocation: { method: "message", id: "m1", epoch: 0 } },
+          at: index + 2
+        })
+      ))
+    }
+    await mind.host.drive()
+
+    const root = mind.host.read(ROOT_THREAD)
+    expect(root.filter((event) => event.type === "CancellationRequested")).toHaveLength(2)
+    expect(root.filter((event) => event.type === "TurnCancelled")).toHaveLength(1)
+    expect(root.filter((event) => event.type === "ResponseDelivered" &&
+      String((event as { readonly method?: unknown }).method) === CANCELLATION_CONTROL_METHOD)).toHaveLength(2)
+    for (const [index, id] of ["x1", "x2"].entries()) {
+      expect(mind.host.read(`caller-${index + 1}`).filter((event) => event.type === "ResponseReceived")).toEqual([
+        expect.objectContaining({ method: CANCELLATION_CONTROL_METHOD, call: id, status: "completed", output: { cancelled: true } })
+      ])
+    }
+  })
+
   test("one complete RLM run records root and child lineage and settles with their answers", async () => {
     const mind = rlm(scripted)
     const answer = await mind.run("fan out and add")

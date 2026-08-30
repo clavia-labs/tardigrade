@@ -36,10 +36,12 @@ tdg call message '{"text":"read this repo and tell me what it does"}'
 | `tdg models lock` | Resolve configured models into the deployment lock |
 | `tdg methods` | List an actor's methods and schemas |
 | `tdg call <method> <input>` | Call a method with JSON input and wait for its result |
+| `tdg call state <method> <invocation>` | Read an invocation's durable state |
+| `tdg call cancel <method> <invocation>` | Request cancellation of an invocation |
 | `tdg ls` | List threads |
 | `tdg events <thread>` | Print a thread's log |
 
-Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. The URL addresses one mounted actor. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. `tdg <command> --help` prints the rest.
+Commands that print data take `--json` where their help lists it. Remote commands take `--url` and `--token`. The URL addresses one mounted actor. A call creates a thread unless `--thread` names one. Use `--no-wait` to print its durable handle immediately. State and cancellation commands require that thread and the invocation ID printed by the call. The runtime resolves the active execution epoch. `tdg <command> --help` prints the rest.
 
 ## Validate actor composition
 
@@ -155,6 +157,8 @@ tdg methods
 tdg call message '{"text":"summarize the open PRs"}' --json
 tdg call message '{"text":"take a deeper pass","model":"anthropic/claude-opus-4-6"}'
 tdg call inspect '{"path":"README.md"}' --no-wait
+tdg call state message m1 --thread root
+tdg call cancel message m1 --thread root --reason "operator stopped it"
 tdg providers --json
 tdg models --provider openrouter --search claude --json
 tdg lint actor.ts

@@ -156,7 +156,7 @@ export const ThreadNode = Schema.Struct({
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
 }).annotate({ identifier: "ThreadNode" })
 
-export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "parked"])
+export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "cancelled", "parked"])
 
 export type TurnStatus = typeof TurnStatus.Type
 
@@ -169,7 +169,8 @@ export const TurnView = Schema.Struct({
   status: TurnStatus,
   epoch: Schema.Finite,
   output: Schema.optionalKey(Schema.String),
-  error: Schema.optionalKey(Schema.String)
+  error: Schema.optionalKey(Schema.String),
+  reason: Schema.optionalKey(Schema.String)
 }).annotate({ identifier: "TurnView" })
 
 export type TurnView = typeof TurnView.Type
@@ -201,23 +202,51 @@ export const MethodAccepted = Schema.Struct({
   actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
-  call: Schema.String
+  call: Schema.String,
+  deadlineAt: Schema.Finite
 }).annotate({ identifier: "MethodAccepted" }).pipe(HttpApiSchema.status(202))
 
 export type MethodAccepted = typeof MethodAccepted.Type
+
+// CancellationRequest carries the caller's reason for stopping an invocation.
+export const CancellationRequest = Schema.Struct({
+  reason: Schema.optionalKey(Schema.String)
+}).annotate({ identifier: "CancellationRequest" })
+
+export type CancellationRequest = typeof CancellationRequest.Type
+
+// CancellationAccepted identifies the durable cancellation request committed for one invocation.
+export const CancellationAccepted = Schema.Struct({
+  actor: Schema.String,
+  thread: Schema.String,
+  method: Schema.String,
+  call: Schema.String,
+  request: Schema.String,
+  status: Schema.Literals(["accepted", "already-requested"])
+}).annotate({ identifier: "CancellationAccepted" }).pipe(HttpApiSchema.status(202))
+
+export type CancellationAccepted = typeof CancellationAccepted.Type
 
 // MethodState is the durable state any declared actor method can expose on the wire.
 export const MethodState = Schema.Union([
   Schema.Struct({ status: Schema.Literal("pending") }),
   Schema.Struct({ status: Schema.Literal("completed"), output: Schema.Unknown }),
-  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String })
+  Schema.Struct({ status: Schema.Literal("failed"), error: Schema.String }),
+  Schema.Struct({
+    status: Schema.Literal("cancelled"),
+    cause: Schema.Literals(["requested", "deadline"]),
+    reason: Schema.optionalKey(Schema.String),
+    deadlineAt: Schema.optionalKey(Schema.Finite)
+  })
 ]).annotate({ identifier: "MethodState" })
 
 export type MethodState = typeof MethodState.Type
 
-// MethodSummary exposes one declared method and standalone JSON Schemas for its input and output.
+// MethodSummary exposes one declared method, its cancellation capability, and standalone JSON Schemas for its input and output.
 export const MethodSummary = Schema.Struct({
   name: Schema.String,
+  cancellable: Schema.Boolean,
+  timeoutMs: Schema.Finite,
   inputSchema: Schema.Unknown,
   outputSchema: Schema.Unknown
 }).annotate({ identifier: "MethodSummary" })
@@ -438,6 +467,11 @@ const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 
 const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
+const RuntimeCancellationParams = {
+  ...RuntimeMethodCallParams,
+  request: Schema.String
+}
+
 // runtimeGroup describes the actor mounted at this runtime origin.
 export const runtimeGroup = HttpApiGroup.make("runtime").add(
   HttpApiEndpoint.get("metadata", "/v1/metadata", { success: ActorMetadata })
@@ -478,14 +512,22 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
   }),
   HttpApiEndpoint.put("invoke", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
+    query: { timeoutMs: Schema.optionalKey(Seq) },
     payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownMethod.schema]
   }),
   HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
+    query: {},
     success: MethodState,
     error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+  }),
+  HttpApiEndpoint.put("cancel", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellations/:request", {
+    params: RuntimeCancellationParams,
+    payload: CancellationRequest,
+    success: CancellationAccepted,
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   })
 )
 

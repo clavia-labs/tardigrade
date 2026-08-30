@@ -9,8 +9,21 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { alarmFired, earliestDeadlineOf, type ActorMethodInvocation } from "@clavia/tardigrade-core/actor/method"
-import { Self, restingActor, settleActor, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import {
+  alarmFired,
+  earliestDeadlineOf,
+  methodIngressKeyOf,
+  type ActorInvocationContext,
+  type ActorMethods
+} from "@clavia/tardigrade-core/actor/method"
+import {
+  EffectInterruptions,
+  Self,
+  effectInterruptionRegistry,
+  restingActor,
+  settleActor,
+  type Actor
+} from "@clavia/tardigrade-core/reconciliation"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -62,14 +75,19 @@ export interface CloudflareThreadHost {
 // createCloudflareThreadHost binds one actor thread to Effect SQL over its Durable Object storage.
 export async function createCloudflareThreadHost<R = never>(options: CloudflareThreadHostOptions<R>): Promise<CloudflareThreadHost> {
   const identity = { actor: options.actorName, instance: options.actorInstance, thread: options.thread }
+  const methods = "methods" in options.actor
+    ? (options.actor as Actor<R> & { readonly methods: ActorMethods }).methods
+    : undefined
   const database = ManagedRuntime.make(SqliteClient.layer({ storage: options.storage }))
   const sql = await database.runPromise(SqliteClient.SqliteClient)
   const workspaceRuntime = ManagedRuntime.make(layerWorkspace(sql))
   const workspaceStore = await workspaceRuntime.runPromise(KeyValueStore.KeyValueStore)
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
-  const storeKeyOf = (event: Event): string | undefined => threadKeys.keyOf(event) ?? options.keyOf?.(event)
+  const storeKeyOf = (event: Event): string | undefined =>
+    methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
   const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
+  const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
   const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
@@ -88,7 +106,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     event: Event,
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ThreadAddress>,
-    call?: ActorMethodInvocation,
+    call?: ActorInvocationContext,
     flush = true
   ): Effect.Effect<void> => {
     const address = formatThreadAddress(target)
@@ -116,6 +134,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
         return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
       }
       const result = yield* events.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+      if (result.appended > 0) interruptions.interrupt([landed])
       if (result.appended > 0) driver.mark(options.thread)
       if (flush) yield* syncCommit(result)
       else if (result.appended > 0) stagedHead = Math.max(stagedHead, result.head)
@@ -142,6 +161,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const self = formatThreadAddress(identity)
   const store = {
     append: (batch: ReadonlyArray<Event>) => events.append(batch).pipe(
+      Effect.tap((result) => result.appended > 0 ? Effect.sync(() => interruptions.interrupt(batch)) : Effect.void),
       Effect.tap(syncCommit)
     ),
     read: events.read,
@@ -151,6 +171,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   }
   const ports = Layer.mergeAll(
     Layer.succeed(EventLog, eventLogFrom(store)),
+    Layer.succeed(EffectInterruptions, interruptions),
     router,
     workspace,
     Layer.succeed(Self, identity)
@@ -174,10 +195,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     await drive()
   }
   const nextMethodDeadline = async (): Promise<number | undefined> => {
-    return earliestDeadlineOf(await Effect.runPromise(readEffect))
+    return earliestDeadlineOf(await Effect.runPromise(readEffect), methods)
   }
   const recordAlarm = async (at: number): Promise<void> => {
-    const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect))
+    const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect), methods)
     if (deadline !== undefined && deadline <= at) {
       const result = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
       if (result.appended > 0) driver.mark(options.thread)

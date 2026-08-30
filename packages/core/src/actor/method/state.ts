@@ -3,3 +3,10 @@ export type ActorMethodState<Output> =
   | { readonly status: "pending" }
   | { readonly status: "completed"; readonly output: Output; readonly data?: unknown }
   | { readonly status: "failed"; readonly error: string; readonly data?: unknown }
+  | {
+      readonly status: "cancelled"
+      readonly cause: "requested" | "deadline"
+      readonly reason?: string
+      readonly deadlineAt?: number
+      readonly data?: unknown
+    }

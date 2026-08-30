@@ -30,9 +30,12 @@ export interface ResponseReceived extends Event {
   readonly id: string
   readonly method: string
   readonly call: string
-  readonly status: "completed" | "failed"
+  readonly status: "completed" | "failed" | "cancelled"
   readonly output?: unknown
   readonly error?: string
+  readonly cause?: "requested" | "deadline"
+  readonly reason?: string
+  readonly deadlineAt?: number
   readonly data?: unknown
   readonly from: string
   readonly at: number
@@ -58,6 +61,7 @@ export const methodResponseKeys: KeyFragment = {
 
 const textOf = (state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>): string => {
   if (state.status === "failed") return `error: ${state.error}`
+  if (state.status === "cancelled") return state.reason === undefined ? "cancelled" : `cancelled: ${state.reason}`
   if (typeof state.output === "string") return state.output
   try {
     return JSON.stringify(state.output) ?? String(state.output)
@@ -72,6 +76,7 @@ const terminalOf = (
   state: Exclude<ActorMethodState<unknown>, { readonly status: "pending" }>
 ): Exclude<ActorMethodState<unknown>, { readonly status: "pending" }> => {
   if (state.status === "failed") return state
+  if (state.status === "cancelled") return state
   try {
     return {
       status: "completed",
@@ -111,8 +116,11 @@ const linkedCalls = (
   const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> = []
   for (const event of log) {
     const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
-    const invocation = typeof candidate.call === "object" && candidate.call !== null
-      ? candidate.call as { readonly method?: unknown; readonly id?: unknown }
+    const context = typeof candidate.call === "object" && candidate.call !== null
+      ? candidate.call as { readonly invocation?: unknown }
+      : undefined
+    const invocation = typeof context?.invocation === "object" && context.invocation !== null
+      ? context.invocation as { readonly method?: unknown; readonly id?: unknown; readonly epoch?: unknown }
       : undefined
     const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
     if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null) continue
@@ -120,7 +128,11 @@ const linkedCalls = (
     for (const [name, method] of Object.entries(methods)) {
       if (invocation !== undefined && invocation.method !== name) continue
       const declaration = method as ActorMethodDeclaration
-      const state = declaration.state(log, id)
+      const state = declaration.state(log, {
+        method: name,
+        id,
+        epoch: typeof invocation?.epoch === "number" ? invocation.epoch : 0
+      })
       if (state === undefined || state.status === "pending") continue
       const response = responseOf(name, id, terminalOf(name, declaration, state))
       if (!delivered(log, response)) calls.push({ response, link: candidate.link as Link<unknown, ThreadAddress> })
@@ -165,6 +177,11 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
               status: state.status,
               ...(state.status === "completed" ? { output: state.output } : {}),
               ...(state.status === "failed" ? { error: state.error } : {}),
+              ...(state.status === "cancelled" ? {
+                cause: state.cause,
+                ...(state.reason === undefined ? {} : { reason: state.reason }),
+                ...(state.deadlineAt === undefined ? {} : { deadlineAt: state.deadlineAt })
+              } : {}),
               ...(state.data === undefined ? {} : { data: state.data }),
               from: formatThreadAddress(self),
               at

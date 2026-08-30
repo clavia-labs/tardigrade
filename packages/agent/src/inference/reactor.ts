@@ -108,7 +108,7 @@ const epochStamp = (epoch: number): { readonly epoch?: number } =>
 export class Infer extends Context.Service<
   Infer,
   {
-    readonly react: (request: InferRequest, key?: string) => Effect.Effect<Action>
+    readonly react: (request: InferRequest, key?: string, signal?: AbortSignal) => Effect.Effect<Action>
     readonly resolve?: (reference?: ModelRef) => ModelResolution
   }
 >()("agent/Infer") {}
@@ -236,6 +236,7 @@ const consequenceOf = (action: Action, ctx: Consequence): Event => {
         ...(action.mode === undefined ? {} : { mode: action.mode }),
         ...stampOf(action),
         turn: ctx.turn,
+        ...epochStamp(ctx.epoch),
         at: ctx.at
       } as Event)
     : action.kind === "complete"
@@ -288,7 +289,7 @@ const awaitingTool = (slice: ReadonlyArray<Event>): boolean => {
 }
 
 const terminated = (slice: ReadonlyArray<Event>): boolean =>
-  slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed")
+  slice.some((e) => e.type === "TurnCompleted" || e.type === "TurnFailed" || e.type === "TurnCancelled")
 
 const terminalKey = (turn: string, epoch: number): string =>
   epoch === 0 ? `tn:${turn}` : `tn:${turn}/${epoch}`
@@ -326,6 +327,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []
   const head = slice[0] as Event & { id?: unknown }
   const turn = String(head.id)
+  const epoch = turnEpochOf(log, turn)
   const resolvedModel = resolvedModelOf(slice)
   const inheritedModels = modelPolicyOf((head as { readonly models?: unknown }).models)
   const resolvedPolicy = resolvedPolicyOf(slice)
@@ -344,6 +346,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
     return [
       effect({
         key: `mr:${turn}`,
+        invocation: { method: "message", id: turn, epoch },
         input: { turn, model, models, policyError },
         act: (input) =>
           Effect.gen(function* () {
@@ -390,7 +393,6 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
       })
     ]
   }
-  const epoch = turnEpochOf(log, turn)
   const died = diedAttempts(slice, epoch)
   const marks = slice.filter((e) => e.type === "ModelCalled").length
   const modelFailures = log.filter(
@@ -417,6 +419,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   ) => [
     intent({
       key: terminalKey(turn, epoch),
+      invocation: { method: "message", id: turn, epoch },
       input: { turn, epoch, attempt, ...input },
       events: (given, at) => [
         turnFailed({
@@ -492,6 +495,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
   return [
     effect({
       key: `mc:${turn}/${marks}`,
+      invocation: { method: "message", id: turn, epoch },
       input: {
         turn,
         epoch,
@@ -513,7 +517,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
               },
         contract
       },
-      act: (input) =>
+      act: (input, signal) =>
         Effect.gen(function* () {
           const events = yield* EventLog
           const self = yield* Self
@@ -539,7 +543,7 @@ export const inferReactorFor = (policy: Partial<InferPolicy>, render: Render): R
               identity: { ...self, turn: input.turn },
               ...(input.model === undefined ? {} : { model: input.model }),
               ...input.render
-            }, input.attempt)
+            }, input.attempt, signal)
             .pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)

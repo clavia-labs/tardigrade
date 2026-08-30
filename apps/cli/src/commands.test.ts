@@ -9,8 +9,9 @@ import { BunServices } from "@effect/platform-bun"
 import {
   ProblemError,
   type ActorClient,
+  type ActorCallRef,
+  type CancellationAccepted,
   type EventRow,
-  type MethodAccepted,
   type MethodState,
   type MethodSummary,
   type ModelCatalogPage,
@@ -56,6 +57,8 @@ const catalogFetch = (): typeof fetch =>
 
 interface Recorded {
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
+  readonly stateRefs: Array<ActorCallRef>
+  readonly cancelled: Array<{ invocation: ActorCallRef; id: string; reason?: string }>
   readonly asked: Array<{ thread: string; options: unknown }>
   readonly catalog: Array<{ kind: "models" | "providers"; options: unknown }>
   readonly installed: Array<string>
@@ -75,10 +78,17 @@ const clientOf = (
     readonly models?: ModelCatalogPage
     readonly providers?: ProviderCatalogPage
     readonly states?: ReadonlyArray<MethodState>
+    readonly cancellation?: CancellationAccepted
     readonly fail?: ProblemError
   }
 ): ActorClient => {
   let read = 0
+  const state = () => {
+    recorded.methodReads += 1
+    const states = answers.states ?? []
+    const current = states[Math.min(read++, states.length - 1)]
+    return current === undefined ? refuse() : Promise.resolve(current)
+  }
   return {
     baseUrl: "http://localhost:0",
     metadata: () => Promise.resolve({ name: "test", storage: { kind: "sqlite", location: "/work/.tardigrade/actor.sqlite" } }),
@@ -115,13 +125,12 @@ const clientOf = (
       recorded.asked.push({ thread, options })
       return answers.fail === undefined ? Promise.resolve(answers.events ?? []) : Promise.reject(answers.fail)
     },
-    methodState: () => {
-      recorded.methodReads += 1
-      const states = answers.states ?? []
-      const state = states[Math.min(read++, states.length - 1)]
-      return state === undefined ? refuse() : Promise.resolve(state)
+    methodState: state,
+    state: (invocation) => {
+      recorded.stateRefs.push(invocation)
+      return state()
     },
-    invoke: (actor, thread, name, invocation) => {
+    call: (actor, thread, name, invocation) => {
       recorded.invoked.push({
         thread,
         method: name,
@@ -133,11 +142,28 @@ const clientOf = (
           actor,
           thread,
           method: name,
-          call: invocation.id
-        } satisfies MethodAccepted)
+          id: invocation.id,
+          deadlineAt: 301_000
+        })
         : Promise.reject(answers.fail)
     },
     append: refuse,
+    cancel: (invocation, cancellation) => {
+      recorded.cancelled.push({
+        invocation,
+        id: cancellation.id,
+        ...(cancellation.reason === undefined ? {} : { reason: cancellation.reason })
+      })
+      if (answers.fail !== undefined) return Promise.reject(answers.fail)
+      return Promise.resolve(answers.cancellation ?? {
+        actor: invocation.actor,
+        thread: invocation.thread,
+        method: invocation.method,
+        call: invocation.id,
+        request: cancellation.id,
+        status: "accepted"
+      })
+    },
     projection: refuse as ActorClient["projection"],
     tree: refuse,
     resume: refuse,
@@ -168,7 +194,15 @@ const drive = async (
   } = {}
 ): Promise<Ran> => {
   const lines: Array<string> = []
-  const recorded: Recorded = { invoked: [], asked: [], catalog: [], installed: [], methodReads: 0 }
+  const recorded: Recorded = {
+    invoked: [],
+    stateRefs: [],
+    cancelled: [],
+    asked: [],
+    catalog: [],
+    installed: [],
+    methodReads: 0
+  }
   const minted = [...(options.ids ?? ["minted-1", "minted-2", "minted-3"])]
   const services: CliServices = {
     env: options.env ?? {},
@@ -587,6 +621,8 @@ describe("events", () => {
 describe("methods", () => {
   const methods: ReadonlyArray<MethodSummary> = [{
     name: "message",
+    cancellable: true,
+    timeoutMs: 300_000,
     inputSchema: { type: "object", required: ["text"], properties: { text: { type: "string" } } },
     outputSchema: { type: "string" }
   }]
@@ -658,7 +694,8 @@ describe("call", () => {
       actor: "main",
       thread: "root",
       method: "message",
-      call: "m1",
+      id: "m1",
+      deadlineAt: 301_000,
       status: "completed",
       output: "done"
     })
@@ -685,6 +722,68 @@ describe("call", () => {
     })
     expect(ran.failed).toBe(true)
     expect(failureText(ran)).toContain("still pending")
+  })
+
+  test("state reads an invocation reference without exposing its default epoch", async () => {
+    const ran = await drive(["call", "state", "message", "m1", "--thread", "root"], {
+      answers: { states: [{ status: "pending" }] }
+    })
+    expect(ran.failed).toBe(false)
+    expect(ran.lines).toEqual(["root m1 pending"])
+    expect(ran.recorded.stateRefs).toEqual([{
+      actor: "main",
+      thread: "root",
+      method: "message",
+      id: "m1"
+    }])
+  })
+
+  test("state JSON carries the logical call reference", async () => {
+    const ran = await drive([
+      "call", "state", "message", "m1", "--thread", "root", "--json"
+    ], { answers: { states: [{ status: "cancelled", cause: "requested", reason: "stopped" }] } })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      id: "m1",
+      status: "cancelled",
+      cause: "requested",
+      reason: "stopped"
+    })
+  })
+
+  test("cancel mints a request id and prints the acknowledgement", async () => {
+    const ran = await drive([
+      "call", "cancel", "message", "m1", "--thread", "root", "--reason", "operator stopped it"
+    ], { ids: ["stop-1"] })
+    expect(ran.failed).toBe(false)
+    expect(ran.lines).toEqual(["root m1 cancellation accepted"])
+    expect(ran.recorded.cancelled).toEqual([{
+      invocation: {
+        actor: "main",
+        thread: "root",
+        method: "message",
+        id: "m1"
+      },
+      id: "stop-1",
+      reason: "operator stopped it"
+    }])
+  })
+
+  test("cancel JSON keeps an explicit idempotency response", async () => {
+    const cancellation = {
+      actor: "main",
+      thread: "root",
+      method: "message",
+      call: "m1",
+      request: "stop-2",
+      status: "already-requested" as const
+    }
+    const ran = await drive([
+      "call", "cancel", "message", "m1", "--thread", "root", "--id", "stop-2", "--json"
+    ], { answers: { cancellation } })
+    expect(JSON.parse(ran.lines[0] ?? "")).toEqual(cancellation)
   })
 })
 

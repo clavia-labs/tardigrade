@@ -24,8 +24,9 @@ export type PermissionDecision = typeof PermissionDecision.Type
 export const requestPermissionMethod = actorMethod({
   input: PermissionRequestInput,
   output: PermissionDecision,
-  event: ({ id, input, at }) => permissionRequestReceived({ id, ...input, at }),
-  state: (events, id) => {
+  event: ({ invocation, input, at }) => permissionRequestReceived({ id: invocation.id, ...input, at }),
+  state: (events, invocation) => {
+    const { id } = invocation
     const received = events.some((event) =>
       event.type === "PermissionRequestReceived" && String((event as { readonly id?: unknown }).id) === id
     )

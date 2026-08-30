@@ -32,8 +32,9 @@ import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
-import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
+import { invokedEventOf, isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { actorMethodTimeoutOf, cancellationRequested, cancellationRequestedOf } from "@clavia/tardigrade-core/actor/method"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { actorFromReactors, effect, restingActor, settleActor } from "@clavia/tardigrade-core/reconciliation"
@@ -437,7 +438,7 @@ const modelLayer = (
         catalogRevision: selected.catalogRevision
       }
     },
-    react: (request, key) => {
+    react: (request, key, signal) => {
       if (request.model === undefined) return Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
       const selectedModel = selectedModelFrom(models, scope, request.model)
       const selected = infer({
@@ -451,7 +452,7 @@ const modelLayer = (
         ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
         ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
       }, adapters, observer === undefined ? {} : { observer })
-      return Effect.flatMap(Infer, (model) => model.react(request, key)).pipe(Effect.provide(selected))
+      return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(selected))
     }
   })
 }
@@ -1158,10 +1159,34 @@ const jsonSchemaOf = (schema: Schema.Constraint): unknown => {
 
 const methodEventOf = (
   method: ActorMethods[string],
-  call: { readonly id: string; readonly input: unknown; readonly at: number }
+  call: Parameters<ActorMethods[string]["eventOf"]>[0]
 ): { readonly event: Event } | { readonly error: string } => {
   try {
     return { event: method.eventOf(call) }
+  } catch (cause) {
+    return { error: cause instanceof Error ? cause.message : String(cause) }
+  }
+}
+
+const invocationContextOf = (event: Event) => {
+  const call = (event as { readonly call?: unknown }).call
+  if (typeof call !== "object" || call === null) return undefined
+  const context = call as {
+    readonly invocation?: { readonly method?: unknown; readonly id?: unknown; readonly epoch?: unknown }
+    readonly deadlineAt?: unknown
+  }
+  const invocation = context.invocation
+  if (invocation === undefined || typeof invocation.method !== "string" || typeof invocation.id !== "string" ||
+    typeof invocation.epoch !== "number" || typeof context.deadlineAt !== "number") return undefined
+  return {
+    invocation: { method: invocation.method, id: invocation.id, epoch: invocation.epoch },
+    deadlineAt: context.deadlineAt
+  }
+}
+
+const selectedMethodTimeoutOf = (raw: string | null): { readonly timeoutMs: number } | { readonly error: string } => {
+  try {
+    return { timeoutMs: actorMethodTimeoutOf(raw === null ? undefined : Number(raw)) }
   } catch (cause) {
     return { error: cause instanceof Error ? cause.message : String(cause) }
   }
@@ -1268,6 +1293,8 @@ const routes = [
       if (methods === undefined) return json({ error: "actor assembly is not deployed" }, 503)
       return json(Object.entries(methods).map(([name, method]) => ({
         name,
+        cancellable: method.cancellation !== undefined,
+        timeoutMs: method.timeoutMs,
         inputSchema: jsonSchemaOf(method.input),
         outputSchema: jsonSchemaOf(method.output)
       })))
@@ -1317,14 +1344,36 @@ const routes = [
       const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
+      const events = yield* Effect.promise(() => stub.events(thread)).pipe(
+        Effect.map((value) => value as ReadonlyArray<Event>)
+      )
+      const existing = events.map(invocationContextOf).find((context) =>
+        context?.invocation.method === methodName && context.invocation.id === call && context.invocation.epoch === 0)
+      if (existing !== undefined) {
+        return json({ actor: instance, thread, method: methodName, call, deadlineAt: existing.deadlineAt }, 202)
+      }
+      const requestedTimeout = new URL(request.url, "http://worker").searchParams.get("timeoutMs")
+      const selectedTimeout = selectedMethodTimeoutOf(requestedTimeout)
+      if ("error" in selectedTimeout) return json({ error: selectedTimeout.error }, 400)
+      const timeoutMs = selectedTimeout.timeoutMs
+      if (timeoutMs > method.timeoutMs) {
+        return json({ error: `timeoutMs cannot exceed method ${JSON.stringify(methodName)}'s declared ${method.timeoutMs}ms` }, 400)
+      }
       const input = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
       const at = yield* Clock.currentTimeMillis
-      const decoded = methodEventOf(method, { id: call, input, at })
+      const deadlineAt = at + timeoutMs
+      if (!Number.isSafeInteger(deadlineAt)) return json({ error: "timeoutMs produces an invalid deadline" }, 400)
+      const context = {
+        invocation: { method: methodName, id: call, epoch: 0 },
+        deadlineAt
+      }
+      const decoded = methodEventOf(method, { ...context, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const stub = addressedThreadStub(env, actor, instance, thread)
-      const appended = yield* Effect.promise(() => stub.append(thread, decoded.event))
+      const appended = yield* Effect.promise(() => stub.append(thread, invokedEventOf(context, decoded.event)))
       if (!appended) return json({ error: "unknown thread" }, 404)
-      return json({ actor: instance, thread, method: methodName, call }, 202)
+      return json({ actor: instance, thread, method: methodName, call, deadlineAt }, 202)
     })
   )),
   HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
@@ -1343,8 +1392,52 @@ const routes = [
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
-      const state = method.state(events, call)
+      const epoch = method.currentEpoch(events, call)
+      const state = method.state(events, { method: methodName, id: call, epoch })
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
+    })
+  )),
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellations/:request", protectedRoute((request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const actor = deployedActor
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const methodName = params.method ?? ""
+      const call = params.call ?? ""
+      const requestId = params.request ?? ""
+      const method = methodsOf(actor)?.[methodName]
+      if (method === undefined) return json({ error: "unknown method" }, 404)
+      if (method.cancellation === undefined) return json({ error: "method does not declare cancellation" }, 400)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
+      const events = yield* Effect.promise(() => stub.events(thread)).pipe(
+        Effect.map((value) => value as ReadonlyArray<Event>)
+      )
+      const epoch = method.currentEpoch(events, call)
+      const invocation = { method: methodName, id: call, epoch }
+      if (method.state(events, invocation) === undefined) return json({ error: "unknown method call" }, 404)
+      const requested = events.some((event) => {
+        const cancellation = cancellationRequestedOf(event)
+        return cancellation?.invocation.method === invocation.method &&
+          cancellation.invocation.id === invocation.id && cancellation.invocation.epoch === invocation.epoch
+      })
+      if (requested) {
+        return json({ actor: instance, thread, method: methodName, call, request: requestId, status: "already-requested" }, 202)
+      }
+      const payload = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as { readonly reason?: unknown }
+      if (payload.reason !== undefined && typeof payload.reason !== "string") return json({ error: "reason must be a string" }, 400)
+      const at = yield* Clock.currentTimeMillis
+      const appended = yield* Effect.promise(() => stub.append(thread, cancellationRequested({
+        request: requestId,
+        invocation,
+        cause: "requested",
+        ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+        at
+      })))
+      if (!appended) return json({ error: "unknown thread" }, 404)
+      return json({ actor: instance, thread, method: methodName, call, request: requestId, status: "accepted" }, 202)
     })
   )),
   HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>

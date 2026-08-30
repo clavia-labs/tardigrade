@@ -84,6 +84,16 @@ describe("the bag law: derivations are permutation-invariant", () => {
   })
 })
 
+test("a code dispatch appended after cancellation is inert", () => {
+  const events: ReadonlyArray<Event> = [
+    { type: "MessageReceived", id: "m1", text: "work", at: 1 },
+    { type: "TurnCancelled", request: "x1", turn: "m1", cause: "requested", at: 2 },
+    { type: "CodeDispatched", execId: "late", code: "write()", turn: "m1", at: 3 }
+  ]
+  expect(workOwed(events)).toBeUndefined()
+  expect(restingThread(events)).toBe(true)
+})
+
 describe("the spec's state graph: NoVoid and QuietIsBlocked on every reachable state", () => {
   // The TLA model, executable: one dispatch "d", calls CALLS, an attempt
   // planned from a snapshot, commits one at a time (terminal last), a
