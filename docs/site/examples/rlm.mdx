@@ -1,0 +1,75 @@
+---
+title: Recursive Language Model
+description: A durable RLM built from Tardigrade components.
+route: /examples/rlm
+section: Examples
+sectionOrder: 2
+order: 1
+articleClass: example-article
+---
+
+## What is an RLM?
+
+An RLM puts long context inside a code environment. The model inspects and partitions that context, calls models over smaller pieces, and combines their work into one answer.
+
+<div className="rlm-reading">
+  <a href="https://alexzhang13.github.io/blog/2025/rlm/" rel="noreferrer" target="_blank">Original write-up</a>
+  <a href="https://arxiv.org/abs/2512.24601" rel="noreferrer" target="_blank">Read the paper</a>
+</div>
+
+<RlmDiagram />
+
+## Build it with Tardigrade
+
+Code mode provides the environment. Packages expose files, fetch, workspace storage, and child agents. Budgets and compaction keep the recursive work bounded.
+
+<div className="example-source-heading"><span>README.md / Compose an agent</span><a href="https://github.com/clavia-labs/tardigrade#compose-an-agent" rel="noreferrer" target="_blank">View on GitHub</a></div>
+
+```ts
+import {
+  actor, agentMethods, agentsPackage, budget,
+  budgetAuthority, caller, codeMode, compaction,
+  fetchPackage, filesPackage, infer,
+  outputValidateOnce, system, workspacePackage
+} from "tardie"
+
+const instructions = system(
+  "Investigate with code and delegate independent work."
+)
+
+const rlm = actor({
+  name: "researcher",
+  methods: agentMethods,
+  components: [
+    infer([
+      instructions,
+      budget([
+        codeMode([
+          filesPackage(),
+          fetchPackage(),
+          agentsPackage(),
+          workspacePackage()
+        ])
+      ], { authority: caller() }),
+      compaction(),
+      outputValidateOnce
+    ]),
+    budgetAuthority()
+  ]
+})
+```
+
+## How it is assembled
+
+<div className="rlm-parts">
+  <div><code>codeMode</code><p>Lets the model act by writing JavaScript.</p></div>
+  <div><code>agentsPackage</code><p>Lets that code spawn durable child agents.</p></div>
+  <div><code>workspacePackage</code><p>Stores large values outside the model context.</p></div>
+  <div><code>budget + compaction</code><p>Bounds delegated work and the context sent to the model.</p></div>
+</div>
+
+## Start from the quickstart
+
+Initialize a project, then replace its actor assembly with this RLM.
+
+<Command value="tdg init researcher" label="Initialize the RLM project" />

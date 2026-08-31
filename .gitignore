@@ -20,6 +20,7 @@ packages/core/tla/states/
 
 # Local files
 .DS_Store
+**/.obsidian/
 *.log
 .env*
 .dev.vars*
