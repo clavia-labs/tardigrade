@@ -2,7 +2,7 @@
 
 Building and running an agent in production is tough. Your agents can fail for a thousand reasons. When a run eventually goes wrong in production, you don't have much control. You change a few prompts, write a new eval case, and hope it doesn't run into a similar situation in the future. Any form of customization is wrestling against the harness, and changing one part might affect the rest in unpredictable ways.
 
-As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. To enable this, we need a harness that can be inspected, forked, and varied. 
+As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves. To enable this, we need a harness that can be inspected, forked, and varied.
 ### Log is all you need
 How can a harness be fully customizable, easy to author, and yet remain reliable in production? We took inspiration from React. Designing a harness is like designing a user interface, except the user is a language model. React derives its component tree and declared effects from state, `{ UI, effects } = f(state)` [1]. A harness has the same shape over its event log, `{ view, transitions } = f(log)`, with transitions grounded in Harel's statecharts [2]. A transition is either an intent that proposes events or an external effect. This simplicity enables expressive authoring without sacrificing reliability.
 

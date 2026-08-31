@@ -1,0 +1,34 @@
+---
+title: CLI Reference
+description: Build, run, and inspect Tardigrade actors.
+route: /cli
+section: Introduction
+sectionOrder: 1
+order: 3
+articleClass: cli-article
+---
+
+## Install
+
+<Command value="bun add -g tardie" label="Install the Tardigrade CLI" />
+
+Use `bunx tardie <command>` to run a command without installing it.
+
+## Commands
+
+<div className="cli-command-list">
+  <div className="cli-command-row"><code>tdg init &lt;name&gt;</code><p>Create an actor and configure its first model provider</p></div>
+  <div className="cli-command-row"><code>tdg setup</code><p>Add provider connections and choose the default model</p></div>
+  <div className="cli-command-row"><code>tdg lint &lt;entry&gt;</code><p>Validate an actor before building or deploying</p></div>
+  <div className="cli-command-row"><code>tdg build &lt;entry&gt;</code><p>Build and validate an actor artifact</p></div>
+  <div className="cli-command-row"><code>tdg dev</code><p>Build actor.ts and serve the local API and Voyager</p></div>
+  <div className="cli-command-row"><code>tdg methods</code><p>List the actor's methods and schemas</p></div>
+  <div className="cli-command-row"><code>tdg call &lt;method&gt; &lt;input&gt;</code><p>Call a method with JSON input and wait for its result</p></div>
+  <div className="cli-command-row"><code>tdg ls</code><p>List threads</p></div>
+  <div className="cli-command-row"><code>tdg events &lt;thread&gt;</code><p>Print a thread's event log</p></div>
+  <div className="cli-command-row"><code>tdg providers</code><p>List provider protocols and setup requirements</p></div>
+  <div className="cli-command-row"><code>tdg models</code><p>Search and page the public model catalog</p></div>
+  <div className="cli-command-row"><code>tdg models lock</code><p>Resolve configured models into the deployment lock</p></div>
+</div>
+
+Use `--json` for machine-readable output. Remote commands accept `--url` and `--token`. Run `tdg <command> --help` for every option.

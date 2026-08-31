@@ -8,3 +8,4 @@
 - [how-to/celld.md](how-to/celld.md): deploy an actor project to a Celld fleet.
 - [explanations/why.md](explanations/why.md): why tardigrade exists. {transitions} = f(log), and what the log-as-state shape enables.
 - [explanations/threads.md](explanations/threads.md): actor definitions, durable threads, storage boundaries, and child placement.
+- [site/README.md](site/README.md): author pages rendered by the web application.

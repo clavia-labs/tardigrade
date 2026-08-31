@@ -1,0 +1,190 @@
+---
+title: Quickstart
+description: Build and deploy your first tardie agent
+route: /guide
+section: Introduction
+sectionOrder: 1
+order: 1
+---
+
+Build and deploy your first tardie agent
+
+**Tardigrade** is a typescript framework for building durable, modular agents around an immutable event log. By the end of this guide, you would learn how to run your own tardigrade agent locally, inspect its logs and deploy it to the cloud.
+### Prerequisites
+1. [Bun](https://bun.sh/docs) 1.4 or above
+2. [Tardie CLI](/cli) 0.16.0 or above
+3. [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) for Cloudflare deployment
+4. [Celld CLI](https://celld.dev/docs/) if you want to deploy on your own cloud
+5. An LLM API Key
+### Initialize your project
+First, install the [tardie CLI](/cli). This makes setup simpler.
+```bash variant="single"
+bun add -g tardie
+```
+
+Now, use the [tardie cli](/cli) to initialize the project. This would walk you through the project creation, and setup a language model provider.
+```bash variant="single"
+tdg init
+```
+
+After the setup, you should see the following files:
+<Filesystem root="my-agent/">
+
+- `actor.ts` Actor, model, and components
+- `worker.ts` Worker runtime entry
+- `wrangler.jsonc` Cloudflare Worker configuration
+- `celld.jsonc` Self-hosted Celld configuration
+- `models.lock.json` Resolved deployment model scope
+- `package.json` Dependencies and module metadata
+
+</Filesystem>
+### Define your first actor
+#### Hello world!
+After running the initialization command, and going through the setup, you would see a new folder that contains all the files required for your agent to run.
+
+For this quick start, we'll implement a simple tool calling agent with a single tool that gives the current weather at a given city. In [going-further], we'd explore a more advance agent that can execute code, access services and call other agents through its sandbox.
+
+Within `actor.ts`, you would see the following code:
+```ts expanded
+import type { AgentComponent, Serve } from "tardie"
+import { actor, agentMessageMethod, infer,
+  nativeOutput, system } from "tardie"
+
+const serveWeather: Serve = (call, _log, answer) => [
+  answer({ city: call.arguments, temperature: 21 })
+]
+
+const weather: AgentComponent = {
+  name: "weather",
+  derive: () => ({
+    view: {
+      system: ["Use weather for current conditions."],
+      tools: [{
+        spec: {
+          name: "get_weather",
+          description: "Get weather for a city",
+          inputSchema: { type: "object" }
+        },
+        serve: serveWeather
+      }],
+      context: [],
+      output: []
+    },
+    transitions: []
+  })
+}
+
+export default actor({
+  name: "weather-agent",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Answer questions about the weather."),
+    weather,
+    fileSystem,
+    nativeOutput // confusing?
+  ])]
+})
+```
+### Running it locally
+To test the agent, we'll first run it locally. You can do it by running the following command:
+```bash variant="single"
+bunx tardie dev
+```
+
+This command, bundles `actor.ts`, and serves it on `localhost:4242` by default. It also launches a local explorer to view the agent's log.
+### Send your first message
+Now that we have the agent running, let's send our first message.
+
+Run the following command to send a message:
+```bash variant="single"
+bunx tardie call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
+```
+<Tip title="About actor methods">
+
+If you notice the code above, you'd see that the agent actor defines the following method:
+```ts highlight="3"
+export default actor({
+  name: "weather-agent",
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system("Answer questions about the weather."),
+    weather,
+    fileSystem,
+    nativeOutput // confusing?
+  ])]
+})
+```
+
+In tardigrade, a method defines the typed interface of an actor. Depending on the actor you implement, you might define different method. For an agent, we'd expect it to accept a message from us holding a prompt. So it could be:
+```ts
+message: {
+  input: {
+    text: string
+    input?: unknown
+    model?: {
+      provider: string
+      model_id: string
+    }
+  }
+  output: string
+}
+```
+
+</Tip>
+
+### Inspecting the actor logs
+Now after your call, you would see an sqlite folder in `.tardigrade` that holds the actor's event log. An event log is an immutable append only ledger for all the events that are sent to the actor, as well as ones that are internally generated.
+
+<Filesystem root=".tardigrade/">
+
+- `actor.sqlite` Actor event log
+
+</Filesystem>
+
+For example, the message that we just sent, would have created the following events in the log:
+<EventLog>
+
+1. `ThreadCreated` `{ address: { ... } }`
+2. `MessageReceived` `{ text: "What is the weather..." }`
+3. `ToolCalled` `{ name: "weather", arguments: { ... } }`
+4. `ToolReturned` `{ result: { ... } }`
+5. `TurnCompleted` `{ output: "..." }`
+
+</EventLog>
+
+These events are stored in an sqlite table locally, and can be inspected across runs. Now you can create a new thread or send a new message to the same thread. Each thread would create its own database.
+
+You can use the following command to view the events:
+```bash variant="single"
+tdg events <thread>
+```
+If you had followed along the guide, the message was sent to the `quickstart` thread. To view the events in the thread, run:
+```bash variant="single"
+tdg events quickstart
+```
+### Send a follow up message
+To send a follow up message, simply send a message again to the same thread:
+```bash variant="single"
+bunx tardie call message '{"text":"How about San Francisco?"}' --thread quickstart
+```
+
+### Deploy your agent
+Now that we've tested our agent, let's deploy it. If you want to deploy the agent on cloudflare, run the following command:
+```bash variant="single"
+wrangler deploy
+```
+
+If you want to deploy it on your own cloud, use celld by running the following command:
+```bash variant="single"
+celld deploy
+```
+
+### Send a message to your cloud agent
+Once your deployment has gone through, your agent could be accessed through an endpoint like `agent.dev/agent`. Try making the following request to see it respond:
+```bash
+curl -X PUT "$ACTOR_URL/v1/threads/quickstart/methods/message/calls/first" \
+  -H 'content-type: application/json' \
+  -d '{"text":"What is the weather in Singapore?"}'
+
+curl "$ACTOR_URL/v1/threads/quickstart/methods/message/calls/first"
+```
