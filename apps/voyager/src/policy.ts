@@ -27,13 +27,8 @@ export const EVENT_STAMP_WIDTH = 164
 // is narrow, and Thread accepts another width when its surrounding shell has a different measure.
 export const EVENT_INSPECTOR_WIDTH = 480
 
-// How often the rail re-reads GET /v1/threads for the roster: the roots and their counts. The server
-// publishes no change feed for the listing, so the rail polls, and this is both the delay between a
-// run changing and the rail saying so and the resolution of the age column.
-export const ROSTER_POLL_MS = 2000
-
 // How often the event list re-reads the log after the stream is gone for good. The stream is the
-// live path and this is the fallback, so the interval matches the rail's (packages/client/src/stream.ts).
+// live path and this is the fallback (packages/client/src/stream.ts).
 export const LOG_POLL_MS = 2000
 
 // How many bars the window's density strip holds. Each bar counts the events whose time falls in

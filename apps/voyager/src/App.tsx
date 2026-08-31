@@ -1,14 +1,14 @@
 import { useEffect, useState, type ReactElement } from "react"
 
 import { Thread } from "./Thread"
-import { NO_ANSWER, ProblemError, type ActorMetadata, type ThreadSummary } from "@clavia/tardigrade-client"
+import { type ActorMetadata, type ProblemError, type ThreadSummary } from "@clavia/tardigrade-client"
 
 import { actorInstance, client } from "./client"
 import { navigate, useRoute } from "./nav"
-import { ROSTER_POLL_MS } from "./policy"
 import { Quickstart } from "./Quickstart"
 import { Rail } from "./Rail"
 import { EMPTY_ROSTER, latestRootOf, rosterOf, type Roster } from "./roster"
+import { applyActorEvent } from "./threads"
 
 // The app: one screen, two panes. The rail lists the run's roots and the center pane reads the
 // selected thread's log (mock.html). The reader chooses on the left and reads on the right, and
@@ -32,8 +32,8 @@ const useActorMetadata = (): ActorMetadata | undefined => {
   return metadata
 }
 
-// useRoster polls the current project's thread listing once for the whole screen. The rail's rows and the header's status chip share that reading, and the last good reading survives a server restart.
-const useRoster = (intervalMs: number) => {
+// useRoster follows actor events once for the whole screen. The rail's rows and the header's status chip share that reading.
+const useRoster = () => {
   const [reading, setReading] = useState<Reading>({ roster: EMPTY_ROSTER, at: Date.now() })
   const [summaries, setSummaries] = useState<ReadonlyArray<ThreadSummary>>([])
   const [problem, setProblem] = useState<ProblemError | undefined>(undefined)
@@ -45,27 +45,28 @@ const useRoster = (intervalMs: number) => {
     setProblem(undefined)
     setReady(false)
     let live = true
-    const read = async () => {
-      try {
-        const all = await client.list(actorInstance())
+    const unsubscribe = client.followActor(actorInstance(), {
+      onEvent: ({ event }) => {
         if (!live) return
-        setSummaries(all)
-        setReading({ roster: rosterOf(all), at: Date.now() })
+        setSummaries((current) => {
+          const next = applyActorEvent(current, event)
+          setReading({ roster: rosterOf(next), at: Date.now() })
+          return next
+        })
         setProblem(undefined)
         setReady(true)
-      } catch (error) {
+      },
+      onError: (error) => {
         if (!live) return
-        setProblem(error instanceof ProblemError ? error : new ProblemError({ title: String(error), status: NO_ANSWER }))
+        setProblem(error)
         setReady(true)
       }
-    }
-    void read()
-    const timer = setInterval(read, intervalMs)
+    })
     return () => {
       live = false
-      clearInterval(timer)
+      unsubscribe()
     }
-  }, [intervalMs])
+  }, [])
 
   return { reading, summaries, problem, ready }
 }
@@ -73,7 +74,7 @@ const useRoster = (intervalMs: number) => {
 export const App = (): ReactElement => {
   const route = useRoute()
   const actorMetadata = useActorMetadata()
-  const { problem, reading, summaries, ready } = useRoster(ROSTER_POLL_MS)
+  const { problem, reading, summaries, ready } = useRoster()
   const status = summaries.find((summary) => summary.id === route.thread)?.status
   useEffect(() => {
     if (!ready || route.view !== undefined || route.thread !== undefined) return

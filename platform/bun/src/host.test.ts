@@ -104,6 +104,49 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("the actor log survives reopen and wakes its follower", async () => {
+    const path = freshPath()
+    const first = await createBunHost(options(path))
+    const waiting = first.awaitActorHead(0)
+
+    await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+
+    expect(await waiting).toBeGreaterThan(0)
+    expect(await first.actorHead()).toBe(3)
+    expect(await first.readActorPage(0, 10)).toEqual([
+      { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
+      { seq: 2, event: expect.objectContaining({ type: "ThreadCreated", thread: "alpha" }) },
+      { seq: 3, event: expect.objectContaining({ type: "ThreadCommitted", thread: "alpha", head: 2 }) }
+    ])
+    await first.close()
+
+    const reopened = await createBunHost(options(path))
+    expect(await reopened.actorHead()).toBe(3)
+    await reopened.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m2", at: 2 } as Event)
+    expect(await reopened.actorHead()).toBe(4)
+    await reopened.close()
+  })
+
+  test("recovery repairs actor events from a thread log", async () => {
+    const path = freshPath()
+    const first = await createBunHost(options(path))
+    await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    await first.close()
+
+    const database = new Database(path)
+    database.run("DELETE FROM actor_events")
+    database.close()
+
+    const reopened = await createBunHost(options(path))
+    await reopened.recover()
+    expect((await reopened.readActorPage(0, 10)).map((row) => row.event.type)).toEqual([
+      "ThreadRequested",
+      "ThreadCreated",
+      "ThreadCommitted"
+    ])
+    await reopened.close()
+  })
+
   test("a committed head wakes a thread follower", async () => {
     const commits: Array<{ readonly thread: string; readonly head: number }> = []
     const h = await createBunHost({
@@ -356,7 +399,8 @@ describe("the bun host", () => {
     const thread = new Database(bunThreadDatabasePath(path, "first"))
     expect(actor.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "actor_identity" },
-      { migration_id: 2, name: "actor_directory" }
+      { migration_id: 2, name: "actor_directory" },
+      { migration_id: 3, name: "actor_events" }
     ])
     expect(thread.query("SELECT migration_id, name FROM effect_sql_migrations").all()).toEqual([
       { migration_id: 1, name: "thread_identity" },

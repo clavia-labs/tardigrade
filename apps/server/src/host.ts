@@ -103,6 +103,9 @@ export interface ActorThreads {
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
+  readonly actorEventsPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
+  readonly actorHead: Effect.Effect<number>
+  readonly awaitActorHead: (mark: number) => Effect.Effect<number>
   readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
@@ -448,6 +451,7 @@ const runtimeOf = async (
     Effect.promise(() => host.readPage(threadOf(id), mark, limit))
   const awaitHead = (id: string, mark: number) =>
     Effect.promise((signal) => host.awaitHead(threadOf(id), mark, signal))
+  const awaitActorHead = (mark: number) => Effect.promise((signal) => host.awaitActorHead(mark, signal))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
@@ -480,6 +484,9 @@ const runtimeOf = async (
     events: read,
     eventsPage: readPage,
     awaitHead,
+    actorEventsPage: (mark, limit) => Effect.promise(() => host.readActorPage(mark, limit)),
+    actorHead: Effect.promise(() => host.actorHead()),
+    awaitActorHead,
     list: Effect.gen(function*() {
       const threads = yield* Effect.promise(() => host.threads())
       const ids = threads.flatMap((candidate) => {

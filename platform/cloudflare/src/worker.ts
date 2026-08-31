@@ -36,6 +36,13 @@ import type { Transport } from "@clavia/tardigrade-core/communication/transport"
 import { invokedEventOf, isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import {
+  actorEventsOf,
+  actorEventKeyOf,
+  actorThreadsOf,
+  type ActorThreadRecord,
+  type ThreadRequested,
+} from "@clavia/tardigrade-core/actor"
+import {
   actorInvocationContextFrom,
   actorMethodTimeoutOf,
   cancellationDispositionOf,
@@ -102,74 +109,17 @@ export interface ActorThreadNode {
   readonly children: ReadonlyArray<ActorThreadNode>
 }
 
-interface ActorThreadRecord {
-  readonly [key: string]: string | number | null
-  readonly thread: string
-  readonly parent_thread: string | null
-  readonly depth: number
-  readonly placement: ChildPlacement | null
-  readonly state: "requested" | "created"
-}
-
-interface ThreadRequested extends Event {
-  readonly type: "ThreadRequested"
-  readonly thread: string
-  readonly parentThread?: string
-  readonly depth: number
-  readonly placement?: ChildPlacement
-  readonly at: number
-}
-
-interface ActorThreadCreated extends Event {
-  readonly type: "ThreadCreated"
-  readonly thread: string
-  readonly at: number
-}
-
-type ThreadLifecycleEvent = ThreadRequested | ActorThreadCreated
-
-const requestedKeyOf = (thread: string): string => `thread:requested:${thread}`
 const createdKeyOf = (thread: string): string => `thread:created:${thread}`
-
-const threadLifecycleKeyOf = (event: Event): string | undefined => {
-  if (event.type === "ThreadRequested" && typeof event.thread === "string") return requestedKeyOf(event.thread)
-  if (event.type === "ThreadCreated" && typeof event.thread === "string") return createdKeyOf(event.thread)
-  return undefined
-}
-
-const lifecycleEventsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ThreadLifecycleEvent> =>
-  events.filter((event): event is ThreadLifecycleEvent =>
-    (event.type === "ThreadRequested" || event.type === "ThreadCreated") && typeof event.thread === "string"
-  )
-
-const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorThreadRecord> => {
-  const entries = new Map<string, ActorThreadRecord>()
-  for (const event of lifecycleEventsOf(events)) {
-    if (event.type === "ThreadRequested") {
-      entries.set(event.thread, {
-        thread: event.thread,
-        parent_thread: event.parentThread ?? null,
-        depth: event.depth,
-        placement: event.placement ?? null,
-        state: "requested"
-      })
-      continue
-    }
-    const requested = entries.get(event.thread)
-    if (requested === undefined) throw new Error(`thread ${JSON.stringify(event.thread)} was created without a request`)
-    entries.set(event.thread, { ...requested, state: "created" })
-  }
-  return [...entries.values()].sort((left, right) => left.thread.localeCompare(right.thread))
-}
+const committedKeyOf = (thread: string, head: number): string => `thread:committed:${thread}:${head}`
 
 const actorSupervisorOf = (
   env: Env,
   identity: { readonly actor: string; readonly instance: string }
 ) => actorFromReactors([
   (events) => {
-    const lifecycle = lifecycleEventsOf(events)
-    const created = new Set(lifecycle.flatMap((event) => event.type === "ThreadCreated" ? [event.thread] : []))
-    return lifecycle.flatMap((event) => {
+    const actorEvents = actorEventsOf(events)
+    const created = new Set(actorEvents.flatMap((event) => event.type === "ThreadCreated" ? [event.thread] : []))
+    const creations = actorEvents.flatMap((event) => {
       if (event.type !== "ThreadRequested" || created.has(event.thread)) return []
       return [effect({
         key: createdKeyOf(event.thread),
@@ -189,8 +139,29 @@ const actorSupervisorOf = (
         })
       })]
     })
+    const commits = actorThreadsOf(actorEvents).flatMap((thread) => {
+      if (thread.state !== "created") return []
+      return [effect({
+        key: committedKeyOf(thread.thread, thread.head),
+        concurrent: true,
+        input: thread,
+        act: (current) => Effect.gen(function* () {
+          const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, current.thread))
+          const head = yield* Effect.promise(() => stub.head(current.thread))
+          if (head <= current.head) return []
+          return [{
+            type: "ThreadCommitted",
+            thread: current.thread,
+            after: current.head,
+            head,
+            at: yield* Clock.currentTimeMillis
+          }]
+        })
+      })]
+    })
+    return [...creations, ...commits]
   }
-], threadLifecycleKeyOf)
+], actorEventKeyOf)
 
 const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<ActorThreadNode> => {
   const entries = new Map<string, Omit<ActorThreadNode, "children">>()
@@ -199,7 +170,7 @@ const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<Act
   for (const row of rows) {
     const id = threadIdOf(row.thread)
     if (id === undefined) continue
-    const parent = row.parent_thread === null ? undefined : threadIdOf(row.parent_thread)
+    const parent = row.parentThread === undefined ? undefined : threadIdOf(row.parentThread)
     entries.set(id, {
       id,
       ...(parent === undefined ? {} : { parent }),
@@ -588,10 +559,10 @@ const methodsOf = (name: string): ActorMethods | undefined => {
   return name === DEFAULT_ACTOR_NAME ? agentMethods : undefined
 }
 
-// ActorDO reconciles one actor instance lifecycle from its durable log.
+// ActorDO reconciles one actor instance from its durable event log.
 export class ActorDO extends DurableObject<Env> {
   private schema: Promise<void> | undefined
-  private lifecycleStore: Promise<CloudflareEventStore> | undefined
+  private eventStore: Promise<CloudflareEventStore> | undefined
   private actorName: string | undefined
   private actorInstance: string | undefined
   private readonly database = ManagedRuntime.make(SqliteClient.layer({ storage: this.ctx.storage }))
@@ -637,18 +608,18 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   private store(): Promise<CloudflareEventStore> {
-    this.lifecycleStore ??= this.database.runPromise(SqliteClient.SqliteClient).then(
-      (sql) => new CloudflareEventStore(sql, threadLifecycleKeyOf)
+    this.eventStore ??= this.database.runPromise(SqliteClient.SqliteClient).then(
+      (sql) => new CloudflareEventStore(sql, actorEventKeyOf)
     )
-    return this.lifecycleStore
+    return this.eventStore
   }
 
-  private async lifecycle(): Promise<ReadonlyArray<Event>> {
+  private async events(): Promise<ReadonlyArray<Event>> {
     return this.database.runPromise((await this.store()).read)
   }
 
   private async resting(): Promise<boolean> {
-    return restingActor(actorSupervisorOf(this.env, this.identity()), await this.lifecycle())
+    return restingActor(actorSupervisorOf(this.env, this.identity()), await this.events())
   }
 
   private async synchronizeAlarm(): Promise<void> {
@@ -689,8 +660,8 @@ export class ActorDO extends DurableObject<Env> {
 
   async createThread(thread: string): Promise<void> {
     const identity = this.identity()
-    const existing = actorThreadsOf(await this.lifecycle()).find((entry) => entry.thread === thread)
-    if (existing !== undefined && existing.parent_thread !== null) {
+    const existing = actorThreadsOf(await this.events()).find((entry) => entry.thread === thread)
+    if (existing !== undefined && existing.parentThread !== undefined) {
       throw new Error("a child thread cannot be recreated as a root")
     }
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
@@ -710,14 +681,14 @@ export class ActorDO extends DurableObject<Env> {
     if (!isThreadAddress(envelope.link.source) || !sameThreadAddress(envelope.link.source, lineage.parent)) {
       throw new Error("a child thread lineage must match its delivery source")
     }
-    const threads = actorThreadsOf(await this.lifecycle())
+    const threads = actorThreadsOf(await this.events())
     const parent = threads.find((entry) => entry.thread === lineage.parent.thread)
     if (parent === undefined || parent.state !== "created") throw new Error("a child thread requires a created parent")
     if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
     const existing = threads.find((entry) => entry.thread === target.thread)
     const placement = lineage.placement ?? null
     if (existing !== undefined && (
-      existing.parent_thread !== lineage.parent.thread ||
+      existing.parentThread !== lineage.parent.thread ||
       Number(existing.depth) !== lineage.depth ||
       existing.placement !== placement
     )) {
@@ -737,7 +708,7 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
-    const entries = actorThreadsOf(await this.lifecycle()).filter((entry) => entry.state === "created")
+    const entries = actorThreadsOf(await this.events()).filter((entry) => entry.state === "created")
     return threadTreeOf(entries)
   }
 
@@ -930,16 +901,15 @@ export class ThreadDO extends DurableObject<Env> {
       isActorEnvelope,
       (envelope) => envelope.link.target
     )
+    const commitObserver = mountedActor?.commitObserverFor?.({ env: this.env, actorInstance, thread: currentThread })
     return createCloudflareThreadHost({
       storage: this.ctx.storage,
       actorName,
       actorInstance,
       thread: currentThread,
       actor: selectedAssembly,
-      ...(mountedActor?.commitObserverFor === undefined ? {} : {
-        commitObserver: mountedActor.commitObserverFor({ env: this.env, actorInstance, thread: currentThread }),
-        retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task)
-      }),
+      ...(commitObserver === undefined ? {} : { commitObserver }),
+      retainCommitTask: (task: Promise<void>) => retainBackgroundTask(this.ctx, this.backgroundTaskOwner, task),
       layers: (() => {
         const thread = currentThread
         const observer = mountedActor?.inferenceObserverFor?.({ env: this.env, actorInstance, thread })
@@ -1077,6 +1047,15 @@ export class ThreadDO extends DurableObject<Env> {
       throw new Error("request thread does not match the Thread DO identity")
     }
     return (await this.host()).read()
+  }
+
+  async head(thread: string): Promise<number> {
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
+    }
+    return (await this.host()).head()
   }
 
   async queryEvents(

@@ -56,6 +56,7 @@ export type CloudflareThreadHostOptions<R> = {
 export interface CloudflareThreadHost {
   readonly identity: ThreadAddress
   readonly read: () => Promise<ReadonlyArray<Event>>
+  readonly head: () => Promise<number>
   readonly readPage: (mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly stage: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
@@ -213,6 +214,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   return {
     identity,
     read: () => Effect.runPromise(readEffect),
+    head: () => Effect.runPromise(events.head),
     readPage: (mark, limit) => Effect.runPromise(events.readPage(mark, limit)),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),

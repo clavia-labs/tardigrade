@@ -15,6 +15,7 @@ import {
   ResumeRefused,
   type Accepted,
   type ActorArtifact,
+  type ActorEventRow,
   type ActorInstanceSummary,
   type ActorMetadata,
   type ActorSummary,
@@ -36,7 +37,7 @@ import {
   type TurnView
 } from "./contract"
 import { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
-import { stream, type OpenEventSource, type StreamOptions } from "./stream"
+import { actorStream, stream, type OpenEventSource, type StreamOptions } from "./stream"
 
 // The client, derived from the declaration. Every method here is one endpoint of contract.ts read
 // through HttpApiClient, so a route this client can call is a route the server declared, and the
@@ -125,6 +126,12 @@ export interface ModelPageOptions extends CatalogPageOptions {
 
 // What a caller states to follow a log: the tail's options, less the ones the client already holds.
 export type FollowOptions = Omit<StreamOptions, "baseUrl" | "actor" | "thread" | "eventSource">
+
+export interface FollowActorOptions {
+  readonly after?: number | undefined
+  readonly onEvent: (row: ActorEventRow) => void
+  readonly onError?: ((error: ProblemError) => void) | undefined
+}
 
 // The query one projection accepts, and what it answers: both read from the actor's own
 // declaration, so a caller states what that projection states and gets back what it promises
@@ -224,6 +231,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   ) => Promise<ProjectionResult<P, Name>>
   // Follows one thread's log and answers with the unsubscribe.
   readonly follow: (actor: string, thread: string, options: FollowOptions) => (() => void)
+  readonly followActor: (actor: string, options: FollowActorOptions) => (() => void)
 }
 
 export interface ControlClient {
@@ -449,6 +457,13 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         baseUrl,
         actor,
         thread,
+        ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
+      }),
+    followActor: (actor, follow) =>
+      actorStream({
+        ...follow,
+        baseUrl,
+        actor,
         ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
       })
   }

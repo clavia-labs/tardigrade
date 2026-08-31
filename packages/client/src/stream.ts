@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-import { V1_PREFIX, type EventRow } from "./contract"
+import { V1_PREFIX, type ActorEventRow, type ActorStreamEvent, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"
 
 // The log tail. The stream is not a declared endpoint, because HttpApi is request-and-response
@@ -57,6 +57,15 @@ export interface StreamOptions {
   readonly eventSource?: OpenEventSource | undefined
 }
 
+export interface ActorStreamOptions {
+  readonly baseUrl: string
+  readonly actor: string
+  readonly after?: number | undefined
+  readonly onEvent: (row: ActorEventRow) => void
+  readonly onError?: ((error: ProblemError) => void) | undefined
+  readonly eventSource?: OpenEventSource | undefined
+}
+
 const trimSlash = (url: string): string => (url.endsWith("/") ? url.slice(0, -1) : url)
 
 // streamUrl is the address one tail is opened at. It follows the declaration by hand because the
@@ -74,6 +83,44 @@ export const streamUrl = (
   return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/${encodeURIComponent(thread)}/events/stream${suffix}`
 }
 
+export const actorStreamUrl = (baseUrl: string, actor: string, after?: number): string => {
+  const suffix = after === undefined ? "" : `?after=${after}`
+  return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/events/stream${suffix}`
+}
+
+const follow = <Row>(options: {
+  readonly url: string
+  readonly subject: string
+  readonly onEvent: (row: Row) => void
+  readonly rowOf: (seq: number, data: string) => Row
+  readonly onError?: ((error: ProblemError) => void) | undefined
+  readonly eventSource?: OpenEventSource | undefined
+}): (() => void) => {
+  const open = options.eventSource ?? globalEventSource
+  const source = open(options.url)
+  source.onmessage = (frame) => {
+    const seq = Number(frame.lastEventId)
+    if (!Number.isFinite(seq)) return
+    try {
+      options.onEvent(options.rowOf(seq, frame.data))
+    } catch {
+      options.onError?.(new ProblemError({ title: "Unreadable Event", status: NO_ANSWER }))
+    }
+  }
+  source.onerror = () => {
+    if (source.readyState === CLOSED) {
+      options.onError?.(
+        new ProblemError({
+          title: "Stream Closed",
+          status: NO_ANSWER,
+          detail: `The event stream for ${options.subject} ended and will not reconnect.`
+        })
+      )
+    }
+  }
+  return () => source.close()
+}
+
 // stream follows one thread's log and returns the unsubscribe. Reconnection belongs to the
 // EventSource, and so does the Last-Event-ID it carries; this function adds only the frame decoding
 // and the seq, so a source that drops and resumes keeps feeding the same handler and no event is
@@ -84,29 +131,18 @@ export const streamUrl = (
 // with TARDIGRADE_TOKEN the tail is refused and `onError` reports it, which is why a caller keeps
 // an ordinary `events` poll as the fallback.
 export const stream = (options: StreamOptions): (() => void) => {
-  const open = options.eventSource ?? globalEventSource
-  const source = open(streamUrl(options.baseUrl, options.actor, options.thread, options.after))
-  source.onmessage = (frame) => {
-    const seq = Number(frame.lastEventId)
-    if (!Number.isFinite(seq)) return
-    try {
-      options.onEvent({ seq, event: JSON.parse(frame.data) as Event })
-    } catch {
-      options.onError?.(new ProblemError({ title: "Unreadable Event", status: NO_ANSWER }))
-    }
-  }
-  source.onerror = () => {
-    // A source reconnects on its own unless it has given up, so only a closed one is a failure the
-    // caller has to show.
-    if (source.readyState === CLOSED) {
-      options.onError?.(
-        new ProblemError({
-          title: "Stream Closed",
-          status: NO_ANSWER,
-          detail: `The event stream for ${options.thread} ended and will not reconnect.`
-        })
-      )
-    }
-  }
-  return () => source.close()
+  return follow({
+    ...options,
+    url: streamUrl(options.baseUrl, options.actor, options.thread, options.after),
+    subject: options.thread,
+    rowOf: (seq, data) => ({ seq, event: JSON.parse(data) as Event })
+  })
 }
+
+export const actorStream = (options: ActorStreamOptions): (() => void) =>
+  follow({
+    ...options,
+    url: actorStreamUrl(options.baseUrl, options.actor, options.after),
+    subject: options.actor,
+    rowOf: (seq, data) => ({ seq, event: JSON.parse(data) as ActorStreamEvent })
+  })

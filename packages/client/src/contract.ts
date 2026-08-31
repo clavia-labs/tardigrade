@@ -149,6 +149,31 @@ export const ThreadSummary = Schema.Struct({
 
 export type ThreadSummary = typeof ThreadSummary.Type
 
+export const ThreadsSnapshot = Schema.Struct({
+  type: Schema.Literal("ThreadsSnapshot"),
+  threads: Schema.Array(ThreadSummary)
+}).annotate({ identifier: "ThreadsSnapshot" })
+
+export type ThreadsSnapshot = typeof ThreadsSnapshot.Type
+
+export const ThreadChanged = Schema.Struct({
+  type: Schema.Literal("ThreadChanged"),
+  thread: ThreadSummary
+}).annotate({ identifier: "ThreadChanged" })
+
+export type ThreadChanged = typeof ThreadChanged.Type
+
+export const ActorStreamEvent = Schema.Union([ThreadsSnapshot, ThreadChanged])
+
+export type ActorStreamEvent = typeof ActorStreamEvent.Type
+
+export const ActorEventRow = Schema.Struct({
+  seq: Schema.Finite,
+  event: ActorStreamEvent
+}).annotate({ identifier: "ActorEventRow" })
+
+export type ActorEventRow = typeof ActorEventRow.Type
+
 export interface ThreadNode extends ThreadSummary {
   readonly children: ReadonlyArray<ThreadNode>
 }

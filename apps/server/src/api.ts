@@ -1,4 +1,4 @@
-import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -26,6 +26,8 @@ import {
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
+  type ThreadChanged,
+  type ThreadsSnapshot,
   type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
@@ -34,7 +36,7 @@ import { ModelCatalogStore } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { ServerConfig } from "./config"
-import { Threads, type ActorThreads } from "./host"
+import { idOf, Threads, type ActorThreads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
 
@@ -51,7 +53,7 @@ export const DEFAULT_EVENT_LIMIT = 200
 
 // How long an idle tail waits before writing a comment frame. A proxy between the client and this
 // process closes a connection that says nothing, and a comment is the cheapest thing to say.
-export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(15)
+export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(5)
 
 export interface ApiOptions {
   readonly limit?: number
@@ -115,7 +117,10 @@ const findNode = (nodes: ReadonlyArray<ThreadNode>, id: string): ThreadNode | un
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
 
-const frameOf = (seq: number, event: Event): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
+const rosterOf = (threads: ActorThreads) =>
+  Effect.map(threads.list, (entries) => flatten(treeOf(logsOf(entries))))
+
+const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
 // A comment frame: the client's parser drops it and the bytes keep the connection alive.
 const HEARTBEAT = ": tardigrade\n\n"
@@ -188,6 +193,62 @@ const tail = (
   )
 }
 
+const actorTail = (
+  threads: ActorThreads,
+  from: number | undefined,
+  limit: number,
+  heartbeat: Duration.Input
+): Stream.Stream<Uint8Array> => {
+  interface State {
+    readonly cursor: number
+    readonly initial: boolean
+    readonly handshake: boolean
+  }
+  const snapshot = (seq: number, summaries: ReadonlyArray<ThreadSummary>): string =>
+    frameOf(seq, { type: "ThreadsSnapshot", threads: summaries } satisfies ThreadsSnapshot)
+  const step = (state: State): Effect.Effect<readonly [string, State]> =>
+    Effect.gen(function*() {
+      if (state.initial) {
+        const cursor = yield* threads.actorHead
+        return [snapshot(cursor, yield* rosterOf(threads)), { cursor, initial: false, handshake: false }] as const
+      }
+      if (state.handshake) return [HEARTBEAT, { ...state, handshake: false }] as const
+      const page = yield* threads.actorEventsPage(state.cursor, limit)
+      if (page.length > 0) {
+        const summaries = yield* rosterOf(threads)
+        const byId = new Map(summaries.map((summary) => [summary.id, summary] as const))
+        const frames = page.flatMap(({ seq, event }) => {
+          if (event.type !== "ThreadCommitted" || typeof event.thread !== "string") return []
+          const id = idOf(event.thread) ?? event.thread
+          const thread = byId.get(id)
+          return thread === undefined ? [] : [frameOf(seq, { type: "ThreadChanged", thread } satisfies ThreadChanged)]
+        }).join("")
+        const cursor = page[page.length - 1]!.seq
+        return [frames === "" ? HEARTBEAT : frames, { cursor, initial: false, handshake: false }] as const
+      }
+      const wake = yield* Effect.race(
+        Effect.map(threads.awaitActorHead(state.cursor), (cursor) => ({ kind: "commit" as const, cursor })),
+        Effect.as(Effect.sleep(heartbeat), { kind: "heartbeat" as const })
+      )
+      if (wake.kind === "heartbeat") return [HEARTBEAT, state] as const
+      return [HEARTBEAT, { cursor: state.cursor, initial: false, handshake: false }] as const
+    })
+  const frames = Stream.unfold({ cursor: from ?? 0, initial: from === undefined, handshake: from !== undefined } as State, step)
+  return Stream.unwrap(
+    Effect.as(
+      Effect.acquireRelease(
+        Effect.sync(() => {
+          openTails += 1
+        }),
+        () => Effect.sync(() => {
+          openTails -= 1
+        })
+      ),
+      Stream.encodeText(frames)
+    )
+  )
+}
+
 // The stream stays an HttpRouter route rather than an HttpApi endpoint. HttpApi is
 // request-and-response shaped: an endpoint decodes a request, runs a handler, and encodes one
 // answer, while this route hands back a connection that outlives the handler and carries its own
@@ -215,18 +276,53 @@ const streamResponse = (
   })
 })
 
+const actorStreamResponse = (
+  threads: ActorThreads,
+  limit: number,
+  heartbeat: Duration.Input
+) => Effect.gen(function*() {
+  const query = yield* HttpServerRequest.ParsedSearchParams
+  const rawAfter = singleOf(query["after"])
+  const after = integerOf(rawAfter)
+  if (rawAfter !== undefined && after === undefined) {
+    return problemResponse(invalidRequest("Query", [unacceptableField("after")]))
+  }
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const rawLastEventId = request.headers["last-event-id"]
+  const lastEventId = integerOf(rawLastEventId)
+  if (rawLastEventId !== undefined && lastEventId === undefined) {
+    return problemResponse(invalidRequest("Headers", [unacceptableField("last-event-id")]))
+  }
+  return HttpServerResponse.stream(actorTail(threads, lastEventId ?? after, limit, heartbeat), {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
+  })
+})
+
 export const layerStream = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
-  return HttpRouter.add(
-    "GET",
-    "/v1/actors/:id/threads/:thread/events/stream",
-    Effect.gen(function*() {
-      const params = yield* HttpRouter.params
-      const service = yield* Threads
-      const threads = yield* actorOf(service, paramOf(params, "id"))
-      return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat)
-    })
+  return Layer.mergeAll(
+    HttpRouter.add(
+      "GET",
+      "/v1/actors/:id/threads/:thread/events/stream",
+      Effect.gen(function*() {
+        const params = yield* HttpRouter.params
+        const service = yield* Threads
+        const threads = yield* actorOf(service, paramOf(params, "id"))
+        return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat)
+      })
+    ),
+    HttpRouter.add(
+      "GET",
+      "/v1/actors/:id/events/stream",
+      Effect.gen(function*() {
+        const params = yield* HttpRouter.params
+        const service = yield* Threads
+        const threads = yield* service.ensure(paramOf(params, "id"))
+        return yield* actorStreamResponse(threads, limit, heartbeat)
+      })
+    )
   )
 }
 
@@ -251,7 +347,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          return flatten(treeOf(logsOf(yield* threads.list)))
+          return yield* rosterOf(threads)
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
