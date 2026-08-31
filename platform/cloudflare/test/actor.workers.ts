@@ -537,25 +537,9 @@ describe("cloudflare actor", () => {
       "ThreadCreated",
       "ThreadRequested",
       "ThreadCreated",
-      "ThreadCommitted",
       "ThreadRequested",
-      "ThreadCreated",
-      "ThreadCommitted"
+      "ThreadCreated"
     ])
-
-    const committedHead = Math.max(...actorEvents
-      .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string; readonly head?: number })
-      .filter((event) => event.type === "ThreadCommitted" && event.thread === "ag.directory-child")
-      .map((event) => event.head ?? 0))
-    await threadStub("directory-child").append("directory-child", { type: "IndexedRecord", id: "after-creation", at: 4 })
-    await runInDurableObject(directory, (instance) => instance.alarm())
-    const recovered = await runInDurableObject(directory, (_instance, state) =>
-      state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
-    )
-    expect(recovered
-      .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string; readonly after?: number })
-      .some((event) => event.type === "ThreadCommitted" && event.thread === "ag.directory-child" && event.after === committedHead))
-      .toBe(true)
   })
 
   test("actor supervisor alarm completes a staged child", async () => {

@@ -14,10 +14,8 @@ import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type Provi
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import {
   actorEventKeyOf,
-  actorThreadsOf,
   type ActorThreadCreated,
-  type ThreadRequested,
-  type ThreadCommitted
+  type ThreadRequested
 } from "@clavia/tardigrade-core/actor"
 import {
   alarmFired,
@@ -239,11 +237,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Effect.map((rows) => rows.map((row) => ({ seq: Number(row.seq), event: JSON.parse(row.event) as Event }))),
       Effect.orDie
     ))
-  const readActorEvents = (): Promise<ReadonlyArray<Event>> =>
-    directoryRuntime.runPromise(directorySql<{ event: string }>`SELECT event FROM actor_events ORDER BY seq`.pipe(
-      Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
-      Effect.orDie
-    ))
   await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
   const appendActorEvent = async (event: Event): Promise<void> => {
     const head = await directoryRuntime.runPromise(directorySql.withTransaction(Effect.gen(function*() {
@@ -260,9 +253,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     }).pipe(Effect.orDie)))
     await directoryRuntime.runPromise(PubSub.publish(actorCommits, head))
   }
-  const recordActorCommit = (thread: string, head: number): Promise<void> =>
-    appendActorEvent({ type: "ThreadCommitted", thread, head, at: Date.now() } satisfies ThreadCommitted)
-
   const register = async (thread: string, lineage?: ThreadLineage, at = Date.now()): Promise<void> => {
     if (lineage !== undefined && (
       lineage.parent.actor !== actorName || lineage.parent.instance !== actorInstance
@@ -413,7 +403,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     if (result.appended > 0) threadRuntime.interruptions.interrupt(events)
     if (result.appended > 0) {
       await register(thread)
-      await recordActorCommit(thread, result.head)
     }
     return result
   }
@@ -459,7 +448,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     if (result.appended > 0) {
       threadRuntime.interruptions.interrupt([event])
       await register(thread, lineage)
-      await recordActorCommit(thread, result.head)
       driver.mark(thread)
     }
   }).pipe(Effect.orDie)
@@ -490,10 +478,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       append: (events) => threadRuntime.store.append(events).pipe(Effect.tap((result) => result.appended > 0
         ? Effect.all([
             Effect.sync(() => threadRuntime.interruptions.interrupt(events)),
-            Effect.promise(async () => {
-              await register(thread)
-              await recordActorCommit(thread, result.head)
-            })
+            Effect.promise(() => register(thread))
           ]).pipe(Effect.asVoid)
         : Effect.void))
     }
@@ -583,7 +568,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     return driver.resting()
   }
   const recover = async (): Promise<void> => {
-    const recorded = new Map(actorThreadsOf(await readActorEvents()).map((thread) => [thread.thread, thread.head] as const))
     for (const thread of await threads()) {
       const threadRuntime = await runtimeOf(thread)
       const events = await threadRuntime.runtime.runPromise(threadRuntime.store.read)
@@ -595,8 +579,6 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           ...(created.placement === undefined ? {} : { placement: created.placement })
         }
         await register(thread, lineage, created.at)
-        const head = await threadRuntime.runtime.runPromise(threadRuntime.store.head)
-        if (head > (recorded.get(thread) ?? 0)) await recordActorCommit(thread, head)
       }
       if (options.actorFor(thread) !== undefined) driver.mark(thread)
     }

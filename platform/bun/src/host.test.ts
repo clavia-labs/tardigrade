@@ -112,18 +112,17 @@ describe("the bun host", () => {
     await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
 
     expect(await waiting).toBeGreaterThan(0)
-    expect(await first.actorHead()).toBe(3)
+    expect(await first.actorHead()).toBe(2)
     expect(await first.readActorPage(0, 10)).toEqual([
       { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
-      { seq: 2, event: expect.objectContaining({ type: "ThreadCreated", thread: "alpha" }) },
-      { seq: 3, event: expect.objectContaining({ type: "ThreadCommitted", thread: "alpha", head: 2 }) }
+      { seq: 2, event: expect.objectContaining({ type: "ThreadCreated", thread: "alpha" }) }
     ])
     await first.close()
 
     const reopened = await createBunHost(options(path))
-    expect(await reopened.actorHead()).toBe(3)
+    expect(await reopened.actorHead()).toBe(2)
     await reopened.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m2", at: 2 } as Event)
-    expect(await reopened.actorHead()).toBe(4)
+    expect(await reopened.actorHead()).toBe(2)
     await reopened.close()
   })
 
@@ -141,8 +140,7 @@ describe("the bun host", () => {
     await reopened.recover()
     expect((await reopened.readActorPage(0, 10)).map((row) => row.event.type)).toEqual([
       "ThreadRequested",
-      "ThreadCreated",
-      "ThreadCommitted"
+      "ThreadCreated"
     ])
     await reopened.close()
   })

@@ -42,7 +42,6 @@ export const intent = <T>(proposal: {
 // input from the same derivation.
 export const effect = <T, R = never>(work: {
   readonly key: string
-  readonly concurrent?: boolean
   readonly invocation?: ActorInvocation
   readonly input: T
   readonly interrupts?: (input: T, event: Event) => boolean

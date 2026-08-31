@@ -110,7 +110,6 @@ export interface ActorThreadNode {
 }
 
 const createdKeyOf = (thread: string): string => `thread:created:${thread}`
-const committedKeyOf = (thread: string, head: number): string => `thread:committed:${thread}:${head}`
 
 const actorSupervisorOf = (
   env: Env,
@@ -139,27 +138,7 @@ const actorSupervisorOf = (
         })
       })]
     })
-    const commits = actorThreadsOf(actorEvents).flatMap((thread) => {
-      if (thread.state !== "created") return []
-      return [effect({
-        key: committedKeyOf(thread.thread, thread.head),
-        concurrent: true,
-        input: thread,
-        act: (current) => Effect.gen(function* () {
-          const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, current.thread))
-          const head = yield* Effect.promise(() => stub.head(current.thread))
-          if (head <= current.head) return []
-          return [{
-            type: "ThreadCommitted",
-            thread: current.thread,
-            after: current.head,
-            head,
-            at: yield* Clock.currentTimeMillis
-          }]
-        })
-      })]
-    })
-    return [...creations, ...commits]
+    return creations
   }
 ], actorEventKeyOf)
 
@@ -1047,15 +1026,6 @@ export class ThreadDO extends DurableObject<Env> {
       throw new Error("request thread does not match the Thread DO identity")
     }
     return (await this.host()).read()
-  }
-
-  async head(thread: string): Promise<number> {
-    const actorThread = actorThreadOf(thread)
-    const ownedThread = this.thread()
-    if (ownedThread !== actorThread) {
-      throw new Error("request thread does not match the Thread DO identity")
-    }
-    return (await this.host()).head()
   }
 
   async queryEvents(

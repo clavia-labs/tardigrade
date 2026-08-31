@@ -773,7 +773,7 @@ describe("the event stream", () => {
     expect(read.closed).toBe(true)
   })
 
-  test("the actor stream starts with a snapshot and resumes with thread changes", async () => {
+  test("the actor stream starts with a snapshot and resumes with roster changes", async () => {
     const read = await serving(async (base) => {
       const firstAbort = new AbortController()
       const firstResponse = await fetch(`${base}/v1/actors/main/events/stream`, { signal: firstAbort.signal })
@@ -793,11 +793,11 @@ describe("the event stream", () => {
       await until("the empty actor snapshot", async () => framesOf(firstText).length === 1 ? true : undefined)
       const empty = framesOf(firstText)[0]!
       await birth(base, "alpha", { id: "m1", text: "hello" })
-      await until("the settled actor snapshot", async () => {
+      await until("the populated actor snapshot", async () => {
         const latest = framesOf(firstText).at(-1)
         if (latest === undefined) return undefined
-        const event = JSON.parse(latest.data) as { thread?: { readonly status?: string } }
-        return event.thread?.status === "settled" ? true : undefined
+        const event = JSON.parse(latest.data) as { thread?: { readonly id?: string } }
+        return event.thread?.id === "alpha" ? true : undefined
       })
       await sleep(50)
       const populated = framesOf(firstText).at(-1)!
@@ -823,8 +823,8 @@ describe("the event stream", () => {
 
       await sleep(40)
       const before = framesOf(resumedText)
-      await post(base, "/v1/actors/main/threads/alpha/events", { type: "MessageReceived", id: "m2", text: "again" })
-      await until("the resumed thread change", async () => framesOf(resumedText).length >= 1 ? true : undefined)
+      await birth(base, "beta", { id: "m2", text: "again" })
+      await until("the resumed roster change", async () => framesOf(resumedText).length >= 1 ? true : undefined)
       const resumed = framesOf(resumedText).at(-1)!
       resumedAbort.abort()
       await resumedReader.cancel().catch(() => undefined)
@@ -841,7 +841,7 @@ describe("the event stream", () => {
     expect(Number(read.resumed.id)).toBeGreaterThan(Number(read.populated.id))
     expect(JSON.parse(read.resumed.data)).toMatchObject({
       type: "ThreadChanged",
-      thread: { id: "alpha" }
+      thread: { id: "beta" }
     })
   })
 })

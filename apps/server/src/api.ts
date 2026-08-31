@@ -218,7 +218,7 @@ const actorTail = (
         const summaries = yield* rosterOf(threads)
         const byId = new Map(summaries.map((summary) => [summary.id, summary] as const))
         const frames = page.flatMap(({ seq, event }) => {
-          if (event.type !== "ThreadCommitted" || typeof event.thread !== "string") return []
+          if (event.type !== "ThreadCreated" || typeof event.thread !== "string") return []
           const id = idOf(event.thread) ?? event.thread
           const thread = byId.get(id)
           return thread === undefined ? [] : [frameOf(seq, { type: "ThreadChanged", thread } satisfies ThreadChanged)]
