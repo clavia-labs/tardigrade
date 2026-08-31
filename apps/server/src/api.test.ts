@@ -652,6 +652,10 @@ describe("the event stream", () => {
         waiters.add(wake)
         return Effect.sync(() => { waiters.delete(wake) })
       }),
+      actorEventsPage: () => Effect.succeed([]),
+      actorThreads: Effect.succeed({ cursor: 0, threads: [] }),
+      actorThread: () => Effect.never,
+      awaitActorHead: () => Effect.never,
       list: Effect.succeed([]),
       settled: Effect.void
     }
@@ -768,6 +772,78 @@ describe("the event stream", () => {
     expect(read.live.some((frame) => JSON.parse(frame.data).id === "m2")).toBe(true)
     // And the disconnect took the poll with it.
     expect(read.closed).toBe(true)
+  })
+
+  test("the actor threads stream starts with a snapshot and resumes with additions", async () => {
+    const read = await serving(async (base) => {
+      const firstAbort = new AbortController()
+      const firstResponse = await fetch(`${base}/v1/actors/main/threads/stream`, { signal: firstAbort.signal })
+      expect(firstResponse.status).toBe(200)
+      expect(firstResponse.headers.get("content-type")).toContain("text/event-stream")
+      const firstReader = firstResponse.body!.getReader()
+      const decoder = new TextDecoder()
+      let firstText = ""
+      const firstPump = (async () => {
+        for (;;) {
+          const chunk = await firstReader.read()
+          if (chunk.done) return
+          firstText += decoder.decode(chunk.value, { stream: true })
+        }
+      })().catch(() => undefined)
+
+      await until("the empty actor snapshot", async () => framesOf(firstText).length === 1 ? true : undefined)
+      const empty = framesOf(firstText)[0]!
+      await birth(base, "alpha", { id: "m1", text: "hello" })
+      await until("the first thread addition", async () => {
+        const latest = framesOf(firstText).at(-1)
+        if (latest === undefined) return undefined
+        const event = JSON.parse(latest.data) as { thread?: { readonly id?: string } }
+        return event.thread?.id === "alpha" ? true : undefined
+      })
+      await sleep(50)
+      const populated = framesOf(firstText).at(-1)!
+      firstAbort.abort()
+      await firstReader.cancel().catch(() => undefined)
+      await firstPump
+
+      const resumedAbort = new AbortController()
+      const resumedResponse = await fetch(`${base}/v1/actors/main/threads/stream?after=0`, {
+        headers: { "last-event-id": populated.id },
+        signal: resumedAbort.signal
+      })
+      expect(resumedResponse.status).toBe(200)
+      const resumedReader = resumedResponse.body!.getReader()
+      let resumedText = ""
+      const resumedPump = (async () => {
+        for (;;) {
+          const chunk = await resumedReader.read()
+          if (chunk.done) return
+          resumedText += decoder.decode(chunk.value, { stream: true })
+        }
+      })().catch(() => undefined)
+
+      await sleep(40)
+      const before = framesOf(resumedText)
+      await birth(base, "beta", { id: "m2", text: "again" })
+      await until("the resumed thread addition", async () => framesOf(resumedText).length >= 1 ? true : undefined)
+      const resumed = framesOf(resumedText).at(-1)!
+      resumedAbort.abort()
+      await resumedReader.cancel().catch(() => undefined)
+      await resumedPump
+      return { empty, populated, before, resumed }
+    })
+
+    expect(JSON.parse(read.empty.data)).toEqual({ type: "ThreadsSnapshot", threads: [] })
+    expect(JSON.parse(read.populated.data)).toMatchObject({
+      type: "ThreadAdded",
+      thread: { id: "alpha" }
+    })
+    expect(read.before).toEqual([])
+    expect(Number(read.resumed.id)).toBeGreaterThan(Number(read.populated.id))
+    expect(JSON.parse(read.resumed.data)).toMatchObject({
+      type: "ThreadAdded",
+      thread: { id: "beta" }
+    })
   })
 })
 

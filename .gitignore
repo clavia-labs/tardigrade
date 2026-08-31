@@ -37,3 +37,4 @@ examples/.data/
 
 .claude/*
 !.claude/skills/
+.obsidian/

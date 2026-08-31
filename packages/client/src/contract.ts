@@ -3,46 +3,25 @@ import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchem
 import { Event } from "@clavia/tardigrade-core/log/event"
 import { ActorInstanceId } from "@clavia/tardigrade-core/communication/endpoint"
 
-// The API as a value. Every JSON route is an HttpApiEndpoint with its path params, query, success
-// schema, and error schemas, so the router, the OpenAPI document, and the derived client all read
-// one declaration and cannot disagree (apps/server/src/contract.test.ts, "the OpenAPI document
-// lists every endpoint"). The declaration lives in this package because three consumers read it and
-// only one of them is the server: the server implements it (apps/server/src/api.ts), the client
-// derives from it (client.ts), and a browser imports its types. Nothing here performs IO.
-//
-// The SSE route is absent on purpose. HttpApi is request-and-response shaped, and the tail is a
-// connection with a cursor, so it stays an HttpRouter route beside this app
-// (apps/server/src/api.ts, layerStream) and a hand-written helper follows it (stream.ts).
-//
-// The vocabulary is four levels, and every route names the first three. An actor is the deployed
-// code, addressed by name. A thread is one log under an actor, resumable forever. A turn is one
-// inbound message and the work it caused. An event is one fact. The resource a route reads is the
-// thread; the actor above it is what a deploy will vary.
-
-// Where every versioned route lives. The unversioned paths are the three that describe the process
-// rather than its resources: /healthz, OPENAPI_PATH, and DOCS_PATH (apps/server/src/http.ts,
-// UNAUTHENTICATED_PATHS). The endpoint paths below are written out in full rather than built from
-// this, because a declaration a reader can grep for is worth more than a spared repetition; this
-// constant is what a hand-written helper follows the declaration with (stream.ts, streamUrl).
+// V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
 
 // RESERVED_ACTOR is the internal name of the built-in actor mounted by the generic host.
 export const RESERVED_ACTOR = "default"
 
-// Where the derived OpenAPI document is served, and where the reference page renders it. Both are
-// open even when a token is set (apps/server/src/http.ts, UNAUTHENTICATED_PATHS), because a
-// document that describes the door should not need the key.
+// OPENAPI_PATH serves the generated OpenAPI document without authentication (apps/server/src/http.ts, UNAUTHENTICATED_PATHS).
 export const OPENAPI_PATH = "/openapi.json"
 
+// DOCS_PATH serves the API reference without authentication (apps/server/src/http.ts, UNAUTHENTICATED_PATHS).
 export const DOCS_PATH = "/docs"
 
+// PROBLEM_CONTENT_TYPE identifies RFC 9457 problem documents.
 export const PROBLEM_CONTENT_TYPE = "application/problem+json"
 
-// The base of the `type` URI in a problem document. RFC 9457 wants a URI that identifies the error
-// kind; a client matches on it rather than on the human title.
+// PROBLEM_TYPE_BASE prefixes each problem type URI.
 export const PROBLEM_TYPE_BASE = "https://tardigrade.dev/problems/"
 
-// One RFC 9457 problem document, the only failure shape this API answers with.
+// Problem describes an RFC 9457 API failure.
 export interface Problem {
   readonly type: string
   readonly title: string
@@ -50,10 +29,7 @@ export interface Problem {
   readonly detail?: string
 }
 
-// problemKind declares one failure as RFC 9457 problem+json. The three fields a client matches on
-// are literals, which is what makes the document its own discriminator: an endpoint declaring two
-// failures encodes the one whose `type` matches, so the union never renders a 404 as a 400
-// (apps/server/src/contract.test.ts, "a problem response carries all four fields").
+// problemKind declares a problem with literal type, title, and status fields (apps/server/src/contract.test.ts, "a problem response carries all four fields").
 const problemKind = <const Kind extends string, const Title extends string, const Status extends number>(
   kind: Kind,
   title: Title,
@@ -74,21 +50,16 @@ const problemKind = <const Kind extends string, const Title extends string, cons
   }
 }
 
-// What a request that does not match its declaration answers with. A caller who wrote `after=soon`
-// or left out `text` asked for something, and answering page one, or inventing a message id, hides
-// the mistake behind plausible data (apps/server/src/contract.test.ts, "a refused request is a
-// problem document").
+// InvalidRequest reports input that does not match an endpoint declaration.
 export const InvalidRequest = problemKind("invalid-request", "Invalid Request", 400)
 
-// A thread exists once its log has its ThreadCreated event, so an empty log is the only unknown thread there is (apps/server/src/api.test.ts, "a log that never existed is the only 404").
+// UnknownThread reports a thread whose log has no ThreadCreated event (apps/server/src/api.test.ts, "a log that never existed is the only 404").
 export const UnknownThread = problemKind("unknown-thread", "Unknown Thread", 404)
 
 // UnknownActor reports an actor instance that no write has created.
 export const UnknownActor = problemKind("unknown-actor", "Unknown Actor", 404)
 
-// A name the actor never declared. The platform mounts what an actor declares and nothing else, so
-// this is the answer for any other name under a thread, and its detail lists the names that do
-// exist (apps/server/src/api.ts, layerProjections).
+// UnknownProjection reports a projection the actor did not declare.
 export const UnknownProjection = problemKind("unknown-projection", "Unknown Projection", 404)
 
 // UnknownMethod reports a method name the mounted actor did not declare.
@@ -97,22 +68,16 @@ export const UnknownMethod = problemKind("unknown-method", "Unknown Method", 404
 // UnknownMethodCall reports a call id the selected method cannot derive from the thread log.
 export const UnknownMethodCall = problemKind("unknown-method-call", "Unknown Method Call", 404)
 
-// ModelCatalogUnavailable reports that neither the source nor the last valid cached snapshot could
-// supply the public model directory.
+// ModelCatalogUnavailable reports an unavailable public model catalog.
 export const ModelCatalogUnavailable = problemKind("model-catalog-unavailable", "Model Catalog Unavailable", 503)
 
-// A resume refused before it was sent. The platform has no resume route: a resume is an appended
-// TurnResumed like any other event, and the guard that a turn's active epoch must be failed is the
-// SDK's convenience rather than the server's rule (client.ts, resume).
+// ResumeRefused reports a turn that the client cannot resume.
 export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409)
 
 // InvocationSettled reports that cancellation cannot change a completed or failed invocation.
 export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
 
-// The parts of a request a declaration can refuse, named the way the framework names them
-// (HttpApiError.HttpApiSchemaError, kind). `Body` and `ResponseHeaders` are absent because those
-// are the server encoding its own answer: a failure there is a defect of the server's, not a bad
-// request.
+// RequestPart names the request locations validated by HttpApi.
 export type RequestPart = "Params" | "Query" | "Payload" | "Headers"
 
 const WHERE: Record<RequestPart, string> = {
@@ -122,9 +87,7 @@ const WHERE: Record<RequestPart, string> = {
   Headers: "The request headers"
 }
 
-// invalidRequest states which part of the request was refused and, where the refusal names fields,
-// which fields. The detail is prose a caller can act on rather than a rendered schema issue: a
-// client reads `type` to branch and `detail` to show a person (docs/how-to/server.md, "Endpoints").
+// invalidRequest describes the request location and fields that validation refused.
 export const invalidRequest = (part: RequestPart, faults: ReadonlyArray<string>) =>
   InvalidRequest.of([`${WHERE[part]} is not what this endpoint accepts.`, ...faults].join(" "))
 
@@ -136,8 +99,7 @@ export const ThreadStatus = Schema.Literals(["settled", "running", "blocked", "f
 
 export type ThreadStatus = typeof ThreadStatus.Type
 
-// One row of GET /v1/threads: what a thread is, without its events. `parent` is absent for a root, and
-// `lastAt` for a thread whose events carry no timestamp.
+// ThreadSummary describes a thread without its event bodies.
 export const ThreadSummary = Schema.Struct({
   id: Schema.String,
   parent: Schema.optionalKey(Schema.String),
@@ -149,11 +111,45 @@ export const ThreadSummary = Schema.Struct({
 
 export type ThreadSummary = typeof ThreadSummary.Type
 
+// ActorThread identifies a thread in an actor and records its lineage.
+export const ActorThread = Schema.Struct({
+  id: Schema.String,
+  parent: Schema.optionalKey(Schema.String),
+  depth: Schema.Int
+}).annotate({ identifier: "ActorThread" })
+
+export type ActorThread = typeof ActorThread.Type
+
+export const ThreadsSnapshot = Schema.Struct({
+  type: Schema.Literal("ThreadsSnapshot"),
+  threads: Schema.Array(ActorThread)
+}).annotate({ identifier: "ThreadsSnapshot" })
+
+export type ThreadsSnapshot = typeof ThreadsSnapshot.Type
+
+export const ThreadAdded = Schema.Struct({
+  type: Schema.Literal("ThreadAdded"),
+  thread: ActorThread
+}).annotate({ identifier: "ThreadAdded" })
+
+export type ThreadAdded = typeof ThreadAdded.Type
+
+export const ActorThreadsEvent = Schema.Union([ThreadsSnapshot, ThreadAdded])
+
+export type ActorThreadsEvent = typeof ActorThreadsEvent.Type
+
+export const ActorThreadsEventRow = Schema.Struct({
+  seq: Schema.Finite,
+  event: ActorThreadsEvent
+}).annotate({ identifier: "ActorThreadsEventRow" })
+
+export type ActorThreadsEventRow = typeof ActorThreadsEventRow.Type
+
 export interface ThreadNode extends ThreadSummary {
   readonly children: ReadonlyArray<ThreadNode>
 }
 
-// A summary with the threads it spawned, the shape GET /v1/threads/:id/tree serves.
+// ThreadNode adds child threads to a thread summary.
 export const ThreadNode = Schema.Struct({
   ...ThreadSummary.fields,
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
@@ -163,10 +159,7 @@ export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "ca
 
 export type TurnStatus = typeof TurnStatus.Type
 
-// `epoch` is the execution epoch the turn's active attempt belongs to, zero until an operator has
-// resumed it. It is on the wire because resuming stamps the next one, and a caller that cannot read
-// the current epoch cannot name the next (client.ts, resume; packages/code/src/execution/turns.ts,
-// turnEpochOf).
+// TurnView describes a turn and its current execution epoch.
 export const TurnView = Schema.Struct({
   turn: Schema.String,
   status: TurnStatus,
@@ -178,10 +171,7 @@ export const TurnView = Schema.Struct({
 
 export type TurnView = typeof TurnView.Type
 
-// One row of GET /v1/threads/:id/events. `seq` is the event's 1-based position in the whole log,
-// assigned before any filter runs, so a `types` filter narrows the rows without renumbering them
-// and `after` still means the same place (apps/server/src/api.test.ts, "after and limit page the
-// log, and types filters without renumbering it").
+// EventRow pairs an event with its stable log sequence (apps/server/src/api.test.ts, "after and limit page the log, and types filters without renumbering it").
 export const EventRow = Schema.Struct({
   seq: Schema.Finite,
   event: Event
@@ -189,10 +179,7 @@ export const EventRow = Schema.Struct({
 
 export type EventRow = typeof EventRow.Type
 
-// What an append answers: the thread the request named. 202 because the event is committed and
-// the settle loop takes it from there, and because the actor's own key absorbs a duplicate, so a
-// retrying caller gets this same answer and never learns it retried. Nothing turn-shaped is echoed:
-// a turn is the actor's reading of the log, and the caller already holds whatever id it sent.
+// Accepted identifies the actor and thread that accepted an event for asynchronous reconciliation.
 export const Accepted = Schema.Struct({
   actor: Schema.String,
   thread: Schema.String
@@ -336,8 +323,7 @@ export const ModelCatalogProvider = Schema.Struct({
   models: Schema.Array(ModelCatalogModel)
 }).annotate({ identifier: "ModelCatalogProvider" })
 
-// ModelCatalog is the public provider and model snapshot. Its source revision identifies the
-// upstream data, while status says whether this process refreshed it or served its last valid copy.
+// ModelCatalog describes the public provider and model snapshot.
 export const ModelCatalog = Schema.Struct({
   source: Schema.Literal("models.dev"),
   revision: Schema.NonEmptyString,
@@ -446,14 +432,7 @@ export const ActorArtifact = Schema.Struct({
 
 export type ActorArtifact = typeof ActorArtifact.Type
 
-// One event to append. `type` is the only field the platform requires, because an event is one fact
-// and what its other fields mean is the actor's own knowledge: a brief is
-// `{ type: "MessageReceived", id, text }`, and a resume is a `TurnResumed`. The platform stamps `at`
-// when the caller states none and otherwise passes the fact through untouched.
-//
-// Duplicate suppression is the actor's too, keyed by its own `keyOf`: a MessageReceived dedups on
-// `id`, so a retried brief is absorbed rather than started twice (packages/core/src/communication/message.ts,
-// messageKeys; docs/how-to/server.md, "Redelivery is absorbed").
+// Append describes an event accepted by the platform. The actor defines every field except `type`.
 export const Append = Schema.StructWithRest(
   Schema.Struct({ type: Schema.NonEmptyString }),
   [Schema.Record(Schema.String, Schema.Unknown)]
@@ -461,10 +440,7 @@ export const Append = Schema.StructWithRest(
 
 export type Append = typeof Append.Type
 
-// A sequence number names a position in a log, so it is a whole number at or above zero. The query
-// carries it as text and the declaration is what turns it into a number: a value that is not one is
-// refused here rather than read as page one (apps/server/src/contract.test.ts, "a refused request
-// is a problem document").
+// Seq identifies a position in a log as a non-negative integer.
 export const Seq = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))
 )
@@ -477,15 +453,13 @@ const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
 
 const RuntimeMethodCallParams = { ...RuntimeThreadParams, method: Schema.String, call: Schema.String }
 
-// runtimeGroup describes the actor mounted at this runtime origin.
+// runtimeGroup exposes metadata for the mounted actor.
 export const runtimeGroup = HttpApiGroup.make("runtime").add(
   HttpApiEndpoint.get("metadata", "/v1/metadata", { success: ActorMetadata })
 )
 
-// threadsGroup declares the platform's raw log operations: list threads, append an event, and read events back.
+// threadsGroup exposes thread logs and lineage.
 export const threadsGroup = HttpApiGroup.make("threads").add(
-  // Envelope is an append: a message is an event, and the log is where it lands, so the write side
-  // of a thread is the same noun as its read side (docs/how-to/server.md, "Creation is delivery").
   HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     payload: Append,
@@ -502,7 +476,6 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
     success: Schema.Array(EventRow),
     error: [UnknownActor.schema, UnknownThread.schema]
   }),
-  // The tree reads the whole family because each thread owns its identity while parent addresses resolve against the other ThreadCreated records in the actor's listing.
   HttpApiEndpoint.get("tree", "/v1/actors/:id/threads/:thread/tree", {
     params: RuntimeThreadParams,
     success: ThreadNode,
@@ -510,7 +483,7 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   })
 )
 
-// methodsGroup turns typed actor input into a durable event and projects each call from the same log.
+// methodsGroup exposes durable actor method calls.
 export const methodsGroup = HttpApiGroup.make("methods").add(
   HttpApiEndpoint.get("methods", "/v1/methods", {
     success: Schema.Array(MethodSummary)
@@ -576,7 +549,7 @@ const CatalogQuery = {
   availability: Schema.optionalKey(Schema.Literals(CATALOG_AVAILABILITY_FILTERS))
 }
 
-// modelsGroup exposes paginated public provider and model discovery independently of private routes and credentials.
+// modelsGroup exposes paginated public provider and model discovery.
 export const modelsGroup = HttpApiGroup.make("models").add(
   HttpApiEndpoint.get("providers", "/v1/providers", {
     query: CatalogQuery,
@@ -596,24 +569,17 @@ export const modelsGroup = HttpApiGroup.make("models").add(
   })
 )
 
-// A projection is a pure read of one thread's events, declared by the actor whose reactors wrote
-// them. The platform holds the log and mounts what the actor declares; what the events mean is the
-// actor's own knowledge, so the declaration lives beside its reactors (apps/server/src/actor.ts).
-//
-// `run` is a projection in the framework's sense: pure over the event set, recomputed per request,
-// never stored. Nothing here performs IO, and a prefix of a log is a valid argument.
+// ProjectionDeclaration defines a pure read over a thread log.
 export interface ProjectionDeclaration {
   readonly params: Schema.Struct.Fields
   readonly result: Schema.Top
-  // `never` is the widest parameter a constraint can ask for: it accepts a `run` typed against its
-  // own decoded query, which is what `projection` below infers for an author.
+  // run accepts parameters inferred by projection.
   readonly run: (events: ReadonlyArray<Event>, params: never) => unknown
 }
 
 export type Projections = Record<string, ProjectionDeclaration>
 
-// projection is how an actor writes one, and exists so `run` is inferred rather than annotated: the
-// query it receives is `params` decoded, and what it answers is `result`'s type.
+// projection preserves the parameter and result types of a projection declaration.
 export const projection = <Params extends Schema.Struct.Fields, Result extends Schema.Top>(
   declaration: {
     readonly params: Params
@@ -622,12 +588,10 @@ export const projection = <Params extends Schema.Struct.Fields, Result extends S
   }
 ): typeof declaration => declaration
 
-// projectionsOf preserves the names and schemas used to build the projection routes.
+// projectionsOf preserves projection names and schemas.
 export const projectionsOf = <const P extends Projections>(projections: P): P => projections
 
-// One endpoint from one declaration. The schemas are type parameters of this function rather than
-// fields reached through one declaration parameter, because inference through an indexed access
-// widens `success` to `Schema.Top` and the derived client then answers `unknown`.
+// projectionEndpoint creates an endpoint without widening its result schema.
 const projectionEndpoint = <
   const Name extends string,
   Params extends Schema.Struct.Fields,
@@ -648,10 +612,7 @@ export type ProjectionEndpoints<P extends Projections> = {
   readonly [Name in keyof P & string]: ProjectionEndpoint<Name, P[Name]>
 }[keyof P & string]
 
-// The endpoints a declaration mounts. The assertion is about arity, not shape: the element type is
-// derived from the same record the values are built from, and a loop over `Object.entries` cannot
-// carry a key's literal type, which is what `add` needs to key the group by name. An actor that
-// declares nothing yields a group with no endpoints, which is what it should.
+// projectionEndpointsOf creates the endpoints mounted for a projection record.
 const projectionEndpointsOf = <const P extends Projections>(
   projections: P
 ): readonly [ProjectionEndpoints<P>, ...ReadonlyArray<ProjectionEndpoints<P>>] =>
@@ -662,25 +623,21 @@ const projectionEndpointsOf = <const P extends Projections>(
 export const projectionsGroupOf = <const P extends Projections>(projections: P) =>
   HttpApiGroup.make("projections").add(...projectionEndpointsOf(projections))
 
-// RequestProblems is the declaration's own guarantee: whatever a Schema in it refuses, the caller
-// reads as a problem document. It is API-wide middleware rather than an error on each endpoint
-// because the refusal happens before a handler runs, in framework code every endpoint shares, and
-// because a rule stated once cannot be forgotten on the next endpoint added. The implementation is
-// the server's (apps/server/src/contract.ts, layerRequestProblems).
+// RequestProblems converts request schema failures into problem documents.
 export class RequestProblems extends HttpApiMiddleware.Service<RequestProblems>()(
   "tardigrade/server/RequestProblems",
   { error: InvalidRequest.schema }
 ) {}
 
-// actorApiOf declares the runtime mounted at one origin.
+// actorApiOf declares the API for one mounted actor.
 export const actorApiOf = <const P extends Projections>(projections: P) =>
   HttpApi.make("tardigrade-actor").add(modelsGroup, runtimeGroup, actorsGroup, threadsGroup, methodsGroup, projectionsGroupOf(projections), healthGroup)
     .middleware(RequestProblems)
 
-// controlApi declares the host operations that manage several actors.
+// controlApi declares actor definition management operations.
 export const controlApi = HttpApi.make("tardigrade-control").add(definitionsGroup).middleware(RequestProblems)
 
-// apiOf combines the mounted runtime, control plane, and health probe served by one process.
+// apiOf combines actor, control, model, and health operations.
 export const apiOf = <const P extends Projections>(projections: P) =>
   HttpApi.make("tardigrade").add(
     modelsGroup,
@@ -701,7 +658,5 @@ export const apiOf = <const P extends Projections>(projections: P) =>
       })
     )
 
-// The platform's own API, with no actor mounted. It is what a consumer that reads the log alone
-// derives from (client.ts, makeActorClient), and the group identifiers it carries are the ones every
-// build shares, so a handler written against it serves an API with projections too.
+// Api declares the platform API without actor projections.
 export const Api = apiOf({})

@@ -1,12 +1,11 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
-import { V1_PREFIX, type EventRow } from "./contract"
+import { V1_PREFIX, type ActorThreadsEvent, type ActorThreadsEventRow, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"
 
-// The log tail. The stream is not a declared endpoint, because HttpApi is request-and-response
-// shaped and this is a connection with a cursor (apps/server/src/api.ts, layerStream), so it is
-// hand-written here over EventSource. The transport is an argument rather than a global, so a
-// consumer outside a browser supplies its own implementation (stream.test.ts).
+// The log tail. Streaming responses are hand-written over EventSource because each connection
+// carries a cursor and outlives an ordinary request. The transport is an argument rather than a
+// global, so a consumer outside a browser supplies its own implementation (stream.test.ts).
 
 // The EventSource readyState that means the connection is gone for good.
 export const CLOSED = 2
@@ -44,18 +43,20 @@ const globalEventSource: OpenEventSource = (url) => {
   return new ctor(url)
 }
 
-export interface StreamOptions {
+interface FollowStreamOptions<Row> {
   readonly baseUrl: string
   readonly actor: string
-  readonly thread: string
-  // Where the first connection starts. A reconnect ignores it: the source replays the same URL with
-  // a Last-Event-ID header, and the server prefers that header, so a resume lands where the dropped
-  // connection stopped rather than back at `after` (apps/server/src/api.ts, layerStream).
   readonly after?: number | undefined
-  readonly onEvent: (row: EventRow) => void
+  readonly onEvent: (row: Row) => void
   readonly onError?: ((error: ProblemError) => void) | undefined
   readonly eventSource?: OpenEventSource | undefined
 }
+
+export interface StreamOptions extends FollowStreamOptions<EventRow> {
+  readonly thread: string
+}
+
+export type ActorThreadsStreamOptions = FollowStreamOptions<ActorThreadsEventRow>
 
 const trimSlash = (url: string): string => (url.endsWith("/") ? url.slice(0, -1) : url)
 
@@ -74,6 +75,44 @@ export const streamUrl = (
   return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/${encodeURIComponent(thread)}/events/stream${suffix}`
 }
 
+export const actorThreadsStreamUrl = (baseUrl: string, actor: string, after?: number): string => {
+  const suffix = after === undefined ? "" : `?after=${after}`
+  return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/stream${suffix}`
+}
+
+const follow = <Row>(options: {
+  readonly url: string
+  readonly subject: string
+  readonly onEvent: (row: Row) => void
+  readonly rowOf: (seq: number, data: string) => Row
+  readonly onError?: ((error: ProblemError) => void) | undefined
+  readonly eventSource?: OpenEventSource | undefined
+}): (() => void) => {
+  const open = options.eventSource ?? globalEventSource
+  const source = open(options.url)
+  source.onmessage = (frame) => {
+    const seq = Number(frame.lastEventId)
+    if (!Number.isFinite(seq)) return
+    try {
+      options.onEvent(options.rowOf(seq, frame.data))
+    } catch {
+      options.onError?.(new ProblemError({ title: "Unreadable Event", status: NO_ANSWER }))
+    }
+  }
+  source.onerror = () => {
+    if (source.readyState === CLOSED) {
+      options.onError?.(
+        new ProblemError({
+          title: "Stream Closed",
+          status: NO_ANSWER,
+          detail: `The event stream for ${options.subject} ended and will not reconnect.`
+        })
+      )
+    }
+  }
+  return () => source.close()
+}
+
 // stream follows one thread's log and returns the unsubscribe. Reconnection belongs to the
 // EventSource, and so does the Last-Event-ID it carries; this function adds only the frame decoding
 // and the seq, so a source that drops and resumes keeps feeding the same handler and no event is
@@ -83,30 +122,18 @@ export const streamUrl = (
 // token from `authorization` alone (apps/server/src/http.ts, bearerOf). Against a server started
 // with TARDIGRADE_TOKEN the tail is refused and `onError` reports it, which is why a caller keeps
 // an ordinary `events` poll as the fallback.
-export const stream = (options: StreamOptions): (() => void) => {
-  const open = options.eventSource ?? globalEventSource
-  const source = open(streamUrl(options.baseUrl, options.actor, options.thread, options.after))
-  source.onmessage = (frame) => {
-    const seq = Number(frame.lastEventId)
-    if (!Number.isFinite(seq)) return
-    try {
-      options.onEvent({ seq, event: JSON.parse(frame.data) as Event })
-    } catch {
-      options.onError?.(new ProblemError({ title: "Unreadable Event", status: NO_ANSWER }))
-    }
-  }
-  source.onerror = () => {
-    // A source reconnects on its own unless it has given up, so only a closed one is a failure the
-    // caller has to show.
-    if (source.readyState === CLOSED) {
-      options.onError?.(
-        new ProblemError({
-          title: "Stream Closed",
-          status: NO_ANSWER,
-          detail: `The event stream for ${options.thread} ended and will not reconnect.`
-        })
-      )
-    }
-  }
-  return () => source.close()
-}
+export const stream = (options: StreamOptions): (() => void) =>
+  follow({
+    ...options,
+    url: streamUrl(options.baseUrl, options.actor, options.thread, options.after),
+    subject: options.thread,
+    rowOf: (seq, data) => ({ seq, event: JSON.parse(data) as Event })
+  })
+
+export const actorThreadsStream = (options: ActorThreadsStreamOptions): (() => void) =>
+  follow({
+    ...options,
+    url: actorThreadsStreamUrl(options.baseUrl, options.actor, options.after),
+    subject: options.actor,
+    rowOf: (seq, data) => ({ seq, event: JSON.parse(data) as ActorThreadsEvent })
+  })
