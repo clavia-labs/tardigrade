@@ -78,14 +78,14 @@ export const agentsPackage = (
     },
     docs: {
       run: {
-        description: "Brief a fresh agent. `output` (a JSON schema) makes the answer structured and parsed. `model` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; opus for the hardest judgment. `budget` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. `background: true` returns `{ callId }` at once; result({id: callId}) awaits the reply later. `escalatable: true` lets the agent ask for more budget at the cap instead of answering; the run then returns `{ requesting, reason, amount, handle }`, and you decide with continue().",
+        description: "Brief a fresh agent. `output` (a JSON schema) makes the answer structured and parsed. `model` picks the mind: haiku for quick, cheap work like scouting; sonnet (default) for most work; terra for balanced OpenAI writing; sol for the hardest judgment; opus when explicitly configured. `budget` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. `background: true` returns `{ callId }` at once; result({id: callId}) awaits the reply later. `escalatable: true` lets the agent ask for more budget at the cap instead of answering; the run then returns `{ requesting, reason, amount, handle }`, and you decide with continue().",
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
             background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
             output: { type: "object", description: "JSON schema for a structured answer" },
-            model: { type: "string", enum: ["haiku", "sonnet", "opus"], description: "which model runs the agent; default sonnet" },
+            model: { type: "string", enum: ["haiku", "sonnet", "opus", "terra", "sol"], description: "which model runs the agent; default sonnet" },
             budget: { type: "number", description: "max tool calls before the agent must answer; keeps a research agent bounded" },
             escalatable: { type: "boolean", description: "true: at its budget the agent may ask for more instead of answering; the run returns a request you resolve with continue()" }
           },
@@ -132,7 +132,7 @@ export const agentsPackage = (
           const output = a?.output
           // The model name rides the brief's envelope: the child's log records the choice, so its
           // Infer resolves it from trajectory and replay agrees by construction.
-          const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" ? a.model : undefined
+          const model = a?.model === "haiku" || a?.model === "sonnet" || a?.model === "opus" || a?.model === "terra" || a?.model === "sol" ? a.model : undefined
           // The tool-call budget rides the brief like the model does; the child's budget reactor reads
           // it from its own trajectory. A run without a stated budget wants the per-agent default.
           const want = typeof a?.budget === "number" && a.budget > 0 ? Math.floor(a.budget) : defaultBudget
