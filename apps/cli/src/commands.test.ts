@@ -166,7 +166,8 @@ const clientOf = (
     tree: refuse,
     resume: refuse,
     health: refuse,
-    follow: () => () => {}
+    follow: () => () => {},
+    followThreads: () => () => {}
   }
 }
 

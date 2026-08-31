@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from "react"
 import { X } from "@phosphor-icons/react"
 
-import { NO_ANSWER, ProblemError, type ThreadStatus, type EventRow } from "@clavia/tardigrade-client"
+import { NO_ANSWER, ProblemError, type EventRow } from "@clavia/tardigrade-client"
 
 import { actorInstance, client } from "./client"
 import { fieldsOf, merged, momentsOf, stampOf, type Field, type Moment } from "./narrative"
@@ -212,14 +212,11 @@ const Problem = ({ problem }: { readonly problem: ProblemError }): ReactElement 
   </div>
 )
 
-const Head = ({ id, status }: { readonly id: string; readonly status: ThreadStatus | undefined }): ReactElement => (
+const Head = ({ id }: { readonly id: string }): ReactElement => (
   <div className="thread-head">
     <span className="thread-id-label">thread id</span>
     <span className="mono thread-id-value" title={id}>{id}</span>
     <CopyButton className="thread-copy" text={id} confirmMs={COPY_CONFIRM_MS} label="Copy thread ID" />
-    {status === undefined ? null : (
-      <span className={`chip chip-${status}${status === "running" ? " breathe" : ""}`}>{status}</span>
-    )}
   </div>
 )
 
@@ -228,15 +225,13 @@ export const Thread = ({
   headerHeight = PANE_HEADER_HEIGHT,
   id,
   inspectorWidth = EVENT_INSPECTOR_WIDTH,
-  stampWidth = EVENT_STAMP_WIDTH,
-  status
+  stampWidth = EVENT_STAMP_WIDTH
 }: {
   readonly id: string
   readonly fieldCollapsedHeight?: number | undefined
   readonly headerHeight?: number | undefined
   readonly inspectorWidth?: number | undefined
   readonly stampWidth?: number | undefined
-  readonly status: ThreadStatus | undefined
 }): ReactElement => {
   const route = useRoute()
   // The window's own edges. The URL carries them so a view is shareable, and the pane holds them so
@@ -312,7 +307,7 @@ export const Thread = ({
     return (
       <>
         <div className="pane-chrome" style={{ height: headerHeight }}>
-          <Head id={id} status={status} />
+          <Head id={id} />
         </div>
         <Problem problem={problem} />
       </>
@@ -323,7 +318,7 @@ export const Thread = ({
     <div className="thread-view">
       <section className="thread-trace">
         <div className="pane-chrome" style={{ height: headerHeight }}>
-          <Head id={id} status={status} />
+          <Head id={id} />
         </div>
         <WindowBrush axis={axis} moments={moments} shown={shown} window={held} onChange={onWindow} />
         {problem === undefined ? null : <Problem problem={problem} />}

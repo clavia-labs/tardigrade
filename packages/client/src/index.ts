@@ -22,6 +22,7 @@ export {
   type CatalogPageOptions,
   type EventsOptions,
   type FollowOptions,
+  type FollowThreadsOptions,
   type MethodCall,
   type ModelPageOptions
 } from "./client"
@@ -36,11 +37,14 @@ export {
   MODEL_CATALOG_UNPRICED_ORDERS,
   V1_PREFIX
 } from "./contract"
-export { CLOSED, stream, streamUrl, type EventSourceLike, type Frame, type OpenEventSource, type StreamOptions } from "./stream"
+export { actorThreadsStream, actorThreadsStreamUrl, CLOSED, stream, streamUrl, type ActorThreadsStreamOptions, type EventSourceLike, type Frame, type OpenEventSource, type StreamOptions } from "./stream"
 
 export type {
   Accepted,
   ActorArtifact,
+  ActorThreadsEventRow,
+  ActorThreadsEvent,
+  ActorThread,
   ActorInstanceSummary,
   ActorMetadata,
   ActorSummary,
@@ -63,6 +67,8 @@ export type {
   ProviderCatalogPage,
   Problem,
   ThreadNode,
+  ThreadAdded,
+  ThreadsSnapshot,
   ThreadStatus,
   ThreadSummary,
   TurnStatus,

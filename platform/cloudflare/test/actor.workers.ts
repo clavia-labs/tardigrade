@@ -526,19 +526,19 @@ describe("cloudflare actor", () => {
     })
     const childEvents = await threadStub("directory-child").events("directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
-    const lifecycle = await runInDurableObject(directory, (_instance, state) =>
+    const actorEvents = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
     )
-    expect(lifecycle
+    expect(actorEvents
       .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
       .filter((event) => event.thread.startsWith("ag.directory-"))
       .map((event) => event.type)).toEqual([
       "ThreadRequested",
-      "ThreadCreated",
+      "ThreadRegistered",
       "ThreadRequested",
-      "ThreadCreated",
+      "ThreadRegistered",
       "ThreadRequested",
-      "ThreadCreated"
+      "ThreadRegistered"
     ])
   })
 

@@ -6,7 +6,7 @@ import { docsUrl } from "./client"
 import { navigate } from "./nav"
 import { ICON_SIZE, RAIL_COLLAPSED_WIDTH, RAIL_HEADER_HEIGHT, RAIL_WIDTH } from "./policy"
 import { ProductMark } from "./ProductMark"
-import { agoOf, countsOf, matches, type Roster, type RootRow } from "./roster"
+import { matches, type List, type RootRow } from "./list"
 import { ThemeToggle } from "./ThemeToggle"
 
 const SOURCE_URL = "https://github.com/clavia-labs/tardigrade"
@@ -16,11 +16,9 @@ const SOURCE_URL = "https://github.com/clavia-labs/tardigrade"
 // rather than the twenty-four threads behind them.
 
 const Row = ({
-  now,
   row,
   selected
 }: {
-  readonly now: number
   readonly row: RootRow
   readonly selected: boolean
 }): ReactElement => {
@@ -40,14 +38,8 @@ const Row = ({
         open()
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-        <span className="mono rail-id">{row.id}</span>
-        <span className="mono rail-meta">{row.lastAt === undefined ? "" : agoOf(row.lastAt, now)}</span>
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: "var(--space-2)" }}>
-        <span className={`chip chip-${row.status}${row.status === "running" ? " breathe" : ""}`}>{row.status}</span>
-        <span className="mono rail-meta">{countsOf(row)}</span>
-      </div>
+      <span className="mono rail-id">{row.id}</span>
+      {row.family === 0 ? null : <span className="mono rail-meta">{row.family} threads</span>}
     </div>
   )
 }
@@ -55,24 +47,22 @@ const Row = ({
 export const Rail = ({
   collapsedWidth = RAIL_COLLAPSED_WIDTH,
   headerHeight = RAIL_HEADER_HEIGHT,
-  now,
   problem,
-  roster,
+  list,
   selected,
   width = RAIL_WIDTH
 }: {
   readonly collapsedWidth?: number | undefined
   readonly headerHeight?: number | undefined
-  readonly now: number
   readonly problem: ProblemError | undefined
-  readonly roster: Roster
+  readonly list: List
   readonly selected: string | undefined
   readonly width?: number | undefined
 }): ReactElement => {
-  // query is the rail's local id filter (roster.test.ts, "matches").
+  // query is the rail's local id filter (list.test.ts, "matches").
   const [query, setQuery] = useState("")
   const [collapsed, setCollapsed] = useState(false)
-  const rows = roster.roots.filter((row) => matches(row.id, query))
+  const rows = list.roots.filter((row) => matches(row.id, query))
   return (
     <aside className="rail" data-collapsed={collapsed} style={{ width: collapsed ? collapsedWidth : width }}>
       <div className="pane-chrome" style={{ height: headerHeight }}>
@@ -118,7 +108,7 @@ export const Rail = ({
       )}
       <div className="run-list">
         {rows.map((row) => (
-          <Row key={row.id} row={row} now={now} selected={row.id === selected} />
+          <Row key={row.id} row={row} selected={row.id === selected} />
         ))}
       </div>
       <div className="rail-footer">

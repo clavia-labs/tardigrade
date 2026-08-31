@@ -7,6 +7,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import type { Directory } from "@clavia/tardigrade-core/communication/directory"
@@ -103,6 +104,13 @@ export interface ActorThreads {
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
+  readonly actorEventsPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
+  readonly actorThreads: Effect.Effect<{
+    readonly cursor: number
+    readonly threads: ReadonlyArray<ActorThreadRecord>
+  }>
+  readonly actorThread: (thread: string) => Effect.Effect<ActorThreadRecord | undefined>
+  readonly awaitActorHead: (mark: number) => Effect.Effect<number>
   readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
   readonly settled: Effect.Effect<void>
 }
@@ -448,6 +456,7 @@ const runtimeOf = async (
     Effect.promise(() => host.readPage(threadOf(id), mark, limit))
   const awaitHead = (id: string, mark: number) =>
     Effect.promise((signal) => host.awaitHead(threadOf(id), mark, signal))
+  const awaitActorHead = (mark: number) => Effect.promise((signal) => host.awaitActorHead(mark, signal))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
@@ -480,6 +489,10 @@ const runtimeOf = async (
     events: read,
     eventsPage: readPage,
     awaitHead,
+    actorEventsPage: (mark, limit) => Effect.promise(() => host.readActorPage(mark, limit)),
+    actorThreads: Effect.promise(() => host.actorThreads()),
+    actorThread: (thread) => Effect.promise(() => host.actorThread(thread)),
+    awaitActorHead,
     list: Effect.gen(function*() {
       const threads = yield* Effect.promise(() => host.threads())
       const ids = threads.flatMap((candidate) => {

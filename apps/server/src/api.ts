@@ -1,7 +1,9 @@
-import { Clock, Context, Duration, Effect, Schema, Stream } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Schema, Stream } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
+import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
 import {
   actorMethodTimeoutOf,
@@ -26,6 +28,9 @@ import {
   UnknownProjection,
   UnknownThread,
   type ActorSummary,
+  type ActorThread,
+  type ThreadAdded,
+  type ThreadsSnapshot,
   type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
@@ -34,7 +39,7 @@ import { ModelCatalogStore } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { ServerConfig } from "./config"
-import { Threads, type ActorThreads } from "./host"
+import { idOf, Threads, type ActorThreads } from "./host"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
 
@@ -51,7 +56,7 @@ export const DEFAULT_EVENT_LIMIT = 200
 
 // How long an idle tail waits before writing a comment frame. A proxy between the client and this
 // process closes a connection that says nothing, and a comment is the cheapest thing to say.
-export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(15)
+export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(5)
 
 export interface ApiOptions {
   readonly limit?: number
@@ -115,10 +120,21 @@ const findNode = (nodes: ReadonlyArray<ThreadNode>, id: string): ThreadNode | un
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
 
-const frameOf = (seq: number, event: Event): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
+const rosterOf = (threads: ActorThreads) =>
+  Effect.map(threads.list, (entries) => flatten(treeOf(logsOf(entries))))
+
+const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
 // A comment frame: the client's parser drops it and the bytes keep the connection alive.
 const HEARTBEAT = ": tardigrade\n\n"
+
+const actorThreadOf = (record: ActorThreadRecord): ActorThread => ({
+  id: idOf(record.thread) ?? record.thread,
+  ...(record.parentThread === undefined
+    ? {}
+    : { parent: idOf(record.parentThread) ?? record.parentThread }),
+  depth: record.depth
+})
 
 // openTails counts the SSE tails this process holds. A tail is a fiber that outlives its request
 // handler, so the count is what proves a disconnected client leaves nothing polling behind
@@ -128,50 +144,61 @@ let openTails = 0
 
 export const openStreams = (): number => openTails
 
-// tail is the SSE body: replay from `from`, then wait for the thread head to advance. The durable
-// sequence is both the page cursor and the SSE id, so Last-Event-ID resumes without duplication
-// (api.test.ts, "a reconnect replays from Last-Event-ID and then runs live, once each").
-const tail = (
-  readPage: ActorThreads["eventsPage"],
-  awaitHead: ActorThreads["awaitHead"],
-  id: string,
-  from: number,
-  limit: number,
+interface TailOptions {
+  readonly from: number
+  readonly limit: number
+  readonly heartbeat: Duration.Input
+  readonly initial?: Effect.Effect<readonly [string, number]>
+  readonly readPage: (cursor: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
+  readonly awaitHead: (cursor: number) => Effect.Effect<number>
+  readonly encodePage: (page: ReadonlyArray<ThreadEventRow>) => Effect.Effect<string>
+}
+
+const waitForHead = (
+  awaitHead: TailOptions["awaitHead"],
+  cursor: number,
   heartbeat: Duration.Input
-): Stream.Stream<Uint8Array> => {
+) => Effect.race(
+  Effect.map(awaitHead(cursor), (target) => ({ kind: "commit" as const, target })),
+  Effect.as(Effect.sleep(heartbeat), { kind: "heartbeat" as const })
+)
+
+// resumableTail replays committed pages, waits at the head, and keeps an idle connection open.
+const resumableTail = (options: TailOptions): Stream.Stream<Uint8Array> => {
   interface State {
     readonly cursor: number
-    readonly target?: number
+    readonly waiting: boolean
   }
   const step = (state: State): Effect.Effect<readonly [string, State]> =>
     Effect.gen(function*() {
       let current = state
+      let target: number | undefined
       for (;;) {
-        if (current.target !== undefined && current.cursor >= current.target) {
-          const wake = yield* Effect.race(
-            Effect.map(awaitHead(id, current.cursor), (target) => ({ kind: "commit" as const, target })),
-            Effect.as(Effect.sleep(heartbeat), { kind: "heartbeat" as const })
-          )
+        if (current.waiting) {
+          const wake = yield* waitForHead(options.awaitHead, current.cursor, options.heartbeat)
           if (wake.kind === "heartbeat") return [HEARTBEAT, current] as const
-          current = { cursor: current.cursor, target: wake.target }
+          target = wake.target
+          current = { ...current, waiting: false }
         }
-        const page = yield* readPage(id, current.cursor, limit)
+        const page = yield* options.readPage(current.cursor, options.limit)
         if (page.length > 0) {
-          const frames = page.map(({ seq, event }) => frameOf(seq, event)).join("")
+          const frames = yield* options.encodePage(page)
           const cursor = page[page.length - 1]!.seq
-          const target = current.target ?? (page.length < limit ? cursor : undefined)
-          return [frames, { cursor, ...(target === undefined ? {} : { target }) }] as const
+          return [frames === "" ? HEARTBEAT : frames, {
+            cursor,
+            waiting: target !== undefined && cursor >= target
+          }] as const
         }
-        const waiting = { cursor: current.cursor, target: current.cursor }
-        const wake = yield* Effect.race(
-          Effect.map(awaitHead(id, current.cursor), (target) => ({ kind: "commit" as const, target })),
-          Effect.as(Effect.sleep(heartbeat), { kind: "heartbeat" as const })
-        )
-        if (wake.kind === "heartbeat") return [HEARTBEAT, waiting] as const
-        current = { cursor: current.cursor, target: wake.target }
+        const wake = yield* waitForHead(options.awaitHead, current.cursor, options.heartbeat)
+        if (wake.kind === "heartbeat") return [HEARTBEAT, { ...current, waiting: true }] as const
+        target = wake.target
       }
     })
-  const frames = Stream.unfold({ cursor: from } as State, step)
+  const framesFrom = (cursor: number) => Stream.unfold({ cursor, waiting: false } as State, step)
+  const frames = options.initial === undefined
+    ? framesFrom(options.from)
+    : Stream.unwrap(Effect.map(options.initial, ([frame, cursor]) =>
+      Stream.succeed(frame).pipe(Stream.concat(framesFrom(cursor)))))
   return Stream.unwrap(
     Effect.as(
       Effect.acquireRelease(
@@ -188,6 +215,79 @@ const tail = (
   )
 }
 
+const streamCursor = Effect.gen(function*() {
+  const query = yield* HttpServerRequest.ParsedSearchParams
+  const rawAfter = singleOf(query["after"])
+  const after = integerOf(rawAfter)
+  if (rawAfter !== undefined && after === undefined) {
+    return { problem: problemResponse(invalidRequest("Query", [unacceptableField("after")])) } as const
+  }
+  const request = yield* HttpServerRequest.HttpServerRequest
+  const rawLastEventId = request.headers["last-event-id"]
+  const lastEventId = integerOf(rawLastEventId)
+  if (rawLastEventId !== undefined && lastEventId === undefined) {
+    return { problem: problemResponse(invalidRequest("Headers", [unacceptableField("last-event-id")])) } as const
+  }
+  return { from: lastEventId ?? after } as const
+})
+
+const streamResponseOf = (body: Stream.Stream<Uint8Array>) => HttpServerResponse.stream(body, {
+  contentType: "text/event-stream",
+  headers: { "cache-control": "no-cache" }
+})
+
+// tail streams one thread with its durable sequence as both the page cursor and SSE id.
+const tail = (
+  readPage: ActorThreads["eventsPage"],
+  awaitHead: ActorThreads["awaitHead"],
+  id: string,
+  from: number,
+  limit: number,
+  heartbeat: Duration.Input
+): Stream.Stream<Uint8Array> => resumableTail({
+  from,
+  limit,
+  heartbeat,
+  readPage: (cursor, pageLimit) => readPage(id, cursor, pageLimit),
+  awaitHead: (cursor) => awaitHead(id, cursor),
+  encodePage: (page) => Effect.succeed(page.map(({ seq, event }) => frameOf(seq, event)).join(""))
+})
+
+const actorThreadsTail = (
+  threads: ActorThreads,
+  from: number | undefined,
+  limit: number,
+  heartbeat: Duration.Input
+): Stream.Stream<Uint8Array> => {
+  const initial = from === undefined
+    ? Effect.map(threads.actorThreads, ({ cursor, threads: records }) => [
+      frameOf(cursor, {
+        type: "ThreadsSnapshot",
+        threads: records.filter((record) => record.state === "registered").map(actorThreadOf)
+      } satisfies ThreadsSnapshot),
+      cursor
+    ] as const)
+    : undefined
+  return resumableTail({
+    from: from ?? 0,
+    limit,
+    heartbeat,
+    ...(initial === undefined ? {} : { initial }),
+    readPage: threads.actorEventsPage,
+    awaitHead: threads.awaitActorHead,
+    encodePage: (page) => Effect.map(
+      Effect.forEach(page, ({ seq, event }) => {
+        if (event.type !== "ThreadRegistered" || typeof event.thread !== "string") return Effect.succeed("")
+        return Effect.map(threads.actorThread(event.thread), (record) =>
+          record === undefined
+            ? ""
+            : frameOf(seq, { type: "ThreadAdded", thread: actorThreadOf(record) } satisfies ThreadAdded))
+      }),
+      (frames) => frames.join("")
+    )
+  })
+}
+
 // The stream stays an HttpRouter route rather than an HttpApi endpoint. HttpApi is
 // request-and-response shaped: an endpoint decodes a request, runs a handler, and encodes one
 // answer, while this route hands back a connection that outlives the handler and carries its own
@@ -201,32 +301,44 @@ const streamResponse = (
 ) => Effect.gen(function*() {
   const first = yield* threads.eventsPage(id, 0, 1)
   if (first.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
-  const query = yield* HttpServerRequest.ParsedSearchParams
-  const rawAfter = singleOf(query["after"])
-  const after = integerOf(rawAfter)
-  if (rawAfter !== undefined && after === undefined) {
-    return problemResponse(invalidRequest("Query", [unacceptableField("after")]))
-  }
-  const request = yield* HttpServerRequest.HttpServerRequest
-  const from = integerOf(request.headers["last-event-id"]) ?? after ?? 0
-  return HttpServerResponse.stream(tail(threads.eventsPage, threads.awaitHead, id, from, limit, heartbeat), {
-    contentType: "text/event-stream",
-    headers: { "cache-control": "no-cache" }
-  })
+  const cursor = yield* streamCursor
+  if ("problem" in cursor) return cursor.problem
+  return streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat))
+})
+
+const actorThreadsStreamResponse = (
+  threads: ActorThreads,
+  limit: number,
+  heartbeat: Duration.Input
+) => Effect.gen(function*() {
+  const cursor = yield* streamCursor
+  if ("problem" in cursor) return cursor.problem
+  return streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat))
 })
 
 export const layerStream = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
-  return HttpRouter.add(
-    "GET",
-    "/v1/actors/:id/threads/:thread/events/stream",
-    Effect.gen(function*() {
-      const params = yield* HttpRouter.params
-      const service = yield* Threads
-      const threads = yield* actorOf(service, paramOf(params, "id"))
-      return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat)
-    })
+  return Layer.mergeAll(
+    HttpRouter.add(
+      "GET",
+      "/v1/actors/:id/threads/:thread/events/stream",
+      Effect.gen(function*() {
+        const params = yield* HttpRouter.params
+        const service = yield* Threads
+        const threads = yield* actorOf(service, paramOf(params, "id"))
+        return yield* streamResponse(threads, paramOf(params, "thread"), limit, heartbeat)
+      })
+    ),
+    HttpRouter.add(
+      "GET",
+      "/v1/actors/:id/threads/stream",
+      Effect.gen(function*() {
+        const params = yield* HttpRouter.params
+        const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
+        return yield* actorThreadsStreamResponse(threads, limit, heartbeat)
+      })
+    )
   )
 }
 
@@ -251,7 +363,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
       .handle("list", ({ params }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          return flatten(treeOf(logsOf(yield* threads.list)))
+          return yield* rosterOf(threads)
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {

@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, lifecycle log, and thread tree. D1 stores the public model catalog. The Worker bundle carries the model scope resolved for its deployment. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, event log, and thread tree. D1 stores the public model catalog. The Worker bundle carries the model scope resolved for its deployment. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
 
@@ -17,7 +17,7 @@ export default cloudflareWorker(definition)
 
 The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
 
-The Actor DO projects each thread's parent, depth, and placement from its lifecycle log. `GET /v1/threads` reads this projection without fetching Thread DO logs. Thread-specific method and event routes select the matching Thread DO.
+The Actor DO projects each thread's parent, depth, and placement from its event log. `GET /v1/threads` reads this projection without fetching Thread DO logs. Thread-specific method and event routes select the matching Thread DO.
 
 ## Model catalog storage
 

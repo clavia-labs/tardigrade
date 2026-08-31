@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 
-import { CLOSED, stream, streamUrl, type EventSourceLike, type Frame } from "./stream"
-import type { EventRow } from "./contract"
+import { actorThreadsStream, actorThreadsStreamUrl, CLOSED, stream, streamUrl, type EventSourceLike, type Frame } from "./stream"
+import type { ActorThreadsEventRow, EventRow } from "./contract"
 import type { ProblemError } from "./problem"
 
 // The tail against a stand-in connection. Reconnection belongs to the EventSource, so what is
@@ -62,6 +62,11 @@ describe("streamUrl", () => {
   test("no after means the whole log", () => {
     expect(streamUrl("http://localhost:4111", "main", "root")).toBe("http://localhost:4111/v1/actors/main/threads/root/events/stream")
   })
+
+  test("the actor threads stream carries its actor and cursor", () => {
+    expect(actorThreadsStreamUrl("http://localhost:4111/", "one two", 4))
+      .toBe("http://localhost:4111/v1/actors/one%20two/threads/stream?after=4")
+  })
 })
 
 describe("stream", () => {
@@ -108,5 +113,29 @@ describe("stream", () => {
     const { source, unsubscribe } = following()
     unsubscribe()
     expect(source.closed).toBe(true)
+  })
+})
+
+describe("actorThreadsStream", () => {
+  test("a threads frame becomes an actor event row", () => {
+    const rows: Array<ActorThreadsEventRow> = []
+    let source: FakeSource | undefined
+    const unsubscribe = actorThreadsStream({
+      baseUrl: "http://localhost:4111",
+      actor: "main",
+      after: 2,
+      onEvent: (row) => rows.push(row),
+      eventSource: (url) => {
+        source = new FakeSource(url)
+        return source
+      }
+    })
+
+    source!.send(3, { type: "ThreadsSnapshot", threads: [] })
+
+    expect(source!.url).toContain("after=2")
+    expect(rows).toEqual([{ seq: 3, event: { type: "ThreadsSnapshot", threads: [] } }])
+    unsubscribe()
+    expect(source!.closed).toBe(true)
   })
 })
