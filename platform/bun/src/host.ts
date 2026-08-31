@@ -14,7 +14,7 @@ import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type Provi
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import {
   actorEventKeyOf,
-  type ActorThreadCreated,
+  type ThreadRegistered,
   type ThreadRequested
 } from "@clavia/tardigrade-core/actor"
 import {
@@ -278,7 +278,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       at
     } satisfies ThreadRequested)
-    await appendActorEvent({ type: "ThreadCreated", thread, at } satisfies ActorThreadCreated)
+    await appendActorEvent({ type: "ThreadRegistered", thread, at } satisfies ThreadRegistered)
   }
   const threads = (): Promise<ReadonlyArray<string>> => directoryRuntime.runPromise(
     directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)

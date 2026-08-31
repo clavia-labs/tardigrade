@@ -10,32 +10,32 @@ export interface ThreadRequested extends Event {
   readonly at: number
 }
 
-export interface ActorThreadCreated extends Event {
-  readonly type: "ThreadCreated"
+export interface ThreadRegistered extends Event {
+  readonly type: "ThreadRegistered"
   readonly thread: string
   readonly at: number
 }
 
-export type ActorEvent = ThreadRequested | ActorThreadCreated
+export type ActorEvent = ThreadRequested | ThreadRegistered
 
 export interface ActorThreadRecord {
   readonly thread: string
   readonly parentThread?: string
   readonly depth: number
   readonly placement?: ChildPlacement
-  readonly state: "requested" | "created"
+  readonly state: "requested" | "registered"
 }
 
 export const actorEventKeyOf = (event: Event): string | undefined => {
   if (event.type === "ThreadRequested" && typeof event.thread === "string") return `thread:requested:${event.thread}`
-  if (event.type === "ThreadCreated" && typeof event.thread === "string") return `thread:created:${event.thread}`
+  if (event.type === "ThreadRegistered" && typeof event.thread === "string") return `thread:registered:${event.thread}`
   return undefined
 }
 
 export const actorEventsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorEvent> =>
   events.filter((event): event is ActorEvent => {
     if (typeof event.thread !== "string") return false
-    return event.type === "ThreadRequested" || event.type === "ThreadCreated"
+    return event.type === "ThreadRequested" || event.type === "ThreadRegistered"
   })
 
 export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorThreadRecord> => {
@@ -53,7 +53,7 @@ export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<Acto
     }
     const current = entries.get(event.thread)
     if (current === undefined) throw new Error(`thread ${JSON.stringify(event.thread)} has no request`)
-    entries.set(event.thread, { ...current, state: "created" })
+    entries.set(event.thread, { ...current, state: "registered" })
   }
   return [...entries.values()].sort((left, right) => left.thread.localeCompare(right.thread))
 }

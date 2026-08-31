@@ -534,11 +534,11 @@ describe("cloudflare actor", () => {
       .filter((event) => event.thread.startsWith("ag.directory-"))
       .map((event) => event.type)).toEqual([
       "ThreadRequested",
-      "ThreadCreated",
+      "ThreadRegistered",
       "ThreadRequested",
-      "ThreadCreated",
+      "ThreadRegistered",
       "ThreadRequested",
-      "ThreadCreated"
+      "ThreadRegistered"
     ])
   })
 

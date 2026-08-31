@@ -109,7 +109,7 @@ export interface ActorThreadNode {
   readonly children: ReadonlyArray<ActorThreadNode>
 }
 
-const createdKeyOf = (thread: string): string => `thread:created:${thread}`
+const registeredKeyOf = (thread: string): string => `thread:registered:${thread}`
 
 const actorSupervisorOf = (
   env: Env,
@@ -117,11 +117,11 @@ const actorSupervisorOf = (
 ) => actorFromReactors([
   (events) => {
     const actorEvents = actorEventsOf(events)
-    const created = new Set(actorEvents.flatMap((event) => event.type === "ThreadCreated" ? [event.thread] : []))
-    const creations = actorEvents.flatMap((event) => {
-      if (event.type !== "ThreadRequested" || created.has(event.thread)) return []
+    const registered = new Set(actorEvents.flatMap((event) => event.type === "ThreadRegistered" ? [event.thread] : []))
+    const registrations = actorEvents.flatMap((event) => {
+      if (event.type !== "ThreadRequested" || registered.has(event.thread)) return []
       return [effect({
-        key: createdKeyOf(event.thread),
+        key: registeredKeyOf(event.thread),
         input: event,
         act: (request) => Effect.gen(function* () {
           yield* Effect.promise(async () => {
@@ -134,11 +134,11 @@ const actorSupervisorOf = (
               await stub.commitCreation()
             }
           })
-          return [{ type: "ThreadCreated", thread: request.thread, at: yield* Clock.currentTimeMillis }]
+          return [{ type: "ThreadRegistered", thread: request.thread, at: yield* Clock.currentTimeMillis }]
         })
       })]
     })
-    return creations
+    return registrations
   }
 ], actorEventKeyOf)
 
@@ -662,7 +662,7 @@ export class ActorDO extends DurableObject<Env> {
     }
     const threads = actorThreadsOf(await this.events())
     const parent = threads.find((entry) => entry.thread === lineage.parent.thread)
-    if (parent === undefined || parent.state !== "created") throw new Error("a child thread requires a created parent")
+    if (parent === undefined || parent.state !== "registered") throw new Error("a child thread requires a registered parent")
     if (lineage.depth !== Number(parent.depth) + 1) throw new Error("a child thread depth must follow its parent")
     const existing = threads.find((entry) => entry.thread === target.thread)
     const placement = lineage.placement ?? null
@@ -687,7 +687,7 @@ export class ActorDO extends DurableObject<Env> {
   }
 
   async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
-    const entries = actorThreadsOf(await this.events()).filter((entry) => entry.state === "created")
+    const entries = actorThreadsOf(await this.events()).filter((entry) => entry.state === "registered")
     return threadTreeOf(entries)
   }
 

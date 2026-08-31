@@ -115,7 +115,7 @@ describe("the bun host", () => {
     expect(await first.actorHead()).toBe(2)
     expect(await first.readActorPage(0, 10)).toEqual([
       { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
-      { seq: 2, event: expect.objectContaining({ type: "ThreadCreated", thread: "alpha" }) }
+      { seq: 2, event: expect.objectContaining({ type: "ThreadRegistered", thread: "alpha" }) }
     ])
     await first.close()
 
@@ -140,7 +140,7 @@ describe("the bun host", () => {
     await reopened.recover()
     expect((await reopened.readActorPage(0, 10)).map((row) => row.event.type)).toEqual([
       "ThreadRequested",
-      "ThreadCreated"
+      "ThreadRegistered"
     ])
     await reopened.close()
   })
