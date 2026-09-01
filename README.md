@@ -1,6 +1,9 @@
 <p align="center">
   <br>
-  <img alt="Tardigrade" src="docs/assets/mark.svg" width="120">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/mark-dark.svg">
+    <img alt="Tardigrade" src="docs/assets/mark.svg" width="120">
+  </picture>
 </p>
 
 <p align="center">
