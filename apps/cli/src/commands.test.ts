@@ -393,6 +393,7 @@ describe("parsing", () => {
 
       expect(ran.failed).toBe(false)
       expect(actor).toContain("infer([")
+      expect(actor).toContain('name: "get_weather"')
       expect(config).toContain('"provider": "openrouter"')
       expect(config).toContain('"model_id": "anthropic/claude-sonnet-4-6"')
       expect(ran.recorded.installed).toEqual([directory])
@@ -417,6 +418,7 @@ describe("parsing", () => {
     expect(devHelp).toContain("--max-concurrent-threads")
     const initHelp = (await drive(["init", "--help"])).lines.join("\n")
     expect(initHelp).toContain("--dir")
+    expect(initHelp).toContain("--template")
     for (const flag of ["--provider", "--provider-config", "--default-model"]) {
       expect(initHelp).toContain(flag)
     }

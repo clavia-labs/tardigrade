@@ -105,6 +105,13 @@ describe("initActor", () => {
     expect(initialized.entry).toBe(join(cwd, "actors", "custom", DEFAULT_ACTOR_ENTRY))
   })
 
+  test("writes the stated actor template", async () => {
+    const cwd = await temporaryRoot()
+    const initialized = await initActor("reviewer", { cwd, template: "rlm" })
+
+    expect(await readFile(initialized.entry, "utf8")).toContain("codeMode([")
+  })
+
 })
 
 describe("initSummary", () => {

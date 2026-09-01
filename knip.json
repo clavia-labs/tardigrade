@@ -12,7 +12,7 @@
       "entry": [
         "tools/*.ts",
         "examples/*.ts",
-        "examples/quickstart/*.ts"
+        "examples/*/*.ts"
       ],
       "project": [
         "tools/**/*.ts",
