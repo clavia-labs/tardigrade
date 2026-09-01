@@ -1,6 +1,7 @@
 import mdx from "@mdx-js/rollup"
 import { tanstackStart } from "@tanstack/react-start/plugin/vite"
 import { readFile } from "node:fs/promises"
+import { fileURLToPath } from "node:url"
 import { nitro } from "nitro/vite"
 import rehypeHighlight from "rehype-highlight"
 import rehypeMdxCodeProps from "rehype-mdx-code-props"
@@ -9,29 +10,27 @@ import react from "@vitejs/plugin-react"
 import remarkFrontmatter from "remark-frontmatter"
 import remarkMdxFrontmatter from "remark-mdx-frontmatter"
 
-const MDX_SOURCE_QUERY = "?mdx-source"
-const MDX_SOURCE_PREFIX = "\0mdx-source:"
-const MDX_SOURCE_SUFFIX = ":source"
+const DOC_SOURCE_QUERY = "?doc-source"
+const DOC_SOURCE_PREFIX = "\0doc-source:"
 
-const mdxSource = (): Plugin => ({
-  name: "mdx-source",
+const docSource = (): Plugin => ({
+  name: "doc-source",
   enforce: "pre",
   async resolveId(source, importer, options) {
-    if (!source.endsWith(MDX_SOURCE_QUERY)) return undefined
-    const resolved = await this.resolve(source.slice(0, -MDX_SOURCE_QUERY.length), importer, { ...options, skipSelf: true })
-    if (resolved === null) return undefined
-    return `${MDX_SOURCE_PREFIX}${resolved.id}${MDX_SOURCE_SUFFIX}`
+    if (!source.endsWith(DOC_SOURCE_QUERY)) return undefined
+    const resolved = await this.resolve(source.slice(0, -DOC_SOURCE_QUERY.length), importer, { ...options, skipSelf: true })
+    return resolved === null ? undefined : `${DOC_SOURCE_PREFIX}${resolved.id}.ts`
   },
   async load(id) {
-    if (!id.startsWith(MDX_SOURCE_PREFIX) || !id.endsWith(MDX_SOURCE_SUFFIX)) return undefined
-    const path = id.slice(MDX_SOURCE_PREFIX.length, -MDX_SOURCE_SUFFIX.length)
-    return `export default ${JSON.stringify(await readFile(path, "utf8"))}`
+    if (!id.startsWith(DOC_SOURCE_PREFIX) || !id.endsWith(".ts")) return undefined
+    return `export default ${JSON.stringify(await readFile(id.slice(DOC_SOURCE_PREFIX.length, -3), "utf8"))}`
   }
 })
 
 export default defineConfig({
+  resolve: { alias: { "@docs": fileURLToPath(new URL("../../docs/site", import.meta.url)) } },
   plugins: [
-    mdxSource(),
+    docSource(),
     {
       enforce: "pre",
       ...mdx({
@@ -43,10 +42,8 @@ export default defineConfig({
     tanstackStart({
       prerender: {
         enabled: true,
-        crawlLinks: true,
-        filter: ({ path }) => path !== "/console"
-      },
-      pages: [{ path: "/docs" }]
+        filter: ({ path }) => path !== "/console" && !path.startsWith("/docs")
+      }
     }),
     nitro(),
     react({ include: /\.(?:js|jsx|mdx|ts|tsx)$/ })

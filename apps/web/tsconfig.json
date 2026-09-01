@@ -10,6 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "paths": { "@docs/*": ["../../docs/site/*"] },
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
