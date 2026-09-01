@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_INIT_ACTOR_NAME, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
 afterEach(async () => {
@@ -18,6 +18,10 @@ const temporaryRoot = async (): Promise<string> => {
 }
 
 describe("initActor", () => {
+  test("uses a visible quickstart name", () => {
+    expect(DEFAULT_INIT_ACTOR_NAME).toBe("my-agent")
+  })
+
   test("creates a buildable named quickstart", async () => {
     const cwd = await temporaryRoot()
     const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })

@@ -12,6 +12,7 @@ import { callCommand, shellWord } from "./workflow"
 import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
+export const DEFAULT_INIT_ACTOR_NAME = "my-agent"
 export const DEFAULT_WORKER_ENTRY = "worker.ts"
 export const DEFAULT_PACKAGE_MANIFEST = "package.json"
 export const DEFAULT_MODEL_LOCK = MODEL_LOCK_FILE
