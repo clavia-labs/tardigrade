@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.19.0](https://github.com/clavia-labs/tardigrade/compare/v0.18.0...v0.19.0) (2026-09-01)
+
+
+### Features
+
+* **cli:** add actor templates ([#319](https://github.com/clavia-labs/tardigrade/issues/319)) ([e5d6171](https://github.com/clavia-labs/tardigrade/commit/e5d6171e7cdf49ec9b00bd0b6070c50ada3073ad))
+
+
+### Bug Fixes
+
+* **cli:** explain missing project ([#321](https://github.com/clavia-labs/tardigrade/issues/321)) ([1ce1151](https://github.com/clavia-labs/tardigrade/commit/1ce11515808a20c61246da2f81cb52254f54c29e))
+
 ## [0.18.0](https://github.com/clavia-labs/tardigrade/compare/v0.17.0...v0.18.0) (2026-09-01)
 
 
