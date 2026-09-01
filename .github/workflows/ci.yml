@@ -49,7 +49,17 @@ jobs:
           bun-version: canary
       - run: bun install --frozen-lockfile
       - run: bun install --global vercel@latest
-      - run: vercel pull --yes --environment=production --token=${{ secrets.VERCEL_TOKEN }}
+      - name: Link Vercel project
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          set -o pipefail
+          mkdir -p .vercel
+          curl -fsS "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            | jq --arg orgId "$VERCEL_ORG_ID" --arg projectId "$VERCEL_PROJECT_ID" \
+              '{orgId: $orgId, projectId: $projectId, projectName: .name, settings: {createdAt, framework, devCommand, installCommand, buildCommand, outputDirectory, rootDirectory, directoryListing, nodeVersion}}' \
+              > .vercel/project.json
         working-directory: apps/web
       - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: apps/web
