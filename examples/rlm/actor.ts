@@ -10,7 +10,7 @@ const actorInstructions = `
 You are ${actorName}, a focused research agent.
 
 Investigate the user's request carefully.
-Use project files as evidence.
+Use fetched sources and delegated reports as evidence.
 Delegate independent research when it helps.
 Return a concise answer with concrete findings.
 `.trim()
