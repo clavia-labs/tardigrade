@@ -20,7 +20,7 @@ import { CODE_SYSTEM, codeMode, codeSystemFor } from "../components/code"
 import { budget } from "../components/budget"
 import { compaction } from "../components/compaction"
 import { agentMethods } from "../actor/methods"
-import { toolList } from "../components/tool-list"
+import { tool } from "../components/tool"
 import { nativeOutput } from "../components/native-output"
 import { system } from "../components/system"
 import { receive } from "./turn"
@@ -65,7 +65,7 @@ const readLog = Effect.flatMap(EventLog, (log) => log.read)
 const run = <A, R>(effect: Effect.Effect<A, never, R>, layers: Layer.Layer<R>) =>
   Effect.runPromise(effect.pipe(Effect.provide(layers)) as Effect.Effect<A>)
 
-const echoTable = toolList([
+const echoTable = tool([
   {
     spec: { name: "echo", description: "echoes", inputSchema: { type: "object" } },
     run: (input) => Effect.succeed({ echoed: input })
@@ -374,7 +374,7 @@ describe("infer component", () => {
   })
 
   test("two components declaring one tool name collide at construction", () => {
-    expect(() => assembled(infer([echoTable, toolList([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput], TEST_MODEL))).toThrow(
+    expect(() => assembled(infer([echoTable, tool([{ spec: { name: "echo", description: "again", inputSchema: {} }, run: () => Effect.succeed({}) }]), nativeOutput], TEST_MODEL))).toThrow(
       'tool "echo" declared more than once'
     )
   })

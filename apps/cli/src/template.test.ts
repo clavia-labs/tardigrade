@@ -30,6 +30,7 @@ describe("actorTemplate", () => {
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("infer([")
     expect(source).toContain('name: "get_weather"')
+    expect(source).toContain("tool({")
   })
 
   test("builds the RLM template", async () => {

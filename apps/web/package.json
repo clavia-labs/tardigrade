@@ -9,11 +9,13 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite",
-    "preview": "vite preview",
+    "preview": "NODE_ENV=production node .output/server/index.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@mdx-js/react": "^3.1.1",
+    "@tanstack/react-router": "^1.170.32",
+    "@tanstack/react-start": "^1.168.49",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   },
@@ -22,6 +24,7 @@
     "@types/react": "^19.2.16",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.2",
+    "nitro": "^3.0.260610-beta",
     "rehype-highlight": "^7.0.2",
     "rehype-mdx-code-props": "^3.0.1",
     "remark-frontmatter": "^5.0.0",

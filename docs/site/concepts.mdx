@@ -1,7 +1,7 @@
 ---
 title: Core Concepts
 description: Thinking in Tardigrade.
-route: /concepts
+route: /docs/concepts
 section: Introduction
 sectionOrder: 1
 order: 2
@@ -14,17 +14,17 @@ articleClass: concepts-article
     <p>The core primitive of Tardigrade is an actor. At a high level, an actor is an addressable entity with state and behavior. Its history is recorded as an append-only log of events, and its current state is derived from that log.</p>
     <p>Methods let the world call an actor. Components read the log and derive transitions, the units of work that define how the actor responds.</p>
   </div>
+
   <ConceptInterface>
-
-```ts
-actor({
-  name: string,
-  methods: ActorMethods,
-  components: Component[]
-})
-```
-
+    ```ts
+    actor({
+      name: string,
+      methods: ActorMethods,
+      components: Component[]
+    })
+    ```
   </ConceptInterface>
+
   <ActorDiagram />
 </ConceptSection>
 
@@ -34,20 +34,24 @@ actor({
     <p>A transition describes one unit of work enabled by the actor's log. The runtime executes enabled transitions and records their outcomes as new events.</p>
     <p>Transitions come in two types. An intent proposes events without external work. An external effect interacts with the world and returns events that record its outcome. Each transition has a key, which lets the runtime determine whether its result is already in the log.</p>
   </div>
+
   <ConceptInterface>
-
-```ts
-type Transition =
-  | { kind: "intent", key, events }
-  | { kind: "effect", key, act }
-```
-
+    ```ts
+    type Transition =
+      | { kind: "intent", key, events }
+      | { kind: "effect", key, act }
+    ```
   </ConceptInterface>
+
   <div className="transition-example-copy">
     <h3>Example: a tool-calling agent</h3>
     <p>A message starts inference. A tool call starts service work. Its result enables inference again. A final response completes the method call.</p>
   </div>
-  <div className="transition-loop-frame"><TransitionLoop /></div>
+
+  <div className="transition-loop-frame">
+    <TransitionLoop />
+  </div>
+
   <p className="concept-bridge-copy">The actor runs enabled transitions until none remain, at which point it has settled. A component packages the logic that derives those transitions from the log.</p>
 </ConceptSection>
 
@@ -57,23 +61,28 @@ type Transition =
     <p>A component packages part of an actor's behavior as a named, pure function over the log. It derives two things. Its view is the value its parent component consumes. Its transitions describe the work currently enabled.</p>
     <p>Given the same log, a component returns the same view and transitions without performing external work. External work stays inside effect transitions, which the runtime executes. Components can compose other components, so an actor's behavior can be assembled from smaller parts.</p>
   </div>
+
   <ConceptInterface>
-
-```ts
-component({
-  name: string,
-  keys?: KeyFragment,
-  derive(log): { view, transitions }
-})
-```
-
+    ```ts
+    component({
+      name: string,
+      keys?: KeyFragment,
+      derive(log): { view, transitions }
+    })
+    ```
   </ConceptInterface>
+
   <p className="concept-bridge-copy">In the tool-calling agent, an inference component derives the language model transition, while a tool component derives the service transition. Events in the shared log connect them: a model response enables the tool component, and a tool result enables the inference component again.</p>
+
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction derives a transition that summarizes the older span. The transition appends <code>CompactionCompleted</code> to the log, and later model requests use its summary with a 64k-token tail. The full log remains unchanged.</p>
+    <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction derives a transition that summarizes the older span. The transition appends `CompactionCompleted` to the log, and later model requests use its summary with a 64k-token tail. The full log remains unchanged.</p>
   </div>
-  <div className="component-diagram-frame"><ComponentDiagram /></div>
+
+  <div className="component-diagram-frame">
+    <ComponentDiagram />
+  </div>
+
   <p className="concept-bridge-copy">Components define this internal behavior. Methods expose it to callers.</p>
 </ConceptSection>
 
@@ -82,17 +91,20 @@ component({
     <h2>Methods</h2>
     <p>Methods define the actor's callable interface. Each method declares input and output schemas, turns a valid call into an event, and derives the call's pending, completed, or failed state from the log.</p>
   </div>
+
   <ConceptInterface>
-
-```ts
-actorMethod({
-  input, output, timeoutMs?,
-  event(call): Event,
-  state(log, id): MethodState
-})
-```
-
+    ```ts
+    actorMethod({
+      input, output, timeoutMs?,
+      event(call): Event,
+      state(log, id): MethodState
+    })
+    ```
   </ConceptInterface>
-  <div className="method-diagram-frame"><MethodDiagram /></div>
-  <p className="concept-bridge-copy">For the tool-calling agent, the <code>message</code> method records the user's message. That event starts the transition loop. When the log contains a final response, the method returns its typed output. Each call has an identifier that links its input to its result and lets the log absorb duplicate deliveries.</p>
+
+  <div className="method-diagram-frame">
+    <MethodDiagram />
+  </div>
+
+  <p className="concept-bridge-copy">For the tool-calling agent, the `message` method records the user's message. That event starts the transition loop. When the log contains a final response, the method returns its typed output. Each call has an identifier that links its input to its result and lets the log absorb duplicate deliveries.</p>
 </ConceptSection>

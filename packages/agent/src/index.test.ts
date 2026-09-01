@@ -19,7 +19,7 @@ import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
-import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput, toolList, type AgentComponent } from "./index"
+import { actor, agentMethods, budget, codeMode, compaction, infer, nativeOutput, tool, type AgentComponent } from "./index"
 import type { AgentR } from "./runtime/turn"
 
 const ROOT_THREAD = "ag.root"
@@ -308,7 +308,7 @@ describe("an assembled agent", () => {
     // the turn loop, the budget wall, and the answer contract while presenting that harness's
     // tools (surface.ts).
     const reads: string[] = []
-    const components = [toolList([
+    const components = [tool([
       {
         spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
         run: (input) => {
@@ -338,7 +338,7 @@ describe("an assembled agent", () => {
     const failureInRequest: boolean[] = []
     let postToolCalls = 0
     const components = [
-      toolList([
+      tool([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: {} } },
           run: () => {
@@ -409,7 +409,7 @@ describe("an assembled agent", () => {
   })
 
   test("a call outside the surface comes back as an unknown tool, never a dead turn", async () => {
-    const components = [toolList([
+    const components = [tool([
       { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
     ])]
     const mind = rlm(async ({ trajectory }) => {

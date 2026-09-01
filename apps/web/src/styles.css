@@ -366,21 +366,27 @@ h1 span { display: block; white-space: nowrap; }
 .footer-links { display: flex; flex-wrap: wrap; gap: 26px; color: var(--ink-2); font-size: 14px; }
 .footer-links a { display: inline-flex; align-items: center; gap: 8px; transition: color 160ms ease; }
 .footer-links svg { width: 18px; height: 18px; color: var(--faint); }
-.site-footer.is-visible .footer-brand .mark path { animation: mark-wave 440ms var(--ease-out) both; }
-.site-footer.is-visible .footer-brand .mark path:nth-child(5) { animation-delay: 0ms; }
-.site-footer.is-visible .footer-brand .mark path:nth-child(4) { animation-delay: 45ms; }
-.site-footer.is-visible .footer-brand .mark path:nth-child(3) { animation-delay: 90ms; }
-.site-footer.is-visible .footer-brand .mark path:nth-child(2) { animation-delay: 135ms; }
-.site-footer.is-visible .footer-brand .mark path:nth-child(1) { animation-delay: 180ms; }
+@media (hover: hover) and (pointer: fine) {
+  .footer-brand:hover .mark path { animation: mark-wave 440ms var(--ease-out) both; }
+  .footer-brand:hover .mark path:nth-child(5) { animation-delay: 0ms; }
+  .footer-brand:hover .mark path:nth-child(4) { animation-delay: 45ms; }
+  .footer-brand:hover .mark path:nth-child(3) { animation-delay: 90ms; }
+  .footer-brand:hover .mark path:nth-child(2) { animation-delay: 135ms; }
+  .footer-brand:hover .mark path:nth-child(1) { animation-delay: 180ms; }
+}
 .guide-page { min-height: calc(100vh - 64px); overflow: visible; background: var(--bg); }
+.not-found-page { min-height: calc(100vh - 64px); padding: 64px var(--gutter); display: grid; place-items: center; background: var(--bg); color: var(--ink); text-align: center; }
+.not-found-state { display: grid; justify-items: center; }
+.pixel-404 { width: min(100%, 430px); height: auto; overflow: visible; fill: var(--moss); stroke: color-mix(in srgb, var(--moss) 38%, var(--bg)); stroke-linejoin: round; stroke-width: 1.25px; vector-effect: non-scaling-stroke; }
+.not-found-page h1 { margin: 40px 0 12px; font-family: var(--display); font-size: clamp(30px, 3.4vw, 42px); font-weight: 600; letter-spacing: -.045em; }
+.not-found-page a { padding: 10px 0; color: var(--moss-ink); font-family: var(--mono); font-size: 16px; text-decoration: underline; text-underline-offset: 4px; }
 .guide-shell { width: min(100%, var(--container)); min-height: calc(100vh - 64px); margin: 0 auto; padding: 0 var(--gutter); display: grid; grid-template-columns: 240px minmax(0, 760px); gap: 80px; }
 .guide-sidebar { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 68px 36px 80px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: start; gap: 18px; border-right: 1px dashed rgb(var(--accent-rgb) / 36%); color: var(--ink-2); font-size: 15px; }
 .guide-sidebar > span { color: var(--ink); font-weight: 600; }
 .guide-sidebar > .guide-sidebar-section { margin-top: 14px; }
 .guide-sidebar > .guide-coming-soon { margin-top: 8px; color: var(--faint); font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: .06em; }
 .guide-sidebar a[aria-current="page"] { color: var(--moss-ink); }
-.theme-toggle { width: 100%; margin-top: auto; padding: 10px 0; display: flex; align-items: center; gap: 9px; border: 0; background: transparent; color: var(--faint); cursor: pointer; font-size: 13px; text-align: left; transition: color 160ms ease, transform 140ms var(--ease-out); }
-.theme-toggle:active { transform: scale(.97); }
+.theme-toggle { width: 32px; height: 32px; padding: 7px; display: grid; place-items: center; border: 0; background: transparent; color: var(--faint); cursor: pointer; transition: color 160ms ease; }
 .theme-toggle:focus-visible { outline: 2px solid var(--moss-ink); outline-offset: 3px; }
 .theme-toggle svg { width: 16px; height: 16px; }
 @media (hover: hover) and (pointer: fine) { .theme-toggle:hover { color: var(--ink); } }
@@ -522,6 +528,7 @@ h1 span { display: block; white-space: nowrap; }
 .docs-tip[open] summary svg:last-child { transform: rotate(180deg); }
 .docs-tip-content { padding: 18px 20px 22px; border-top: 1px dashed var(--tip-border); }
 .docs-tip-content > p { margin: 0; color: var(--ink); font-size: 16px; line-height: 1.62; }
+.docs-tip-content > p + p { margin-top: 18px; }
 .docs-tip-content > p + .docs-code, .docs-tip-content > .docs-code + p { margin-top: 18px; }
 .docs-tip-content > .docs-code { width: 100%; }
 .hljs-comment, .hljs-quote { color: var(--faint); font-style: italic; }
@@ -684,7 +691,6 @@ h1 span { display: block; white-space: nowrap; }
   .mobile-nav-resources svg { width: 15px; height: 15px; }
   .guide-shell { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; }
   .guide-sidebar { position: sticky; z-index: 8; top: 64px; width: 100%; min-width: 0; max-width: 100%; height: auto; padding: 14px 0; overflow-x: auto; flex-direction: row; align-items: center; gap: 24px; border-right: 0; border-bottom: 1px dashed rgb(var(--accent-rgb) / 36%); background: var(--bg); scrollbar-width: none; white-space: nowrap; }
-  .theme-toggle { width: auto; margin-top: 0; margin-left: auto; padding: 8px 10px; flex: 0 0 auto; }
   .guide-sidebar::-webkit-scrollbar { display: none; }
   .guide-sidebar > span:first-child, .guide-sidebar > .guide-sidebar-section, .guide-sidebar > .guide-coming-soon { display: none; }
   .guide-article { min-width: 0; }
@@ -841,5 +847,4 @@ h1 span { display: block; white-space: nowrap; }
   .button, .harness-button { transition-duration: .01ms; }
   .brand:hover .mark path { animation: none; }
   .flow-overlay > path { stroke-dashoffset: 0; animation: none; }
-  .site-footer.is-visible .footer-brand .mark path { animation: none; }
 }

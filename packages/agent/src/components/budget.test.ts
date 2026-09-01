@@ -16,7 +16,7 @@ import { codeMode } from "./code"
 import { compaction } from "./compaction"
 import { agentMethods } from "../actor/methods"
 import { nativeOutput } from "./native-output"
-import { toolList } from "./tool-list"
+import { tool } from "./tool"
 import { agentKeys } from "../log/events"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
@@ -184,7 +184,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
 })
 
 describe("the budget component boundary", () => {
-  const readTool = toolList([
+  const readTool = tool([
     { spec: { name: "read", description: "read", inputSchema: {} }, run: () => Effect.succeed("ok") }
   ])
 

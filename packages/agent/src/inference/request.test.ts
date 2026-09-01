@@ -3,7 +3,7 @@ import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/execution/turns"
 import { modelRequest, renderMessages } from "./request"
-import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, toolList } from "../index"
+import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, tool } from "../index"
 
 // One declared contract, used wherever a turn needs one.
 const SCOUT = output({
@@ -280,7 +280,7 @@ describe("the repair exchange in the render", () => {
 })
 
 describe("the tool surface decides the tool table", () => {
-  const lab = toolList([
+  const lab = tool([
     { spec: { name: "read", description: "read a file", inputSchema: {} }, run: () => Effect.succeed("") },
     { spec: { name: "grep", description: "search files", inputSchema: {} }, run: () => Effect.succeed("") }
   ])

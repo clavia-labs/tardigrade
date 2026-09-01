@@ -1,7 +1,6 @@
-import { useEffect, useRef, useState, type ReactElement } from "react"
+import { Link } from "@tanstack/react-router"
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { ComponentBridge } from "./ComponentBridge"
-import { DocsPage } from "./docs/Docs"
-import { docAt } from "./docs/load"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
 import { WorldGlobe } from "./WorldGlobe"
@@ -75,6 +74,31 @@ const CheckIcon = (): ReactElement => (
     <path fill="none" stroke="currentColor" strokeLinecap="square" strokeLinejoin="miter" strokeWidth="1.8" d="m5 12.5 4.2 4.2L19 7" />
   </svg>
 )
+
+const MoonIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
+)
+
+const SunIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.7" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" /></svg>
+)
+
+const ThemeToggle = (): ReactElement => {
+  const [dark, setDark] = useState(false)
+  useEffect(() => setDark(document.documentElement.dataset.theme === "dark"), [])
+  const toggle = (): void => {
+    const nextDark = !dark
+    const theme = nextDark ? "dark" : "light"
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem("tardigrade-theme", theme)
+    setDark(nextDark)
+  }
+  return (
+    <button className="theme-toggle" type="button" aria-label={`Use ${dark ? "light" : "dark"} mode`} title={`Use ${dark ? "light" : "dark"} mode`} aria-pressed={dark} onClick={toggle}>
+      {dark ? <SunIcon /> : <MoonIcon />}
+    </button>
+  )
+}
 
 const CopyPromptButton = (): ReactElement => {
   const [copied, setCopied] = useState(false)
@@ -557,7 +581,7 @@ const ConsoleScene = (): ReactElement => (
   </div>
 )
 
-const ConsolePage = (): ReactElement => (
+export const ConsolePage = (): ReactElement => (
   <main className="console-page">
     <section className="console-hero">
       <div className="console-copy">
@@ -574,46 +598,31 @@ const ConsolePage = (): ReactElement => (
 )
 
 const SiteFooter = (): ReactElement => {
-  const footerRef = useRef<HTMLElement | null>(null)
-  const [entered, setEntered] = useState(false)
-
-  useEffect(() => {
-    const footer = footerRef.current
-    if (footer === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      setEntered(true)
-      observer.disconnect()
-    }, { threshold: 0.55 })
-    observer.observe(footer)
-    return () => observer.disconnect()
-  }, [])
-
   return (
-    <footer className={`site-footer${entered ? " is-visible" : ""}`} ref={footerRef}>
+    <footer className="site-footer">
       <div className="footer-inner">
-        <a className="footer-brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
+        <Link className="footer-brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
         <nav className="footer-links" aria-label="Footer navigation">
-          <a href="/guide"><GuideIcon />Guide</a>
-          <a href="/console"><ConsoleIcon />Console</a>
+          <Link to="/docs/$" params={{ _splat: "quickstart" }}><GuideIcon />Quickstart</Link>
+          <Link to="/console"><ConsoleIcon />Console</Link>
           <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
           <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
+          <ThemeToggle />
         </nav>
       </div>
     </footer>
   )
 }
 
-export const App = (): ReactElement => {
+export const SiteShell = ({ children, pathname }: { readonly children: ReactNode; readonly pathname: string }): ReactElement => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
-  const guide = window.location.pathname === "/guide" || window.location.pathname.startsWith("/guide/")
-  const cli = window.location.pathname === "/cli" || window.location.pathname.startsWith("/cli/")
-  const concepts = window.location.pathname === "/concepts" || window.location.pathname.startsWith("/concepts/")
-  const examples = window.location.pathname === "/examples" || window.location.pathname.startsWith("/examples/")
-  const consolePage = window.location.pathname === "/console" || window.location.pathname.startsWith("/console/")
-  const docsPage = docAt(window.location.pathname) !== undefined
+  const guide = pathname === "/docs/quickstart"
+  const cli = pathname === "/docs/cli"
+  const concepts = pathname === "/docs/concepts"
+  const examples = pathname.startsWith("/docs/examples/")
+  const consolePage = pathname === "/console"
 
   useEffect(() => {
     if (!mobileMenuOpen) return
@@ -644,21 +653,21 @@ export const App = (): ReactElement => {
     <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
-          <a className="brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
-          <a className="guide-link" href="/guide" aria-current={guide ? "page" : undefined}>Guide</a>
-          <a className="guide-link" href="/concepts" aria-current={concepts ? "page" : undefined}>Concepts</a>
-          <a className="guide-link" href="/cli" aria-current={cli ? "page" : undefined}>CLI</a>
-          <a className="guide-link" href="/examples/rlm" aria-current={examples ? "page" : undefined}>Examples</a>
+          <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
         </div>
         <div className="nav-links">
-          <a href={`${REPOSITORY}/blob/main/docs/quickstart.md`} rel="noreferrer" target="_blank">Guide</a>
+          <Link to="/docs/$" params={{ _splat: "quickstart" }}>Quickstart</Link>
           <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Reference</a>
           <a href={`${REPOSITORY}/blob/main/docs/how-to/cli.md`} rel="noreferrer" target="_blank">CLI</a>
           <a href={`${REPOSITORY}/tree/main/apps/voyager`} rel="noreferrer" target="_blank">Voyager</a>
         </div>
         <div className="nav-actions">
-          <a className="docs-link" href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
-          <a className="console-link" href="/console" aria-current={consolePage ? "page" : undefined}>Console</a>
+          <Link className="docs-link" to="/docs">Docs</Link>
+          <Link className="console-link" to="/console" aria-current={consolePage ? "page" : undefined}>Console</Link>
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
           <button className="mobile-menu-trigger" type="button" aria-controls="mobile-navigation" aria-expanded={mobileMenuOpen} ref={menuButtonRef} onClick={() => setMobileMenuOpen((open) => !open)}>
             <MenuIcon />
@@ -669,17 +678,17 @@ export const App = (): ReactElement => {
       <div className="mobile-nav-panel" data-open={mobileMenuOpen} id="mobile-navigation" aria-hidden={!mobileMenuOpen} inert={!mobileMenuOpen ? true : undefined}>
         <nav className="mobile-nav-panel-inner" aria-label="Mobile navigation">
           <div className="mobile-nav-primary">
-            <a className="mobile-nav-console" href="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</a>
+            <Link className="mobile-nav-console" to="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</Link>
             <div className="mobile-nav-sections">
-              <a href="/guide" aria-current={guide ? "page" : undefined}>Guide</a>
-              <a href="/concepts" aria-current={concepts ? "page" : undefined}>Concepts</a>
-              <a href="/cli" aria-current={cli ? "page" : undefined}>CLI</a>
-              <a href="/examples/rlm" aria-current={examples ? "page" : undefined}>Examples</a>
+              <Link to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
+              <Link to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
+              <Link to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
+              <Link to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
             </div>
           </div>
           <div className="mobile-nav-resources">
             <span>Resources</span>
-            <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
+            <Link to="/docs">Docs</Link>
             <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
             <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
           </div>
@@ -687,7 +696,13 @@ export const App = (): ReactElement => {
       </div>
     </header>
 
-    {docsPage ? <DocsPage pathname={window.location.pathname} /> : consolePage ? <ConsolePage /> : <main>
+    {children}
+    <SiteFooter />
+  </>
+}
+
+export const LandingPage = (): ReactElement => (
+  <main>
       <section className="hero">
         <PuzzlePiece />
         <div className="hero-inner">
@@ -709,7 +724,5 @@ export const App = (): ReactElement => {
       <Durability />
       <Observability />
       <Deployments />
-      <SiteFooter />
-    </main>}
-  </>
-}
+  </main>
+)

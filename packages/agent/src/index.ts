@@ -1,4 +1,5 @@
 export { type AgentPolicy, type AgentR, receive } from "./runtime/turn"
+export { Effect } from "effect"
 export {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
@@ -222,7 +223,7 @@ export {
   type PackageCallPolicy
 } from "@clavia/tardigrade-code/execution/reactor"
 export { system, type SystemText } from "./components/system"
-export { toolList, type NativeTool } from "./components/tool-list"
+export { tool, toolList, type NativeTool } from "./components/tool"
 export {
   budget,
   caller,
