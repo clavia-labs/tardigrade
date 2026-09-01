@@ -38,7 +38,6 @@ describe("actorTemplate", () => {
 
     expect(built.manifest.name).toBe("reviewer")
     expect(source).toContain("You are ${actorName}, a focused research agent.")
-    expect(source).toContain("filesPackage()")
     expect(source).toContain("fetchPackage()")
     expect(source).toContain("agentsPackage()")
     expect(source).toContain("workspacePackage()")

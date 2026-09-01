@@ -1,6 +1,6 @@
 import {
   actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
-  compaction, fetchPackage, filesPackage, infer,
+  compaction, fetchPackage, infer,
   outputValidateOnce, system, workspacePackage
 } from "tardie"
 
@@ -23,7 +23,7 @@ export default actor({
       system(actorInstructions),
       budget([
         codeMode([
-          filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
+          fetchPackage(), agentsPackage(), workspacePackage()
         ])
       ], { authority: caller() }),
       compaction(),
