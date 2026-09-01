@@ -62,6 +62,8 @@ jobs:
               > .vercel/project.json
         working-directory: apps/web
       - run: vercel build --prod --token=${{ secrets.VERCEL_TOKEN }}
+        env:
+          NITRO_PRESET: vercel
         working-directory: apps/web
       - run: vercel deploy --prebuilt --prod --token=${{ secrets.VERCEL_TOKEN }}
         working-directory: apps/web
