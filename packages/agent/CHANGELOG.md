@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.18.0](https://github.com/clavia-labs/tardigrade/compare/v0.17.0...v0.18.0) (2026-09-01)
+
+
+### Features
+
+* **agent:** select compaction model ([#312](https://github.com/clavia-labs/tardigrade/issues/312)) ([68f2e0e](https://github.com/clavia-labs/tardigrade/commit/68f2e0efe2dccc8be11ba7c39c2a2f1a20f26b1a))
+* **server:** stream actor threads ([#317](https://github.com/clavia-labs/tardigrade/issues/317)) ([6eee447](https://github.com/clavia-labs/tardigrade/commit/6eee4479655d540a1a91c23644efe92c063ce501))
+
+
+### Bug Fixes
+
+* **cli:** default actor name ([#318](https://github.com/clavia-labs/tardigrade/issues/318)) ([4a007f9](https://github.com/clavia-labs/tardigrade/commit/4a007f943c244b9700eb54c58977ceffcd677ec9))
+
 ## [0.17.0](https://github.com/clavia-labs/tardigrade/compare/v0.16.0...v0.17.0) (2026-08-30)
 
 
