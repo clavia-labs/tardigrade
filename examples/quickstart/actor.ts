@@ -1,43 +1,51 @@
-import {
-  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
-  compaction, fetchPackage, filesPackage, infer,
-  outputValidateOnce, system, workspacePackage
-} from "tardie"
+import type { AgentComponent, AgentTool } from "tardie"
+import { actor, agentMessageMethod, infer, nativeOutput, system } from "tardie"
 
-// actorName is the stable name used by build, development, and deployment.
-const actorName = "researcher"
+const actorName = "weather-agent"
 
-// actorInstructions is the main place to describe the job and its expected answer.
 const actorInstructions = `
-You are ${actorName}, a focused research agent.
-
-Investigate the user's request carefully.
-Use project files as evidence.
-Delegate independent research when it helps.
-Return a concise answer with concrete findings.
+Answer questions about the weather.
+Use the weather tool for current conditions.
 `.trim()
+
+const serveWeather: AgentTool["serve"] = (call, _log, answer) => {
+  const city = typeof call.arguments === "object" && call.arguments !== null && "city" in call.arguments
+    ? String(call.arguments.city)
+    : "unknown"
+  return [answer({ city, temperature: 21, unit: "celsius" })]
+}
+
+const weather: AgentComponent = {
+  name: "weather",
+  derive: () => ({
+    view: {
+      system: [],
+      tools: [{
+        spec: {
+          name: "get_weather",
+          description: "Get the current weather for a city",
+          inputSchema: {
+            type: "object",
+            properties: { city: { type: "string" } },
+            required: ["city"],
+            additionalProperties: false
+          }
+        },
+        serve: serveWeather
+      }],
+      context: [],
+      output: []
+    },
+    transitions: []
+  })
+}
 
 export default actor({
   name: actorName,
-  // methods declares the typed calls this actor accepts.
-  methods: agentMethods,
-  // components carry implementation and output requirements into the host type.
-  components: [
-    infer([
-      system(actorInstructions),
-      // budget scopes the tool-call limit to the codeMode subtree.
-      budget([
-        // codeMode gives the model one code tool over the package components listed here.
-        codeMode([
-          // codeMode package components grant access to files, HTTP, child agents, and saved results.
-          filesPackage(), fetchPackage(), agentsPackage(), workspacePackage()
-        ])
-      ], { authority: caller() }),
-      // compaction summarizes older context when a long turn outgrows its context window.
-      compaction(),
-      // outputValidateOnce validates one structured result when the endpoint supplies no native guarantee.
-      outputValidateOnce
-    ]),
-    budgetAuthority()
-  ]
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system(actorInstructions),
+    weather,
+    nativeOutput
+  ])]
 })

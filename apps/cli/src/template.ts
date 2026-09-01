@@ -6,11 +6,17 @@ import { fileURLToPath } from "node:url"
 export interface ActorTemplateOptions {
   readonly name: string
   readonly instructions?: string
+  readonly template?: InitTemplate
 }
 
-export const INSTALLED_ACTOR_TEMPLATE = "../../examples/quickstart/actor.ts"
-export const REPO_ACTOR_TEMPLATE = "../../../examples/quickstart/actor.ts"
-export const ACTOR_TEMPLATE_CANDIDATES: ReadonlyArray<string> = [INSTALLED_ACTOR_TEMPLATE, REPO_ACTOR_TEMPLATE]
+export const INIT_TEMPLATES = ["quickstart", "rlm"] as const
+export type InitTemplate = typeof INIT_TEMPLATES[number]
+export const DEFAULT_INIT_TEMPLATE: InitTemplate = "quickstart"
+
+export const actorTemplateCandidates = (template: InitTemplate): ReadonlyArray<string> => [
+  `../../examples/${template}/actor.ts`,
+  `../../../examples/${template}/actor.ts`
+]
 
 const templateLiteralOf = (value: string): string =>
   value
@@ -20,7 +26,7 @@ const templateLiteralOf = (value: string): string =>
 
 const replaceExactlyOnce = (source: string, pattern: RegExp, replacement: string, field: string): string => {
   const matches = source.match(pattern)
-  if (matches === null || matches.length !== 1) throw new Error(`quickstart template must contain one ${field}`)
+  if (matches === null || matches.length !== 1) throw new Error(`actor template must contain one ${field}`)
   return source.replace(pattern, replacement)
 }
 
@@ -56,7 +62,7 @@ export const loadActorTemplate = async (candidates: ReadonlyArray<string>): Prom
 
 export const actorTemplate = async (
   options: ActorTemplateOptions,
-  candidates: ReadonlyArray<string> = ACTOR_TEMPLATE_CANDIDATES.map((candidate) =>
+  candidates: ReadonlyArray<string> = actorTemplateCandidates(options.template ?? DEFAULT_INIT_TEMPLATE).map((candidate) =>
     fileURLToPath(new URL(candidate, import.meta.url))
   )
 ): Promise<string> => renderActorTemplate(await loadActorTemplate(candidates), options)

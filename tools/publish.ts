@@ -2,6 +2,7 @@ import { cp, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "n
 import { tmpdir } from "node:os"
 import { isAbsolute, join, resolve } from "node:path"
 import { fileURLToPath } from "node:url"
+import { INIT_TEMPLATES } from "../apps/cli/src/template"
 
 type PkgJson = {
   readonly name: string
@@ -55,8 +56,6 @@ const STAGED_ASSETS = "ui"
 const STAGED_EXAMPLES = "examples"
 
 const VOYAGER_SOURCE = "apps/voyager/dist"
-const QUICKSTART_SOURCE = "examples/quickstart"
-
 const VOYAGER_BUILD = ["bun", "run", "--cwd", "apps/voyager", "build"]
 
 const npmMin = { maj: 11, min: 5, patch: 1 } as const
@@ -199,7 +198,9 @@ try {
     cp(join(root, "LICENSE"), join(stage, "LICENSE")),
     cp(join(root, "README.md"), join(stage, "README.md")),
     cp(join(root, VOYAGER_SOURCE), join(stage, STAGED_ASSETS), { recursive: true }),
-    cp(join(root, QUICKSTART_SOURCE), join(stage, STAGED_EXAMPLES, "quickstart"), { recursive: true }),
+    ...INIT_TEMPLATES.map((template) =>
+      cp(join(root, "examples", template), join(stage, STAGED_EXAMPLES, template), { recursive: true })
+    ),
     ...packages.map(async (source) => {
       await cp(join(root, source.dir, "src"), join(stage, "src", source.namespace), {
         recursive: true,

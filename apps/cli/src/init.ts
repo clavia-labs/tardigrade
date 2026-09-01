@@ -5,7 +5,7 @@ import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflar
 import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
-import { actorTemplate } from "./template"
+import { actorTemplate, type InitTemplate } from "./template"
 import type { SetupAnswers, SetupFiles } from "./setup"
 import { versionIn } from "./version"
 import { callCommand, shellWord } from "./workflow"
@@ -26,6 +26,7 @@ export interface InitActorOptions {
   readonly packageVersion?: string
   readonly modelProtocol?: ModelProtocol
   readonly modelLock?: ModelLock
+  readonly template?: InitTemplate
 }
 
 export interface InitializedActor {
@@ -119,7 +120,10 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const packageManifest = resolve(directory, DEFAULT_PACKAGE_MANIFEST)
   const modelLock = resolve(directory, DEFAULT_MODEL_LOCK)
   const catalogMigration = resolve(directory, DEFAULT_CATALOG_MIGRATION)
-  const source = await actorTemplate({ name })
+  const source = await actorTemplate({
+    name,
+    ...(options.template === undefined ? {} : { template: options.template })
+  })
   const manifestSource = manifestTemplate(name, options.now ?? new Date())
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")

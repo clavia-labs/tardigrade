@@ -25,6 +25,7 @@ import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } fr
 import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
 import { resolveModelLock, writeModelLock } from "./model-lock"
+import { DEFAULT_INIT_TEMPLATE, INIT_TEMPLATES } from "./template"
 import {
   defaultModelFrom,
   defaultSetupJson,
@@ -456,6 +457,10 @@ export const initCommand = Command.make("init", {
     Flag.withDescription("The directory to create. Defaults to a directory named after the actor."),
     Flag.optional
   ),
+  template: Flag.choice("template", INIT_TEMPLATES).pipe(
+    Flag.withDescription(`The actor template. Defaults to ${DEFAULT_INIT_TEMPLATE}.`),
+    Flag.withDefault(DEFAULT_INIT_TEMPLATE)
+  ),
   provider: setupProvider,
   providerConfig: setupProviderConfig,
   defaultModel: setupDefaultModel,
@@ -498,6 +503,7 @@ export const initCommand = Command.make("init", {
       try: () => initActor(name, {
         cwd: cli.cwd,
         ...(directory === undefined ? {} : { directory }),
+        template: flags.template,
         modelProtocol: answers.protocol,
         modelLock
       }),

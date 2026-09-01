@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 
 import { buildActor } from "./build"
-import { actorTemplate, renderActorTemplate } from "./template"
+import { actorTemplate, DEFAULT_INIT_TEMPLATE, INIT_TEMPLATES, renderActorTemplate } from "./template"
 
 let root = ""
 
@@ -20,13 +20,23 @@ const build = async (source: string) => {
 }
 
 describe("actorTemplate", () => {
-  test("builds a named actor with the useful local reach", async () => {
+  test("builds the quickstart template by default", async () => {
     const source = await actorTemplate({ name: "reviewer" })
     const built = await build(source)
 
     expect(built.manifest.name).toBe("reviewer")
+    expect(DEFAULT_INIT_TEMPLATE).toBe("quickstart")
+    expect(INIT_TEMPLATES).toEqual(["quickstart", "rlm"])
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("infer([")
+    expect(source).toContain('name: "get_weather"')
+  })
+
+  test("builds the RLM template", async () => {
+    const source = await actorTemplate({ name: "reviewer", template: "rlm" })
+    const built = await build(source)
+
+    expect(built.manifest.name).toBe("reviewer")
     expect(source).toContain("You are ${actorName}, a focused research agent.")
     expect(source).toContain("filesPackage()")
     expect(source).toContain("fetchPackage()")
@@ -55,7 +65,7 @@ describe("actorTemplate", () => {
 
   test("refuses a template without its editable fields", () => {
     expect(() => renderActorTemplate("export default {}", { name: "reviewer" })).toThrow(
-      "quickstart template must contain one actorName declaration"
+      "actor template must contain one actorName declaration"
     )
   })
 })
