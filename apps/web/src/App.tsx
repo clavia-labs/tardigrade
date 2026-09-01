@@ -1,12 +1,11 @@
-import { useEffect, useRef, useState, type ReactElement } from "react"
-import { ActorDiagram } from "./ActorDiagram"
+import { Link } from "@tanstack/react-router"
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "react"
 import { ComponentBridge } from "./ComponentBridge"
-import { ComponentDiagram } from "./ComponentDiagram"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
-import { MethodDiagram } from "./MethodDiagram"
-import { TransitionLoop } from "./TransitionLoop"
+import { PuzzleGrid } from "./PuzzleGrid"
 import { WorldGlobe } from "./WorldGlobe"
+import { CheckIcon, CopyIcon, useCopy } from "./ui/copy"
 
 const REPOSITORY = "https://github.com/clavia-labs/tardigrade"
 const SHOW_HARNESS_CONTROLS = import.meta.env.VITE_SHOW_HARNESS_CONTROLS === "true"
@@ -66,53 +65,50 @@ const ConsoleIcon = (): ReactElement => (
   </svg>
 )
 
-const CopyIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M9 8h9v11H9zM6 16H5V5h9v1" />
-  </svg>
+const MoonIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
 )
 
-const CheckIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeLinecap="square" strokeLinejoin="miter" strokeWidth="1.8" d="m5 12.5 4.2 4.2L19 7" />
-  </svg>
+const SunIcon = (): ReactElement => (
+  <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3.5" fill="none" stroke="currentColor" strokeWidth="1.7" /><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M18.7 5.3l-1.4 1.4M6.7 17.3l-1.4 1.4" fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.7" /></svg>
 )
+
+const ThemeToggle = (): ReactElement => {
+  const [dark, setDark] = useState(false)
+  useEffect(() => setDark(document.documentElement.dataset.theme === "dark"), [])
+  const toggle = (): void => {
+    const nextDark = !dark
+    const theme = nextDark ? "dark" : "light"
+    document.documentElement.dataset.theme = theme
+    window.localStorage.setItem("tardigrade-theme", theme)
+    setDark(nextDark)
+  }
+  return (
+    <button className="theme-toggle" type="button" aria-label={`Use ${dark ? "light" : "dark"} mode`} title={`Use ${dark ? "light" : "dark"} mode`} aria-pressed={dark} onClick={toggle}>
+      {dark ? <SunIcon /> : <MoonIcon />}
+    </button>
+  )
+}
 
 const CopyPromptButton = (): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  const copyPrompt = async (): Promise<void> => {
-    await navigator.clipboard.writeText(STARTER_PROMPT)
-    setCopied(true)
-  }
+  const [copied, copy] = useCopy()
 
   return (
-    <button className="button button-primary" type="button" onClick={() => void copyPrompt()}>
-      <CopyIcon />
+    <button className="button button-primary" type="button" onClick={() => void copy(STARTER_PROMPT)}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
       {copied ? "Copied" : "Copy prompt"}
     </button>
   )
 }
 
 const CommandLine = ({ command, label }: { readonly command: string; readonly label: string }): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!copied) return
-    const reset = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(reset)
-  }, [copied])
-
-  const copyCommand = async (): Promise<void> => {
-    await navigator.clipboard.writeText(command)
-    setCopied(true)
-  }
+  const [copied, copy] = useCopy()
 
   return (
     <div className="install-command" aria-label={label}>
       <span aria-hidden="true">$</span>
       <code>{command}</code>
-      <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copyCommand()}>
+      <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copy(command)}>
         {copied ? <CheckIcon /> : <CopyIcon />}
       </button>
     </div>
@@ -120,71 +116,6 @@ const CommandLine = ({ command, label }: { readonly command: string; readonly la
 }
 
 const InstallCommand = (): ReactElement => <CommandLine command={INIT_COMMAND} label="Install Tardigrade" />
-
-const syntaxPattern = /(\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|\b(?:import|from|const|as|export|default|type|return|async|await)\b|\b(?:true|false|null|undefined)\b|\b\d+(?:\.\d+)?\b|\b(?:actor|infer|system|budget|codeMode|compaction|filesPackage|fetchPackage|agentsPackage|workspacePackage|outputValidateOnce|budgetAuthority|caller)\b)/g
-
-const syntaxTone = (value: string): string => {
-  if (value.startsWith("//") || value.startsWith("/*")) return "comment"
-  if (/^["'`]/.test(value)) return "string"
-  if (/^\d/.test(value)) return "number"
-  if (/^(?:true|false|null|undefined)$/.test(value)) return "literal"
-  if (/^(?:import|from|const|as|export|default|type|return|async|await)$/.test(value)) return "keyword"
-  return "function"
-}
-
-const HighlightedCode = ({ code }: { readonly code: string }): ReactElement => {
-  const parts = code.split(syntaxPattern)
-  return <>{parts.map((part, index) => index % 2 === 1 ? <span className={`syntax-${syntaxTone(part)}`} key={`${index}-${part}`}>{part}</span> : part)}</>
-}
-
-const ActorCopyButton = (): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!copied) return
-    const reset = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(reset)
-  }, [copied])
-
-  const copyExample = async (event: React.MouseEvent<HTMLButtonElement>): Promise<void> => {
-    const example = event.currentTarget.closest(".guide-actor-example")
-    const code = Array.from(example?.querySelectorAll("pre") ?? [])
-      .map((block) => block.textContent ?? "")
-      .join("\n\n")
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-  }
-
-  return (
-    <button className="guide-code-copy" type="button" aria-label={copied ? "Actor copied" : "Copy actor"} onClick={(event) => void copyExample(event)}>
-      {copied ? <CheckIcon /> : <CopyIcon />}
-    </button>
-  )
-}
-
-const CodeSnippet = ({ code, label }: { readonly code: string; readonly label: string }): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!copied) return
-    const reset = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(reset)
-  }, [copied])
-
-  const copyCode = async (): Promise<void> => {
-    await navigator.clipboard.writeText(code)
-    setCopied(true)
-  }
-
-  return (
-    <div className="concept-code">
-      <pre><code><HighlightedCode code={code} /></code></pre>
-      <button type="button" aria-label={copied ? `${label} copied` : `Copy ${label}`} onClick={() => void copyCode()}>
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </button>
-    </div>
-  )
-}
 
 const CelldMark = (): ReactElement => (
   <svg viewBox="0 0 28 28" aria-hidden="true">
@@ -211,52 +142,11 @@ const providers: ReadonlyArray<Provider> = [
   { name: "MinIO", href: "https://min.io/", icon: "https://cdn.simpleicons.org/minio/c72e49" }
 ]
 
-type Point = { readonly x: number; readonly y: number }
-
-const puzzlePoint = (start: Point, end: Point, normal: Point, progress: number, offset: number): Point => ({
-  x: start.x + (end.x - start.x) * progress + normal.x * offset,
-  y: start.y + (end.y - start.y) * progress + normal.y * offset
-})
-
-const puzzleCoordinate = ({ x, y }: Point): string => `${x.toFixed(1)} ${y.toFixed(1)}`
-
-const puzzleEdge = (start: Point, end: Point, normal: Point, direction: number): string => {
-  if (direction === 0) return `L ${puzzleCoordinate(end)}`
-  const depth = Math.hypot(end.x - start.x, end.y - start.y) * 0.13 * direction
-  return [
-    `L ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.34, 0))}`,
-    `C ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.4, 0))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.4, depth * 1.3))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.5, depth * 1.3))}`,
-    `C ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.6, depth * 1.3))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.6, 0))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.66, 0))}`,
-    `L ${puzzleCoordinate(end)}`
-  ].join(" ")
-}
-
-const puzzleDirection = (row: number, column: number, axis: number): number => (Math.abs(row * 31 + column * 17 + axis * 13) % 2 === 0 ? 1 : -1)
-
-const puzzlePath = (row: number, column: number, size: number, inset: number): string => {
-  const left = inset + column * size
-  const top = inset + row * size
-  const right = left + size
-  const bottom = top + size
-  return [
-    `M ${left} ${top}`,
-    puzzleEdge({ x: left, y: top }, { x: right, y: top }, { x: 0, y: -1 }, -puzzleDirection(row - 1, column, 0)),
-    puzzleEdge({ x: right, y: top }, { x: right, y: bottom }, { x: 1, y: 0 }, puzzleDirection(row, column, 1)),
-    puzzleEdge({ x: right, y: bottom }, { x: left, y: bottom }, { x: 0, y: 1 }, puzzleDirection(row, column, 0)),
-    puzzleEdge({ x: left, y: bottom }, { x: left, y: top }, { x: -1, y: 0 }, -puzzleDirection(row, column - 1, 1)),
-    "Z"
-  ].join(" ")
-}
-
-const puzzleLayout = Array.from({ length: 24 }, (_, index) => {
-  const row = Math.floor(index / 12)
-  const column = index % 12
-  return { row, column }
-})
+const puzzleRows = ["111111111111", "111111111111"]
 
 const PuzzlePiece = (): ReactElement => (
   <div className="puzzle-art" aria-hidden="true">
-    <svg className="puzzle-piece" viewBox="0 -30 1680 340" preserveAspectRatio="xMidYMid meet">
+    <PuzzleGrid className="puzzle-piece" connectors="all" pathClassName={(row, column) => `puzzle-tone-${(row * 3 + column) % 5}`} preserveAspectRatio="xMidYMid meet" rows={puzzleRows} size={140} tabRatio={0.13} viewBox="0 -30 1680 340">
       <defs>
         <pattern id="puzzle-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line className="puzzle-hatch-line" x1="0" y1="0" x2="0" y2="9" />
@@ -265,14 +155,7 @@ const PuzzlePiece = (): ReactElement => (
           <path className="puzzle-hatch-line" d="M 0 12 L 12 0 M -3 3 L 3 -3 M 9 15 L 15 9" />
         </pattern>
       </defs>
-      {puzzleLayout.map((piece) => (
-        <path
-          className={`puzzle-tone-${(piece.row * 3 + piece.column) % 5}`}
-          d={puzzlePath(piece.row, piece.column, 140, 0)}
-          key={`${piece.row}-${piece.column}`}
-        />
-      ))}
-    </svg>
+    </PuzzleGrid>
   </div>
 )
 
@@ -611,350 +494,6 @@ const Deployments = (): ReactElement => (
   </section>
 )
 
-type GuideRoute = "guide" | "concepts" | "cli" | "rlm"
-
-const GuideSidebar = ({ current }: { readonly current: GuideRoute }): ReactElement => (
-  <aside className="guide-sidebar">
-    <span>Introduction</span>
-    <a href="/guide" aria-current={current === "guide" ? "page" : undefined}>Getting Started</a>
-    <a href="/concepts" aria-current={current === "concepts" ? "page" : undefined}>Concepts</a>
-    <a href="/cli" aria-current={current === "cli" ? "page" : undefined}>CLI Reference</a>
-    <span className="guide-sidebar-section">Examples</span>
-    <a href="/examples/rlm" aria-current={current === "rlm" ? "page" : undefined}>RLM</a>
-    <span className="guide-coming-soon">Work in progress...</span>
-  </aside>
-)
-
-const GuidePage = (): ReactElement => (
-  <main className="guide-page">
-    <div className="guide-shell">
-      <GuideSidebar current="guide" />
-      <article className="guide-article">
-        <h1>Getting Started</h1>
-        <p className="guide-intro">Build and run your first durable agent.</p>
-        <div className="guide-divider" />
-        <p><strong>Tardigrade</strong> is a TypeScript framework for building modular agents around a durable event log. Components read the log, derive work, and append the results.</p>
-        <h2>Initialize a project</h2>
-        <p>Run the initializer in a new or existing TypeScript project.</p>
-        <div className="guide-command"><InstallCommand /></div>
-        <h3>What gets created</h3>
-        <p>The initializer creates a small project that can run locally or on your own infrastructure.</p>
-        <div className="guide-scaffold" aria-label="Initialized project structure">
-          <strong>my-agent/</strong>
-          <ul>
-            <li><code>actor.ts</code><span /><p>Actor, model, and components</p></li>
-            <li><code>worker.ts</code><span /><p>Worker runtime entry</p></li>
-            <li><code>wrangler.jsonc</code><span /><p>Worker and Durable Object config</p></li>
-            <li><code>celld.jsonc</code><span /><p>Self-hosted Celld config</p></li>
-            <li><code>models.lock.json</code><span /><p>Resolved deployment model scope</p></li>
-            <li><code>package.json</code><span /><p>Dependencies and module metadata</p></li>
-          </ul>
-        </div>
-        <h2>Define an actor</h2>
-        <h3 className="guide-example-title">Hello world agent</h3>
-        <p>If you have built a tool-calling agent before, the pieces will feel familiar: instructions, a model, and tools. Tardigrade gives those pieces a durable home inside an actor.</p>
-        <div className="guide-actor-example">
-          <ActorCopyButton />
-          <div className="guide-code-row" data-tone="setup">
-            <pre><code>{`import type { AgentComponent } from "tardie"
-import { actor, agentMessageMethod, infer,
-  nativeOutput, system } from "tardie"`}</code></pre>
-            <aside><strong>Familiar pieces</strong><p>The model loop, instructions, and fixed tools remain explicit.</p></aside>
-          </div>
-          <div className="guide-code-row" data-tone="tool">
-            <pre><code>{`const weather: AgentComponent = {
-  name: "weather",
-  derive: () => ({
-    view: {
-      system: ["Use weather for current conditions."],
-      tools: [{
-        spec: {
-          name: "get_weather",
-          description: "Get weather for a city",
-          inputSchema: { type: "object" }
-        },
-        serve: (call, _log, answer) => [
-          answer({ city: call.arguments, temperature: 21 })
-        ]
-      }],
-      context: [],
-      output: []
-    },
-    transitions: []
-  })
-}`}</code></pre>
-            <aside><strong>weather component</strong><p><code>derive</code> is pure. It contributes a tool and the handler that serves it.</p></aside>
-          </div>
-          <div className="guide-code-row" data-tone="name">
-            <pre><code>{`export default actor({
-  name: "weather-agent",`}</code></pre>
-            <aside><strong>name</strong><p>The stable identity used by builds, deployments, and stored logs.</p></aside>
-          </div>
-          <div className="guide-code-row" data-tone="methods">
-            <pre><code>{`  methods: { message: agentMessageMethod },`}</code></pre>
-            <aside><strong>methods</strong><p>The typed calls clients can make. This actor accepts a message.</p></aside>
-          </div>
-          <div className="guide-code-row" data-tone="components">
-            <pre><code>{`  components: [infer([
-    system("Answer questions about the weather."),
-    weather,
-    nativeOutput
-  ])]
-})`}</code></pre>
-            <aside><strong>components</strong><p>Pure functions over the log that compose instructions, tools, output, and policy.</p></aside>
-          </div>
-        </div>
-        <h2>Run locally</h2>
-        <p>Run the development host from the actor directory. It builds <code>actor.ts</code>, starts the local API, and opens Voyager.</p>
-        <div className="guide-command"><CommandLine command="tdg dev" label="Run the actor locally" /></div>
-        <div className="guide-scaffold guide-runtime-store" aria-label="Local Tardigrade state">
-          <strong>.tardigrade/</strong>
-          <ul>
-            <li><code>actor.sqlite</code><span /><p>Durable event logs for every thread</p></li>
-            <li><code>models.json</code><span /><p>Validated model catalog cache</p></li>
-          </ul>
-        </div>
-        <h2>Send a message</h2>
-        <p>Keep the development host running. From another terminal, call the actor's <code>message</code> method and wait for its durable result.</p>
-        <div className="guide-command"><CommandLine command={'tdg call message \'{"text":"What is the weather in Singapore?"}\''} label="Send a message" /></div>
-        <p className="guide-followup">The command prints the answer and a direct Voyager URL for the new trace.</p>
-        <h2>Test the actor</h2>
-        <p>Validate the actor's declared methods and component handlers before deployment.</p>
-        <div className="guide-command"><CommandLine command="tdg lint actor.ts" label="Validate the actor" /></div>
-        <h2>Deploy</h2>
-        <p>Add the same provider credential to your chosen platform, then deploy with one of the generated configurations.</p>
-        <div className="guide-deploy-commands">
-          <div><span>Cloudflare</span><CommandLine command="bunx wrangler deploy" label="Deploy to Cloudflare" /></div>
-          <div><span>Celld</span><CommandLine command="celld deploy --config celld.jsonc" label="Deploy with Celld" /></div>
-        </div>
-      </article>
-    </div>
-  </main>
-)
-
-const cliCommands = [
-  ["tdg init <name>", "Create an actor and configure its first model provider"],
-  ["tdg setup", "Add provider connections and choose the default model"],
-  ["tdg lint <entry>", "Validate an actor before building or deploying"],
-  ["tdg build <entry>", "Build and validate an actor artifact"],
-  ["tdg dev", "Build actor.ts and serve the local API and Voyager"],
-  ["tdg methods", "List the actor's methods and schemas"],
-  ["tdg call <method> <input>", "Call a method with JSON input and wait for its result"],
-  ["tdg ls", "List threads"],
-  ["tdg events <thread>", "Print a thread's event log"],
-  ["tdg providers", "List provider protocols and setup requirements"],
-  ["tdg models", "Search and page the public model catalog"],
-  ["tdg models lock", "Resolve configured models into the deployment lock"]
-] as const
-
-const CliPage = (): ReactElement => (
-  <main className="guide-page">
-    <div className="guide-shell">
-      <GuideSidebar current="cli" />
-      <article className="guide-article cli-article">
-        <h1>CLI Reference</h1>
-        <p className="guide-intro">Build, run, and inspect Tardigrade actors.</p>
-        <div className="guide-divider" />
-        <h2>Install</h2>
-        <div className="guide-command"><CommandLine command="bun add -g tardie" label="Install the Tardigrade CLI" /></div>
-        <p className="cli-install-note">Use <code>bunx tardie &lt;command&gt;</code> to run a command without installing it.</p>
-        <h2>Commands</h2>
-        <div className="cli-command-list">
-          {cliCommands.map(([command, description]) => (
-            <div className="cli-command-row" key={command}>
-              <code>{command}</code>
-              <p>{description}</p>
-            </div>
-          ))}
-        </div>
-        <p className="cli-reference-note">Use <code>--json</code> for machine-readable output. Remote commands accept <code>--url</code> and <code>--token</code>. Run <code>tdg &lt;command&gt; --help</code> for every option.</p>
-      </article>
-    </div>
-  </main>
-)
-
-const rlmSource = `import {
-  actor, agentMethods, agentsPackage, budget,
-  budgetAuthority, caller, codeMode, compaction,
-  fetchPackage, filesPackage, infer,
-  outputValidateOnce, system, workspacePackage
-} from "tardie"
-
-const instructions = system(
-  "Investigate with code and delegate independent work."
-)
-
-const rlm = actor({
-  name: "researcher",
-  methods: agentMethods,
-  components: [
-    infer([
-      instructions,
-      budget([
-        codeMode([
-          filesPackage(),
-          fetchPackage(),
-          agentsPackage(),
-          workspacePackage()
-        ])
-      ], { authority: caller() }),
-      compaction(),
-      outputValidateOnce
-    ]),
-    budgetAuthority()
-  ]
-})
-`
-
-const RlmExamplePage = (): ReactElement => (
-  <main className="guide-page">
-    <div className="guide-shell">
-      <GuideSidebar current="rlm" />
-      <article className="guide-article example-article">
-        <h1>Recursive Language Model</h1>
-        <p className="guide-intro">A durable RLM built from Tardigrade components.</p>
-        <div className="guide-divider" />
-        <h2>What is an RLM?</h2>
-        <p>An RLM puts long context inside a code environment. The model inspects and partitions that context, calls models over smaller pieces, and combines their work into one answer.</p>
-        <div className="rlm-reading">
-          <a href="https://alexzhang13.github.io/blog/2025/rlm/" rel="noreferrer" target="_blank">Original write-up</a>
-          <a href="https://arxiv.org/abs/2512.24601" rel="noreferrer" target="_blank">Read the paper</a>
-        </div>
-        <div className="rlm-diagram" role="img" aria-label="A long context enters a code environment that makes recursive model calls and returns a final answer">
-          <div className="rlm-context-card">
-            <span>context as data</span>
-            <div aria-hidden="true"><i /><i /><i /><i /><i /></div>
-            <code>context[0..n]</code>
-          </div>
-          <div className="rlm-diagram-arrow" aria-hidden="true" />
-          <div className="rlm-program-card">
-            <span>code environment</span>
-            <code>inspect(context)</code>
-            <code>partition(context)</code>
-            <strong>recursive model calls</strong>
-            <div className="rlm-subcalls" aria-hidden="true"><i>LM 01</i><i>LM 02</i><i>LM 03</i></div>
-          </div>
-          <div className="rlm-diagram-arrow" aria-hidden="true" />
-          <div className="rlm-answer-card">
-            <span>result</span>
-            <strong>final answer</strong>
-          </div>
-        </div>
-        <h2>Build it with Tardigrade</h2>
-        <p>Code mode provides the environment. Packages expose files, fetch, workspace storage, and child agents. Budgets and compaction keep the recursive work bounded.</p>
-        <div className="example-source-heading">
-          <span>README.md / Compose an agent</span>
-          <a href={`${REPOSITORY}#compose-an-agent`} rel="noreferrer" target="_blank"><Github />View on GitHub</a>
-        </div>
-        <CodeSnippet code={rlmSource} label="RLM implementation" />
-        <h2>How it is assembled</h2>
-        <div className="rlm-parts">
-          <div><code>codeMode</code><p>Lets the model act by writing JavaScript.</p></div>
-          <div><code>agentsPackage</code><p>Lets that code spawn durable child agents.</p></div>
-          <div><code>workspacePackage</code><p>Stores large values outside the model context.</p></div>
-          <div><code>budget + compaction</code><p>Bounds delegated work and the context sent to the model.</p></div>
-        </div>
-        <h2>Start from the quickstart</h2>
-        <p>Initialize a project, then replace its actor assembly with this RLM.</p>
-        <div className="guide-command"><CommandLine command="tdg init researcher" label="Initialize the RLM project" /></div>
-      </article>
-    </div>
-  </main>
-)
-
-const ConceptsPage = (): ReactElement => (
-  <main className="guide-page">
-    <div className="guide-shell">
-      <GuideSidebar current="concepts" />
-      <article className="guide-article concepts-article">
-        <h1>Core Concepts</h1>
-        <p className="guide-intro">Thinking in Tardigrade.</p>
-        <div className="guide-divider" />
-
-        <section className="concept-section concept-section-actor">
-          <div className="concept-copy">
-            <h2>Actors</h2>
-            <p>The core primitive of Tardigrade is an actor. At a high level, an actor is an addressable entity with state and behavior. Its history is recorded as an append-only log of events, and its current state is derived from that log.</p>
-            <p>Methods let the world call an actor. Components read the log and derive transitions, the units of work that define how the actor responds.</p>
-          </div>
-          <div className="concept-interface">
-            <span>interface</span>
-            <pre>{`actor({
-  name: string,
-  methods: ActorMethods,
-  components: Component[]
-})`}</pre>
-          </div>
-          <ActorDiagram />
-        </section>
-
-        <section className="concept-section concept-section-transitions">
-          <div className="concept-copy">
-            <h2>Transitions</h2>
-            <p>A transition describes one unit of work enabled by the actor's log. The runtime executes enabled transitions and records their outcomes as new events.</p>
-            <p>Transitions come in two types. An intent proposes events without external work. An external effect interacts with the world and returns events that record its outcome. Each transition has a key, which lets the runtime determine whether its result is already in the log.</p>
-          </div>
-          <div className="concept-interface">
-            <span>interface</span>
-            <pre>{`type Transition =
-  | { kind: "intent", key, events }
-  | { kind: "effect", key, act }`}</pre>
-          </div>
-          <div className="transition-example-copy">
-            <h3>Example: a tool-calling agent</h3>
-            <p>A message starts inference. A tool call starts service work. Its result enables inference again. A final response completes the method call.</p>
-          </div>
-          <div className="transition-loop-frame">
-            <TransitionLoop />
-          </div>
-          <p className="concept-bridge-copy">The actor runs enabled transitions until none remain, at which point it has settled. A component packages the logic that derives those transitions from the log.</p>
-        </section>
-
-        <section className="concept-section concept-section-components">
-          <div className="concept-copy">
-            <h2>Components</h2>
-            <p>A component packages part of an actor's behavior as a named, pure function over the log. It derives two things. Its view is the value its parent component consumes. Its transitions describe the work currently enabled.</p>
-            <p>Given the same log, a component returns the same view and transitions without performing external work. External work stays inside effect transitions, which the runtime executes. Components can compose other components, so an actor's behavior can be assembled from smaller parts.</p>
-          </div>
-          <div className="concept-interface">
-            <span>interface</span>
-            <pre>{`component({
-  name: string,
-  keys?: KeyFragment,
-  derive(log): { view, transitions }
-})`}</pre>
-          </div>
-          <p className="concept-bridge-copy">In the tool-calling agent, an inference component derives the language model transition, while a tool component derives the service transition. Events in the shared log connect them: a model response enables the tool component, and a tool result enables the inference component again.</p>
-          <div className="compaction-example-copy">
-            <h3>Example: compaction</h3>
-            <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction derives a transition that summarizes the older span. The transition appends <code>CompactionCompleted</code> to the log, and later model requests use its summary with a 64k-token tail. The full log remains unchanged.</p>
-          </div>
-          <div className="component-diagram-frame"><ComponentDiagram /></div>
-          <p className="concept-bridge-copy">Components define this internal behavior. Methods expose it to callers.</p>
-        </section>
-
-        <section className="concept-section concept-section-methods">
-          <div className="concept-copy">
-            <h2>Methods</h2>
-            <p>Methods define the actor's callable interface. Each method declares input and output schemas, turns a valid call into an event, and derives the call's pending, completed, or failed state from the log.</p>
-          </div>
-          <div className="concept-interface">
-            <span>interface</span>
-            <pre>{`actorMethod({
-  input, output, timeoutMs?,
-  event(call): Event,
-  state(log, id): MethodState
-})`}</pre>
-          </div>
-          <div className="method-diagram-frame"><MethodDiagram /></div>
-          <p className="concept-bridge-copy">For the tool-calling agent, the <code>message</code> method records the user's message. That event starts the transition loop. When the log contains a final response, the method returns its typed output. Each call has an identifier that links its input to its result and lets the log absorb duplicate deliveries.</p>
-        </section>
-
-      </article>
-    </div>
-  </main>
-)
-
 const ConsoleScene = (): ReactElement => (
   <div className="console-scene" aria-label="A tardigrade floating above Earth">
     <div className="console-log-clouds" aria-hidden="true">
@@ -968,7 +507,7 @@ const ConsoleScene = (): ReactElement => (
   </div>
 )
 
-const ConsolePage = (): ReactElement => (
+export const ConsolePage = (): ReactElement => (
   <main className="console-page">
     <section className="console-hero">
       <div className="console-copy">
@@ -985,45 +524,31 @@ const ConsolePage = (): ReactElement => (
 )
 
 const SiteFooter = (): ReactElement => {
-  const footerRef = useRef<HTMLElement | null>(null)
-  const [entered, setEntered] = useState(false)
-
-  useEffect(() => {
-    const footer = footerRef.current
-    if (footer === null || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return
-    const observer = new IntersectionObserver(([entry]) => {
-      if (!entry.isIntersecting) return
-      setEntered(true)
-      observer.disconnect()
-    }, { threshold: 0.55 })
-    observer.observe(footer)
-    return () => observer.disconnect()
-  }, [])
-
   return (
-    <footer className={`site-footer${entered ? " is-visible" : ""}`} ref={footerRef}>
+    <footer className="site-footer">
       <div className="footer-inner">
-        <a className="footer-brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
+        <Link className="footer-brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
         <nav className="footer-links" aria-label="Footer navigation">
-          <a href="/guide"><GuideIcon />Guide</a>
-          <a href="/console"><ConsoleIcon />Console</a>
+          <Link to="/docs/$" params={{ _splat: "quickstart" }}><GuideIcon />Quickstart</Link>
+          <Link to="/console"><ConsoleIcon />Console</Link>
           <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
           <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
+          <ThemeToggle />
         </nav>
       </div>
     </footer>
   )
 }
 
-export const App = (): ReactElement => {
+export const SiteShell = ({ children, pathname }: { readonly children: ReactNode; readonly pathname: string }): ReactElement => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
-  const guide = window.location.pathname === "/guide" || window.location.pathname.startsWith("/guide/")
-  const cli = window.location.pathname === "/cli" || window.location.pathname.startsWith("/cli/")
-  const concepts = window.location.pathname === "/concepts" || window.location.pathname.startsWith("/concepts/")
-  const examples = window.location.pathname === "/examples" || window.location.pathname.startsWith("/examples/")
-  const consolePage = window.location.pathname === "/console" || window.location.pathname.startsWith("/console/")
+  const guide = pathname === "/docs/quickstart"
+  const cli = pathname === "/docs/cli"
+  const concepts = pathname === "/docs/concepts"
+  const examples = pathname.startsWith("/docs/examples/")
+  const consolePage = pathname === "/console"
 
   useEffect(() => {
     if (!mobileMenuOpen) return
@@ -1054,21 +579,21 @@ export const App = (): ReactElement => {
     <header className="site-header" ref={headerRef}>
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
-          <a className="brand" href="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></a>
-          <a className="guide-link" href="/guide" aria-current={guide ? "page" : undefined}>Guide</a>
-          <a className="guide-link" href="/concepts" aria-current={concepts ? "page" : undefined}>Concepts</a>
-          <a className="guide-link" href="/cli" aria-current={cli ? "page" : undefined}>CLI</a>
-          <a className="guide-link" href="/examples/rlm" aria-current={examples ? "page" : undefined}>Examples</a>
+          <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
+          <Link className="guide-link" to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
         </div>
         <div className="nav-links">
-          <a href={`${REPOSITORY}/blob/main/docs/quickstart.md`} rel="noreferrer" target="_blank">Guide</a>
+          <Link to="/docs/$" params={{ _splat: "quickstart" }}>Quickstart</Link>
           <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Reference</a>
           <a href={`${REPOSITORY}/blob/main/docs/how-to/cli.md`} rel="noreferrer" target="_blank">CLI</a>
           <a href={`${REPOSITORY}/tree/main/apps/voyager`} rel="noreferrer" target="_blank">Voyager</a>
         </div>
         <div className="nav-actions">
-          <a className="docs-link" href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
-          <a className="console-link" href="/console" aria-current={consolePage ? "page" : undefined}>Console</a>
+          <Link className="docs-link" to="/docs">Docs</Link>
+          <Link className="console-link" to="/console" aria-current={consolePage ? "page" : undefined}>Console</Link>
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
           <button className="mobile-menu-trigger" type="button" aria-controls="mobile-navigation" aria-expanded={mobileMenuOpen} ref={menuButtonRef} onClick={() => setMobileMenuOpen((open) => !open)}>
             <MenuIcon />
@@ -1079,17 +604,17 @@ export const App = (): ReactElement => {
       <div className="mobile-nav-panel" data-open={mobileMenuOpen} id="mobile-navigation" aria-hidden={!mobileMenuOpen} inert={!mobileMenuOpen ? true : undefined}>
         <nav className="mobile-nav-panel-inner" aria-label="Mobile navigation">
           <div className="mobile-nav-primary">
-            <a className="mobile-nav-console" href="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</a>
+            <Link className="mobile-nav-console" to="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</Link>
             <div className="mobile-nav-sections">
-              <a href="/guide" aria-current={guide ? "page" : undefined}>Guide</a>
-              <a href="/concepts" aria-current={concepts ? "page" : undefined}>Concepts</a>
-              <a href="/cli" aria-current={cli ? "page" : undefined}>CLI</a>
-              <a href="/examples/rlm" aria-current={examples ? "page" : undefined}>Examples</a>
+              <Link to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
+              <Link to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
+              <Link to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
+              <Link to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
             </div>
           </div>
           <div className="mobile-nav-resources">
             <span>Resources</span>
-            <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Docs</a>
+            <Link to="/docs">Docs</Link>
             <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
             <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
           </div>
@@ -1097,7 +622,13 @@ export const App = (): ReactElement => {
       </div>
     </header>
 
-    {guide ? <GuidePage /> : concepts ? <ConceptsPage /> : cli ? <CliPage /> : examples ? <RlmExamplePage /> : consolePage ? <ConsolePage /> : <main>
+    {children}
+    <SiteFooter />
+  </>
+}
+
+export const LandingPage = (): ReactElement => (
+  <main>
       <section className="hero">
         <PuzzlePiece />
         <div className="hero-inner">
@@ -1119,7 +650,5 @@ export const App = (): ReactElement => {
       <Durability />
       <Observability />
       <Deployments />
-      <SiteFooter />
-    </main>}
-  </>
-}
+  </main>
+)

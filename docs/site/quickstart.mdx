@@ -1,0 +1,244 @@
+---
+title: Quickstart
+description: Build and deploy your first Tardie agent
+route: /docs/quickstart
+section: Introduction
+sectionOrder: 1
+order: 1
+---
+
+**Tardigrade** is a TypeScript framework for building durable, modular agents around an immutable event log. By the end of this guide, you will know how to run a Tardigrade agent locally, inspect its trajectory, and deploy it to the cloud.
+
+### Prerequisites
+
+1. [Bun](https://bun.sh/docs) 1.4 or above
+2. [Tardie CLI](/docs/cli) 0.18.0 or above
+3. An LLM API key from a provider of your choice
+
+For deployment, install either the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) for Cloudflare or the [Celld CLI](https://celld.dev/docs/) for your own cloud.
+
+### Initialize your project
+
+First, install the [Tardie CLI](/docs/cli).
+
+```bash variant="single"
+bun add -g tardie@latest
+```
+
+Now, use the [Tardie CLI](/docs/cli) to create a new `my-agent` directory and configure a language model provider.
+
+```bash variant="single"
+tdg init --template quickstart
+```
+
+After the setup, you should see the following files:
+
+<Filesystem root="my-agent/">
+  - `actor.ts` Actor, model, and components
+  - `worker.ts` Worker runtime entry
+  - `wrangler.jsonc` Cloudflare Worker configuration
+  - `celld.jsonc` Self-hosted Celld configuration
+  - `models.lock.json` Resolved deployment model scope
+  - `package.json` Dependencies and module metadata
+</Filesystem>
+
+Move into the new project directory:
+
+```bash variant="single"
+cd my-agent
+```
+
+### Define your first actor
+
+#### Hello world!
+
+For this Quickstart, we'll implement a simple agent with a tool that returns dummy weather data for a given city. In another guide, we'll explore a more advanced setup by building an agent that can execute JavaScript code, call MCP servers, and run subagents within a sandbox.
+
+As you follow along, you will see tip boxes that you can expand to learn what happens behind the scenes.
+
+<Tip title="About these tips">
+These notes explain what Tardigrade is doing behind the scenes. You can skip them and still complete the guide.
+</Tip>
+
+Within `actor.ts`, you will see the following code:
+
+```ts expanded
+import { Effect, actor, agentMessageMethod, infer, nativeOutput, system, tool } from "tardie"
+
+const actorName = "weather-agent"
+
+const actorInstructions = `
+Answer questions about the weather.
+Use the weather tool for current conditions.
+`.trim()
+
+const weather = tool({
+  spec: {
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    inputSchema: { type: "object" }
+  },
+  run: () => Effect.succeed({ temperature: 21 })
+})
+
+export default actor({
+  name: actorName,
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system(actorInstructions),
+    weather,
+    nativeOutput
+  ])]
+})
+```
+
+<Tip title="About actor components">
+A Tardigrade component has the following interface:
+
+```ts
+interface AgentComponent {
+  name: string
+  derive: (log: Event[]) => {
+    view: AgentView
+    transitions: Transition[]
+  }
+}
+```
+
+Components are pure functions over the agent log that define the agent's behaviors. For example, tool calling is a behavior where when a model makes a tool call response, a `ToolCalled` event is appended to the log. The `tool` component "reacts" to the `ToolCalled` event by running the associated effect and appending `ToolReturned` as the response. In the case of weather, it returns dummy weather data.&#x20;
+
+In the Quickstart actor, weather is defined as a tool component, which is a higher level component that abstracts the core component interface. It automatically adds the tool to the agent view and defines a transition that reacts to tool calls by the model.
+
+```ts
+const weather = tool({
+  spec: {
+    name: "get_weather",
+    description: "Get the current weather for a city",
+    inputSchema: { type: "object" }
+  },
+  run: () => Effect.succeed({ temperature: 21 })
+})
+```
+
+As you build with Tardigrade, you would realize that this simple way of defining behavior could compose to describe more complex behaviors like compaction, subagents and so on. In fact, user message is just another type of event and nothing special at all! In this case, we run inference on a model with the provided input.&#x20;
+</Tip>
+
+### Running it locally
+
+We'll test the agent by running it locally. Use the following command to bundle and serve `actor.ts`.
+
+```bash variant="single"
+tdg dev
+```
+
+The server runs on `localhost:4242` when the port is available and prints the selected address. It also opens a local explorer for the agent's log.
+
+### Send your first message
+
+Once you have the agent running, you can send your first message.
+
+```bash variant="single"
+tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
+```
+
+<Tip title="About actor methods">
+The actor code defines the following method:
+
+```ts highlight="3"
+export default actor({
+  name: actorName,
+  methods: { message: agentMessageMethod },
+  components: [infer([
+    system(actorInstructions),
+    weather,
+    nativeOutput
+  ])]
+})
+```
+
+In Tardigrade, a method defines the typed interface of an actor. Different actors can expose different methods. A typical agent accepts text and an optional model, then returns text.
+
+```ts
+message: {
+  input: {
+    text: string
+    input?: unknown
+    model?: {
+      provider: string
+      model_id: string
+    }
+  }
+  output: string
+}
+```
+</Tip>
+
+### Inspecting the actor logs
+
+After your call, you will see `.tardigrade/actor.sqlite`. This SQLite database holds the actor's event logs. An event log is an immutable, append-only ledger of events sent to the actor and events generated by the actor.
+
+<Filesystem root=".tardigrade/">
+  - `actor.sqlite` Actor event log
+</Filesystem>
+
+A simplified view of the message includes the following events. The log also records the model requests and responses.
+
+<EventLog>
+  1. `ThreadCreated` `{ address: { ... } }`
+  2. `MessageReceived` `{ text: "What is the weather..." }`
+  3. `ToolCalled` `{ name: "get_weather", arguments: { ... } }`
+  4. `ToolReturned` `{ result: { ... } }`
+  5. `TurnCompleted` `{ output: "..." }`
+</EventLog>
+
+These events are stored locally and persist across runs. Each thread has its own event log within the same SQLite database.
+
+You can use the following command to view the events:
+
+```bash variant="single"
+tdg events <thread>
+```
+
+If you used the command in this guide, the first message landed in a thread called `quickstart`. To view its events, run:
+
+```bash variant="single"
+tdg events quickstart
+```
+
+### Send a follow up message
+
+To send a follow up message, simply send another message to the same thread:
+
+```bash variant="single"
+tdg call message '{"text":"How about San Francisco?"}' --thread quickstart
+```
+
+### Deploy your agent
+
+Now that we've tested our agent, let's deploy it. To deploy the agent on Cloudflare, run:
+
+```bash variant="single"
+wrangler deploy
+```
+
+To deploy it on your own cloud, use Celld:
+
+```bash variant="single"
+celld deploy
+```
+
+### Send a message to your cloud agent
+
+Once your deployment has gone through, your agent could be accessed through an endpoint on the internet. Try making the following request to see it respond:
+
+```bash
+curl -X PUT "$ACTOR_URL/v1/threads/quickstart/methods/message/calls/first" \
+  -H 'content-type: application/json' \
+  -d '{"text":"What is the weather in Singapore?"}'
+
+curl "$ACTOR_URL/v1/threads/quickstart/methods/message/calls/first"
+```
+
+### Going further
+
+Congrats! You've got your first durable agent running. In an upcoming guide, you will learn how to build your own Slack or Telegram bot, connect it to external services, and use its logs as a source of durable memory.

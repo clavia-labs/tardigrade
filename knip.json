@@ -80,6 +80,15 @@
         "src/**/*.{ts,tsx}!",
         "dev/**/*.ts"
       ]
+    },
+    "apps/web": {
+      "entry": [
+        "../../docs/site/**/*.mdx"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}!",
+        "../../docs/site/**/*.mdx"
+      ]
     }
   }
 }

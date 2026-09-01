@@ -32,7 +32,7 @@ import {
   outputRepair,
   outputRepairFor,
   outputRetryRequested,
-  toolList
+  tool
 } from "../index"
 import { agentMethods } from "../actor/methods"
 
@@ -894,7 +894,7 @@ describe("the mind on a native surface", () => {
   test("a turn completes with no budget, code, or compaction reactors", async () => {
     const reads: string[] = []
     const mind = assembled(infer([
-      toolList([
+      tool([
         {
           spec: { name: "read", description: "read a file", inputSchema: { type: "object", properties: { path: { type: "string" } } } },
           run: (input: unknown) => {

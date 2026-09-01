@@ -15,10 +15,11 @@ const platformPkg = (name: string) => `${root}platform/${name}`
 const platforms = ["model", "bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
+const typecheckedApps = [...apps, "web"]
 const e2e = `${root}e2e`
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
 // can resolve and emit them.
-const bundled = ["voyager"]
+const bundled = ["voyager", "web"]
 
 const tsconfigsIn = (directory: string): ReadonlyArray<string> =>
   [...new Bun.Glob("tsconfig*.json").scanSync({ cwd: directory, absolute: true, onlyFiles: true })]
@@ -29,7 +30,7 @@ const effectProjects = [
   ...tsconfigsIn(root),
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
-  ...apps.flatMap((name) => tsconfigsIn(appPkg(name))),
+  ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
   ...tsconfigsIn(e2e)
 ]
 
@@ -65,7 +66,7 @@ const tasks: ReadonlyArray<Task> = [
   { id: "typecheck:tools", cmd: ["bun", "--bun", "node_modules/.bin/tsc", "--noEmit"] },
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
-  ...apps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),

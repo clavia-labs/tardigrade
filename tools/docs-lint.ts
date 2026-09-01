@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises"
+import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 // The markdown gate. The house rules for prose are as mechanical as the ones for code, so they are
@@ -13,15 +13,15 @@ import { join } from "node:path"
 
 const root = join(import.meta.dir, "..")
 
-// Every page in docs/ is found rather than listed, so a new page cannot escape the check.
-const pages = (await readdir(join(root, "docs"))).filter((name) => name.endsWith(".md"))
+// Every Markdown and MDX page under docs/ is found rather than listed, so a nested page cannot escape the check.
+const pages = [...new Bun.Glob("**/*.{md,mdx}").scanSync({ cwd: join(root, "docs"), onlyFiles: true })]
 const files = [
   "README.md",
   "AGENTS.md",
   "CLAUDE.md",
   "CONTRIBUTING.md",
   ".github/PULL_REQUEST_TEMPLATE.md",
-  ...pages.map((name) => `docs/${name}`)
+  ...pages.map((name) => `docs/${name}`).sort()
 ]
 
 interface Problem {
@@ -64,10 +64,16 @@ const check = (file: string, text: string): ReadonlyArray<Problem> => {
   const problems: Array<Problem> = []
   const lines = text.split("\n")
   let fenced = false
+  let frontmatter = false
   lines.forEach((line, index) => {
     const number = index + 1
     const add = (rule: string, detail: string) => problems.push({ file, line: number, rule, detail })
-    if (/^\s*(```|~~~)/.test(line)) {
+    if ((index === 0 || frontmatter) && line === "---") {
+      frontmatter = !frontmatter
+      return
+    }
+    if (frontmatter) return
+    if (/^\s*(?:```|~~~)/.test(line) || line.trim() === "$$") {
       fenced = !fenced
       return
     }
