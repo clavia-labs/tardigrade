@@ -608,7 +608,7 @@ export const devCommand = Command.make("dev", {
     const cli = yield* Cli
     if (!existsSync(resolve(cli.cwd, DEFAULT_ACTOR_ENTRY))) {
       return yield* userErrorOf(
-        `no Tardigrade project found in ${cli.cwd}. Run \`tdg init\`, enter the created project directory, then run \`tdg dev\` again.`
+        `no Tardigrade project found in ${cli.cwd}. Run \`tdg init\`, navigate to the created project directory, then run \`tdg dev\` again.`
       )
     }
     const localSecrets = yield* readSetupEnv(cli.cwd)
