@@ -22,7 +22,7 @@ import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-serve
 import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActor } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
 import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
-import { DEFAULT_ACTOR_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
 import { resolveModelLock, writeModelLock } from "./model-lock"
 import {
@@ -467,6 +467,7 @@ export const initCommand = Command.make("init", {
     const name = declaredName ?? (canAsk()
       ? yield* Prompt.text({
         message: "Actor name",
+        default: DEFAULT_INIT_ACTOR_NAME,
         validate: (value) => {
           const candidate = value.trim()
           return ACTOR_NAME_PATTERN.test(candidate)
