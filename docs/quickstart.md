@@ -115,6 +115,8 @@ An agent is three reactors over one log. The complete runnable version of this e
 #### Tools
 **Running tools.** Start with a projection: which calls have no result yet?
 
+Large tool results spill into the agent workspace. `workspace.read({ ref })` returns a bounded slice and an opaque `nextCursor` while more content remains. The complete serialized read answer uses the same default bound as spilling, so reading a spill does not create another spill. The next call passes that cursor alone, as in `workspace.read({ cursor: previous.nextCursor })`. The cursor contains the resource and next position, so the workspace can continue without per-agent pagination state. An explicit `ref` and `offset` remain available for random access and for locations returned by `workspace.grep`.
+
 ```ts
 // unansweredCalls returns tool calls with no matching result.
 const unansweredCalls: Projection<ToolCalled[]> = (events) =>

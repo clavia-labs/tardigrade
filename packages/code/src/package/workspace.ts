@@ -1,7 +1,7 @@
 import { Context, Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
+import { DEFAULT_SPILL_POLICY, hydrate, refs } from "../storage/store"
 import { definePackage, type Package } from "./definition"
-import { hydrate, refs } from "../storage/store"
 
 // The workspace package: the model's own view of the store its spilled values live in (store.ts).
 // `read` and `grep` are derived from the store alone, so every backend the platform can bind
@@ -35,19 +35,27 @@ export const WorkspaceSql: Context.Reference<SqlRunner | undefined> = Context.Re
   defaultValue: (): SqlRunner | undefined => undefined
 })
 
-// WorkspacePolicy bounds what one call can put in a turn's context. `sliceChars` caps `read`, and a
-// larger `length` argument clamps to it. `contextChars` is the window `grep` returns on each side of
-// a match, and `maxMatches` is where a match-heavy pattern stops and reports itself truncated.
+// WorkspacePolicy bounds what one call can put in a turn's context. `sliceChars` caps the source
+// characters `read` considers, and `inlineChars` caps its complete serialized answer so that answer
+// stays below the spill bound. `contextChars` is the window `grep` returns on each side of a match,
+// and `maxMatches` is where a match-heavy pattern stops and reports itself truncated.
 export interface WorkspacePolicy {
   readonly sliceChars: number
+  readonly inlineChars: number
   readonly contextChars: number
   readonly maxMatches: number
 }
 
-export const DEFAULT_WORKSPACE_POLICY: WorkspacePolicy = { sliceChars: 32_768, contextChars: 200, maxMatches: 50 }
+export const DEFAULT_WORKSPACE_POLICY: WorkspacePolicy = {
+  sliceChars: 32_768,
+  inlineChars: DEFAULT_SPILL_POLICY.spillBytes,
+  contextChars: 200,
+  maxMatches: 50
+}
 
 export const workspacePolicyOf = (policy: Partial<WorkspacePolicy> = {}): WorkspacePolicy => ({
   sliceChars: policy.sliceChars ?? DEFAULT_WORKSPACE_POLICY.sliceChars,
+  inlineChars: policy.inlineChars ?? DEFAULT_WORKSPACE_POLICY.inlineChars,
   contextChars: policy.contextChars ?? DEFAULT_WORKSPACE_POLICY.contextChars,
   maxMatches: policy.maxMatches ?? DEFAULT_WORKSPACE_POLICY.maxMatches
 })
@@ -60,6 +68,49 @@ export const WORKSPACE_SQL_DESCRIPTION =
 export interface WorkspaceOptions {
   readonly sql?: SqlRunner
   readonly policy?: Partial<WorkspacePolicy>
+}
+
+interface WorkspaceCursor {
+  readonly version: 1
+  readonly ref: string
+  readonly offset: number
+  readonly length: number
+}
+
+const encodeBase64Url = (value: string): string => {
+  const bytes = new TextEncoder().encode(value)
+  let binary = ""
+  for (const byte of bytes) binary += String.fromCharCode(byte)
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "")
+}
+
+const decodeBase64Url = (value: string): string => {
+  const padded = value.replaceAll("-", "+").replaceAll("_", "/").padEnd(Math.ceil(value.length / 4) * 4, "=")
+  const binary = atob(padded)
+  return new TextDecoder().decode(Uint8Array.from(binary, (character) => character.charCodeAt(0)))
+}
+
+const workspaceCursor = (cursor: WorkspaceCursor): string => `w1.${encodeBase64Url(JSON.stringify(cursor))}`
+
+const workspaceCursorOf = (value: string): WorkspaceCursor | undefined => {
+  try {
+    if (!value.startsWith("w1.")) return undefined
+    const decoded = JSON.parse(decodeBase64Url(value.slice(3))) as Partial<WorkspaceCursor>
+    if (
+      decoded.version !== 1 ||
+      typeof decoded.ref !== "string" ||
+      decoded.ref === "" ||
+      !Number.isInteger(decoded.offset) ||
+      decoded.offset! < 0 ||
+      !Number.isInteger(decoded.length) ||
+      decoded.length! < 1
+    ) {
+      return undefined
+    }
+    return decoded as WorkspaceCursor
+  } catch {
+    return undefined
+  }
 }
 
 // workspacePackage builds the package. The store is a requirement of its methods, stated in the
@@ -100,15 +151,28 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
     docs: {
       ...(runner === undefined ? {} : { sql: sqlDoc }),
       read: {
-        description: `A bounded slice of one spilled value by ref, any size. offset/length in characters; length caps at ${policy.sliceChars}. \`size\` is the whole value's length, so an offset past the end answers with an empty slice and the size to aim at.`,
+        description: `A bounded slice of one spilled value. Start with ref and optional offset/length, then pass nextCursor alone to continue without repeating or skipping a range. Requested length caps at ${policy.sliceChars} characters, and the complete answer caps at ${policy.inlineChars} serialized characters so it stays inline. done says the value is exhausted.`,
         input: {
           type: "object",
-          properties: { ref: { type: "string" }, offset: { type: "number" }, length: { type: "number" } },
-          required: ["ref"]
+          properties: {
+            ref: { type: "string" },
+            cursor: { type: "string" },
+            offset: { type: "number" },
+            length: { type: "number" }
+          }
         },
         output: {
           type: "object",
-          properties: { slice: { type: "string" }, size: { type: "number" }, error: { type: "string" } }
+          properties: {
+            ref: { type: "string" },
+            offset: { type: "number" },
+            length: { type: "number" },
+            size: { type: "number" },
+            done: { type: "boolean" },
+            nextCursor: { type: "string" },
+            slice: { type: "string" },
+            error: { type: "string" }
+          }
         }
       },
       grep: {
@@ -139,13 +203,51 @@ export const workspacePackage = (options: WorkspaceOptions = {}): Package<KeyVal
       // turn's context is what the cap protects (workspace.test.ts, W3).
       read: (args: unknown) =>
         Effect.gen(function* () {
-          const a = args as { ref?: string; offset?: number; length?: number } | undefined
-          if (!a?.ref) return { error: "workspace.read needs { ref }" }
-          const whole = yield* hydrate(a.ref).pipe(Effect.orElseSucceed(() => undefined))
-          if (whole === undefined) return { error: `no value under ref '${a.ref}'` }
-          const from = Math.max(0, Math.floor(a.offset ?? 0))
-          const take = Math.min(Math.max(0, Math.floor(a.length ?? policy.sliceChars)), policy.sliceChars)
-          return { slice: whole.slice(from, from + take), size: whole.length }
+          const a = args as { ref?: string; cursor?: string; offset?: number; length?: number } | undefined
+          let request: { readonly ref: string; readonly offset: number; readonly length: number }
+          if (a?.cursor !== undefined) {
+            if (a.ref !== undefined || a.offset !== undefined || a.length !== undefined) {
+              return { error: "workspace.read accepts cursor alone or ref with optional offset/length" }
+            }
+            const cursor = workspaceCursorOf(a.cursor)
+            if (cursor === undefined) return { error: "invalid workspace.read cursor" }
+            request = cursor
+          } else {
+            if (!a?.ref) return { error: "workspace.read needs { ref } or { cursor }" }
+            request = { ref: a.ref, offset: a.offset ?? 0, length: a.length ?? policy.sliceChars }
+          }
+          const whole = yield* hydrate(request.ref).pipe(Effect.orElseSucceed(() => undefined))
+          if (whole === undefined) return { error: `no value under ref '${request.ref}'` }
+          const from = Math.max(0, Math.floor(request.offset))
+          const take = Math.min(Math.max(0, Math.floor(request.length)), policy.sliceChars)
+          const answer = (length: number) => {
+            const slice = whole.slice(from, from + length)
+            const nextOffset = from + slice.length
+            const done = take === 0 || nextOffset >= whole.length
+            return {
+              ref: request.ref,
+              offset: from,
+              length: slice.length,
+              size: whole.length,
+              done,
+              ...(!done
+                ? { nextCursor: workspaceCursor({ version: 1, ref: request.ref, offset: nextOffset, length: take }) }
+                : {}),
+              slice
+            }
+          }
+          let low = 0
+          let high = Math.min(take, Math.max(0, whole.length - from))
+          while (low < high) {
+            const middle = Math.ceil((low + high) / 2)
+            if (JSON.stringify(answer(middle)).length <= policy.inlineChars) low = middle
+            else high = middle - 1
+          }
+          const result = answer(low)
+          if (low === 0 && from < whole.length && take > 0) {
+            return { error: `workspace.read inline cap ${policy.inlineChars} is too small for its response metadata` }
+          }
+          return result
         }),
       // Every value the manifest names is searched whole, so a match inside a value far too large
       // for one event is still found and located (workspace.test.ts, W4).
