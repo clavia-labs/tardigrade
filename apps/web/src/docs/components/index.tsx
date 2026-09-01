@@ -1,21 +1,10 @@
-import { Children, cloneElement, isValidElement, useEffect, useState, type ComponentPropsWithoutRef, type CSSProperties, type MouseEvent, type ReactElement, type ReactNode } from "react"
+import { Children, cloneElement, isValidElement, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
 
 import { ActorDiagram } from "../../ActorDiagram"
 import { ComponentDiagram } from "../../ComponentDiagram"
 import { MethodDiagram } from "../../MethodDiagram"
 import { TransitionLoop } from "../../TransitionLoop"
-
-export const CopyIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M9 8h9v11H9zM6 16H5V5h9v1" />
-  </svg>
-)
-
-export const CheckIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeLinecap="square" strokeLinejoin="miter" strokeWidth="1.8" d="m5 12.5 4.2 4.2L19 7" />
-  </svg>
-)
+import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
 
 const BulbIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M8.5 15.5A7 7 0 1 1 15.5 15.5C14.6 16.2 14 17 14 18h-4c0-1-.6-1.8-1.5-2.5Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
@@ -25,70 +14,20 @@ const ChevronIcon = (): ReactElement => (
   <svg viewBox="0 0 20 20" aria-hidden="true"><path d="m6.5 8 3.5 3.5L13.5 8" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.6" /></svg>
 )
 
-export const useCopiedState = (): readonly [boolean, () => void] => {
-  const [copied, setCopied] = useState(false)
-  useEffect(() => {
-    if (!copied) return
-    const reset = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(reset)
-  }, [copied])
-  return [copied, () => setCopied(true)]
-}
-
 const Command = ({ label, value }: { readonly label?: string; readonly value: string }): ReactElement => {
-  const [copied, markCopied] = useCopiedState()
-  const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(value)
-    markCopied()
-  }
+  const [copied, copy] = useCopy()
   return (
     <div className="guide-command">
       <div className="install-command" aria-label={label ?? value}>
         <span aria-hidden="true">$</span>
         <code>{value}</code>
-        <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copy()}>
+        <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copy(value)}>
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       </div>
     </div>
   )
 }
-
-const ProjectTree = ({ children, name, runtime = false }: { readonly children: ReactNode; readonly name: string; readonly runtime?: boolean }): ReactElement => (
-  <div className={`guide-scaffold${runtime ? " guide-runtime-store" : ""}`} aria-label={`${name} project structure`}>
-    <strong>{name}</strong>
-    <ul>{children}</ul>
-  </div>
-)
-
-const ProjectFile = ({ children, name }: { readonly children: ReactNode; readonly name: string }): ReactElement => (
-  <li><code>{name}</code><span /><p>{children}</p></li>
-)
-
-const AnnotatedExample = ({ children }: { readonly children: ReactNode }): ReactElement => {
-  const [copied, markCopied] = useCopiedState()
-  const copy = async (event: MouseEvent<HTMLButtonElement>): Promise<void> => {
-    const example = event.currentTarget.closest(".guide-actor-example")
-    const code = Array.from(example?.querySelectorAll("pre") ?? []).map((block) => block.textContent ?? "").join("\n\n")
-    await navigator.clipboard.writeText(code)
-    markCopied()
-  }
-  return (
-    <div className="guide-actor-example">
-      <button className="guide-code-copy" type="button" aria-label={copied ? "Actor copied" : "Copy actor"} onClick={(event) => void copy(event)}>
-        {copied ? <CheckIcon /> : <CopyIcon />}
-      </button>
-      {children}
-    </div>
-  )
-}
-
-const AnnotatedCode = ({ children, description, title, tone }: { readonly children: ReactNode; readonly description: string; readonly title: string; readonly tone: string }): ReactElement => (
-  <div className="guide-code-row" data-tone={tone}>
-    {children}
-    <aside><strong>{title}</strong><p>{description}</p></aside>
-  </div>
-)
 
 const textFrom = (node: ReactNode): string => {
   if (typeof node === "string" || typeof node === "number") return String(node)
@@ -103,20 +42,6 @@ const languageOf = (children: ReactNode): string => {
   return match?.[1] ?? "text"
 }
 
-const highlightedShell = (source: string): ReactNode => {
-  let executable = true
-  return (source.match(/(?:'[^']*'|"(?:\\.|[^"])*"|\$[A-Za-z_][A-Za-z0-9_]*|--?[A-Za-z0-9-]+|\s+|[^\s]+)/g) ?? [source]).map((token, index) => {
-    if (/^\s+$/.test(token)) return token
-    if (executable) {
-      executable = false
-      return <span className="docs-shell-command" key={index}>{token}</span>
-    }
-    if (token.startsWith("-") || token.startsWith("$")) return <span className="docs-shell-flag" key={index}>{token}</span>
-    if ((token.startsWith("'") && token.endsWith("'")) || (token.startsWith('"') && token.endsWith('"'))) return <span className="docs-shell-string" key={index}>{token}</span>
-    return token
-  })
-}
-
 type CodeProps = ComponentPropsWithoutRef<"pre"> & {
   readonly expanded?: boolean | undefined
   readonly highlight?: number | string | undefined
@@ -124,23 +49,19 @@ type CodeProps = ComponentPropsWithoutRef<"pre"> & {
 }
 
 const Code = ({ children, expanded = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
-  const [copied, markCopied] = useCopiedState()
+  const [copied, copy] = useCopy()
   const language = languageOf(children)
   const highlightedLine = Number(highlight)
   const highlightStyle = Number.isInteger(highlightedLine) && highlightedLine > 0
     ? { "--docs-highlight-offset": `${(highlightedLine - 1) * 1.7}em` } as CSSProperties
     : undefined
-  const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(textFrom(children).trimEnd())
-    markCopied()
-  }
+  const source = textFrom(children).trimEnd()
   if (variant === "single") {
-    const source = textFrom(children).trimEnd()
     return (
       <div className="install-command docs-code-single" aria-label={`${language} command`}>
         <span aria-hidden="true">$</span>
-        {language === "bash" ? <code className="docs-shell-code">{highlightedShell(source)}</code> : children}
-        <button type="button" aria-label={copied ? "Code copied" : "Copy code"} title={copied ? "Copied" : "Copy code"} onClick={() => void copy()}>
+        {children}
+        <button type="button" aria-label={copied ? "Code copied" : "Copy code"} title={copied ? "Copied" : "Copy code"} onClick={() => void copy(source)}>
           {copied ? <CheckIcon /> : <CopyIcon />}
         </button>
       </div>
@@ -150,7 +71,7 @@ const Code = ({ children, expanded = false, highlight, variant = "multi", ...pro
     <div className="concept-code docs-code" data-expanded={expanded} data-highlight={highlightStyle === undefined ? undefined : "true"} style={highlightStyle}>
       <div className="docs-code-header"><span>{language}</span></div>
       <pre {...props}>{children}</pre>
-      <button type="button" aria-label={copied ? "Code copied" : "Copy code"} onClick={() => void copy()}>
+      <button type="button" aria-label={copied ? "Code copied" : "Copy code"} onClick={() => void copy(source)}>
         {copied ? <CheckIcon /> : <CopyIcon />}
       </button>
     </div>
@@ -226,8 +147,6 @@ const RlmDiagram = (): ReactElement => (
 
 export const mdxComponents = {
   ActorDiagram,
-  AnnotatedCode,
-  AnnotatedExample,
   Command,
   ComponentDiagram,
   ConceptInterface,
@@ -235,8 +154,6 @@ export const mdxComponents = {
   EventLog,
   Filesystem,
   MethodDiagram,
-  ProjectFile,
-  ProjectTree,
   RlmDiagram,
   Tip,
   TransitionLoop,

@@ -3,7 +3,9 @@ import { useEffect, useRef, useState, type ReactElement, type ReactNode } from "
 import { ComponentBridge } from "./ComponentBridge"
 import { FlowOverlay } from "./FlowOverlay"
 import { IsometricEventLog } from "./IsometricEventLog"
+import { PuzzleGrid } from "./PuzzleGrid"
 import { WorldGlobe } from "./WorldGlobe"
+import { CheckIcon, CopyIcon, useCopy } from "./ui/copy"
 
 const REPOSITORY = "https://github.com/clavia-labs/tardigrade"
 const SHOW_HARNESS_CONTROLS = import.meta.env.VITE_SHOW_HARNESS_CONTROLS === "true"
@@ -63,18 +65,6 @@ const ConsoleIcon = (): ReactElement => (
   </svg>
 )
 
-const CopyIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeWidth="1.8" d="M9 8h9v11H9zM6 16H5V5h9v1" />
-  </svg>
-)
-
-const CheckIcon = (): ReactElement => (
-  <svg viewBox="0 0 24 24" aria-hidden="true">
-    <path fill="none" stroke="currentColor" strokeLinecap="square" strokeLinejoin="miter" strokeWidth="1.8" d="m5 12.5 4.2 4.2L19 7" />
-  </svg>
-)
-
 const MoonIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 15.2A8.5 8.5 0 0 1 8.8 4 8.5 8.5 0 1 0 20 15.2Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
 )
@@ -101,40 +91,24 @@ const ThemeToggle = (): ReactElement => {
 }
 
 const CopyPromptButton = (): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  const copyPrompt = async (): Promise<void> => {
-    await navigator.clipboard.writeText(STARTER_PROMPT)
-    setCopied(true)
-  }
+  const [copied, copy] = useCopy()
 
   return (
-    <button className="button button-primary" type="button" onClick={() => void copyPrompt()}>
-      <CopyIcon />
+    <button className="button button-primary" type="button" onClick={() => void copy(STARTER_PROMPT)}>
+      {copied ? <CheckIcon /> : <CopyIcon />}
       {copied ? "Copied" : "Copy prompt"}
     </button>
   )
 }
 
 const CommandLine = ({ command, label }: { readonly command: string; readonly label: string }): ReactElement => {
-  const [copied, setCopied] = useState(false)
-
-  useEffect(() => {
-    if (!copied) return
-    const reset = window.setTimeout(() => setCopied(false), 1800)
-    return () => window.clearTimeout(reset)
-  }, [copied])
-
-  const copyCommand = async (): Promise<void> => {
-    await navigator.clipboard.writeText(command)
-    setCopied(true)
-  }
+  const [copied, copy] = useCopy()
 
   return (
     <div className="install-command" aria-label={label}>
       <span aria-hidden="true">$</span>
       <code>{command}</code>
-      <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copyCommand()}>
+      <button type="button" aria-label={copied ? "Command copied" : "Copy command"} title={copied ? "Copied" : "Copy command"} onClick={() => void copy(command)}>
         {copied ? <CheckIcon /> : <CopyIcon />}
       </button>
     </div>
@@ -168,52 +142,11 @@ const providers: ReadonlyArray<Provider> = [
   { name: "MinIO", href: "https://min.io/", icon: "https://cdn.simpleicons.org/minio/c72e49" }
 ]
 
-type Point = { readonly x: number; readonly y: number }
-
-const puzzlePoint = (start: Point, end: Point, normal: Point, progress: number, offset: number): Point => ({
-  x: start.x + (end.x - start.x) * progress + normal.x * offset,
-  y: start.y + (end.y - start.y) * progress + normal.y * offset
-})
-
-const puzzleCoordinate = ({ x, y }: Point): string => `${x.toFixed(1)} ${y.toFixed(1)}`
-
-const puzzleEdge = (start: Point, end: Point, normal: Point, direction: number): string => {
-  if (direction === 0) return `L ${puzzleCoordinate(end)}`
-  const depth = Math.hypot(end.x - start.x, end.y - start.y) * 0.13 * direction
-  return [
-    `L ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.34, 0))}`,
-    `C ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.4, 0))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.4, depth * 1.3))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.5, depth * 1.3))}`,
-    `C ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.6, depth * 1.3))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.6, 0))} ${puzzleCoordinate(puzzlePoint(start, end, normal, 0.66, 0))}`,
-    `L ${puzzleCoordinate(end)}`
-  ].join(" ")
-}
-
-const puzzleDirection = (row: number, column: number, axis: number): number => (Math.abs(row * 31 + column * 17 + axis * 13) % 2 === 0 ? 1 : -1)
-
-const puzzlePath = (row: number, column: number, size: number, inset: number): string => {
-  const left = inset + column * size
-  const top = inset + row * size
-  const right = left + size
-  const bottom = top + size
-  return [
-    `M ${left} ${top}`,
-    puzzleEdge({ x: left, y: top }, { x: right, y: top }, { x: 0, y: -1 }, -puzzleDirection(row - 1, column, 0)),
-    puzzleEdge({ x: right, y: top }, { x: right, y: bottom }, { x: 1, y: 0 }, puzzleDirection(row, column, 1)),
-    puzzleEdge({ x: right, y: bottom }, { x: left, y: bottom }, { x: 0, y: 1 }, puzzleDirection(row, column, 0)),
-    puzzleEdge({ x: left, y: bottom }, { x: left, y: top }, { x: -1, y: 0 }, -puzzleDirection(row, column - 1, 1)),
-    "Z"
-  ].join(" ")
-}
-
-const puzzleLayout = Array.from({ length: 24 }, (_, index) => {
-  const row = Math.floor(index / 12)
-  const column = index % 12
-  return { row, column }
-})
+const puzzleRows = ["111111111111", "111111111111"]
 
 const PuzzlePiece = (): ReactElement => (
   <div className="puzzle-art" aria-hidden="true">
-    <svg className="puzzle-piece" viewBox="0 -30 1680 340" preserveAspectRatio="xMidYMid meet">
+    <PuzzleGrid className="puzzle-piece" pathClassName={(row, column) => `puzzle-tone-${(row * 3 + column) % 5}`} preserveAspectRatio="xMidYMid meet" rows={puzzleRows} size={140} tabRatio={0.169} viewBox="0 -30 1680 340">
       <defs>
         <pattern id="puzzle-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line className="puzzle-hatch-line" x1="0" y1="0" x2="0" y2="9" />
@@ -222,14 +155,7 @@ const PuzzlePiece = (): ReactElement => (
           <path className="puzzle-hatch-line" d="M 0 12 L 12 0 M -3 3 L 3 -3 M 9 15 L 15 9" />
         </pattern>
       </defs>
-      {puzzleLayout.map((piece) => (
-        <path
-          className={`puzzle-tone-${(piece.row * 3 + piece.column) % 5}`}
-          d={puzzlePath(piece.row, piece.column, 140, 0)}
-          key={`${piece.row}-${piece.column}`}
-        />
-      ))}
-    </svg>
+    </PuzzleGrid>
   </div>
 )
 

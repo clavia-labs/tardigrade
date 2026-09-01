@@ -59,7 +59,7 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
   }
 }
 
-export const docs: ReadonlyArray<Doc> = Object.entries(modules)
+const docs: ReadonlyArray<Doc> = Object.entries(modules)
   .map(([source, module]) => ({ Content: module.default, frontmatter: readFrontmatter(module.frontmatter, source), markdown: markdown[source] ?? "", source }))
   .filter((doc) => doc.frontmatter.draft !== true)
   .sort((left, right) => left.frontmatter.sectionOrder - right.frontmatter.sectionOrder || left.frontmatter.order - right.frontmatter.order)
@@ -69,6 +69,13 @@ for (const doc of docs) {
   if (routes.has(doc.frontmatter.route)) throw new Error(`${doc.source}: duplicate docs route ${doc.frontmatter.route}`)
   routes.add(doc.frontmatter.route)
 }
+
+export const docSections: ReadonlyArray<readonly [string, ReadonlyArray<Doc>]> = [...docs.reduce<Map<string, Array<Doc>>>((grouped, doc) => {
+  const pages = grouped.get(doc.frontmatter.section) ?? []
+  pages.push(doc)
+  grouped.set(doc.frontmatter.section, pages)
+  return grouped
+}, new Map()).entries()]
 
 export const DEFAULT_DOC_ROUTE = "/docs/quickstart"
 

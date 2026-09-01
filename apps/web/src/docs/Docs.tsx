@@ -2,17 +2,14 @@ import { MDXProvider } from "@mdx-js/react"
 import { Link } from "@tanstack/react-router"
 import { Fragment, type ReactElement } from "react"
 
-import { CheckIcon, CopyIcon, mdxComponents, useCopiedState } from "./components"
-import { docAt, docs, type Doc } from "./load"
+import { CheckIcon, CopyIcon, useCopy } from "../ui/copy"
+import { mdxComponents } from "./components"
+import { docAt, docSections, type Doc } from "./load"
 
 const CopyMarkdownButton = ({ markdown }: { readonly markdown: string }): ReactElement => {
-  const [copied, markCopied] = useCopiedState()
-  const copy = async (): Promise<void> => {
-    await navigator.clipboard.writeText(markdown)
-    markCopied()
-  }
+  const [copied, copy] = useCopy()
   return (
-    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copy()}>
+    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copy(markdown)}>
       {copied ? <CheckIcon /> : <CopyIcon />}
       <span>{copied ? "Copied" : "Copy MD"}</span>
     </button>
@@ -20,15 +17,9 @@ const CopyMarkdownButton = ({ markdown }: { readonly markdown: string }): ReactE
 }
 
 const Sidebar = ({ current }: { readonly current: Doc }): ReactElement => {
-  const sections = docs.reduce<Map<string, Array<Doc>>>((grouped, doc) => {
-    const pages = grouped.get(doc.frontmatter.section) ?? []
-    pages.push(doc)
-    grouped.set(doc.frontmatter.section, pages)
-    return grouped
-  }, new Map())
   return (
     <aside className="guide-sidebar">
-      {[...sections.entries()].map(([section, pages], sectionIndex) => (
+      {docSections.map(([section, pages], sectionIndex) => (
         <Fragment key={section}>
           <span className={sectionIndex === 0 ? undefined : "guide-sidebar-section"}>{section}</span>
           {pages.map((page) => <Link to="/docs/$" params={{ _splat: page.frontmatter.route.slice("/docs/".length) }} aria-current={page === current ? "page" : undefined} key={page.frontmatter.route}>{page.frontmatter.title}</Link>)}
