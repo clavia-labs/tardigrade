@@ -146,7 +146,7 @@ const puzzleRows = ["111111111111", "111111111111"]
 
 const PuzzlePiece = (): ReactElement => (
   <div className="puzzle-art" aria-hidden="true">
-    <PuzzleGrid className="puzzle-piece" pathClassName={(row, column) => `puzzle-tone-${(row * 3 + column) % 5}`} preserveAspectRatio="xMidYMid meet" rows={puzzleRows} size={140} tabRatio={0.169} viewBox="0 -30 1680 340">
+    <PuzzleGrid className="puzzle-piece" connectors="all" pathClassName={(row, column) => `puzzle-tone-${(row * 3 + column) % 5}`} preserveAspectRatio="xMidYMid meet" rows={puzzleRows} size={140} tabRatio={0.13} viewBox="0 -30 1680 340">
       <defs>
         <pattern id="puzzle-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
           <line className="puzzle-hatch-line" x1="0" y1="0" x2="0" y2="9" />
