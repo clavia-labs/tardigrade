@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
-import { spill } from "./store"
+import { DEFAULT_SPILL_POLICY, spill } from "./store"
 import { DEFAULT_WORKSPACE_POLICY, WORKSPACE_SQL_DESCRIPTION, workspacePackage, type SqlRunner } from "./workspace"
 
 // The model's view of the store: a bounded slice of one value, a search across all of them, and a
@@ -38,11 +38,13 @@ const mapStore = (): KeyValueStore.KeyValueStore => {
 }
 
 describe("workspace.read", () => {
-  test("a slice never exceeds the cap, whatever length the model asks for", async () => {
+  test("a read respects both the requested-source cap and the serialized-answer cap", async () => {
     const whole = "x".repeat(DEFAULT_WORKSPACE_POLICY.sliceChars * 2)
     const store = await seeded({ "e1.result": whole })
     const answer = await call(workspacePackage(store), "read", { ref: "e1.result", length: 10_000_000 })
-    expect((answer.slice as string).length).toBe(DEFAULT_WORKSPACE_POLICY.sliceChars)
+    expect((answer.slice as string).length).toBeGreaterThan(0)
+    expect((answer.slice as string).length).toBeLessThanOrEqual(DEFAULT_WORKSPACE_POLICY.sliceChars)
+    expect(JSON.stringify(answer).length).toBeLessThanOrEqual(DEFAULT_WORKSPACE_POLICY.inlineChars)
     expect(answer.size).toBe(whole.length)
   })
 
@@ -52,11 +54,63 @@ describe("workspace.read", () => {
     expect(answer.slice).toBe("abcd")
   })
 
+  test("nextCursor continues at the next unread character without caller arithmetic", async () => {
+    const store = await seeded({ "e1.result": "abcdefghij" })
+    const pkg = workspacePackage(store, { policy: { sliceChars: 4 } })
+    const first = await call(pkg, "read", { ref: "e1.result" })
+    expect(first).toMatchObject({ ref: "e1.result", offset: 0, length: 4, size: 10, done: false, slice: "abcd" })
+    expect(typeof first.nextCursor).toBe("string")
+
+    const second = await call(pkg, "read", { cursor: first.nextCursor })
+    expect(second).toMatchObject({ ref: "e1.result", offset: 4, length: 4, size: 10, done: false, slice: "efgh" })
+
+    const last = await call(pkg, "read", { cursor: second.nextCursor })
+    expect(last).toEqual({ ref: "e1.result", offset: 8, length: 2, size: 10, done: true, slice: "ij" })
+  })
+
+  test("every cursor page fits the shared spill bound and reconstructs the whole value", async () => {
+    const whole = JSON.stringify({ rows: Array.from({ length: 2_000 }, (_, i) => ({ i, text: `quoted \\\"value-${i}\\\"` })) })
+    const pkg = workspacePackage(await seeded({ "e1.result": whole }))
+    let answer = await call(pkg, "read", { ref: "e1.result" })
+    let reconstructed = ""
+    let pages = 0
+    for (;;) {
+      expect(JSON.stringify(answer).length).toBeLessThanOrEqual(DEFAULT_SPILL_POLICY.spillBytes)
+      reconstructed += String(answer.slice)
+      pages++
+      if (answer.done === true) break
+      answer = await call(pkg, "read", { cursor: answer.nextCursor })
+    }
+    expect(pages).toBeGreaterThan(1)
+    expect(reconstructed).toBe(whole)
+  })
+
+  test("a cursor cannot be mixed with random-access arguments", async () => {
+    const store = await seeded({ "e1.result": "abcdefghij" })
+    const pkg = workspacePackage(store, { policy: { sliceChars: 4 } })
+    const first = await call(pkg, "read", { ref: "e1.result" })
+    const mixed = await call(pkg, "read", { cursor: first.nextCursor, offset: 4 })
+    expect(String(mixed.error)).toContain("cursor alone")
+  })
+
+  test("an invalid cursor is an error the model can act on", async () => {
+    const store = await seeded({ "e1.result": "abcdefghij" })
+    const answer = await call(workspacePackage(store), "read", { cursor: "not-a-workspace-cursor" })
+    expect(answer.error).toBe("invalid workspace.read cursor")
+  })
+
+  test("a cap too small for response metadata fails instead of returning an answer that spills", async () => {
+    const store = await seeded({ "e1.result": "abcdefghij" })
+    const answer = await call(workspacePackage(store, { policy: { inlineChars: 1 } }), "read", { ref: "e1.result" })
+    expect(String(answer.error)).toContain("too small")
+  })
+
   test("an offset past the end answers with an empty slice and the true size", async () => {
     const store = await seeded({ "e1.result": "0123456789" })
     const answer = await call(workspacePackage(store), "read", { ref: "e1.result", offset: 99 })
     expect(answer.slice).toBe("")
     expect(answer.size).toBe(10)
+    expect(answer.done).toBe(true)
   })
 
   test("a ref the store never held is an error the model can act on", async () => {
