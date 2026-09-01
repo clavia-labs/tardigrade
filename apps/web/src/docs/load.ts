@@ -1,5 +1,10 @@
 import type { ComponentType } from "react"
 
+import Cli, { frontmatter as cliFrontmatter } from "@docs/cli.mdx"
+import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/concepts.mdx"
+import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
+import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/quickstart.mdx"
+
 type DocFrontmatter = {
   readonly title: string
   readonly description: string
@@ -14,17 +19,21 @@ type DocFrontmatter = {
 export type Doc = {
   readonly Content: ComponentType
   readonly frontmatter: DocFrontmatter
-  readonly markdown: string
   readonly source: string
 }
 
 type DocModule = {
   readonly default: ComponentType
   readonly frontmatter: unknown
+  readonly source: string
 }
 
-const modules = import.meta.glob<DocModule>("../../../../docs/site/**/*.mdx", { eager: true })
-const markdown = import.meta.glob<string>("../../../../docs/site/**/*.mdx", { eager: true, import: "default", query: "?mdx-source" })
+const modules: ReadonlyArray<DocModule> = [
+  { default: Quickstart, frontmatter: quickstartFrontmatter, source: "quickstart.mdx" },
+  { default: Concepts, frontmatter: conceptsFrontmatter, source: "concepts.mdx" },
+  { default: Cli, frontmatter: cliFrontmatter, source: "cli.mdx" },
+  { default: Rlm, frontmatter: rlmFrontmatter, source: "examples/rlm.mdx" }
+]
 
 const stringField = (value: Record<string, unknown>, field: string, source: string): string => {
   const found = value[field]
@@ -59,10 +68,15 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
   }
 }
 
-const docs: ReadonlyArray<Doc> = Object.entries(modules)
-  .map(([source, module]) => ({ Content: module.default, frontmatter: readFrontmatter(module.frontmatter, source), markdown: markdown[source] ?? "", source }))
-  .filter((doc) => doc.frontmatter.draft !== true)
+const docs: ReadonlyArray<Doc> = modules
+  .map((module) => {
+    const frontmatter = readFrontmatter(module.frontmatter, module.source)
+    if (frontmatter.draft === true) throw new Error(`${module.source}: draft docs cannot enter the public registry`)
+    return { Content: module.default, frontmatter, source: module.source }
+  })
   .sort((left, right) => left.frontmatter.sectionOrder - right.frontmatter.sectionOrder || left.frontmatter.order - right.frontmatter.order)
+
+export const docPages = docs
 
 const routes = new Set<string>()
 for (const doc of docs) {

@@ -231,10 +231,27 @@ const streamCursor = Effect.gen(function*() {
   return { from: lastEventId ?? after } as const
 })
 
-const streamResponseOf = (body: Stream.Stream<Uint8Array>) => HttpServerResponse.stream(body, {
-  contentType: "text/event-stream",
-  headers: { "cache-control": "no-cache" }
-})
+const readableStreamOf = <A>(iterable: AsyncIterable<A>): ReadableStream<A> => {
+  const iterator = iterable[Symbol.asyncIterator]()
+  return new ReadableStream({
+    async pull(controller) {
+      const next = await iterator.next()
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
+    },
+    async cancel() {
+      await iterator.return?.()
+    }
+  })
+}
+
+const streamResponseOf = (body: Stream.Stream<Uint8Array>) => Effect.map(
+  Stream.toAsyncIterableEffect(body),
+  (iterable) => HttpServerResponse.raw(readableStreamOf(iterable), {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
+  })
+)
 
 // tail streams one thread with its durable sequence as both the page cursor and SSE id.
 const tail = (
@@ -303,7 +320,7 @@ const streamResponse = (
   if (first.length === 0) return problemResponse(UnknownThread.of(unknownThreadDetail(id)))
   const cursor = yield* streamCursor
   if ("problem" in cursor) return cursor.problem
-  return streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat))
+  return yield* streamResponseOf(tail(threads.eventsPage, threads.awaitHead, id, cursor.from ?? 0, limit, heartbeat))
 })
 
 const actorThreadsStreamResponse = (
@@ -313,7 +330,7 @@ const actorThreadsStreamResponse = (
 ) => Effect.gen(function*() {
   const cursor = yield* streamCursor
   if ("problem" in cursor) return cursor.problem
-  return streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat))
+  return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat))
 })
 
 export const layerStream = (options: ApiOptions = {}) => {

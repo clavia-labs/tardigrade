@@ -6,10 +6,15 @@ import { CheckIcon, CopyIcon, useCopy } from "../ui/copy"
 import { mdxComponents } from "./components"
 import { docAt, docSections, type Doc } from "./load"
 
-const CopyMarkdownButton = ({ markdown }: { readonly markdown: string }): ReactElement => {
+const CopyMarkdownButton = ({ route }: { readonly route: string }): ReactElement => {
   const [copied, copy] = useCopy()
+  const copyMarkdown = async (): Promise<void> => {
+    const response = await fetch(route, { headers: { accept: "text/markdown" } })
+    if (!response.ok) throw new Error(`Markdown request failed with ${response.status}`)
+    await copy(await response.text())
+  }
   return (
-    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copy(markdown)}>
+    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copyMarkdown()}>
       {copied ? <CheckIcon /> : <CopyIcon />}
       <span>{copied ? "Copied" : "Copy MD"}</span>
     </button>
@@ -32,7 +37,7 @@ const Sidebar = ({ current }: { readonly current: Doc }): ReactElement => {
 export const DocsPage = ({ pathname }: { readonly pathname: string }): ReactElement | undefined => {
   const doc = docAt(pathname)
   if (doc === undefined) return undefined
-  const { Content, frontmatter, markdown } = doc
+  const { Content, frontmatter } = doc
   return (
     <main className="guide-page">
       <div className="guide-shell">
@@ -40,7 +45,7 @@ export const DocsPage = ({ pathname }: { readonly pathname: string }): ReactElem
         <article className={`guide-article${frontmatter.articleClass === undefined ? "" : ` ${frontmatter.articleClass}`}`}>
           <div className="guide-heading">
             <div><h1>{frontmatter.title}</h1><p className="guide-intro">{frontmatter.description}</p></div>
-            <CopyMarkdownButton markdown={markdown} />
+            <CopyMarkdownButton route={frontmatter.route} />
           </div>
           <div className="guide-divider" />
           <MDXProvider components={mdxComponents}><Content /></MDXProvider>

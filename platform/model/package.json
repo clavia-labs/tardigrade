@@ -32,7 +32,7 @@
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@tanstack/ai": "0.46.0",
-    "@tanstack/ai-anthropic": "0.16.6",
+    "@tanstack/ai-anthropic": "0.16.7",
     "@tanstack/ai-openai": "0.20.0",
     "effect": "4.0.0-rc.110",
     "tardie": "workspace:*"

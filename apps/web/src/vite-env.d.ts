@@ -7,3 +7,8 @@ declare module "*.mdx" {
   const Content: ComponentType
   export default Content
 }
+
+declare module "*.mdx?doc-source" {
+  const source: string
+  export default source
+}

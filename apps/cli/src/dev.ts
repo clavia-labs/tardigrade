@@ -1,4 +1,4 @@
-import { Console, Context, Effect, Layer } from "effect"
+import { Console, Context, Duration, Effect, Layer } from "effect"
 import { createServer } from "node:net"
 import { HttpRouter, HttpServer, HttpStaticServer } from "effect/unstable/http"
 import { BunFileSystem, BunHttpServer } from "@effect/platform-bun"
@@ -33,6 +33,9 @@ export const DEFAULT_MIN_PORT = 1024
 // DEFAULT_ACTOR_REFRESH_MILLIS lets an atomic local push finish its directory swaps before a
 // self-hosted development server reconciles the actor root. DevOptions can replace it.
 export const DEFAULT_ACTOR_REFRESH_MILLIS = 50
+
+// DEFAULT_DEV_SHUTDOWN_MILLIS bounds graceful shutdown before open browser streams are closed.
+export const DEFAULT_DEV_SHUTDOWN_MILLIS = 1_000
 
 // The status that means the router matched nothing. It is the seam the UI is served through: the
 // declared routes answer first, and only a path none of them owns reaches the build.
@@ -124,6 +127,8 @@ export interface DevOptions {
   readonly catalog?: Layer.Layer<ModelCatalogStore> | undefined
   // actorRefreshMillis is the visible debounce applied to local actor-root changes.
   readonly actorRefreshMillis?: number | undefined
+  // shutdownMillis bounds graceful shutdown before open browser streams are closed.
+  readonly shutdownMillis?: number | undefined
   readonly disableLogger?: boolean | undefined
   readonly disableListenLog?: boolean | undefined
   // onListen receives the UI URL after the server owns its listening socket.
@@ -137,6 +142,10 @@ export const dev = (options: DevOptions) => {
   const actorRefreshMillis = options.actorRefreshMillis ?? DEFAULT_ACTOR_REFRESH_MILLIS
   if (!Number.isInteger(actorRefreshMillis) || actorRefreshMillis < 0) {
     throw new Error(`actor refresh must be a non-negative integer, got ${actorRefreshMillis}`)
+  }
+  const shutdownMillis = options.shutdownMillis ?? DEFAULT_DEV_SHUTDOWN_MILLIS
+  if (!Number.isInteger(shutdownMillis) || shutdownMillis < 0) {
+    throw new Error(`shutdown must be a non-negative integer, got ${shutdownMillis}`)
   }
   const root = resolveAssets(options.assets)
   const config = layerConfig(options.config)
@@ -161,7 +170,11 @@ export const dev = (options: DevOptions) => {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
-    [BunHttpServer.layer({ port: options.config.port, hostname: DEV_HOST }), config, threads, catalog]
+    [BunHttpServer.layer({
+      port: options.config.port,
+      hostname: DEV_HOST,
+      gracefulShutdownTimeout: Duration.millis(shutdownMillis)
+    }), config, threads, catalog]
   )
   if (options.onListen === undefined) return running
   return Layer.tap(running, (context) => {
