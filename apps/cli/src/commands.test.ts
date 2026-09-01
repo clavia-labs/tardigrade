@@ -811,6 +811,20 @@ describe("failures", () => {
 })
 
 describe("dev asks only where someone can answer", () => {
+  test("an empty directory points to initialization", async () => {
+    const cwd = await mkdtemp(join(tmpdir(), "tdg-dev-empty-"))
+    try {
+      const ran = await drive(["dev", "--no-open"], { cwd })
+
+      expect(ran.failed).toBe(true)
+      expect(failureText(ran)).toContain("no Tardigrade project found")
+      expect(failureText(ran)).toContain("tdg init")
+      expect(failureText(ran)).toContain("tdg dev")
+    } finally {
+      await rm(cwd, { recursive: true, force: true })
+    }
+  })
+
   // A boot inside CI, a container, or a script has nobody to answer a prompt, so it takes the
   // notice and serves anyway. The terminal check is what separates the two (commands.ts, canAsk).
   test("says what is missing when stdin is not a terminal", () => {

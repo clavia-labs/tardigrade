@@ -606,6 +606,11 @@ export const devCommand = Command.make("dev", {
 }, (flags) =>
   Effect.gen(function*() {
     const cli = yield* Cli
+    if (!existsSync(resolve(cli.cwd, DEFAULT_ACTOR_ENTRY))) {
+      return yield* userErrorOf(
+        `no Tardigrade project found in ${cli.cwd}. Run \`tdg init\`, enter the created project directory, then run \`tdg dev\` again.`
+      )
+    }
     const localSecrets = yield* readSetupEnv(cli.cwd)
     const runtimeEnv = runtimeEnvironmentOf(cli.env, localSecrets)
     const project = yield* Effect.mapError(readProjectConfig(cli.cwd, runtimeEnv), userErrorOf)
