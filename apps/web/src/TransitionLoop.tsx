@@ -42,7 +42,7 @@ export const TransitionLoop = (): ReactElement => (
     </g>
 
     <Node kind="event" label="event" value="MessageReceived" x={80} y={30} />
-    <Node kind="effect" label="effect transition" value="model.generate(log)" x={80} y={150} />
+    <Node kind="effect" label="effect transition" value="model.generate(messages)" x={80} y={150} />
     <Node kind="event" label="event" value="ToolCalled" x={430} y={120} width={220} />
     <Node kind="effect" label="effect transition" value="service.call(...)" x={430} y={250} width={220} />
     <Node kind="event" label="event" value="ToolReturned" x={430} y={390} width={220} />

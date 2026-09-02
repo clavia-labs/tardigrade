@@ -118,11 +118,9 @@ svg { display: block; }
   42% { transform: translateY(-4px); }
   72% { transform: translateY(1px); }
 }
-.nav-links { display: none; }
 .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 24px; color: var(--ink-2); }
 .guide-link { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
 .guide-link[aria-current="page"] { color: var(--moss-ink); }
-.docs-link { display: none; font-weight: 500; }
 .github-link { width: 24px; height: 24px; }
 .github-link svg { width: 100%; height: 100%; }
 .console-link { padding: 9px 14px; border: 1px solid rgb(var(--accent-rgb) / 38%); color: var(--moss-ink); font-family: var(--mono); font-size: 14px; }
@@ -378,9 +376,9 @@ h1 span { display: block; white-space: nowrap; }
 .not-found-page h1 { margin: 40px 0 12px; font-family: var(--display); font-size: clamp(30px, 3.4vw, 42px); font-weight: 600; letter-spacing: -.045em; }
 .not-found-page a { padding: 10px 0; color: var(--moss-ink); font-family: var(--mono); font-size: 16px; text-decoration: underline; text-underline-offset: 4px; }
 .guide-shell { width: min(100%, var(--container)); min-height: calc(100vh - 64px); margin: 0 auto; padding: 0 var(--gutter); display: grid; grid-template-columns: 240px minmax(0, 760px); gap: 80px; }
-.guide-sidebar { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 68px 36px 80px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: start; gap: 18px; border-right: 1px dashed rgb(var(--accent-rgb) / 36%); color: var(--ink-2); font-size: 15px; }
+.guide-sidebar { position: sticky; top: 64px; height: calc(100vh - 64px); padding: 68px 36px 80px 0; display: flex; flex-direction: column; align-items: flex-start; align-self: start; gap: 14px; border-right: 1px dashed rgb(var(--accent-rgb) / 36%); color: var(--ink-2); font-size: 15px; }
 .guide-sidebar > span { color: var(--ink); font-weight: 600; }
-.guide-sidebar > .guide-sidebar-section { margin-top: 14px; }
+.guide-sidebar > .guide-sidebar-section { margin-top: 18px; }
 .guide-sidebar > .guide-coming-soon { margin-top: 8px; color: var(--faint); font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: .06em; }
 .guide-sidebar a[aria-current="page"] { color: var(--moss-ink); }
 .theme-toggle { width: 32px; height: 32px; padding: 7px; display: grid; place-items: center; border: 0; background: transparent; color: var(--faint); cursor: pointer; transition: color 160ms ease; }
@@ -445,11 +443,11 @@ h1 span { display: block; white-space: nowrap; }
 .rlm-parts > div:nth-child(n + 3) { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
 .rlm-parts code { color: var(--moss-ink); font-family: var(--mono); font-size: 12px; }
 .rlm-parts p { margin: 8px 0 0; color: var(--ink-2); font-size: 14px; line-height: 1.5; }
-.concept-section { margin-top: 64px; padding-top: 44px; display: grid; grid-template-columns: minmax(0, .82fr) minmax(0, 1.18fr); gap: 42px; align-items: start; border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
-.concept-section-actor { margin-top: 0; padding-top: 0; grid-template-columns: 1fr; gap: 28px; border-top: 0; }
+.concept-section { margin-top: 64px; padding-top: 44px; display: grid; grid-template-columns: 1fr; gap: 28px; align-items: start; border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
+.concept-section-actors { grid-template-columns: 1fr; gap: 28px; }
 .concept-section-transitions { grid-template-columns: 1fr; gap: 28px; }
 .concept-section-methods { grid-template-columns: 1fr; gap: 28px; }
-.concept-copy { min-width: 0; }
+.concept-copy { min-width: 0; max-width: 720px; }
 .concept-section-transitions .concept-copy { max-width: 720px; }
 .guide-article .concept-copy h2 { margin: 0 0 16px; padding: 0; border: 0; font-size: 30px; }
 .concept-copy p { margin: 0; color: var(--ink-2); font-size: 17px; line-height: 1.62; }
@@ -468,7 +466,7 @@ h1 span { display: block; white-space: nowrap; }
 .guide-article > :is(.docs-code, .docs-code-single, .docs-event-log, .docs-filesystem, .docs-tip) + p { margin-top: 28px; }
 .docs-code-header { height: 40px; padding: 0 14px; display: flex; align-items: center; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .docs-code pre { max-height: 560px; padding: 18px 54px 18px 20px; }
-.docs-code[data-highlight="true"] pre { background-image: linear-gradient(90deg, rgb(207 177 66 / 42%) 2px, rgb(255 238 155 / 28%) 2px); background-position: 0 calc(18px + var(--docs-highlight-offset)); background-repeat: no-repeat; background-size: 100% 1.7em; }
+.docs-code[data-highlight="true"] pre { background-image: linear-gradient(90deg, rgb(207 177 66 / 42%) 2px, rgb(255 238 155 / 28%) 2px); background-position: 0 calc(15px + var(--docs-highlight-offset)); background-repeat: no-repeat; background-size: 100% 1.5em; }
 .docs-code[data-expanded="true"] pre { max-height: none; }
 .docs-code button { top: 4px; }
 .concept-interface .docs-code { width: auto; border: 0; }
@@ -500,10 +498,12 @@ h1 span { display: block; white-space: nowrap; }
 .docs-filesystem ul::before { position: absolute; top: 0; bottom: 15px; left: 4px; border-left: 1px solid rgb(85 103 132 / 70%); content: ""; }
 .docs-filesystem li { position: relative; min-height: 30px; padding-left: 32px; display: grid; grid-template-columns: minmax(180px, max-content) minmax(0, 1fr); gap: 24px; align-items: center; color: var(--faint); font-size: 13px; }
 .docs-filesystem li::before { position: absolute; top: 50%; left: 4px; width: 20px; border-top: 1px solid rgb(85 103 132 / 70%); content: ""; }
-.docs-filesystem li code { min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--mono); font-size: 14px; }
-.docs-filesystem li code .docs-file-icon { width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.15; color: var(--faint); }
-.docs-filesystem li code .docs-file-icon text { fill: currentColor; stroke: none; font-family: Arial, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: -.25px; }
-.docs-filesystem li code::after { min-width: 20px; flex: 1; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); content: ""; transform: translateY(2px); }
+.docs-filesystem li > code { min-width: 0; display: flex; align-items: center; gap: 12px; color: var(--ink); font-family: var(--mono); font-size: 14px; }
+.docs-filesystem li > code .docs-file-icon { width: 16px; height: 16px; flex: 0 0 auto; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.15; color: var(--faint); }
+.docs-filesystem li > code .docs-file-icon text { fill: currentColor; stroke: none; font-family: Arial, sans-serif; font-size: 7px; font-weight: 700; letter-spacing: -.25px; }
+.docs-filesystem li > code::after { min-width: 20px; flex: 1; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); content: ""; transform: translateY(2px); }
+.docs-filesystem-description { min-width: 0; color: var(--faint); }
+.docs-filesystem-description code { color: var(--ink-2); font-family: var(--mono); font-size: .92em; }
 .docs-event-log { width: min(100%, 720px); margin-top: 18px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
 .docs-event-log ol { position: relative; margin: 0; padding: 0; list-style: none; counter-reset: event; }
 .docs-event-log li { min-height: 48px; padding: 11px 18px; display: flex; gap: 10px; align-items: center; counter-increment: event; }
@@ -511,6 +511,17 @@ h1 span { display: block; white-space: nowrap; }
 .docs-event-log li::before { width: 36px; flex: 0 0 auto; color: var(--faint); content: counter(event, decimal-leading-zero); font-family: var(--mono); font-size: 10px; }
 .docs-event-log code { color: var(--ink); font-family: var(--mono); font-size: 14px; }
 .docs-event-log code + code { min-width: 0; margin-left: auto; overflow: hidden; color: var(--faint); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.docs-math { width: min(100%, 720px); margin: 30px 0; overflow-x: auto; color: var(--ink); }
+.docs-math .katex { font-size: 1.25em; }
+.sdk-reference-list { width: min(100%, 900px); margin-top: 18px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
+.sdk-reference-list > div { min-height: 52px; padding: 13px 16px; display: grid; grid-template-columns: minmax(210px, .7fr) minmax(0, 1.3fr); gap: 24px; align-items: center; }
+.sdk-reference-list > div + div { border-top: 1px dashed rgb(var(--accent-rgb) / 24%); }
+.sdk-reference-list > div > code { color: var(--moss-ink); font-family: var(--mono); font-size: 13px; }
+.sdk-reference-list > div > span { color: var(--ink-2); font-size: 14px; line-height: 1.45; }
+.sdk-reference-list > div > span code { color: var(--ink); font-family: var(--mono); font-size: 12px; }
+@media (max-width: 640px) {
+  .sdk-reference-list > div { grid-template-columns: 1fr; gap: 6px; }
+}
 .actor-diagram { width: min(100%, 620px); height: auto; margin: 0 auto; overflow: visible; }
 .actor-diagram-boundary { fill: none; stroke: rgb(var(--accent-rgb) / 28%); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
 .actor-diagram-boundary-label { fill: var(--moss-ink); font-family: var(--mono); font-size: 12px; letter-spacing: .06em; }
@@ -526,7 +537,7 @@ h1 span { display: block; white-space: nowrap; }
 .actor-diagram marker path { fill: var(--moss-ink); }
 .actor-diagram-edge-labels { fill: var(--ink-2); font-family: var(--mono); font-size: 11px; }
 .actor-concept-illustration { min-width: 0; display: grid; grid-template-columns: minmax(150px, 1fr) 42px minmax(170px, 1.05fr); align-items: center; }
-.concept-section-actor .actor-concept-illustration { width: 100%; grid-template-columns: minmax(260px, .9fr) 80px minmax(300px, 1.1fr); }
+.concept-section-actors .actor-concept-illustration { width: 100%; grid-template-columns: minmax(260px, .9fr) 80px minmax(300px, 1.1fr); }
 .actor-concept-source { min-width: 0; }
 .actor-concept-source > span { display: block; margin-bottom: 8px; color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; }
 .actor-concept-source .concept-code pre { padding: 16px 42px 16px 14px; font-size: 9px; line-height: 1.75; }
@@ -543,9 +554,9 @@ h1 span { display: block; white-space: nowrap; }
 .actor-concept-store header code { overflow: hidden; color: var(--moss-ink); font-family: var(--mono); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
 .actor-concept-store ol { margin: 0; padding: 0; list-style: none; }
 .actor-concept-store li { min-height: 32px; padding: 7px 9px; display: grid; grid-template-columns: 20px minmax(0, 1fr); align-items: center; border-left: 3px solid; }
-.concept-section-actor .actor-concept-store li { min-height: 42px; padding: 10px 12px; }
-.concept-section-actor .actor-concept-store li code { font-size: 10px; }
-.concept-section-actor .actor-concept-source .concept-code pre { padding: 22px 50px 22px 18px; font-size: 11px; }
+.concept-section-actors .actor-concept-store li { min-height: 42px; padding: 10px 12px; }
+.concept-section-actors .actor-concept-store li code { font-size: 10px; }
+.concept-section-actors .actor-concept-source .concept-code pre { padding: 22px 50px 22px 18px; font-size: 11px; }
 .actor-concept-store li + li { border-top: 1px dashed rgb(var(--accent-rgb) / 20%); }
 .actor-concept-store li span { color: var(--faint); font-family: var(--mono); font-size: 8px; }
 .actor-concept-store li code { overflow: hidden; color: var(--ink); font-family: var(--mono); font-size: 8px; text-overflow: ellipsis; white-space: nowrap; }
@@ -594,6 +605,46 @@ h1 span { display: block; white-space: nowrap; }
 .component-diagram-detail { fill: var(--ink-2); font-family: var(--mono); font-size: 11px; }
 .component-diagram-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#component-diagram-arrow); vector-effect: non-scaling-stroke; }
 .component-diagram marker path { fill: var(--moss-ink); }
+.compaction-machine-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.compaction-machine-diagram { min-width: 560px; width: min(100%, 720px); height: auto; margin: 10px auto 0; display: block; }
+.compaction-machine-node rect, .compaction-machine-state rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.compaction-machine-state rect { fill: var(--moss-wash); stroke: var(--moss); }
+.compaction-machine-view rect, .compaction-machine-inference rect { stroke: var(--run); }
+.compaction-machine-transition rect, .compaction-machine-event rect { stroke: var(--plum); }
+.compaction-machine-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.compaction-machine-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
+.compaction-machine-detail { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; }
+.compaction-machine-code { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; text-anchor: end; }
+.compaction-machine-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#compaction-machine-arrow); vector-effect: non-scaling-stroke; }
+.compaction-machine-diagram marker path { fill: var(--moss-ink); }
+.compaction-machine-labels { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.harness-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.harness-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 8px auto 0; display: block; }
+.harness-diagram-node rect, .harness-diagram-component rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.harness-diagram-component rect { fill: var(--moss-wash); stroke: var(--moss); }
+.harness-diagram-view rect { stroke: var(--moss); }
+.harness-diagram-transition rect { stroke: var(--plum); }
+.harness-diagram-runtime rect { stroke: var(--run); }
+.harness-diagram-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.harness-diagram-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
+.harness-diagram-detail { fill: var(--moss-ink); font-family: var(--mono); font-size: 12px; }
+.harness-diagram-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#harness-diagram-arrow); vector-effect: non-scaling-stroke; }
+.harness-diagram marker path { fill: var(--moss-ink); }
+.harness-diagram-boundary path { fill: none; stroke: rgb(var(--accent-rgb) / 28%); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
+.harness-diagram-boundary text { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.harness-diagram-labels { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.primitive-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
+.primitive-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 16px auto 0; display: block; }
+.primitive-diagram-node rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.primitive-diagram-projection rect, .primitive-diagram-component rect { fill: var(--moss-wash); stroke: var(--moss); }
+.primitive-diagram-view rect { stroke: var(--run); }
+.primitive-diagram-transition rect { stroke: var(--plum); }
+.primitive-diagram-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.primitive-diagram-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
+.primitive-diagram-detail { fill: var(--moss-ink); font-family: var(--mono); font-size: 12px; }
+.primitive-diagram-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#primitive-diagram-arrow); vector-effect: non-scaling-stroke; }
+.primitive-diagram marker path { fill: var(--moss-ink); }
+.primitive-diagram-labels { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
 .method-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .method-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 0 auto; display: block; }
 .method-diagram-node rect, .method-diagram-loop rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -650,9 +701,11 @@ h1 span { display: block; white-space: nowrap; }
   .guide-sidebar > span:first-child, .guide-sidebar > .guide-sidebar-section, .guide-sidebar > .guide-coming-soon { display: none; }
   .guide-article { min-width: 0; }
   .guide-article { padding-top: 44px; }
+  :is(.transition-loop-frame, .component-diagram-frame, .compaction-machine-frame, .harness-diagram-frame, .primitive-diagram-frame, .method-diagram-frame) { overflow-x: hidden; }
+  :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { min-width: 0; width: min(100%, 560px); margin-top: 0; }
   .cli-command-row { grid-template-columns: 1fr; gap: 6px; }
   .concept-section { grid-template-columns: 1fr; gap: 24px; }
-  .concept-section-actor .actor-concept-illustration { grid-template-columns: minmax(220px, .9fr) 60px minmax(250px, 1.1fr); }
+  .concept-section-actors .actor-concept-illustration { grid-template-columns: minmax(220px, .9fr) 60px minmax(250px, 1.1fr); }
 }
 
 @media (max-width: 560px) {
@@ -664,6 +717,7 @@ h1 span { display: block; white-space: nowrap; }
   .guide-article h1 { font-size: 36px; }
   .guide-article h2 { font-size: 27px; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
+  :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
   .guide-command { width: 100%; }
   .example-source-heading { margin-top: 24px; }
   .example-source-heading > a { font-size: 0; }
@@ -678,7 +732,7 @@ h1 span { display: block; white-space: nowrap; }
   .rlm-parts > div + div { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
   .concept-section { margin-top: 48px; padding-top: 36px; }
   .actor-concept-illustration { grid-template-columns: 1fr; gap: 14px; }
-  .concept-section-actor .actor-concept-illustration { grid-template-columns: 1fr; }
+  .concept-section-actors .actor-concept-illustration { grid-template-columns: 1fr; }
   .actor-concept-link { grid-template-columns: 48px auto; justify-content: center; align-items: center; gap: 0; }
   .actor-concept-link svg { width: 48px; height: 48px; transform: rotate(90deg); }
   .actor-concept-link span { margin-left: -5px; }

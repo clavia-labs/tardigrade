@@ -1,0 +1,97 @@
+@import "@mdxeditor/editor/style.css";
+
+.mdx-editor-view {
+  background: var(--background-primary);
+  container-type: inline-size;
+  height: 100%;
+  overflow: auto;
+  padding: 0;
+}
+
+.mdx-editor {
+  --accentBase: var(--background-primary);
+  --accentBgSubtle: var(--background-secondary);
+  --accentBg: var(--background-secondary-alt);
+  --accentBgHover: var(--background-modifier-hover);
+  --accentBgActive: var(--background-modifier-active-hover);
+  --accentLine: var(--background-modifier-border);
+  --accentBorder: var(--background-modifier-border);
+  --accentBorderHover: var(--interactive-accent-hover);
+  --accentSolid: var(--interactive-accent);
+  --accentSolidHover: var(--interactive-accent-hover);
+  --accentText: var(--text-accent);
+  --accentTextContrast: var(--text-on-accent);
+  --baseBase: var(--background-primary);
+  --baseBgSubtle: var(--background-secondary);
+  --baseBg: var(--background-secondary-alt);
+  --baseBgHover: var(--background-modifier-hover);
+  --baseBgActive: var(--background-modifier-active-hover);
+  --baseLine: var(--background-modifier-border);
+  --baseBorder: var(--background-modifier-border);
+  --baseBorderHover: var(--background-modifier-border-hover);
+  --baseSolid: var(--text-faint);
+  --baseSolidHover: var(--text-muted);
+  --baseText: var(--text-muted);
+  --baseTextContrast: var(--text-normal);
+  --basePageBg: var(--background-primary);
+  --font-mono: var(--font-monospace);
+  background: var(--background-primary);
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+  min-height: 100%;
+}
+
+.mdx-editor .mdxeditor-toolbar {
+  background: color-mix(in srgb, var(--background-primary) 92%, transparent);
+  border: 0;
+  border-bottom: 1px solid var(--background-modifier-border);
+  border-radius: 0;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.mdx-editor-content {
+  color: var(--text-normal);
+  font-family: var(--font-text);
+  font-size: var(--font-text-size);
+  line-height: var(--line-height-normal);
+  margin: 0 auto;
+  max-width: 900px;
+  min-height: calc(100vh - 44px);
+  padding: 56px 64px 120px;
+}
+
+.mdx-editor-content h1,
+.mdx-editor-content h2,
+.mdx-editor-content h3,
+.mdx-editor-content h4 {
+  color: var(--text-normal);
+  font-family: var(--font-interface);
+}
+
+.mdx-editor-content a {
+  color: var(--link-color);
+}
+
+.mdx-editor-content code {
+  font-family: var(--font-monospace);
+}
+
+.mdx-editor .cm-editor,
+.mdx-editor .cm-scroller {
+  background: var(--background-primary);
+  color: var(--text-normal);
+}
+
+.mdx-editor .cm-gutters {
+  background: var(--background-secondary);
+  border-color: var(--background-modifier-border);
+  color: var(--text-faint);
+}
+
+@container (max-width: 720px) {
+  .mdx-editor-content {
+    padding: 32px 24px 80px;
+  }
+}

@@ -44,7 +44,7 @@ export const DocsPage = ({ pathname }: { readonly pathname: string }): ReactElem
         <Sidebar current={doc} />
         <article className={`guide-article${frontmatter.articleClass === undefined ? "" : ` ${frontmatter.articleClass}`}`}>
           <div className="guide-heading">
-            <div><h1>{frontmatter.title}</h1><p className="guide-intro">{frontmatter.description}</p></div>
+            <div><h1>{frontmatter.title}</h1>{frontmatter.hideDescription === true ? null : <p className="guide-intro">{frontmatter.description}</p>}</div>
             <CopyMarkdownButton route={frontmatter.route} />
           </div>
           <div className="guide-divider" />

@@ -1,0 +1,43 @@
+---
+title: Welcome
+description: Meet Tardigrade and its core design.
+hideDescription: true
+route: /docs/welcome
+section: Start Here
+sectionOrder: 1
+order: 1
+---
+
+Tardigrade is a TypeScript framework for building modular agents around an immutable event log. It is built on top of Effect TS.
+
+## Why Tardigrade?
+
+### Composable harness
+
+Add tools, code execution, budgets, compaction, and replies as independent components.
+
+### Strongly typed, built on [Effect](https://effect.website/)
+
+Typed services and Layers make each component's dependencies explicit. A missing service fails at compile time.
+
+### Let it crash
+
+A durable host derives unfinished work from the stored log. After a crash, the agent resumes the work it still owes.
+
+### Serverless
+
+No process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
+
+### Inspect and improve every run
+
+The log at the core supports native debugging, replay, and experiments with state forked from any checkpoint.
+
+### Infinite memory
+
+The event log can serve directly as an agent's memory. It keeps model context bounded while giving the agent programmatic access to its complete history, an approach explored in [PRO-LONG](https://arxiv.org/abs/2607.20064).
+
+## Where next
+
+1. Follow the [Quickstart](/docs/quickstart) to build and run your first durable agent.
+2. Read [Concepts](/docs/concepts) to understand events, projections, components, views, transitions, actors, and methods.
+3. Choose a platform for deployment: [Bun](/docs/platforms/bun), [Cloudflare](/docs/platforms/cloudflare), or [Celld](/docs/platforms/celld).

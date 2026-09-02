@@ -1,8 +1,12 @@
 import { Children, cloneElement, isValidElement, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
+import { renderToString } from "katex"
 
 import { ActorDiagram } from "../../ActorDiagram"
 import { ComponentDiagram } from "../../ComponentDiagram"
+import { CompactionMachineDiagram } from "../../CompactionMachineDiagram"
+import { HarnessDiagram } from "../../HarnessDiagram"
 import { MethodDiagram } from "../../MethodDiagram"
+import { PrimitiveDiagram } from "../../PrimitiveDiagram"
 import { TransitionLoop } from "../../TransitionLoop"
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
 
@@ -102,9 +106,16 @@ const FileIcon = ({ kind }: { readonly kind: FileIconKind }): ReactElement => {
 const withFileIcons = (node: ReactNode): ReactNode => {
   if (Array.isArray(node)) return Children.map(node, withFileIcons)
   if (!isValidElement<{ readonly children?: ReactNode }>(node)) return node
-  if (node.type === InlineCode) {
-    const name = textFrom(node.props.children)
-    return cloneElement(node, undefined, <><FileIcon kind={fileIconKindOf(name)} />{node.props.children}</>)
+  if (node.type === "li") {
+    const children = Children.toArray(node.props.children)
+    const fileIndex = children.findIndex((child) => isValidElement(child) && child.type === InlineCode)
+    if (fileIndex === -1) return node
+    const file = children[fileIndex] as ReactElement<{ readonly children?: ReactNode }>
+    const name = textFrom(file.props.children)
+    return cloneElement(node, undefined,
+      cloneElement(file, undefined, <><FileIcon kind={fileIconKindOf(name)} />{file.props.children}</>),
+      <span className="docs-filesystem-description">{children.slice(fileIndex + 1)}</span>
+    )
   }
   return cloneElement(node, undefined, withFileIcons(node.props.children))
 }
@@ -128,6 +139,13 @@ const ConceptSection = ({ children, kind }: { readonly children: ReactNode; read
   <section className={`concept-section concept-section-${kind}`}>{children}</section>
 )
 
+const Math = ({ expression }: { readonly expression: string }): ReactElement => (
+  <div
+    className="docs-math"
+    dangerouslySetInnerHTML={{ __html: renderToString(expression, { displayMode: true, throwOnError: false }) }}
+  />
+)
+
 const Tip = ({ children, title }: { readonly children: ReactNode; readonly title: string }): ReactElement => (
   <details className="docs-tip">
     <summary><BulbIcon /><span>{title}</span><ChevronIcon /></summary>
@@ -149,11 +167,15 @@ export const mdxComponents = {
   ActorDiagram,
   Command,
   ComponentDiagram,
+  CompactionMachineDiagram,
   ConceptInterface,
   ConceptSection,
   EventLog,
   Filesystem,
+  HarnessDiagram,
+  Math,
   MethodDiagram,
+  PrimitiveDiagram,
   RlmDiagram,
   Tip,
   TransitionLoop,

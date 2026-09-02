@@ -2,6 +2,7 @@ import { HeadContent, Outlet, Scripts, createRootRoute, useRouterState } from "@
 import type { ReactElement, ReactNode } from "react"
 
 import { SiteShell } from "../App"
+import "katex/dist/katex.min.css"
 import "../styles.css"
 
 const THEME_SCRIPT = `const saved=localStorage.getItem("tardigrade-theme");document.documentElement.dataset.theme=saved==="dark"||(saved===null&&matchMedia("(prefers-color-scheme: dark)").matches)?"dark":"light"`
@@ -13,6 +14,19 @@ export const Route = createRootRoute({
       { name: "viewport", content: "width=device-width, initial-scale=1" },
       { name: "theme-color", content: "#131514" },
       { name: "description", content: "Tardigrade is a TypeScript framework for durable, modular agents." },
+      { property: "og:type", content: "website" },
+      { property: "og:url", content: "https://tardigrade.sh/" },
+      { property: "og:title", content: "Tardie Agent" },
+      { property: "og:description", content: "A composable harness for durable agents." },
+      { property: "og:image", content: "https://tardigrade.sh/images/tardigrade-social-code-light.png" },
+      { property: "og:image:width", content: "1200" },
+      { property: "og:image:height", content: "630" },
+      { property: "og:image:alt", content: "A Tardie RLM researcher agent assembled from modular components." },
+      { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "Tardie Agent" },
+      { name: "twitter:description", content: "A composable harness for durable agents." },
+      { name: "twitter:image", content: "https://tardigrade.sh/images/tardigrade-social-code-light.png" },
+      { name: "twitter:image:alt", content: "A Tardie RLM researcher agent assembled from modular components." },
       { title: "Tardigrade" }
     ],
     links: [

@@ -1,0 +1,26 @@
+{
+  "name": "mdx-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "bun build src/main.tsx src/styles.css --outdir dist --target browser --format cjs --external obsidian --minify",
+    "install:docs": "bun run build && bun run scripts/install.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@codemirror/language": "^6.12.4",
+    "@codemirror/view": "^6.43.9",
+    "@lezer/highlight": "^1.2.3",
+    "@mdxeditor/editor": "^3.42.0",
+    "react": "^19.2.7",
+    "react-dom": "^19.2.7"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.16",
+    "@types/react-dom": "^19.2.3",
+    "obsidian": "^1.8.7",
+    "typescript": "7.0.2"
+  }
+}
