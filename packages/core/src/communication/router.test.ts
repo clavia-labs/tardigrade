@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { mappedDirectory } from "./directory"
 import type { ThreadAddress, ProviderEndpoint } from "./endpoint"
 import { envelopeOf, isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type ProviderEnvelope } from "./envelope"

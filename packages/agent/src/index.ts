@@ -28,10 +28,8 @@ export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
 
-// The parts a caller lists. An agent is components over one log; the reactors underneath remain
-// reachable for a bespoke assembly.
+// The parts a caller lists. An agent is components over one log; the inference machine remains reachable for a bespoke assembly.
 export {
-  inferReactorFor,
   Infer,
   NativeOutputSupport,
   DEFAULT_INFER_POLICY,
@@ -39,8 +37,19 @@ export {
   type InferRequest,
   type ModelResolution,
   type Render
-} from "./inference/reactor"
+} from "./inference/contract"
+export { inferenceFromHistory, inferenceMachine, type InferenceMachineProjection } from "./inference/machine"
 export { ModelRef, modelRefOf } from "./inference/reference"
+export {
+  type ModelRequest
+} from "./inference/request"
+export {
+  messagesProjection,
+  renderMessages,
+  type AgentMessage,
+  type AgentToolCall,
+  type MessagesProjectionState
+} from "./projection/messages"
 export {
   DEFAULT_INFERENCE_OBSERVER_POLICY,
   type InferDelta,
@@ -79,7 +88,6 @@ export {
   declaredOutputOf,
   canonicalOf,
   fingerprintOf,
-  projectedOutput,
   correctionText,
   correctionAttemptsErrors,
   correctionsOf,
@@ -103,6 +111,13 @@ export {
   type OutputStringFormat
 } from "./output/contract"
 export {
+  projectedOutput,
+  transcriptProjection,
+  type TranscriptProjection,
+  type TranscriptProjectionOutput,
+  type TranscriptProjectionState
+} from "./projection/transcript"
+export {
   outputRepair,
   outputRepairFor,
   outputValidateOnce,
@@ -112,9 +127,9 @@ export {
   VALIDATE_ONCE_FALLBACK,
   DEFAULT_REPAIR_POLICY,
   type RepairPolicy
-} from "./components/repair"
-export { nativeOutput } from "./components/native-output"
-export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./components/budget"
+} from "./component/repair"
+export { nativeOutput } from "./component/native-output"
+export { DEFAULT_BUDGET_POLICY, type BudgetPolicy } from "./component/budget"
 export { toolsReactorFrom, type Answer, type PendingCall, type Serve } from "./runtime/tools"
 export {
   compactionReactor,
@@ -124,8 +139,8 @@ export {
   type CompactionPolicy,
   type ContextPolicy,
   type ContextWindowTokens
-} from "./components/compaction"
-export { agentKeys, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
+} from "./component/compaction"
+export { agentKeys, outputRepaired, outputRetryRequested, TURN_FAILURE_CAUSES, type TurnFailureCause } from "./log/events"
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"
 export {
   usageIn,
@@ -214,7 +229,7 @@ export {
   codeSystemFor,
   DEFAULT_CODE_SUMMARY_MAX_LENGTH,
   type CodeModeOptions
-} from "./components/code"
+} from "./component/code"
 export {
   DEFAULT_PACKAGE_CALL_POLICY,
   packageCallPolicyOf,
@@ -222,8 +237,8 @@ export {
   type PackageCallFailure,
   type PackageCallPolicy
 } from "@clavia/tardigrade-code/execution/reactor"
-export { system, type SystemText } from "./components/system"
-export { tool, toolList, type NativeTool } from "./components/tool"
+export { system, type SystemProjection, type SystemText } from "./component/system"
+export { tool, toolList, type NativeTool } from "./component/tool"
 export {
   budget,
   caller,
@@ -231,7 +246,7 @@ export {
   type BudgetAuthorityMethods,
   type BudgetOptions,
   type CallerBudgetAuthority
-} from "./components/budget"
+} from "./component/budget"
 export {
   budgetAuthority,
   budgetAuthorityKeys,
@@ -239,22 +254,22 @@ export {
   type BudgetAuthorityOptions,
   type BudgetRequest,
   type DecideBudget
-} from "./components/budget-authority"
+} from "./component/budget-authority"
 export {
   permissions,
   type PermissionAuthorityMethods,
   type PermissionCall,
   type PermissionsOptions,
   type PermissionSubject
-} from "./components/permissions"
+} from "./component/permissions"
 export {
   permissionAuthority,
   permissionAuthorityKeys,
   type DecidePermission,
   type PermissionAuthorityOptions,
   type PermissionRequest
-} from "./components/permission-authority"
-export { compaction } from "./components/compaction"
+} from "./component/permission-authority"
+export { compaction } from "./component/compaction"
 export {
   actor,
   actorCall,
@@ -266,8 +281,11 @@ export {
   externallyHandled,
   handles,
   inheritComponentContract,
+  incrementalComponent,
   independentTransitions,
-  reactorOf,
+  legacyComponent,
+  deriveComponent,
+  cancelComponent,
   validateActor,
   type Actor,
   type ActorCall,
@@ -277,9 +295,12 @@ export {
   type ActorMethodContract,
   type ActorRef,
   type Component,
+  type ComponentMachine,
   type ComponentRequirements,
   type CompositionOptions,
-  type Derivation,
+  type ComponentOutput,
+  type IncrementalComponentDefinition,
+  type LegacyComponentDefinition,
   type TransitionReconciler,
   type ViewAlgebra
 } from "@clavia/tardigrade-core/actor"

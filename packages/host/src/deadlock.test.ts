@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
@@ -30,8 +31,8 @@ const knotKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const knotReactor = (me: string, partner: string): Reactor<Router> =>
-  (events) => {
+const knotProjection = (me: string, partner: string): ErasedTransitionProjection<Router> =>
+  completeTransitionProjection((events) => {
     if (has(events, "Settled")) return []
     // A brief with no declared await: declare one.
     if (has(events, "MessageReceived", "brief") && !has(events, "Awaiting")) {
@@ -68,7 +69,7 @@ const knotReactor = (me: string, partner: string): Reactor<Router> =>
           })
       })
     ]
-  }
+  })
 
 const edgesOf = (thread: string, events: ReadonlyArray<Event>): ReadonlyArray<AwaitEdge> => {
   if (has(events, "Settled")) return []
@@ -86,8 +87,8 @@ const edgesOf = (thread: string, events: ReadonlyArray<Event>): ReadonlyArray<Aw
 const knot = (withSentinel: boolean) =>
   createHost<Router>({
     actorFor: (thread) =>
-      thread === "p" ? { reactors: [knotReactor("p", "c")], keyOf: knotKeys }
-      : thread === "c" ? { reactors: [knotReactor("c", "p")], keyOf: knotKeys }
+      thread === "p" ? { projections: [knotProjection("p", "c")], keyOf: knotKeys }
+      : thread === "c" ? { projections: [knotProjection("c", "p")], keyOf: knotKeys }
       : undefined,
     ...(withSentinel ? { edgesOf } : {})
   })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { actorEventKeyOf, actorThreadsOf } from "./events"
 
 describe("actor events", () => {

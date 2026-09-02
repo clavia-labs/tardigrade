@@ -12,9 +12,9 @@ import {
   outputErrors,
   outputFrom,
   outputProfileErrors,
-  projectedOutput,
   OUTPUT_STRING_FORMATS
 } from "./contract"
+import { projectedOutput, transcriptProjection } from "../projection/transcript"
 
 const SCOUT = output({
   name: "scout",
@@ -276,7 +276,7 @@ describe("the declaration on the log", () => {
   })
 
   // A projection that throws poisons the settle that reads it, so a declaration nobody can serve
-  // is a verdict the reactor turns into a terminal (inference/reactor.ts).
+  // is a verdict the machine turns into a terminal (inference/machine.ts).
   test("a declaration that is not a contract is a verdict, never a throw", () => {
     const bad = declaredOutputOf([{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 1 }])
     expect(bad.kind).toBe("invalid")
@@ -306,6 +306,15 @@ describe("the history projection", () => {
     expect(projectedOutput(open)).toHaveLength(1)
     const done: ReadonlyArray<Event> = [rejection("m1", true), { type: "TurnCompleted", output: "{}", turn: "m1", at: 2 }]
     expect(projectedOutput(done).map((e) => e.type)).toEqual(["TurnCompleted"])
+  })
+
+  test("an explicit repair projects the replaced attempt", () => {
+    const events: ReadonlyArray<Event> = [
+      rejection("m1", true),
+      { type: "OutputRetryRequested", rejection: "m1/infer/0", feedback: "again", by: "repair", turn: "m1", at: 2 },
+      { type: "OutputRepaired", replaced: "m1/infer/0", replacement: "m1/infer/1", turn: "m1", at: 3 }
+    ]
+    expect(projectedOutput(events).map((event) => event.type)).toEqual(["OutputRepaired"])
   })
 
   test("the policy read is the recorded one, so a later mount cannot rewrite an old turn", () => {
@@ -366,5 +375,29 @@ describe("the history projection", () => {
       { type: "TurnCompleted", output: "{}", turn: "m1", at: 3 }
     ]
     expect(projectedOutput(log).map((event) => event.type)).toEqual(["TurnCompleted"])
+  })
+
+  test("the transcript projection discards only the provisional repair entries", () => {
+    const projection = transcriptProjection(() => 1)
+    const events: ReadonlyArray<Event> = [
+      rejection("m1", true),
+      { type: "MessageReceived", id: "m2", text: "queued", at: 2 },
+      { type: "OutputRetryRequested", rejection: "m1/infer/0", feedback: "again", turn: "m1", at: 3 } as Event,
+      { type: "TurnCompleted", output: "{}", turn: "m1", at: 4 }
+    ]
+    const state = events.reduce(projection.step, projection.initial())
+    expect(projection.output(state).events.map((event) => event.type)).toEqual(["MessageReceived", "TurnCompleted"])
+    expect(projection.output(state).weight).toBe(2)
+  })
+
+  test("the transcript projection resolves a decision recorded before its rejection", () => {
+    const projection = transcriptProjection()
+    const events: ReadonlyArray<Event> = [
+      { type: "OutputRetryRequested", rejection: "m1/infer/0", feedback: "again", turn: "m1", at: 1 } as Event,
+      { type: "TurnCompleted", output: "{}", turn: "m1", at: 2 },
+      rejection("m1", true)
+    ]
+    const state = events.reduce(projection.step, projection.initial())
+    expect(projection.output(state).events.map((event) => event.type)).toEqual(["TurnCompleted"])
   })
 })

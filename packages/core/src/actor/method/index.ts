@@ -4,6 +4,7 @@ export {
   actorMethod,
   actorMethodTimeoutOf,
   actorMethodsOf,
+  durableInputProjection,
   type ActorMethod,
   type ActorMethodCancellation,
   type ActorMethodCancellationState,
@@ -11,8 +12,12 @@ export {
   type ActorMethodDefinition,
   type ActorMethodInput,
   type ActorMethodOutput,
+  type ActorMethodProjection,
+  type ErasedActorMethodProjection,
   type ActorMethods,
   type DurableMethodInput,
+  type DurableInputProjection,
+  type ErasedDurableInputProjection,
   type InvalidDurableMethodInput
 } from "./definition"
 export * from "./cancellation"

@@ -1,5 +1,7 @@
 import { Schema } from "effect"
-import type { Event } from "../../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
+import type { Projection } from "@clavia/tardigrade-core/projection"
+import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { ActorInvocation, ActorMethodCall } from "./call"
 import type { ActorMethodState } from "./state"
 import type { InvocationCancellation } from "./cancellation"
@@ -40,6 +42,46 @@ export interface DurableMethodInput {
   readonly matches: (event: Event) => boolean
   readonly keyOf: (input: InvalidDurableMethodInput) => string
   readonly reject: (input: InvalidDurableMethodInput, at: number) => Event
+  readonly incremental?: ErasedDurableInputProjection
+}
+
+export interface DurableInputProjection<State>
+  extends Projection<State, ReadonlyArray<Transition<never>>> {}
+
+export interface ErasedDurableInputProjection
+  extends Projection<unknown, ReadonlyArray<Transition<never>>> {}
+
+// durableInputProjection preserves a typed validation quotient behind the heterogeneous method contract.
+export const durableInputProjection = <State>(
+  projection: DurableInputProjection<State>
+): ErasedDurableInputProjection => ({
+  initial: projection.initial,
+  step: (state, event) => projection.step(state as State, event),
+  output: (state) => projection.output(state as State)
+})
+
+// ActorMethodProjection declares the history quotient used by method state and cancellation queries.
+export interface ActorMethodProjection<State, Output = unknown> {
+  readonly initial: () => State
+  readonly reduce: (state: State, event: Event) => State
+  readonly currentEpoch: (state: State, id: string) => number
+  readonly state: (state: State, invocation: ActorInvocation) => ActorMethodState<Output> | undefined
+  readonly cancellation?: (
+    state: State,
+    invocation: ActorInvocation
+  ) => ActorMethodCancellationState | undefined
+}
+
+// ErasedActorMethodProjection preserves a method projection inside heterogeneous method tables.
+export interface ErasedActorMethodProjection {
+  readonly initial: () => unknown
+  readonly reduce: (state: unknown, event: Event) => unknown
+  readonly currentEpoch: (state: unknown, id: string) => number
+  readonly state: (state: unknown, invocation: ActorInvocation) => ActorMethodState<unknown> | undefined
+  readonly cancellation?: (
+    state: unknown,
+    invocation: ActorInvocation
+  ) => ActorMethodCancellationState | undefined
 }
 
 // ActorMethodDeclaration is the erased shape a heterogeneous method table preserves. eventOf validates unknown input before constructing the durable event.
@@ -49,6 +91,7 @@ export interface ActorMethodDeclaration {
   readonly timeoutMs: number
   readonly durableInput?: DurableMethodInput
   readonly cancellation?: ActorMethodCancellation
+  readonly incremental?: ErasedActorMethodProjection
   readonly currentEpoch: (events: ReadonlyArray<Event>, id: string) => number
   readonly eventOf: (call: ActorMethodCall<unknown>) => Event
   readonly state: (events: ReadonlyArray<Event>, invocation: ActorInvocation) => ActorMethodState<unknown> | undefined
@@ -57,13 +100,15 @@ export interface ActorMethodDeclaration {
 // ActorMethodDefinition declares one typed call as an input event and a result projection.
 export interface ActorMethodDefinition<
   Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>
+  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
+  State = never
 > {
   readonly input: Input
   readonly output: Output
   readonly timeoutMs?: number
   readonly durableInput?: DurableMethodInput
   readonly cancellation?: ActorMethodCancellation
+  readonly incremental?: ActorMethodProjection<State, Output["Type"]>
   readonly currentEpoch?: (events: ReadonlyArray<Event>, id: string) => number
   readonly event: (call: ActorMethodCall<Input["Type"]>) => Event
   readonly state: (events: ReadonlyArray<Event>, invocation: ActorInvocation) => ActorMethodState<Output["Type"]> | undefined
@@ -72,8 +117,9 @@ export interface ActorMethodDefinition<
 // ActorMethod carries a typed definition and its dynamically callable event builder.
 export type ActorMethod<
   Input extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>
-> = Omit<ActorMethodDefinition<Input, Output>, "timeoutMs" | "currentEpoch"> & ActorMethodDeclaration & {
+  Output extends Schema.ConstraintDecoder<unknown> = Schema.ConstraintDecoder<unknown>,
+  State = never
+> = Omit<ActorMethodDefinition<Input, Output, State>, "timeoutMs" | "currentEpoch"> & ActorMethodDeclaration & {
   readonly input: Input
   readonly output: Output
   readonly timeoutMs: number
@@ -83,6 +129,20 @@ export type ActorMethod<
 
 export type ActorMethods = Readonly<Record<string, ActorMethodDeclaration>>
 
+// initialMethodStates constructs private state for every incremental method.
+export const initialMethodStates = (methods: ActorMethods): ReadonlyMap<string, unknown> =>
+  new Map(Object.entries(methods).map(([name, method]) => [name, method.incremental!.initial()]))
+
+// reduceMethodStates advances every incremental method with one event.
+export const reduceMethodStates = (
+  methods: ActorMethods,
+  states: ReadonlyMap<string, unknown>,
+  event: Event
+): ReadonlyMap<string, unknown> => new Map(Object.entries(methods).map(([name, method]) => [
+  name,
+  method.incremental!.reduce(states.get(name), event)
+]))
+
 export type ActorMethodInput<Method extends ActorMethodDeclaration> = Method["input"]["Type"]
 
 export type ActorMethodOutput<Method extends ActorMethodDeclaration> = Method["output"]["Type"]
@@ -90,19 +150,21 @@ export type ActorMethodOutput<Method extends ActorMethodDeclaration> = Method["o
 // actorMethod preserves schema types and adds the validated event builder used after dynamic lookup.
 export function actorMethod<
   Input extends Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown>
->(definition: ActorMethodDefinition<Input, Output> & {
+  Output extends Schema.ConstraintDecoder<unknown>,
+  State
+>(definition: ActorMethodDefinition<Input, Output, State> & {
   readonly cancellation: ActorMethodCancellation
-}): ActorMethod<Input, Output> & { readonly cancellation: ActorMethodCancellation }
+}): ActorMethod<Input, Output, State> & { readonly cancellation: ActorMethodCancellation }
 export function actorMethod<
   Input extends Schema.ConstraintDecoder<unknown>,
-  Output extends Schema.ConstraintDecoder<unknown>
->(definition: ActorMethodDefinition<Input, Output> & {
+  Output extends Schema.ConstraintDecoder<unknown>,
+  State
+>(definition: ActorMethodDefinition<Input, Output, State> & {
   readonly cancellation?: undefined
-}): ActorMethod<Input, Output> & { readonly cancellation?: undefined }
+}): ActorMethod<Input, Output, State> & { readonly cancellation?: undefined }
 export function actorMethod(
-  definition: ActorMethodDefinition
-): ActorMethod {
+  definition: ActorMethodDefinition<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, unknown>
+): ActorMethod<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, unknown> {
   return ({
   ...definition,
   timeoutMs: actorMethodTimeoutOf(definition.timeoutMs),
@@ -111,7 +173,7 @@ export function actorMethod(
     ...call,
     input: Schema.decodeUnknownSync(definition.input)(call.input)
   })
-  }) as ActorMethod
+  }) as ActorMethod<Schema.ConstraintDecoder<unknown>, Schema.ConstraintDecoder<unknown>, unknown>
 }
 
 // actorMethodsOf validates names and declarations at the actor boundary.

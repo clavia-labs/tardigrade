@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { formatThreadAddress, isThreadAddress, ThreadAddress, type ThreadAddress as ThreadAddressType } from "../communication/endpoint"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "../log/keys"
 
 export const ThreadDepth = Schema.Int.pipe(

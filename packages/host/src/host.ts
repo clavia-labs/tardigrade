@@ -22,9 +22,9 @@ import { methodIngressKeyOf, type ActorInvocationContext } from "@clavia/tardigr
 import {
   EffectInterruptions,
   Self,
+  createActorReconciler,
   effectInterruptionRegistry,
   restingActor,
-  settleActor,
   type Actor
 } from "@clavia/tardigrade-core/reconciliation"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
@@ -126,6 +126,10 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const actorInstance = options.actorInstance ?? "main"
   const threads = new Map<string, ReadonlyArray<Event>>()
   const interruptions = new Map<string, ReturnType<typeof effectInterruptionRegistry>>()
+  const reconciliations = new Map<string, {
+    readonly actor: Actor<R>
+    readonly reconciler: ReturnType<typeof createActorReconciler<R>>
+  }>()
   const interruptionsOf = (thread: string) => {
     const current = interruptions.get(thread)
     if (current !== undefined) return current
@@ -256,7 +260,17 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     serve: async (thread) => {
       const actor = options.actorFor(thread)
       if (actor === undefined) return
-      await Effect.runPromise(settleActor(actor).pipe(Effect.provide(layersOf(thread))))
+      let reconciliation = reconciliations.get(thread)
+      if (reconciliation?.actor !== actor) {
+        reconciliation = {
+          actor,
+          reconciler: createActorReconciler(actor)
+        }
+        reconciliations.set(thread, reconciliation)
+      }
+      await Effect.runPromise(
+        reconciliation.reconciler.settle.pipe(Effect.provide(layersOf(thread)))
+      )
     }
   })
 

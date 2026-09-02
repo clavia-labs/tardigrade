@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
-import type { Event } from "../../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { Router } from "../../communication/router"
 import { EventLog, withWatermark } from "../../log"
-import { intent, Self } from "../../reconciliation"
-import type { Component } from "../component"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { Self } from "../../runtime"
+import { legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import { actorMethod } from "./definition"
 import {
   CancellationRequested,
@@ -110,11 +111,11 @@ describe("actor cancellation", () => {
       input: undefined,
       events: (_input, at) => [{ type: "WorkCleaned", id: "w1", at } as Event]
     })
-    const component: Component<undefined> = {
+    const component: Component<undefined> = legacyComponent({
       name: "worker",
       cancel: (events) => events.some((event) => event.type === "WorkCleaned") ? [] : [cleanup],
       derive: () => ({ view: undefined, transitions: [] })
-    }
+    })
     const keyOf = (event: Event) => event.type === "WorkCleaned"
       ? `clean:${String((event as { readonly id?: unknown }).id)}`
       : event.type === "WorkCancelled"
@@ -142,7 +143,7 @@ describe("actor cancellation", () => {
       { type: "CancellationRequested", request: "x2", invocation: invocation("w2"), cause: "requested", at: 4 } as Event,
       { type: "CancellationRequested", request: "x3", invocation: invocation("w1"), cause: "requested", at: 5 } as Event
     ]
-    const component: Component<undefined> = {
+    const component: Component<undefined> = legacyComponent({
       name: "worker",
       cancel: (_events, cancellation) => cancellation.invocation.id === "w1"
         ? [intent({
@@ -152,7 +153,7 @@ describe("actor cancellation", () => {
           })]
         : [],
       derive: () => ({ view: undefined, transitions: [] })
-    }
+    })
     const keyOf = (event: Event) => event.type === "WorkCleaned"
       ? `clean:${String((event as { readonly id?: unknown }).id)}`
       : event.type === "WorkCancelled"

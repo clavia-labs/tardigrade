@@ -1,16 +1,36 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Schema } from "effect"
-import type { Event } from "../../log/event"
-import { actorFromReactors, effect, enabled, intent } from "../../reconciliation"
-import { effectInterruptionRegistry } from "../../reconciliation"
-import type { Component } from "../component"
+import fc from "fast-check"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { actorFromProjections, effectInterruptionRegistry, enabled } from "../../runtime"
+import { completeTransitionProjection, type CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
+import { legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorInvocation } from "./call"
-import { actorMethod } from "./definition"
+import { actorMethod, type ActorMethods } from "./definition"
 import {
+  actorCancellationProjection,
   cancellationKeys,
   cancellationTransitionsOf,
   cancelsInvocation
 } from "./cancellation"
+
+const actorFromCompleteDerivations = <R = never>(
+  derivations: ReadonlyArray<CompleteTransitionDerivation<R>>,
+  keyOf: Parameters<typeof actorFromProjections<R>>[1],
+  cancellationOf?: Parameters<typeof actorFromProjections<R>>[2],
+  cancellationResiduals?: Parameters<typeof actorFromProjections<R>>[3],
+  guards?: ReadonlyArray<CompleteTransitionDerivation<R>>,
+  control?: Parameters<typeof actorFromProjections<R>>[5]
+) => actorFromProjections(
+  derivations.map(completeTransitionProjection),
+  keyOf,
+  cancellationOf,
+  cancellationResiduals,
+  guards?.map(completeTransitionProjection),
+  control
+)
 
 const parent = { method: "message", id: "m1", epoch: 0 } as const
 const nextEpoch = { method: "message", id: "m1", epoch: 1 } as const
@@ -40,6 +60,25 @@ const method = () => actorMethod({
   output: Schema.Void,
   event: ({ invocation, at }) => started(invocation, at),
   state: () => ({ status: "pending" }),
+  incremental: {
+    initial: () => ({ started: new Set<string>(), cancelled: new Set<string>() }),
+    reduce: (state, event) => {
+      const started = new Set(state.started)
+      const cancelled = new Set(state.cancelled)
+      const invocation = invocationOf(event)
+      if (invocation === undefined) return { started, cancelled }
+      if (event.type === "InvocationStarted") started.add(JSON.stringify(invocation))
+      if (event.type === "InvocationCancelled") cancelled.add(JSON.stringify(invocation))
+      return { started, cancelled }
+    },
+    currentEpoch: () => 0,
+    state: () => ({ status: "pending" }),
+    cancellation: (state, invocation) => {
+      const key = JSON.stringify(invocation)
+      if (!state.started.has(key)) return undefined
+      return state.cancelled.has(key) ? "cancelled" : "running"
+    }
+  },
   cancellation: {
     state: (events, invocation) => {
       if (!events.some((event) => event.type === "InvocationStarted" &&
@@ -52,7 +91,7 @@ const method = () => actorMethod({
   }
 })
 
-const methods = { message: method(), inspect: method() }
+const methods: ActorMethods = { message: method(), inspect: method() }
 
 const request = (id: string, invocation: ActorInvocation, at: number): Event => ({
   type: "CancellationRequested",
@@ -69,6 +108,51 @@ const terminalKeyOf = (event: Event): string | undefined => {
 }
 
 describe("cancellation properties", () => {
+  test("the control projection agrees with complete cancellation replay", () => {
+    const projection = actorCancellationProjection(methods, [], terminalKeyOf)!
+    const legacy = actorFromCompleteDerivations(
+      [],
+      terminalKeyOf,
+      (events, invocation) => methods[invocation.method]?.cancellation?.state(events, invocation),
+      (events) => cancellationTransitionsOf(events, methods, [], terminalKeyOf)
+    )
+    const incremental = actorFromCompleteDerivations(
+      [],
+      terminalKeyOf,
+      legacy.cancellationOf,
+      legacy.cancellationResiduals,
+      undefined,
+      projection
+    )
+    const childRequest = "cancel/x1/inspect/m1/0"
+    const candidates: ReadonlyArray<Event> = [
+      started(parent, 1),
+      started(nextEpoch, 2),
+      request("x1", parent, 3),
+      request("x2", parent, 4),
+      cancelled(parent, 5),
+      {
+        type: "InvocationLinked",
+        parent,
+        child: { invocation: child, parent },
+        target: "worker:main:child",
+        at: 6
+      } as Event,
+      { type: "ResponseReceived", method: "inspect", call: "m1", at: 7 } as Event,
+      { type: "CancellationDispatched", request: childRequest, at: 8 } as Event,
+      { type: "ResponseReceived", method: "$cancel", call: childRequest, at: 9 } as Event
+    ]
+
+    fc.assert(fc.property(
+      fc.array(fc.integer({ min: 0, max: candidates.length - 1 }), { maxLength: 40 }),
+      (indices) => {
+        const events = indices.map((index) => candidates[index]!)
+        expect(enabled(incremental, events).map((transition) => transition.key))
+          .toEqual(enabled(legacy, events).map((transition) => transition.key))
+      }
+    ))
+  })
+
   test("ExactRequestTarget and DuplicateRequestsAbsorb use method, id, and epoch", () => {
     const first = request("x1", parent, 4)
     const retry = request("x2", parent, 5)
@@ -93,7 +177,7 @@ describe("cancellation properties", () => {
   })
 
   test("NoNewEffects and OldEffectsSignalled isolate the requested invocation", () => {
-    const runtime = actorFromReactors([() => invocations.map((invocation) => effect({
+    const runtime = actorFromCompleteDerivations([() => invocations.map((invocation) => effect({
       key: `effect:${invocation.method}/${invocation.id}/${invocation.epoch}`,
       invocation,
       input: undefined,
@@ -126,12 +210,12 @@ describe("cancellation properties", () => {
       input: undefined,
       events: (_input, at) => [{ type: "CallTerminated", invocation: parent, at } as Event]
     })
-    const component: Component<undefined> = {
+    const component: Component<undefined> = legacyComponent({
       name: "calls",
       cancel: (events, cancellation) => sameInvocation(cancellation.invocation, parent) &&
         !events.some((event) => event.type === "CallTerminated") ? [terminateCall] : [],
       derive: () => ({ view: undefined, transitions: [] })
-    }
+    })
     const initial = [started(parent, 1), request("x1", parent, 2)]
 
     expect(cancellationTransitionsOf(initial, methods, [component], terminalKeyOf))

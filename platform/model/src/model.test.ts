@@ -79,7 +79,7 @@ describe("actionOf", () => {
 
   test("a final response completes and carries its text verbatim, JSON or prose", () => {
     // Nothing here judges a contract: the actor validates every completion before it records a
-    // terminal (tardie, inference/reactor.ts, completionOf).
+    // terminal (tardie, inference/machine.ts, completionOf).
     const structured = JSON.stringify({ aspects: [{ name: "a" }] })
     expect(actionOf({ content: structured, toolCalls: [] } as never)).toEqual({ kind: "complete", output: structured })
   })

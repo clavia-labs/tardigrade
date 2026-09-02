@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import type { Event } from "../../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 const NonNegativeInt = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))

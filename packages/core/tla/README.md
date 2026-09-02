@@ -18,6 +18,7 @@ The specifications describe the runtime and communication contracts independentl
 | `runtime/InvocationPublication` | Child ownership becomes durable before external publication | `InvocationPublication.cfg` | `InvocationPublicationEarly.cfg` |
 | `runtime/InvocationEpoch` | Each logical method call has at most one active execution owner, and a resumed epoch preserves its parent and deadline | `InvocationEpoch.cfg` | `InvocationEpochOverlap.cfg`, `InvocationEpochDetached.cfg` |
 | `runtime/InvocationDeadline` | A child deadline remains bounded by its parent deadline | `InvocationDeadline.cfg` | `InvocationDeadlineLocal.cfg` |
+| `runtime/IncrementalProjection` | Incremental folds equal complete prefix replay, snapshots preserve that equality, and stale derivations cannot commit | `IncrementalProjection.cfg` | `IncrementalProjectionSkip.cfg`, `IncrementalProjectionStale.cfg`, `IncrementalProjectionSnapshot.cfg` |
 | `runtime/Coherence` | Sibling transitions resolve intent suppression before external effects begin | `Coherence.cfg` | `CoherenceBatch.cfg`, `CoherenceRevalidate.cfg` |
 | `runtime/CommitTail` | A durable head wakes a cursor after the read and subscribe race | `CommitTail.cfg` | `CommitTailDrop.cfg` |
 | `runtime/Child` | Parent-owned child identity, delivery ordering, initialization, and recovery | `Child.cfg`, `ChildLive.cfg` | `ChildEarly.cfg`, `ChildRecompute.cfg` |
@@ -28,6 +29,8 @@ The specifications describe the runtime and communication contracts independentl
 | `runtime/Guard` | Terminal outcome remains singular across attempts | `Guard.cfg` | `GuardRace.cfg` |
 | `runtime/ModelPolicy` | Coordinate authority, complete host defaults, recursive attenuation, and selection | `ModelPolicy.cfg` | `ModelPolicyWiden.cfg` |
 | `runtime/Projection` | Prefix interpretation remains faithful | `Projection.cfg` | `ProjectionView.cfg` |
+| `runtime/ProjectionAlgebra` | A product projection factors behavior, composes homomorphically, and represents the bounded future-equivalence quotient | `ProjectionAlgebra.cfg` | `ProjectionAlgebraCurrent.cfg`, `ProjectionAlgebraBalance.cfg` |
+| `runtime/ProjectionVersion` | Fine projections safely coarsen across versions, while coarse snapshots cannot reconstruct distinctions required by a finer policy | `ProjectionVersion.cfg` | `ProjectionVersionGuess.cfg`, `ProjectionVersionRefine.cfg` |
 | `runtime/Reconcile` | Derived keyed work commits, blocks, or settles | `Reconcile.cfg` | None |
 | `runtime/Replay` | Recorded answers remain bound to their questions | `Replay.cfg` | `ReplayTrust.cfg` |
 | `runtime/Thread` | Atomic creation, immutable lineage, and retry absorption | `Thread.cfg`, `ThreadLive.cfg` | `ThreadSplit.cfg`, `ThreadDepth.cfg`, `ThreadConflict.cfg` |

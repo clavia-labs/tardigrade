@@ -1,5 +1,5 @@
 import { Context, Effect } from "effect"
-import type { Event } from "./event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 export interface ThreadEventRow {
   readonly seq: number
@@ -35,7 +35,7 @@ export interface ThreadEventStore {
 // 7. Bounded ordered page. `readPage(mark, limit)` returns at most `limit` rows after `mark` with their durable sequence numbers.
 //
 // `head` is the store's own testimony of progress: the settle loop compares it instead of
-// materializing the log (packages/core/src/reconciliation/reconciler.ts, settleActor).
+// materializing the log (packages/core/src/runtime/reconciler.ts, settleActor).
 export class EventLog extends Context.Service<
   EventLog,
   {
@@ -52,7 +52,7 @@ export const eventLogFrom = (store: ThreadEventStore): Context.Service.Shape<typ
   append: (events) => store.append(events).pipe(Effect.asVoid),
   read: store.read,
   head: store.head,
-  readFrom: store.readFrom
+  readFrom: (mark) => store.readFrom(mark)
 })
 
 // withWatermark derives `head` and `readFrom` for a store that only has `append` and `read`:

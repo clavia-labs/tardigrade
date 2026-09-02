@@ -211,7 +211,7 @@ export const modes = (): void => {
   // @ts-expect-error the kinds are the four the framework implements
   accepts<OutputMode>({ kind: "native-checked", name: "invented" })
   // A fallback is what a component mounts, and native is never one of them: mounting a policy
-  // cannot turn the provider's own guarantee off (components/repair.ts).
+  // cannot turn the provider's own guarantee off (component/repair.ts).
   accepts<OutputFallback>({ kind: "repair", name: "repair", attempts: 1, projectHistory: false })
   // @ts-expect-error native is a mode an attempt runs in, never a fallback a component declares
   accepts<OutputFallback>({ kind: "native", name: "native" })

@@ -3,7 +3,8 @@ import fc from "fast-check"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { createHost, type HostOptions } from "./host"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -26,8 +27,8 @@ const rallyKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const playerReactor = (me: string, opponent: string): Reactor<Router> =>
-  (events) => {
+const playerProjection = (me: string, opponent: string): ErasedTransitionProjection<Router> =>
+  completeTransitionProjection((events) => {
     const answered = new Set(
       events.filter((e) => e.type === "Answered").map((e) => str((e as { id?: unknown }).id))
     )
@@ -58,7 +59,7 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           })
       })
     ]
-  }
+  })
 
 // Four players, two interleaved rallies, so several threads are dirty at
 // once and the schedule genuinely matters.
@@ -70,7 +71,7 @@ const scenario = (pick: HostOptions<Router>["pick"]) => {
       const i = THREADS.indexOf(thread)
       if (i === -1) return undefined
       const partner = THREADS[(i + 2) % 4]!
-      return { reactors: [playerReactor(thread, partner)], keyOf: rallyKeys }
+      return { projections: [playerProjection(thread, partner)], keyOf: rallyKeys }
     },
     ...(pick === undefined ? {} : { pick })
   })

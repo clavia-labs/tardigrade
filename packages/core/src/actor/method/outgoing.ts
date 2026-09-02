@@ -1,11 +1,14 @@
 import { Clock, Effect, Schema } from "effect"
-import type { Event } from "../../log/event"
+import { effect } from "@clavia/tardigrade-core/effect"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { Self } from "@clavia/tardigrade-core/runtime/reconciler"
+import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../../log"
 import { methodEnvelopeOf } from "../../communication/envelope"
 import { formatThreadAddress } from "../../communication/endpoint"
 import { linkOf } from "../../communication/link"
 import { Router } from "../../communication/router"
-import { Self, effect, intent, type Transition } from "../../reconciliation"
 import type { ThreadLineage } from "../../thread"
 import {
   CANCELLATION_CONTROL_METHOD,

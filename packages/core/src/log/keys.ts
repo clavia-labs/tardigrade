@@ -1,4 +1,4 @@
-import type { Event } from "./event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 // KeyFragment is one package's key derivation for its own alphabet, its prefixes declared as
 // data so composition can prove disjointness. The package owns the derivation because it knows

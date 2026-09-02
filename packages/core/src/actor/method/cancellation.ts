@@ -1,15 +1,25 @@
 import { Clock, Effect, Schema } from "effect"
-import type { Event } from "../../log/event"
+import { effect } from "@clavia/tardigrade-core/effect"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { Self, type ActorControlProjection } from "@clavia/tardigrade-core/runtime/reconciler"
+import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../../log/keys"
 import { methodEnvelopeOf } from "../../communication/envelope"
 import { parseThreadAddress } from "../../communication/endpoint"
 import { linkOf } from "../../communication/link"
 import { Router } from "../../communication/router"
-import { effect, intent, Self, type Transition } from "../../reconciliation"
 import type { ThreadLineage } from "../../thread"
-import type { Component } from "../component"
+import { cancelComponent, type Component } from "@clavia/tardigrade-core/component"
 import { ActorInvocationSchema, type ActorInvocation } from "./call"
-import { actorMethod, type ActorMethodDeclaration, type ActorMethods } from "./definition"
+import {
+  actorMethod,
+  initialMethodStates,
+  reduceMethodStates,
+  type ActorMethodCancellationState,
+  type ActorMethodDeclaration,
+  type ActorMethods
+} from "./definition"
 
 // DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS bounds how long a parent waits for a child cancellation response.
 export const DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS = 30_000
@@ -181,14 +191,16 @@ const terminalTransitionOf = <R>(
 const sameInvocation = (left: ActorInvocation, right: ActorInvocation): boolean =>
   left.method === right.method && left.id === right.id && left.epoch === right.epoch
 
-const childLinksOf = (
-  events: ReadonlyArray<Event>,
-  parent: ActorInvocation
-): ReadonlyArray<{
+interface ChildCancellationLink {
   readonly child: ActorInvocation
   readonly target: string
   readonly lineage?: ThreadLineage
-}> => events.flatMap((event) => {
+}
+
+const childLinksOf = (
+  events: ReadonlyArray<Event>,
+  parent: ActorInvocation
+): ReadonlyArray<ChildCancellationLink> => events.flatMap((event) => {
   if (event.type !== "InvocationLinked") return []
   const link = event as {
     readonly parent?: ActorInvocation
@@ -216,25 +228,16 @@ const callSettled = (events: ReadonlyArray<Event>, invocation: ActorInvocation):
       String((event as { readonly call?: unknown }).call) === invocation.id
   )
 
-const childCancellationTransitionsOf = <R>(
-  events: ReadonlyArray<Event>,
+const childCancellationTransitions = <R>(
+  children: ReadonlyArray<ChildCancellationLink>,
   cancellation: InvocationCancellation,
-  timeoutMs: number
-): ReadonlyArray<Transition<never, R | Router | Self>> => childLinksOf(events, cancellation.invocation)
-  .flatMap(({ child, target, lineage }) => {
-    if (callSettled(events, child)) return []
+  timeoutMs: number,
+  dispositionOf: (child: ActorInvocation, request: string) => "done" | "dispatched" | "ready"
+): ReadonlyArray<Transition<never, R | Router | Self>> => children.flatMap(({ child, target, lineage }) => {
     const request = `cancel/${cancellation.request}/${child.method}/${child.id}/${child.epoch}`
-    const answered = events.some((event) =>
-      (event.type === "ResponseReceived" || event.type === "CallTimedOut") &&
-      String((event as { readonly method?: unknown }).method) === CANCELLATION_CONTROL_METHOD &&
-      String((event as { readonly call?: unknown }).call) === request
-    )
-    if (answered) return []
-    const dispatched = events.some((event) =>
-      event.type === "CancellationDispatched" &&
-      String((event as { readonly request?: unknown }).request) === request
-    )
-    if (dispatched) {
+    const disposition = dispositionOf(child, request)
+    if (disposition === "done") return []
+    if (disposition === "dispatched") {
       return [effect({
         key: `cxwait:${request}`,
         input: undefined,
@@ -278,6 +281,191 @@ const childCancellationTransitionsOf = <R>(
     })]
   }) as ReadonlyArray<Transition<never, R | Router | Self>>
 
+const childCancellationTransitionsOf = <R>(
+  events: ReadonlyArray<Event>,
+  cancellation: InvocationCancellation,
+  timeoutMs: number
+): ReadonlyArray<Transition<never, R | Router | Self>> => childCancellationTransitions<R>(
+  childLinksOf(events, cancellation.invocation),
+  cancellation,
+  timeoutMs,
+  (child, request) => {
+    if (callSettled(events, child)) return "done"
+    const answered = events.some((event) =>
+      (event.type === "ResponseReceived" || event.type === "CallTimedOut") &&
+      String((event as { readonly method?: unknown }).method) === CANCELLATION_CONTROL_METHOD &&
+      String((event as { readonly call?: unknown }).call) === request
+    )
+    if (answered) return "done"
+    return events.some((event) =>
+      event.type === "CancellationDispatched" &&
+      String((event as { readonly request?: unknown }).request) === request
+    ) ? "dispatched" : "ready"
+  }
+)
+
+interface ProjectedCancellationRecord {
+  readonly cancellation: InvocationCancellation
+  readonly accepted: ActorMethodCancellationState | undefined
+}
+
+interface ProjectedChildLink extends ChildCancellationLink {
+  readonly parent: ActorInvocation
+}
+
+interface ActorCancellationProjectionState {
+  readonly methods: ReadonlyMap<string, unknown>
+  readonly components: ReadonlyArray<unknown>
+  readonly requests: ReadonlyArray<ProjectedCancellationRecord>
+  readonly links: ReadonlyArray<ProjectedChildLink>
+  readonly settledCalls: ReadonlySet<string>
+  readonly answeredCancellations: ReadonlySet<string>
+  readonly dispatchedCancellations: ReadonlySet<string>
+  readonly recorded: ReadonlySet<string>
+}
+
+const callKeyOf = (method: string, call: string): string => JSON.stringify([method, call])
+
+const projectedChildCancellationTransitionsOf = <R>(
+  state: ActorCancellationProjectionState,
+  cancellation: InvocationCancellation,
+  timeoutMs: number
+): ReadonlyArray<Transition<never, R | Router | Self>> => childCancellationTransitions<R>(
+  state.links.filter((link) => sameInvocation(link.parent, cancellation.invocation)),
+  cancellation,
+  timeoutMs,
+  (child, request) =>
+    state.settledCalls.has(callKeyOf(child.method, child.id)) || state.answeredCancellations.has(request)
+      ? "done"
+      : state.dispatchedCancellations.has(request) ? "dispatched" : "ready"
+)
+
+// actorCancellationProjection constructs the control-plane quotient when every cancellation observer is incremental.
+export const actorCancellationProjection = <R>(
+  methods: ActorMethods,
+  components: ReadonlyArray<Component<unknown, R>>,
+  keyOf: (event: Event) => string | undefined,
+  childTimeoutMs = DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS
+): ActorControlProjection<R | Router | Self> | undefined => {
+  const entries = Object.entries(methods)
+  const supported = entries.every(([, method]) =>
+    method.incremental !== undefined &&
+    (method.cancellation === undefined || method.incremental.cancellation !== undefined)
+  )
+  if (!supported) return undefined
+  const timeoutMs = childCancellationTimeoutOf(childTimeoutMs)
+  const initial = (): ActorCancellationProjectionState => ({
+    methods: initialMethodStates(methods),
+    components: components.map((component) => component.machine.initial()),
+    requests: [],
+    links: [],
+    settledCalls: new Set(),
+    answeredCancellations: new Set(),
+    dispatchedCancellations: new Set(),
+    recorded: new Set()
+  })
+  const reduce = (state: ActorCancellationProjectionState, event: Event): ActorCancellationProjectionState => {
+    const request = cancellationRequestedOf(event)
+    const requests = request === undefined
+      ? state.requests
+      : [...state.requests, {
+          cancellation: request,
+          accepted: methods[request.invocation.method]?.incremental?.cancellation?.(
+            state.methods.get(request.invocation.method),
+            request.invocation
+          )
+        }]
+    const methodsState = reduceMethodStates(methods, state.methods, event)
+    const componentsState = components.map((component, index) =>
+      component.machine.step(state.components[index], event)
+    )
+    const links = [...state.links]
+    if (event.type === "InvocationLinked") {
+      const link = event as {
+        readonly parent?: ActorInvocation
+        readonly child?: { readonly invocation?: ActorInvocation }
+        readonly target?: unknown
+        readonly lineage?: ThreadLineage
+      }
+      if (link.parent !== undefined && link.child?.invocation !== undefined && typeof link.target === "string") {
+        links.push({
+          parent: link.parent,
+          child: link.child.invocation,
+          target: link.target,
+          ...(link.lineage === undefined ? {} : { lineage: link.lineage })
+        })
+      }
+    }
+    const settledCalls = new Set(state.settledCalls)
+    const answeredCancellations = new Set(state.answeredCancellations)
+    if (event.type === "ResponseReceived" || event.type === "CallTimedOut") {
+      const method = String((event as { readonly method?: unknown }).method)
+      const call = String((event as { readonly call?: unknown }).call)
+      settledCalls.add(callKeyOf(method, call))
+      if (method === CANCELLATION_CONTROL_METHOD) answeredCancellations.add(call)
+    }
+    const dispatchedCancellations = new Set(state.dispatchedCancellations)
+    if (event.type === "CancellationDispatched") {
+      dispatchedCancellations.add(String((event as { readonly request?: unknown }).request))
+    }
+    const recorded = new Set(state.recorded)
+    const key = keyOf(event)
+    if (key !== undefined) recorded.add(key)
+    return {
+      methods: methodsState,
+      components: componentsState,
+      requests,
+      links,
+      settledCalls,
+      answeredCancellations,
+      dispatchedCancellations,
+      recorded
+    }
+  }
+  const cancellationOf = (state: ActorCancellationProjectionState, invocation: ActorInvocation) =>
+    methods[invocation.method]?.incremental?.cancellation?.(state.methods.get(invocation.method), invocation)
+  const pending = (state: ActorCancellationProjectionState): ReadonlyArray<InvocationCancellation> => {
+    const seen = new Set<string>()
+    const result: Array<InvocationCancellation> = []
+    for (const record of state.requests) {
+      const invocation = record.cancellation.invocation
+      const current = cancellationOf(state, invocation)
+      if (current !== "running" || (record.accepted !== undefined && record.accepted !== "running")) continue
+      const key = invocationKeyOf(invocation)
+      if (seen.has(key)) continue
+      seen.add(key)
+      result.push(record.cancellation)
+    }
+    return result
+  }
+  return {
+    initial,
+    reduce: (state, event) => reduce(state as ActorCancellationProjectionState, event),
+    cancellationOf: (state, invocation) => cancellationOf(state as ActorCancellationProjectionState, invocation),
+    suppresses: (state, invocation) => (state as ActorCancellationProjectionState).requests.some((record) =>
+      sameInvocation(record.cancellation.invocation, invocation) &&
+      (record.accepted === "running" || cancellationOf(state as ActorCancellationProjectionState, invocation) === "running")
+    ),
+    residuals: (erased) => {
+      const state = erased as ActorCancellationProjectionState
+      const cancellations = pending(state)
+      if (cancellations.length === 0) return undefined
+      const terminals: Array<Transition<never, R | Router | Self>> = []
+      const obligations: Array<Transition<never, R | Router | Self>> = []
+      for (const cancellation of cancellations) {
+        const child = projectedChildCancellationTransitionsOf<R>(state, cancellation, timeoutMs)
+        const component = components.flatMap((entry, index) =>
+          entry.machine.cancel?.(state.components[index], cancellation) ?? []
+        )
+        const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
+        if (outstanding.length === 0) terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
+        else obligations.push(...outstanding)
+      }
+      return [...terminals, ...obligations]
+    }
+  }
+}
+
 // cancellationTransitionsOf projects independent component cleanup and method terminals for pending invocations.
 export const cancellationTransitionsOf = <R>(
   events: ReadonlyArray<Event>,
@@ -298,8 +486,7 @@ export const cancellationTransitionsOf = <R>(
   for (const cancellation of cancellations) {
     const pending = [
       ...childCancellationTransitionsOf<R>(events, cancellation, timeoutMs),
-      ...components
-      .flatMap((component) => component.cancel?.(events, cancellation) ?? [])
+      ...components.flatMap((component) => cancelComponent(component, events, cancellation))
     ]
       .filter((transition) => !recorded.has(transition.key))
     if (pending.length === 0) {
@@ -312,6 +499,28 @@ export const cancellationTransitionsOf = <R>(
 }
 
 // cancellationMethodFor constructs the internal control method paired with an actor's cancellable methods.
+interface CancellationMethodState {
+  readonly methods: ReadonlyMap<string, unknown>
+  readonly requests: ReadonlyMap<string, {
+    readonly cancellation: InvocationCancellation
+    readonly accepted: ActorMethodCancellationState | undefined
+  }>
+}
+
+const cancellationMethodState = (
+  target: ActorInvocation,
+  cancellable: boolean,
+  accepted: ActorMethodCancellationState | undefined,
+  current: ActorMethodCancellationState | undefined
+) => {
+  if (!cancellable) return { status: "failed" as const, error: `method ${JSON.stringify(target.method)} is not cancellable` }
+  if (accepted === undefined) return { status: "failed" as const, error: `invocation ${JSON.stringify(target.id)} does not exist` }
+  if (accepted === "terminal") return { status: "completed" as const, output: { cancelled: false } }
+  if (accepted === "cancelled") return { status: "completed" as const, output: { cancelled: true } }
+  if (current === "running") return { status: "pending" as const }
+  return { status: "completed" as const, output: { cancelled: current === "cancelled" } }
+}
+
 export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
   input: CancellationInput,
   output: CancellationResult,
@@ -322,23 +531,55 @@ export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     at
   }),
+  ...(Object.values(methods).every((method) => method.incremental !== undefined)
+    ? {
+        incremental: {
+          initial: (): CancellationMethodState => ({
+            methods: initialMethodStates(methods),
+            requests: new Map()
+          }),
+          reduce: (state: CancellationMethodState, event: Event): CancellationMethodState => {
+            const requests = new Map(state.requests)
+            const request = cancellationRequestedOf(event)
+            if (request !== undefined && !requests.has(request.request)) {
+              const method = methods[request.invocation.method]
+              const projected = state.methods.get(request.invocation.method)
+              requests.set(request.request, {
+                cancellation: request,
+                accepted: method?.incremental?.cancellation?.(projected, request.invocation)
+              })
+            }
+            const projected = reduceMethodStates(methods, state.methods, event)
+            return { methods: projected, requests }
+          },
+          currentEpoch: () => 0,
+          state: (state: CancellationMethodState, invocation: ActorInvocation) => {
+            const record = state.requests.get(invocation.id)
+            if (record === undefined) return undefined
+            const target = record.cancellation.invocation
+            const method = methods[target.method]
+            const cancellation = method?.incremental?.cancellation
+            return cancellationMethodState(
+              target,
+              method?.cancellation !== undefined && cancellation !== undefined,
+              record.accepted,
+              cancellation?.(state.methods.get(target.method), target)
+            )
+          }
+        }
+      }
+    : {}),
   state: (events, invocation) => {
     const id = invocation.id
     const requestAt = events.findIndex((event) => cancellationRequestedOf(event)?.request === id)
     if (requestAt < 0) return undefined
     const request = cancellationRequestedOf(events[requestAt]!)!
     const cancellation = methods[request.invocation.method]?.cancellation
-    if (cancellation === undefined) {
-      return { status: "failed" as const, error: `method ${JSON.stringify(request.invocation.method)} is not cancellable` }
-    }
-    const accepted = cancellation.state(events.slice(0, requestAt), request.invocation)
-    if (accepted === undefined) {
-      return { status: "failed" as const, error: `invocation ${JSON.stringify(request.invocation.id)} does not exist` }
-    }
-    if (accepted === "terminal") return { status: "completed" as const, output: { cancelled: false } }
-    if (accepted === "cancelled") return { status: "completed" as const, output: { cancelled: true } }
-    const current = cancellation.state(events, request.invocation)
-    if (current === "running") return { status: "pending" as const }
-    return { status: "completed" as const, output: { cancelled: current === "cancelled" } }
+    return cancellationMethodState(
+      request.invocation,
+      cancellation !== undefined,
+      cancellation?.state(events.slice(0, requestAt), request.invocation),
+      cancellation?.state(events, request.invocation)
+    )
   }
 })

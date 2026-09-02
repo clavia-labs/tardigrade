@@ -58,7 +58,7 @@ export interface Connection {
 // MethodDoc documents one method for `packages.describe` and the dispatch funnel's contract
 // gate (contract.ts). `input` and `output` are JSON Schemas of the args object and the returned
 // value. The input is enforced at the funnel, and both shapes are rendered into code mode's
-// system contract (packages/agent/src/components/code.ts).
+// system contract (packages/agent/src/component/code.ts).
 export interface MethodDoc {
   readonly description: string
   readonly input: unknown // JSON schema of the args object
@@ -148,17 +148,21 @@ export interface Package<R = never> extends CodeComponent<R> {
 }
 
 // PackageDefinition is the leaf declaration accepted by definePackage.
-export type PackageDefinition<R = never> = Omit<Package<R>, "derive" | "keys">
+export type PackageDefinition<R = never> = Omit<Package<R>, "machine" | "keys">
 
 // definePackage makes a package declaration a leaf code component.
 export const definePackage = <R>(definition: PackageDefinition<R>): Package<R> => {
   let pkg: Package<R>
   pkg = {
     ...definition,
-    derive: () => ({
-      view: { packages: [pkg as Package<unknown>] },
-      transitions: []
-    })
+    machine: {
+      initial: () => undefined,
+      step: (state: unknown) => state,
+      output: () => ({
+        view: { packages: [pkg as Package<unknown>] },
+        transitions: []
+      })
+    }
   }
   return pkg
 }

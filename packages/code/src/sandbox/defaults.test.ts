@@ -154,7 +154,7 @@ describe("logs ride the settle", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [codeReactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
         ReadonlyArray<Event>

@@ -531,7 +531,7 @@ describe("actors", () => {
       isolatedCatalog,
       Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
     ])
-    const module = `export default { name: "reviewer", methods: {}, components: [], reactors: [], keyOf: () => undefined }\n`
+    const module = `export default { name: "reviewer", methods: {}, components: [], projections: [], keyOf: () => undefined }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
     try {
       const result = await Effect.gen(function*() {

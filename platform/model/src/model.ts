@@ -19,7 +19,8 @@ import {
 } from "tardie"
 import type { Action, AttemptEndpoint } from "tardie/log/events"
 import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
-import { modelRequest, type AgentMessage, type ModelRequest, type ToolSpec } from "tardie/inference/request"
+import { modelRequest, type ModelRequest, type ToolSpec } from "tardie/inference/request"
+import type { AgentMessage } from "tardie/projection/messages"
 import {
   capabilityOf,
   outputModeOf,
@@ -123,7 +124,7 @@ const toTool = (t: ToolSpec): Tool => ({
 // schema constrained it to; an empty response enters the provider failure path.
 //
 // Nothing here judges the response against a contract. The turn's contract is the actor's, and
-// the actor validates every completion before it records a terminal (tardie, inference/reactor.ts,
+// the actor validates every completion before it records a terminal (tardie, inference/machine.ts,
 // completionOf), so a strict provider is checked once rather than trusted twice.
 export const actionOf = (result: ProcessorResult): Action => {
   const calls = result.toolCalls ?? []
@@ -161,7 +162,7 @@ class RefusedError extends Error {
 
 // ViolatedError marks a provider breaking a native strict guarantee on its own wire, which
 // Converse says outright (output.ts, converseStopClass). The compatible leg reports the same
-// class through local validation instead (tardie, inference/reactor.ts, completionOf).
+// class through local validation instead (tardie, inference/machine.ts, completionOf).
 class ViolatedError extends Error {
   readonly violated = true
 }
@@ -599,7 +600,7 @@ export const infer = <const C extends ModelConfig>(
   ): Promise<Action> => {
     // Every consequence of a declared-output attempt names the mode it ran in, so replay reads a
     // recorded fact rather than re-deciding from a capability that may have changed since
-    // (tardie, inference/reactor.ts, completionOf).
+    // (tardie, inference/machine.ts, completionOf).
     const stamped = (action: Action): Action => (req.output === undefined ? action : { ...action, mode })
     // A changed ceiling is a different request, so it mints a different idempotency key: a
     // provider that dedups would otherwise answer the escalated retry with the cached truncated

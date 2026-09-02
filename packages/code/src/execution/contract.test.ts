@@ -190,7 +190,7 @@ const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ reactors: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ projections: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
     }).pipe(
       Effect.provide(

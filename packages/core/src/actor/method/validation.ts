@@ -1,6 +1,6 @@
 import { Schema } from "effect"
-import { intent } from "../../reconciliation"
-import type { Component } from "../component"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { incrementalComponent, legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorMethods, InvalidDurableMethodInput } from "./definition"
 
 const errorOf = (
@@ -45,11 +45,16 @@ export const methodInputValidationComponents = (
   methods: ActorMethods
 ): ReadonlyArray<Component<undefined>> => Object.entries(methods).flatMap(([name, method]) => {
   if (method.durableInput === undefined) return []
-  return [{
-    name: `actor.method-input.${name}`,
-    derive: (log) => ({
-      view: undefined,
-      transitions: transitionsFor(method, log)
-    })
-  }]
+  const projection = method.durableInput.incremental
+  return [projection === undefined
+    ? legacyComponent({
+        name: `actor.method-input.${name}`,
+        derive: (log) => ({ view: undefined, transitions: transitionsFor(method, log) })
+      })
+    : incrementalComponent({
+        name: `actor.method-input.${name}`,
+        initial: projection.initial,
+        step: projection.step,
+        output: (state) => ({ view: undefined, transitions: projection.output(state) })
+      })]
 })

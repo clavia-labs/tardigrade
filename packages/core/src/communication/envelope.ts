@@ -1,4 +1,4 @@
-import type { Event as CoreEvent } from "../log/event"
+import type { Event as CoreEvent } from "@clavia/tardigrade-core/event"
 import type { ThreadLineage } from "../thread"
 import type { ThreadAddress, Endpoint, ProviderEndpoint } from "./endpoint"
 import type { Link } from "./link"

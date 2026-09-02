@@ -4,7 +4,7 @@ import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
-import { actorFromReactors } from "@clavia/tardigrade-core/reconciliation"
+import { actorFromProjections } from "@clavia/tardigrade-core/runtime"
 import {
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
@@ -15,6 +15,7 @@ import {
 } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
+import { plaintextEventCodec } from "../src/storage"
 
 const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
@@ -110,7 +111,7 @@ describe("cloudflare actor", () => {
         actorName: "echo",
         actorInstance: "main",
         thread: "ag.commit-observer",
-        actor: actorFromReactors([]),
+        actor: actorFromProjections([], () => undefined),
         commitObserver: {
           onCommit: ({ head }) => Effect.sync(() => {
             seen.push(head)
@@ -131,6 +132,42 @@ describe("cloudflare actor", () => {
     })
 
     expect(commits).toEqual([2, 3])
+  })
+
+  test("incremental commits decode only the creation record and new tail", async () => {
+    const decoded = await runInDurableObject(threadStub("incremental-ingress"), async (_instance, state) => {
+      const batches: Array<number> = []
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.incremental-ingress",
+        actor: actorFromProjections([], () => undefined),
+        store: {
+          codec: {
+            encode: plaintextEventCodec.encode,
+            decode: (events) => Effect.sync(() => {
+              batches.push(events.length)
+              return events
+            })
+          },
+          indexKey: Effect.succeed
+        }
+      })
+
+      await host.commitRoot({ type: "MessageReceived", id: "first", at: 1 })
+      await host.drive()
+      expect(await host.resting()).toBe(true)
+      batches.length = 0
+
+      await host.commitRoot({ type: "MessageReceived", id: "second", at: 2 })
+      await host.drive()
+      expect(await host.resting()).toBe(true)
+      await host.close()
+      return batches
+    })
+
+    expect(decoded).toEqual([1])
   })
 
   test("background tasks belong to the configured owner", () => {

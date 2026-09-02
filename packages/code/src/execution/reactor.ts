@@ -2,12 +2,18 @@ import { Clock, Deferred, Effect, Fiber } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect, type Reactor } from "@clavia/tardigrade-core/reconciliation"
-import { workOwed } from "./projections"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { transitionProjection, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { annotationsOf, type Package, type PackageRequirements } from "../package/definition"
 import { checkInput, renderSignature } from "./contract"
 import { Sandbox, sandboxParked, sandboxReturned, type Bindings, type SandboxCall } from "../sandbox/service"
 import { eventEpochOf, turnHead, turnOf } from "./turns"
+import {
+  initialTurnProjection,
+  reduceTurnProjection,
+  turnTerminalFrom,
+  type TurnProjectionState
+} from "./turn-projection"
 import {
   BARE_SPILL_NOTE,
   hydrate,
@@ -360,6 +366,15 @@ export interface CodePolicy {
   readonly call: Partial<PackageCallPolicy>
 }
 
+export interface CodeProjectionState {
+  readonly turns: TurnProjectionState
+  readonly dispatches: ReadonlyMap<string, Event>
+  readonly settled: ReadonlySet<string>
+  readonly calls: ReadonlyMap<string, { readonly execId: string; readonly awaiting?: string }>
+  readonly returned: ReadonlySet<string>
+  readonly replies: ReadonlySet<string>
+}
+
 // codeReactorFor derives the executable head as one transition: the settle is the record
 // (`cs:<execId>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the thread
@@ -377,7 +392,7 @@ export interface CodePolicy {
 export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | ReadonlyArray<Package<unknown>>>(
   policy: Partial<CodePolicy>,
   packages: P
-): Reactor<KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => {
+): TransitionProjection<CodeProjectionState, KeyValueStore.KeyValueStore | PackageRequirements<P[number]>> => {
   const named = new Set<string>()
   for (const pkg of packages as ReadonlyArray<Package<unknown>>) {
     if (named.has(pkg.name)) throw new Error(`package "${pkg.name}" declared twice`)
@@ -407,17 +422,77 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
   })
   const callPolicy = packageCallPolicyOf(policy.call)
-  return (events) => {
-    const owed = workOwed(events)
-    if (owed === undefined) return []
-    const dispatch = events.find(
-      (e) => e.type === "CodeDispatched" && (e as { execId?: unknown }).execId === owed.execId
-    )
-    if (dispatch === undefined) return []
+  const ownerOf = (dispatches: ReadonlyMap<string, Event>, callId: string): string => {
+    let owner = ""
+    for (const execId of dispatches.keys()) {
+      if (callId.startsWith(`${execId}.`) && execId.length > owner.length) owner = execId
+    }
+    return owner
+  }
+  return transitionProjection({
+    initial: (): CodeProjectionState => ({
+      turns: initialTurnProjection(),
+      dispatches: new Map(),
+      settled: new Set(),
+      calls: new Map(),
+      returned: new Set(),
+      replies: new Set()
+    }),
+    step: (state, event): CodeProjectionState => {
+      const dispatches = new Map(state.dispatches)
+      const settled = new Set(state.settled)
+      const calls = new Map(state.calls)
+      const returned = new Set(state.returned)
+      const replies = new Set(state.replies)
+      const value = event as { readonly execId?: unknown; readonly callId?: unknown; readonly awaiting?: unknown; readonly id?: unknown; readonly at?: unknown }
+      if (event.type === "CodeDispatched") {
+        const execId = String(value.execId ?? "")
+        const prior = dispatches.get(execId) as { readonly at?: unknown } | undefined
+        if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) dispatches.set(execId, event)
+      }
+      if (event.type === "CodeSettled") settled.add(String(value.execId ?? ""))
+      if (event.type === "PackageCalled") {
+        const callId = String(value.callId ?? "")
+        calls.set(callId, { execId: ownerOf(dispatches, callId) })
+      }
+      if (event.type === "BlockedOn") {
+        const callId = String(value.callId ?? "")
+        const prior = calls.get(callId)
+        calls.set(callId, { execId: prior?.execId ?? ownerOf(dispatches, callId), awaiting: String(value.awaiting ?? "") })
+      }
+      if (event.type === "PackageReturned") returned.add(String(value.callId ?? ""))
+      if (event.type === "MessageReceived" || event.type === "ResponseReceived") replies.add(String(value.id ?? ""))
+      return {
+        turns: reduceTurnProjection(state.turns, event),
+        dispatches,
+        settled,
+        calls,
+        returned,
+        replies
+      }
+    },
+    output: (state) => {
+      const ordered = [...state.dispatches.entries()].sort(([leftId, left], [rightId, right]) => {
+        const time = Number((left as { readonly at?: unknown }).at ?? 0) - Number((right as { readonly at?: unknown }).at ?? 0)
+        return time !== 0 ? time : leftId < rightId ? -1 : 1
+      })
+      let selected: { readonly execId: string; readonly dispatch: Event } | undefined
+      for (const [execId, dispatch] of ordered) {
+        const turn = turnOf(dispatch)
+        if (state.settled.has(execId) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
+        const owned = [...state.calls.entries()].filter(([, call]) => call.execId === execId)
+        const open = owned.filter(([callId, call]) => call.awaiting !== undefined && !state.returned.has(callId))
+        const home = open.some(([, call]) => state.replies.has(call.awaiting!))
+        if (owned.length === 0 || home || open.length === 0) selected = { execId, dispatch }
+        break
+      }
+      if (selected === undefined) return []
+      const owed = { execId: selected.execId }
+      const dispatch = selected.dispatch
     const d = dispatch as { code?: unknown; at?: unknown }
     const turn = turnOf(dispatch)
     const epoch = eventEpochOf(dispatch)
-    return [
+      return [
       effect<
         { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
         KeyValueStore.KeyValueStore | R
@@ -433,9 +508,10 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
         },
         act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
       })
-    ]
-  }
+      ]
+    }
+  })
 }
 
 // codeReactor is that reactor on the default spill bound, with no packages: the powerless thread.
-export const codeReactor: Reactor<KeyValueStore.KeyValueStore> = codeReactorFor({}, [])
+export const codeReactor: TransitionProjection<CodeProjectionState, KeyValueStore.KeyValueStore> = codeReactorFor({}, [])

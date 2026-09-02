@@ -27,11 +27,12 @@
   "exports": {
     ".": "./src/index.ts",
     "./actor/*": "./src/actor/*.ts",
-    "./components/*": "./src/components/*.ts",
+    "./component/*": "./src/component/*.ts",
     "./inference/*": "./src/inference/*.ts",
     "./log/*": "./src/log/*.ts",
     "./output/*": "./src/output/*.ts",
     "./packages/*": "./src/packages/*.ts",
+    "./projection/*": "./src/projection/*.ts",
     "./runtime/*": "./src/runtime/*.ts"
   },
   "dependencies": {

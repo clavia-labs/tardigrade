@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { mappedDirectory } from "./directory"
 import { threadAddressOf, type ThreadAddress } from "./endpoint"
 import { envelopeOf, isActorEnvelope, type ActorEnvelope } from "./envelope"

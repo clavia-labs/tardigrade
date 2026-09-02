@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import type { Actor } from "@clavia/tardigrade-core/actor"
+import { legacyComponent, type Actor } from "@clavia/tardigrade-core/actor"
 import {
   actor,
   infer,
@@ -13,13 +13,13 @@ import {
 const accepts = <T>(_value: T): void => {}
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
-const empty: AgentComponent = {
+const empty: AgentComponent = legacyComponent({
   name: "empty",
   derive: () => ({
     view: { system: [], tools: [], context: [], output: [] },
     transitions: []
   })
-}
+})
 
 const nativeOnly = actor({ name: "native-only", methods: {}, components: [infer([empty, nativeOutput])] })
 const repaired = actor({ name: "repaired", methods: {}, components: [infer([empty, outputRepair], TEST_MODEL)] })
@@ -40,5 +40,5 @@ export const fallbackBrand = (): void => {
 }
 
 test("output strategy components carry their requirements without changing the runtime shape", () => {
-  expect(nativeOnly.reactors).toHaveLength(repaired.reactors.length)
+  expect(nativeOnly.projections).toHaveLength(repaired.projections.length)
 })

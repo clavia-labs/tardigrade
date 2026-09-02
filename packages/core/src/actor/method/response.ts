@@ -1,7 +1,9 @@
 import { Clock, Effect, Schema } from "effect"
-import type { Event } from "../../log/event"
+import { effect } from "@clavia/tardigrade-core/effect"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { Self } from "@clavia/tardigrade-core/runtime/reconciler"
+import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../../log"
-import { Self, effect, type Reactor } from "../../reconciliation"
 import { Router } from "../../communication/router"
 import { boundaryEvent } from "../../communication/message"
 import { envelopeOf } from "../../communication/envelope"
@@ -13,9 +15,15 @@ import {
   type ThreadAddress,
   type ProviderEndpoint
 } from "../../communication/endpoint"
-import type { ActorMethodDeclaration, ActorMethods } from "./definition"
+import {
+  initialMethodStates,
+  reduceMethodStates,
+  type ActorMethodDeclaration,
+  type ActorMethods
+} from "./definition"
 import type { ActorMethodState } from "./state"
-import type { Component } from "../component"
+import { incrementalComponent, legacyComponent, type Component } from "@clavia/tardigrade-core/component"
+import type { ActorInvocation } from "./call"
 
 // ActorMethodResponse is the terminal response correlated to one method call.
 export interface ActorMethodResponse<Output = unknown> {
@@ -115,37 +123,24 @@ const linkedCalls = (
 ): ReadonlyArray<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> => {
   const calls: Array<{ readonly response: ActorMethodResponse; readonly link: Link<unknown, ThreadAddress> }> = []
   for (const event of log) {
-    const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
-    const context = typeof candidate.call === "object" && candidate.call !== null
-      ? candidate.call as { readonly invocation?: unknown }
-      : undefined
-    const invocation = typeof context?.invocation === "object" && context.invocation !== null
-      ? context.invocation as { readonly method?: unknown; readonly id?: unknown; readonly epoch?: unknown }
-      : undefined
-    const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
-    if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null) continue
-    if (!("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) continue
+    const call = responseCallOf(event)
+    if (call === undefined) continue
     for (const [name, method] of Object.entries(methods)) {
-      if (invocation !== undefined && invocation.method !== name) continue
+      if (call.invocation !== undefined && call.invocation.method !== name) continue
+      const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
       const declaration = method as ActorMethodDeclaration
-      const state = declaration.state(log, {
-        method: name,
-        id,
-        epoch: typeof invocation?.epoch === "number" ? invocation.epoch : 0
-      })
+      const state = declaration.state(log, invocation)
       if (state === undefined || state.status === "pending") continue
-      const response = responseOf(name, id, terminalOf(name, declaration, state))
-      if (!delivered(log, response)) calls.push({ response, link: candidate.link as Link<unknown, ThreadAddress> })
+      const response = responseOf(name, call.id, terminalOf(name, declaration, state))
+      if (!delivered(log, response)) calls.push({ response, link: call.link })
       break
     }
   }
   return calls
 }
 
-// methodResponseReactor derives method reports from linked calls and their declared state projections.
-export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | Self> => (log) =>
-  linkedCalls(log, methods).slice(0, 1).map(({ response, link }) =>
-    effect({
+const responseTransition = (response: ActorMethodResponse, link: Link<unknown, ThreadAddress>) =>
+  effect({
       key: `mres:${response.method}:${response.call}`,
       input: { response, link },
       act: ({ response: current, link: accepted }) =>
@@ -199,11 +194,76 @@ export const methodResponseReactor = (methods: ActorMethods): Reactor<Router | S
           } satisfies ResponseDelivered]
         })
     })
-  )
+
+// methodResponseReactor derives method reports from linked calls and their declared state projections.
+export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> => (log) =>
+  linkedCalls(log, methods).slice(0, 1).map(({ response, link }) => responseTransition(response, link))
+
+interface IncrementalResponseCall {
+  readonly id: string
+  readonly invocation?: ActorInvocation
+  readonly link: Link<unknown, ThreadAddress>
+}
+
+const responseCallOf = (event: Event): IncrementalResponseCall | undefined => {
+  const candidate = event as { readonly id?: unknown; readonly call?: unknown; readonly link?: unknown }
+  const context = typeof candidate.call === "object" && candidate.call !== null
+    ? candidate.call as { readonly invocation?: unknown }
+    : undefined
+  const invocation = typeof context?.invocation === "object" && context.invocation !== null
+    ? context.invocation as ActorInvocation
+    : undefined
+  const id = typeof invocation?.id === "string" ? invocation.id : candidate.id
+  if (typeof id !== "string" || typeof candidate.link !== "object" || candidate.link === null ||
+    !("source" in candidate.link) || !("target" in candidate.link) || !isThreadAddress(candidate.link.target)) return undefined
+  return { id, ...(invocation === undefined ? {} : { invocation }), link: candidate.link as Link<unknown, ThreadAddress> }
+}
+
+interface IncrementalResponseState {
+  readonly methods: ReadonlyMap<string, unknown>
+  readonly calls: ReadonlyArray<IncrementalResponseCall>
+  readonly delivered: ReadonlySet<string>
+}
 
 // methodResponseComponent adapts declared method states into response transitions.
-export const methodResponseComponent = (methods: ActorMethods): Component<undefined, Router | Self> => ({
-  name: "actor.methods",
-  keys: methodResponseKeys,
-  derive: (log) => ({ view: undefined, transitions: methodResponseReactor(methods)(log) })
-})
+export const methodResponseComponent = (methods: ActorMethods): Component<undefined, Router | Self> => {
+  const entries = Object.entries(methods)
+  if (!entries.every(([, method]) => method.incremental !== undefined)) {
+    return legacyComponent({
+      name: "actor.methods",
+      keys: methodResponseKeys,
+      derive: (log) => ({ view: undefined, transitions: methodResponseReactor(methods)(log) })
+    })
+  }
+  return incrementalComponent<IncrementalResponseState, undefined, Router | Self>({
+    name: "actor.methods",
+    keys: methodResponseKeys,
+    initial: () => ({
+      methods: initialMethodStates(methods),
+      calls: [],
+      delivered: new Set()
+    }),
+    step: (state, event) => {
+      const projected = reduceMethodStates(methods, state.methods, event)
+      const delivered = new Set(state.delivered)
+      if (event.type === "ResponseDelivered") {
+        delivered.add(`${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}`)
+      }
+      const accepted = responseCallOf(event)
+      return { methods: projected, calls: accepted === undefined ? state.calls : [...state.calls, accepted], delivered }
+    },
+    output: (state) => {
+      for (const call of state.calls) {
+        for (const [name, method] of entries) {
+          if (call.invocation !== undefined && call.invocation.method !== name) continue
+          const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
+          const current = method.incremental!.state(state.methods.get(name), invocation)
+          if (current === undefined || current.status === "pending" || state.delivered.has(`${name}:${call.id}`)) continue
+          const response = responseOf(name, call.id, terminalOf(name, method, current))
+          return { view: undefined, transitions: [responseTransition(response, call.link)] }
+        }
+      }
+      return { view: undefined, transitions: [] }
+    }
+  })
+}

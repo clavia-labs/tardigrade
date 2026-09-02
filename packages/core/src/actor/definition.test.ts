@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { actor, validateActor } from "./definition"
 import { actorRef } from "./reference"
 import { actorMethod, actorMethodsOf } from "./method/definition"
@@ -8,7 +10,7 @@ import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "./method/cancellation"
 import { alarmFired } from "./method/timeout"
 import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
-const component = { name: "inspect", derive: () => ({ view: undefined, transitions: [] }) }
+const component = legacyComponent({ name: "inspect", derive: () => ({ view: undefined, transitions: [] }) })
 const methods = actorMethodsOf({
   inspect: actorMethod({
     input: Schema.Struct({ value: Schema.String }),
@@ -25,7 +27,7 @@ describe("actor", () => {
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
     expect(definition.cancellation).toEqual({ childTimeoutMs: DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS })
-    expect(definition.reactors).toHaveLength(3)
+    expect(definition.projections).toHaveLength(3)
     expect(actorRef(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
@@ -49,7 +51,7 @@ describe("actor", () => {
 
   test("mounts durable method timeout behavior on every actor", () => {
     const definition = actor({ name: "release-analyst", methods, components: [component] })
-    const transitions = definition.reactors.flatMap((reactor) => reactor([{
+    const transitions = definition.projections.flatMap((projection) => replayProjection(projection, [{
       type: "CallDispatched",
       id: "inspect-1",
       method: "inspect",

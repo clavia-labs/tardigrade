@@ -1,10 +1,19 @@
-import { intent, type Transition, type Intent, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
+import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { toolReturned } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
 import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import type { InvocationCancellation } from "@clavia/tardigrade-core/actor"
-import type { Component } from "@clavia/tardigrade-core/actor"
+import type { Component, ComponentMachine } from "@clavia/tardigrade-core/actor"
+import { incrementalComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
+import { Chunk, HashMap, Option } from "effect"
+import {
+  initialTurnProjection,
+  reduceTurnProjection,
+  turnViewFrom,
+  type TurnProjectionState
+} from "@clavia/tardigrade-code/execution/turn-projection"
 
 // PendingCall identifies the head unanswered ToolCalled event.
 export interface PendingCall {
@@ -67,7 +76,7 @@ const unknownToolError = (name: string, offered: ReadonlyArray<{ readonly name: 
 export const toolsReactorFrom = <R = never>(
   serve: Serve<R>,
   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
-): Reactor<R> => (log) => {
+): CompleteTransitionDerivation<R> => (log) => {
   const call = pendingCall(log)
   if (call === undefined) return []
   const stamp = call.turn === undefined ? {} : { turn: call.turn }
@@ -89,6 +98,25 @@ export const toolsReactorFrom = <R = never>(
 }
 
 // cancelTools settles every open tool call owned by the cancelled message invocation.
+const toolCancellationTransitions = (
+  calls: ReadonlyArray<string>,
+  cancellation: InvocationCancellation
+): ReadonlyArray<Transition<never>> => calls.map((callId) => intent({
+  key: `tr:${callId}`,
+  input: { callId, cancellation },
+  events: (input, at) => {
+    const reason = input.cancellation.reason === undefined
+      ? "cancelled"
+      : `cancelled: ${input.cancellation.reason}`
+    return [toolReturned({
+      callId: input.callId,
+      result: { error: reason },
+      turn: input.cancellation.invocation.id,
+      at
+    })]
+  }
+}))
+
 const cancelTools = (
   log: ReadonlyArray<Event>,
   cancellation: InvocationCancellation
@@ -106,21 +134,7 @@ const cancelTools = (
       ? [String((event as { readonly callId?: unknown }).callId)]
       : []
   )
-  return calls.map((callId) => intent({
-    key: `tr:${callId}`,
-    input: { callId, cancellation },
-    events: (input, at) => {
-      const reason = input.cancellation.reason === undefined
-        ? "cancelled"
-        : `cancelled: ${input.cancellation.reason}`
-      return [toolReturned({
-        callId: input.callId,
-        result: { error: reason },
-        turn: input.cancellation.invocation.id,
-        at
-      })]
-    }
-  }))
+  return toolCancellationTransitions(calls, cancellation)
 }
 
 // toolsComponentFrom exposes tool dispatch and open-call cancellation through one component.
@@ -130,9 +144,155 @@ export const toolsComponentFrom = <V, R = never>(
   toolsFor: (log: ReadonlyArray<Event>, call: PendingCall) => ReadonlyArray<{ readonly name: string }>
 ): Component<V, R> => {
   const dispatch = toolsReactorFrom(serve, toolsFor)
-  return {
+  return legacyComponent({
     name: "tools",
     cancel: cancelTools,
     derive: (log) => ({ view: empty, transitions: dispatch(log) })
-  }
+  })
 }
+
+interface ProjectedTool<R = never> {
+  readonly spec: { readonly name: string }
+  readonly serve: Serve<R>
+}
+
+interface PendingRecord<R = never> {
+  readonly call: PendingCall
+  readonly offered: ReadonlyArray<ProjectedTool<R>>
+  readonly log: Chunk.Chunk<Event>
+  readonly order: number
+}
+
+interface IncrementalToolsState<R = never> {
+  readonly child: unknown
+  readonly turns: TurnProjectionState
+  readonly nextOrder: number
+  readonly pending: HashMap.HashMap<string, PendingRecord<R>>
+  readonly offers: HashMap.HashMap<string, ReadonlyArray<ProjectedTool<R>>>
+  readonly heads: HashMap.HashMap<string, Event>
+  readonly thread?: Event
+}
+
+// incrementalToolsComponentFrom retains one scoped history per open call and the view that offered it.
+export const incrementalToolsComponentFrom = <V, R = never>(
+  empty: V,
+  child: ComponentMachine<V, R>,
+  toolsOf: (view: V) => ReadonlyArray<ProjectedTool<R>>
+): Component<V, R> => incrementalComponent<IncrementalToolsState<R>, V, R>({
+  name: "tools",
+  initial: (): IncrementalToolsState => ({
+    child: child.initial(),
+    turns: initialTurnProjection(),
+    nextOrder: 0,
+    pending: HashMap.empty(),
+    offers: HashMap.empty(),
+    heads: HashMap.empty()
+  }),
+  step: (state, event) => {
+    const eventTurn = String((event as { readonly turn?: unknown }).turn ?? "")
+    let before: ReadonlyArray<ProjectedTool<R>> | undefined
+    const offeredBefore = (): ReadonlyArray<ProjectedTool<R>> => {
+      before ??= toolsOf(child.output(state.child).view)
+      return before
+    }
+    const offers = event.type === "ModelCalled" && eventTurn !== ""
+      ? HashMap.set(state.offers, eventTurn, offeredBefore())
+      : state.offers
+    const heads = event.type === "MessageReceived"
+      ? HashMap.set(state.heads, String((event as { readonly id?: unknown }).id ?? ""), event)
+      : state.heads
+    const thread = event.type === "ThreadCreated" ? event : state.thread
+    let pending: HashMap.HashMap<string, PendingRecord<R>> = HashMap.map(
+      state.pending,
+      (record): PendingRecord<R> => ({ ...record, log: Chunk.append(record.log, event) })
+    )
+    let nextOrder = state.nextOrder
+    if (event.type === "ToolCalled") {
+      const callId = str((event as { readonly callId?: unknown }).callId)
+      if (!HashMap.has(pending, callId)) {
+        const currentTurn = turnViewFrom(state.turns)
+        const turn = (event as { readonly turn?: unknown }).turn
+        const turnId = turn === undefined ? undefined : str(turn)
+        const epoch = (event as { readonly epoch?: unknown }).epoch
+        const call: PendingCall = {
+          callId,
+          name: str((event as { readonly name?: unknown }).name),
+          arguments: (event as { readonly arguments?: unknown }).arguments,
+          ...(turnId === undefined ? {} : { turn: turnId }),
+          ...(typeof epoch === "number"
+            ? { epoch }
+            : {})
+        }
+        const prefix = [
+          ...(thread === undefined ? [] : [thread]),
+          ...(turnId === undefined
+            ? []
+            : currentTurn.length > 0 && String((currentTurn[0] as { readonly id?: unknown }).id) === turnId
+              ? currentTurn
+              : Option.match(HashMap.get(heads, turnId), { onNone: () => [], onSome: (head) => [head] }))
+        ]
+        const callOffer = turnId === undefined
+          ? offeredBefore()
+          : Option.getOrElse(HashMap.get(offers, turnId), offeredBefore)
+        const record: PendingRecord<R> = {
+          call,
+          offered: callOffer,
+          log: Chunk.fromIterable([...prefix, event]),
+          order: nextOrder
+        }
+        pending = HashMap.set(pending, callId, record)
+        nextOrder += 1
+      }
+    }
+    if (event.type === "ToolReturned") {
+      pending = HashMap.remove(pending, str((event as { readonly callId?: unknown }).callId))
+    }
+    if (event.type === "TurnCompleted" || event.type === "TurnFailed" || event.type === "TurnCancelled") {
+      pending = HashMap.filter(pending, (record) =>
+        record.call.turn !== eventTurn || (record.call.epoch ?? 0) !== eventEpochOf(event)
+      )
+    }
+    return {
+      child: child.step(state.child, event),
+      turns: reduceTurnProjection(state.turns, event),
+      nextOrder,
+      pending,
+      offers,
+      heads,
+      ...(thread === undefined ? {} : { thread })
+    }
+  },
+  cancelState: (state, cancellation) => {
+    if (cancellation.invocation.method !== "message") return []
+    const calls = [...HashMap.values(state.pending)]
+      .filter((record) =>
+        record.call.turn === cancellation.invocation.id &&
+        (record.call.epoch ?? 0) === cancellation.invocation.epoch
+      )
+      .map((record) => record.call.callId)
+    return toolCancellationTransitions(calls, cancellation)
+  },
+  output: (state) => {
+    let current: PendingRecord<R> | undefined
+    for (const record of HashMap.values(state.pending)) {
+      if (current === undefined || record.order < current.order) current = record
+    }
+    if (current === undefined) return { view: empty, transitions: [] }
+    const tool = current.offered.find((candidate) => candidate.spec.name === current!.call.name)
+    const log = Chunk.toReadonlyArray(current.log)
+    const stamp = current.call.turn === undefined ? {} : { turn: current.call.turn }
+    const answering = (result: unknown): Intent<never> => intent({
+      key: `tr:${current!.call.callId}`,
+      ...(current!.call.turn === undefined ? {} : {
+        invocation: { method: "message", id: current!.call.turn, epoch: current!.call.epoch ?? 0 }
+      }),
+      input: { callId: current.call.callId, result },
+      events: (input, at) => [toolReturned({ callId: input.callId, result: input.result, ...stamp, at })]
+    })
+    const transitions = tool?.serve(current.call, log, answering)
+    return {
+      view: empty,
+      transitions: transitions ?? [answering({ error: unknownToolError(current.call.name, current.offered.map((tool) => tool.spec)) })]
+    }
+  }
+})

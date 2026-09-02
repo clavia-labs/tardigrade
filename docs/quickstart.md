@@ -14,7 +14,7 @@ type TurnCompleted = { type: "TurnCompleted"; output: string }
 ```
 
 ### Projections
-A projection is a pure function from the event set to a value. Everything else in tardigrade is derived from the log, and a projection is that derivation, named.
+A projection is a pure function from the event set to a value. Everything else in tardigrade is derived from the log, and a projection names that computation.
 
 ```ts
 // Projection derives a value from the event set. It is pure and ignores
@@ -64,14 +64,14 @@ type Reactor = (events: Event[]) => Transition[]
 A component derives a view and transitions from the same log. A component may compose child components, interpret their combined view, and reconcile their transitions. Either side may be empty.
 
 ```ts
-type Derivation<V> = {
+type ComponentOutput<V> = {
   view: V
   transitions: Transition[]
 }
 
 type Component<V> = {
   name: string
-  derive: (events: Event[]) => Derivation<V>
+  derive: (events: Event[]) => ComponentOutput<V>
 }
 ```
 
@@ -85,7 +85,7 @@ type ViewAlgebra<V> = {
 ```
 ### Actor
 
-An actor is one event log and the root components over it. The log is mailbox and state at once: a send lands as an event, components derive what it enables, reconciliation selects coherent transitions, and each committed result starts a fresh derivation. Settling ends when no component enables a transition. `actor(...components)` adapts each root transition projection to a reactor and combines its committing keys.
+An actor is one event log and the root components over it. The log is mailbox and state at once: a send lands as an event, components derive what it enables, reconciliation selects coherent transitions, and each committed result produces fresh output. Settling ends when no component enables a transition. `actor(...components)` adapts each root transition projection to a reactor and combines its committing keys.
 ```ts
 // Actor is the single writer of one log and the reactors over it. The
 // platform serializes sends per actor, so appends never race

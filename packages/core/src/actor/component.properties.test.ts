@@ -1,15 +1,20 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import { enabled, intent, effect } from "../reconciliation"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { intent } from "@clavia/tardigrade-core/intent"
+import { enabled } from "../runtime"
 import {
   actor,
   composeComponents,
+  deriveComponent,
+  incrementalComponent,
+  legacyComponent,
   type Component,
   type TransitionReconciler,
   type ViewAlgebra
 } from "./index"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 interface Facts {
   readonly names: ReadonlyArray<string>
@@ -28,7 +33,7 @@ const facts: ViewAlgebra<Facts> = {
 const leafComponent = (leaf: Leaf): Component<Facts> => {
   const name = `leaf-${leaf.id}`
   const key = `${name}:work`
-  return {
+  return legacyComponent({
     name,
     keys: {
       prefixes: [`${name}:`],
@@ -48,7 +53,31 @@ const leafComponent = (leaf: Leaf): Component<Facts> => {
           : []
       }
     }
-  }
+  })
+}
+
+const incrementalLeafComponent = (leaf: Leaf): Component<Facts> => {
+  const name = `leaf-${leaf.id}`
+  const key = `${name}:work`
+  return incrementalComponent({
+    name,
+    keys: {
+      prefixes: [`${name}:`],
+      keyOf: (event) =>
+        event.type === "Committed" && Number((event as { owner?: unknown }).owner) === leaf.id
+          ? key
+          : undefined
+    },
+    initial: () => false,
+    step: (visible: boolean, event: Event) => visible ||
+      event.type === "Triggered" && String((event as { trigger?: unknown }).trigger) === leaf.trigger,
+    output: (visible: boolean) => ({
+      view: { names: visible ? [name] : [] },
+      transitions: visible
+        ? [effect({ key, input: { owner: leaf.id }, act: () => Effect.succeed([]) })]
+        : []
+    })
+  })
 }
 
 const regroup = (
@@ -86,6 +115,42 @@ const logArbitrary = fc.array(
 ) as fc.Arbitrary<ReadonlyArray<Event>>
 
 describe("recursive component composition", () => {
+  test("the composed machine is the synchronous product of its children", () => {
+    fc.assert(
+      fc.property(leavesArbitrary, logArbitrary, (leafSpecs, log) => {
+        const children = leafSpecs.map(incrementalLeafComponent)
+        const machines = children.map((child) => child.machine)
+        const composed = composeComponents("product", facts, children).machine
+        let childStates = machines.map((machine) => machine.initial())
+        let composedState = composed.initial()
+
+        for (let length = 0; length <= log.length; length++) {
+          const childOutputs = machines.map((machine, index) => machine.output(childStates[index]!))
+          const expected = {
+            view: childOutputs.reduce(
+              (view, output) => facts.combine(view, output.view),
+              facts.empty
+            ),
+            transitions: childOutputs.flatMap((output) => output.transitions)
+          }
+          const observed = composed.output(composedState)
+
+          expect(observed.view).toEqual(expected.view)
+          expect(observed.transitions.map((transition) => ({ key: transition.key, input: transition.input }))).toEqual(
+            expected.transitions.map((transition) => ({ key: transition.key, input: transition.input }))
+          )
+
+          const event = log[length]
+          if (event !== undefined) {
+            childStates = machines.map((machine, index) => machine.step(childStates[index]!, event))
+            composedState = composed.step(composedState, event)
+          }
+        }
+      }),
+      { numRuns: 500 }
+    )
+  })
+
   test("every grouping agrees with the flat composition", () => {
     fc.assert(
       fc.property(
@@ -96,8 +161,8 @@ describe("recursive component composition", () => {
           const leaves = leafSpecs.map(leafComponent)
           const flat = composeComponents("flat", facts, leaves)
           const nested = regroup(leaves, choices)
-          const flatDerivation = flat.derive(log)
-          const nestedDerivation = nested.derive(log)
+          const flatDerivation = deriveComponent(flat, log)
+          const nestedDerivation = deriveComponent(nested, log)
 
           expect(nestedDerivation.view).toEqual(flatDerivation.view)
           expect(nestedDerivation.transitions.map((owed) => ({ key: owed.key, input: owed.input }))).toEqual(
@@ -113,6 +178,46 @@ describe("recursive component composition", () => {
       { numRuns: 500 }
     )
   })
+
+  test("every incremental grouping agrees with complete replay at every prefix", () => {
+    fc.assert(
+      fc.property(
+        leavesArbitrary,
+        fc.array(fc.nat(), { maxLength: 20 }),
+        logArbitrary,
+        (leafSpecs, choices, log) => {
+          const leaves = leafSpecs.map(incrementalLeafComponent)
+          const flat = composeComponents("flat-incremental", facts, leaves)
+          const nested = regroup(leaves, choices)
+          const flatProjection = flat.machine
+          const nestedProjection = nested.machine
+          let flatState = flatProjection.initial()
+          let nestedState = nestedProjection.initial()
+
+          for (let length = 0; length <= log.length; length++) {
+            const prefix = log.slice(0, length)
+            const expected = deriveComponent(flat, prefix)
+            const observations = [
+              deriveComponent(nested, prefix),
+              flatProjection.output(flatState),
+              nestedProjection.output(nestedState)
+            ]
+            for (const observed of observations) {
+              expect(observed.view).toEqual(expected.view)
+              expect(observed.transitions.map((transition) => ({ key: transition.key, input: transition.input })))
+                .toEqual(expected.transitions.map((transition) => ({ key: transition.key, input: transition.input })))
+            }
+            const event = log[length]
+            if (event !== undefined) {
+              flatState = flatProjection.step(flatState, event)
+              nestedState = nestedProjection.step(nestedState, event)
+            }
+          }
+        }
+      ),
+      { numRuns: 500 }
+    )
+  })
 })
 
 interface Claim {
@@ -123,7 +228,7 @@ interface Claim {
   readonly suppresses: ReadonlyArray<number>
 }
 
-const claimComponent = (claim: Claim): Component<Facts> => ({
+const claimComponent = (claim: Claim): Component<Facts> => legacyComponent({
   name: `claim-${claim.id}`,
   derive: () => ({
     view: { names: [`claim-${claim.id}`] },
@@ -170,7 +275,7 @@ describe("transition reconciliation", () => {
           return transitions.filter((transition) => !suppressed.has(claimOf(transition).id))
         }
         const composed = composeComponents("suppression", facts, claims.map(claimComponent), { reconcile })
-        const selected = composed.derive([]).transitions.map(claimOf)
+        const selected = deriveComponent(composed, []).transitions.map(claimOf)
         const selectedIds = new Set(selected.map((claim) => claim.id))
 
         for (const claim of selected) {
@@ -192,7 +297,7 @@ describe("transition reconciliation", () => {
             reconcile: permissionsFor(granted)
           })
 
-          expect(composed.derive([]).transitions.map(claimOf).map((claim) => claim.id)).toEqual(
+          expect(deriveComponent(composed, []).transitions.map(claimOf).map((claim) => claim.id)).toEqual(
             claims.filter((claim) => granted.has(claim.capability)).map((claim) => claim.id)
           )
         }
@@ -207,7 +312,7 @@ describe("transition reconciliation", () => {
         const composed = composeComponents("capacity", facts, claims.map(claimComponent), {
           reconcile: capacityFor(capacity)
         })
-        const selected = composed.derive([]).transitions.map(claimOf)
+        const selected = deriveComponent(composed, []).transitions.map(claimOf)
 
         expect(selected.reduce((spent, claim) => spent + claim.cost, 0)).toBeLessThanOrEqual(capacity)
       }),
@@ -233,7 +338,7 @@ describe("transition reconciliation", () => {
               return capacityFor(capacity)(events, transitions)
             }
           })
-          const resolved = bounded.derive([]).transitions.map(claimOf)
+          const resolved = deriveComponent(bounded, []).transitions.map(claimOf)
           const authorizedClaims = claims.filter((claim) => granted.has(claim.capability))
 
           expect(observedByParent).toEqual(authorizedClaims.map((claim) => claim.id))

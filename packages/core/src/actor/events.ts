@@ -1,4 +1,4 @@
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import type { ChildPlacement } from "../thread/lineage"
 
 export interface ThreadRequested extends Event {

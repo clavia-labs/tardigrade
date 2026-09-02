@@ -1,5 +1,5 @@
 import { Tracer } from "effect"
-import type { Event } from "./event"
+import type { Event } from "@clavia/tardigrade-core/event"
 
 // The trace seam of the event grammar: a delivered event MAY carry `traceparent`, the W3C
 // header form of the span that sent it. The platform stamps it at delivery and packages read it,

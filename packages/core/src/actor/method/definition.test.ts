@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import type { Event } from "../../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import {
   DEFAULT_ACTOR_METHOD_TIMEOUT_MS,
   actorMethod,

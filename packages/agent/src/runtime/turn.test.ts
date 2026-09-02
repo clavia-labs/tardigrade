@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { send, settleActor, effect } from "@clavia/tardigrade-core/reconciliation"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
@@ -9,9 +10,10 @@ import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/s
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { Self } from "@clavia/tardigrade-core/reconciliation"
+import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { Infer, receive } from "./turn"
 import { modelRequest } from "../inference/request"
-import { NativeOutputSupport, type InferRequest } from "../inference/reactor"
+import { NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { turnFailed } from "../log/events"
 import type { AgentComponent } from "./composition"
 import type { OutputFallback } from "../output/contract"
@@ -49,7 +51,8 @@ const assembled = <R>(component: AgentComponent<R>) => actor({
 const agentWith = (packages: ReadonlyArray<Package>) =>
   assembled(infer([budget([codeMode(packages)]), compaction(), nativeOutput], TEST_MODEL))
 const rlmAgent = agentWith([])
-const rootReactor = rlmAgent.reactors[0]!
+const rootProjection = rlmAgent.projections[0]!
+const rootReactor = (events: ReadonlyArray<Event>) => replayProjection(rootProjection, events)
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
 // and the turn completes. The sandbox test binding runs real JS with the package objects in
 // scope; no isolation is needed to test the machinery.
@@ -446,7 +449,7 @@ const completedTurns = (log: ReadonlyArray<Event>): ReadonlySet<string> =>
 
 // The stub binding states the mode it emulates, the way a real binding reports the mode it
 // selected. Nothing synthesizes one: a declared-output result with no mode is an invariant error
-// (inference/reactor.ts, completionOf).
+// (inference/machine.ts, completionOf).
 const REPAIR_TWO = repairFallback({ attempts: 2 })
 
 const repairAgent = (policy: Parameters<typeof outputRepairFor>[0] = {}) =>
@@ -636,6 +639,11 @@ describe("the repair implementation", () => {
     expect(rejected.errors?.join(" ")).toContain("aspects")
     // The rejection is a typed event of its own: no tool stands in for it.
     expect(events.some((e) => e.type === "ToolCalled")).toBe(false)
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "OutputRepaired",
+      replaced: "m1/infer/0",
+      replacement: "m1/infer/1"
+    }))
     expect(outputOf(SCOUT, events, "m1")).toEqual(GOOD_ANSWER)
   })
 
@@ -771,7 +779,7 @@ describe("the repair implementation", () => {
   test("the recorded policy decides exhaustion, so a later mount cannot extend an old round", () => {
     // Two rejections already stand, recorded under a bound of one. Mounting a looser policy now
     // must not reopen that round: replay reads the log, never today's assembly
-    // (src/output/contract.ts, modeOf; inference/reactor.ts, openRejection).
+    // (src/output/contract.ts, modeOf; inference/machine.ts, openRejection).
     const spent = repairFallback({ attempts: 1 })
     const seeded: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "decompose this topic", output: { name: SCOUT.name, schema: SCOUT.schema }, at: 0 },
@@ -868,7 +876,7 @@ describe("the repair implementation", () => {
   })
 
   test("a malformed custom fallback is refused at construction", () => {
-    const malformed: AgentComponent = {
+    const malformed: AgentComponent = legacyComponent({
       name: "output.malformed",
       derive: () => ({
         view: {
@@ -885,7 +893,7 @@ describe("the repair implementation", () => {
         },
         transitions: []
       })
-    }
+    })
     expect(() => assembled(infer([malformed], TEST_MODEL))).toThrow("output fallback declared by component output.malformed")
   })
 })
@@ -907,7 +915,7 @@ describe("the mind on a native surface", () => {
             nativeOutput
     ], TEST_MODEL))
     expect(mind.components).toHaveLength(1)
-    expect(mind.reactors).toHaveLength(4)
+    expect(mind.projections).toHaveLength(4)
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,
@@ -1004,7 +1012,7 @@ describe("the validate-once implementation", () => {
 // again at all. Nothing about the framework repair loop reaches it.
 const HOUSE_STYLE: OutputFallback = { kind: "delegated", name: "house-style", projectHistory: true }
 
-const houseStyle = (options: { readonly asks: number }): AgentComponent => ({
+const houseStyle = (options: { readonly asks: number }): AgentComponent => legacyComponent({
   name: "output.house-style",
   derive: (log: ReadonlyArray<Event>) => {
     const rejections = log.filter((e) => e.type === "OutputRejected")
@@ -1120,13 +1128,13 @@ describe("a domain-specific implementation", () => {
     )
     // A component that mounts the implementation and derives nothing: the rejection stands, and
     // the turn is durably parked rather than quietly retried.
-    const silent: AgentComponent = {
+    const silent: AgentComponent = legacyComponent({
       name: "output.silent",
       derive: () => ({
         view: { system: [], tools: [], context: [], output: [{ component: "output.silent", kind: "fallback", fallback: HOUSE_STYLE }] },
         transitions: []
       })
-    }
+    })
     const events = await run(
       Effect.gen(function* () {
         yield* receive(assembled(infer([codeMode(), silent], TEST_MODEL)), {

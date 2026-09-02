@@ -1,5 +1,5 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
-import { actor, actorMethod } from "tardie"
+import { actor, actorMethod, legacyComponent } from "tardie"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -128,7 +128,7 @@ const echo = actorMethod({
 const worker = cloudflareWorker(actor({
   name: "echo",
   methods: { echo },
-  components: [{
+  components: [legacyComponent({
     name: "echo",
     keys: {
       prefixes: ["echo-request:", "echo-complete:", "indexed-record:"],
@@ -158,7 +158,7 @@ const worker = cloudflareWorker(actor({
         })
       })]
     }) })
-  }]
+  })]
 }), {
   modelAdapters: modelAdapters(openAICompatibleAdapter),
   modelScope: modelScopeFrom({

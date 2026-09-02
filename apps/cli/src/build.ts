@@ -57,7 +57,7 @@ const definitionOf = async (modulePath: string): Promise<Actor<unknown>> => {
     throw new Error(`actor entry name must match ${String(ACTOR_NAME_PATTERN)}`)
   }
   if (
-    !Array.isArray(candidate.reactors) ||
+    !Array.isArray(candidate.projections) ||
     typeof candidate.keyOf !== "function" ||
     !Array.isArray(candidate.components)
   ) {

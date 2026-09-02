@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import type { KeyFragment } from "../log"
 
 // MessageReceived is the canonical inbound: an agent's turn, a mailbox's sink, a worker's brief, and a reply coming home are all this event. id is the dedup key everywhere. source names the arriving connection; chat and sender are provider coordinates; from is the delivering actor's address; input is a run's instance input; data is the provider's structured record. sender and from are separate namespaces on purpose: sender authored the message in the world, from delivered it here, receivers route by from and criteria match sender, so neither can impersonate the other.

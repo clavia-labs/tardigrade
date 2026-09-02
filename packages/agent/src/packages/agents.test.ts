@@ -18,7 +18,7 @@ import type { Link } from "@clavia/tardigrade-core/communication/link"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
-import { codeSystemFor } from "../components/code"
+import { codeSystemFor } from "../component/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.

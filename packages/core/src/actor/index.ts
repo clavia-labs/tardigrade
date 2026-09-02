@@ -7,8 +7,7 @@ export {
   type ActorOptions
 } from "./definition"
 export * from "./contract"
-export * from "./component"
-export * from "./compose"
+export * from "@clavia/tardigrade-core/component"
 export * from "./method/index"
 export * from "./reference"
 export * from "./registry"

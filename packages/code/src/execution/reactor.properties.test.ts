@@ -77,7 +77,7 @@ const runAttempt = async (completions: ReadonlyArray<Completion>): Promise<Reado
   const running = Effect.runPromise(
     Effect.gen(function* () {
       yield* settleActor({
-        reactors: [codeReactorFor({}, [probePackage])],
+        projections: [codeReactorFor({}, [probePackage])],
         keyOf: composeKeys(messageKeys, codeKeys)
       })
       return yield* Effect.flatMap(EventLog, (log) => log.read)

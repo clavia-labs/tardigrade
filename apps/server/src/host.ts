@@ -383,7 +383,7 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
     throw new Error(`actor artifact name does not match ${JSON.stringify(expected.name)}`)
   }
   if (
-    !Array.isArray(candidate.reactors) ||
+    !Array.isArray(candidate.projections) ||
     typeof candidate.keyOf !== "function" ||
     !Array.isArray(candidate.components)
   ) {
