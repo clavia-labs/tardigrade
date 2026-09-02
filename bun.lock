@@ -73,8 +73,8 @@
       "version": "0.0.1",
       "dependencies": {
         "@mdx-js/react": "^3.1.1",
-        "@tanstack/react-router": "^1.170.32",
-        "@tanstack/react-start": "^1.168.49",
+        "@tanstack/react-router": "1.170.32",
+        "@tanstack/react-start": "1.168.49",
         "react": "^19.2.7",
         "react-dom": "^19.2.7",
       },
@@ -208,7 +208,7 @@
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@tanstack/ai": "0.46.0",
-        "@tanstack/ai-anthropic": "0.16.6",
+        "@tanstack/ai-anthropic": "0.16.7",
         "@tanstack/ai-openai": "0.20.0",
         "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
@@ -793,7 +793,7 @@
 
     "@tanstack/ai": ["@tanstack/ai@0.46.0", "", { "dependencies": { "@ag-ui/core": "0.1.1-canary.beta.0", "@standard-schema/spec": "^1.1.0", "@tanstack/ai-event-client": "^0.9.0", "@tanstack/ai-utils": "^0.4.0", "partial-json": "^0.1.7" }, "peerDependencies": { "@opentelemetry/api": ">=1.9.0" }, "optionalPeers": ["@opentelemetry/api"] }, "sha512-c0L9MssuCEdVTxNlWQ8R39v1sTqvahDA3OsFfUSWIFwtE39fc3SKY5osOElkPs5/UpwsCvhVmMOHDFA2PrdtzQ=="],
 
-    "@tanstack/ai-anthropic": ["@tanstack/ai-anthropic@0.16.6", "", { "dependencies": { "@anthropic-ai/sdk": "^0.97.1", "@tanstack/ai-utils": "^0.4.0" }, "peerDependencies": { "@tanstack/ai": "^0.45.0", "zod": "^4.0.0" } }, "sha512-zAm9dm14J71ZANRYjTnHUJHRxGYjoFwuGiA0HUtMtYQ2bFEiJqmnxe5CcbDpoKZQtf1NteI7eGgI9CTUg4tkLg=="],
+    "@tanstack/ai-anthropic": ["@tanstack/ai-anthropic@0.16.7", "", { "dependencies": { "@anthropic-ai/sdk": "^0.97.1", "@tanstack/ai-utils": "^0.4.0" }, "peerDependencies": { "@tanstack/ai": "^0.46.0", "zod": "^4.0.0" } }, "sha512-Ku76Ww1OEx1+jouCXFCo3zRRrvyg/R0p1q/wWflhp4t2gM1t+QPJwGSrqTimrldR+c3DoEEgZ3jeikNPEPR7sw=="],
 
     "@tanstack/ai-bedrock": ["@tanstack/ai-bedrock@0.2.3", "", { "dependencies": { "@aws-crypto/sha256-js": "^5.2.0", "@aws-sdk/client-bedrock-runtime": "^3.1057.0", "@aws-sdk/credential-providers": "^3.1057.0", "@smithy/signature-v4": "^5.4.5", "@smithy/types": "^4.14.2", "@tanstack/openai-base": "^0.9.15", "openai": "^6.41.0" }, "peerDependencies": { "@tanstack/ai": "^0.46.0", "zod": "^4.0.0" } }, "sha512-Uhzd3YGWbhfLqyZyFdQ47V4rAP8gAsjpNtew4giL2McCspdi01FE4WbXcELngr+LZxI0UlGQAgzyx5UyMVIMhA=="],
 

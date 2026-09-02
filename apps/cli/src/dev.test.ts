@@ -62,7 +62,7 @@ const directActor: Actor<never> = {
 const booted = <A>(
   body: (baseUrl: string, hostname: string, actors: string) => Promise<A>,
   env: Record<string, string | undefined> = {},
-  options: Pick<DevOptions, "actor" | "onListen"> = {}
+  options: Pick<DevOptions, "actor" | "onListen" | "shutdownMillis"> = {}
 ): Promise<A> => {
   const actors = mkdtempSync(join(tmpdir(), "tardigrade-dev-actors-"))
   const actorData = mkdtempSync(join(tmpdir(), "tardigrade-dev-data-"))
@@ -168,6 +168,21 @@ describe("tdg dev", () => {
 
   test("an invalid fallback range is refused", async () => {
     expect(availableDevPort(4242, 4243)).rejects.toThrow("--min-port")
+  })
+
+  test("an open event stream does not delay shutdown", async () => {
+    const started = Date.now()
+    await booted(
+      async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/v1/actors/main/threads/stream`)
+        await response.body!.getReader().read()
+      },
+      {},
+      { shutdownMillis: 25 }
+    ).catch((error) => {
+      if (!(error instanceof Error) || error.message !== "All fibers interrupted without error") throw error
+    })
+    expect(Date.now() - started).toBeLessThan(2_000)
   })
 
   test("the browser callback receives a live UI URL after listening", async () => {

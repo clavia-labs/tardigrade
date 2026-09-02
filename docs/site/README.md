@@ -1,6 +1,6 @@
 # Web documentation
 
-The web application renders every `.mdx` file under this directory. Each page owns its route and navigation position through frontmatter.
+The web application renders the published `.mdx` files registered in `apps/web/src/docs/load.ts`. Each page owns its route and navigation position through frontmatter. Draft files stay outside the registry.
 
 ## Frontmatter
 
@@ -32,4 +32,4 @@ Pages can use standard Markdown and these components without imports:
 - `ConceptSection` and `ConceptInterface` arrange the concepts page.
 - `ActorDiagram`, `TransitionLoop`, `ComponentDiagram`, `MethodDiagram`, and `RlmDiagram` render interactive or illustrated material.
 
-Reusable components live in `apps/web/src/docs/Docs.tsx`. Add a component to its `components` map before using its name in MDX.
+Reusable components live in `apps/web/src/docs/components/index.tsx`. Add a component to its `mdxComponents` map before using its name in MDX.
