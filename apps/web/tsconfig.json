@@ -10,6 +10,7 @@
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "types": ["bun", "vite/client"],
     "paths": { "@docs/*": ["../../docs/site/*"] },
     "resolveJsonModule": true,
     "isolatedModules": true,

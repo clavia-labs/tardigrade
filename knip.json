@@ -83,6 +83,7 @@
     },
     "apps/web": {
       "entry": [
+        "src/**/*.test.ts",
         "../../docs/site/**/*.mdx"
       ],
       "project": [
