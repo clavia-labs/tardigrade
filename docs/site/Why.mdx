@@ -66,7 +66,9 @@ If you asked me to compress Tardigrade's single most important insight, it is th
 
 <BehaviorTrajectoryDiagram />
 
-If you can describe the behavior you want to see, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
+This idea has roots in finite state machines. A component in tardigrade is a finite state machine whose current output value is determined only by its current state. This is also known as a Moore Machine.
+
+If you can describe the behavior you want to see in relation to what has happened, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
 <div className="harness-diagram-frame">
   <HarnessDiagram />
@@ -110,25 +112,17 @@ A component has the following interface:
 
 ```ts
 interface ComponentDefinition<State, View, Requirements = never> {
-  // name identifies the component.
   readonly name: string
-  // initial creates the component's starting state.
   readonly initial: () => State
-  // step derives the next state from an event.
   readonly step: (state: State, event: Event) => State
-  // output derives the component's view and enabled transitions.
   readonly output: (state: State) => {
-    // view is the value observed by the parent.
     readonly view: View
-    // transitions are the work enabled by the component.
     readonly transitions: ReadonlyArray<Transition<never, Requirements>>
   }
-  // cancelState derives transitions when an invocation is cancelled.
   readonly cancelState?: (
     state: State,
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
-  // keys derives stable keys for the component's events.
   readonly keys?: KeyFragment
 }
 ```
