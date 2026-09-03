@@ -104,23 +104,31 @@ export const researcher = actor({
 })
 ```
 
-Composition is possible because each state machine is defined as a typed state machine using Effect TS.
+Composition is possible because each state machine is defined as a typed state machine using [Effect TS](https://effect.website/).
 
 A component has the following interface:
 
 ```ts
 interface ComponentDefinition<State, View, Requirements = never> {
+  // name identifies the component.
   readonly name: string
+  // initial creates the component's starting state.
   readonly initial: () => State
+  // step derives the next state from an event.
   readonly step: (state: State, event: Event) => State
+  // output derives the component's view and enabled transitions.
   readonly output: (state: State) => {
+    // view is the value observed by the parent.
     readonly view: View
+    // transitions are the work enabled by the component.
     readonly transitions: ReadonlyArray<Transition<never, Requirements>>
   }
+  // cancelState derives transitions when an invocation is cancelled.
   readonly cancelState?: (
     state: State,
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
+  // keys derives stable keys for the component's events.
   readonly keys?: KeyFragment
 }
 ```
