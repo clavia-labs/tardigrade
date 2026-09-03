@@ -1,0 +1,31 @@
+---
+title: Cloudflare
+description: Deploy Tardigrade actors to Cloudflare Workers and Durable Objects.
+route: /docs/platforms/cloudflare
+section: Platforms
+sectionOrder: 3
+order: 2
+---
+
+Tardigrade runs each actor thread in a SQLite-backed Cloudflare Durable Object. The generated Worker routes requests to actors and threads, stores their event logs, and resumes unfinished work through Durable Object alarms.
+
+## Configure
+
+`tdg init` creates `wrangler.jsonc` and the Worker entry for your actor. Run `tdg setup` to select a model and write its visible configuration to the project.
+
+Store the Tardigrade token and each model provider credential as Wrangler secrets:
+
+```bash
+bunx wrangler secret put TARDIGRADE_TOKEN
+bunx wrangler secret put OPENAI_API_KEY
+```
+
+Use the credential name configured for your provider in place of `OPENAI_API_KEY`.
+
+## Deploy
+
+```bash variant="single"
+bunx wrangler deploy
+```
+
+The deployed Worker exposes the same actor, thread, method, and event routes used during local development.

@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
+  <title id="title">Tardie Agent</title>
+  <description id="description">A Tardigrade RLM researcher agent composed from system, compaction, budget, code mode, agents, workspace, and native output components.</description>
+  <defs>
+    <pattern id="puzzle-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="9" stroke="#7890bd" stroke-opacity=".2" stroke-width=".75"/>
+    </pattern>
+    <pattern id="puzzle-crosshatch" width="12" height="12" patternUnits="userSpaceOnUse">
+      <path d="M0 12 12 0M-3 3 3-3M9 15 15 9" fill="none" stroke="#7890bd" stroke-opacity=".18" stroke-width=".75"/>
+    </pattern>
+    <path id="puzzle-a" d="M0 0 47.6 0C56 0 56-23.7 70-23.7S84 0 92.4 0H140V47.6C140 56 116.3 56 116.3 70S140 84 140 92.4V140H92.4C84 140 84 116.3 70 116.3S56 140 47.6 140H0V92.4C0 84 23.7 84 23.7 70S0 56 0 47.6Z"/>
+    <path id="puzzle-b" d="M0 0 47.6 0C56 0 56 23.7 70 23.7S84 0 92.4 0H140V47.6C140 56 163.7 56 163.7 70S140 84 140 92.4V140H92.4C84 140 84 163.7 70 163.7S56 140 47.6 140H0V92.4C0 84-23.7 84-23.7 70S0 56 0 47.6Z"/>
+    <pattern id="puzzle" width="280" height="280" patternUnits="userSpaceOnUse">
+      <g stroke="#7890bd" stroke-opacity=".48" stroke-width="1" vector-effect="non-scaling-stroke">
+        <use xlink:href="#puzzle-a" fill="#2450ff" fill-opacity=".02"/>
+        <use x="140" xlink:href="#puzzle-b" fill="url(#puzzle-hatch)"/>
+        <use y="140" xlink:href="#puzzle-b" fill="#526073" fill-opacity=".025"/>
+        <use x="140" y="140" xlink:href="#puzzle-a" fill="url(#puzzle-crosshatch)"/>
+      </g>
+    </pattern>
+    <linearGradient id="panel" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#11151c"/>
+      <stop offset="1" stop-color="#0d1117"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="630" fill="#f8f7f2"/>
+  <rect width="1200" height="630" fill="url(#puzzle)"/>
+
+  <rect x="32" y="24" width="72" height="72" rx="8" fill="#2450ff"/>
+  <svg x="42" y="43" width="52" height="34" viewBox="36 62 210 136" aria-hidden="true">
+    <g fill="#fffefa" transform="translate(320 0) scale(-1 1)">
+      <path d="M78 117 112 99v77c0 6-3 10-8 13l-21-11c-3-2-5-5-5-9Z"/>
+      <path d="M120 95 154 81v96c0 6-3 10-8 13l-21-11c-3-2-5-5-5-9Z"/>
+      <path d="M162 78c10-4 21-7 34-8v106c0 5-3 9-8 12l-21-11c-3-2-5-5-5-9Z"/>
+      <path d="M204 70c12 1 23 4 34 8v90c0 4-2 7-5 9l-21 11c-5-3-8-7-8-12Z"/>
+      <path d="m246 81 34 14v47l-34 14Z"/>
+    </g>
+  </svg>
+  <text x="120" y="71" fill="#101521" font-family="'Instrument Sans', system-ui, sans-serif" font-size="34" font-weight="600" letter-spacing="-1">Tardie Agent</text>
+  <line x1="330" y1="38" x2="330" y2="82" stroke="#7c8798" stroke-width="1.5"/>
+  <text x="356" y="71" fill="#101521" font-family="Georgia, 'Times New Roman', serif" font-size="29" font-weight="500" letter-spacing="-.3">behavior = <tspan font-style="italic">f</tspan>(immutable event log)</text>
+
+  <g transform="translate(0 -10)">
+    <rect x="64" y="145" width="1072" height="425" fill="url(#panel)"/>
+    <g font-family="'.SF NS Mono', Menlo, Monaco, monospace" font-size="23" font-weight="500" xml:space="preserve">
+      <text x="105" y="184"><tspan fill="#c9a5ff">export</tspan><tspan fill="#8ab4ff"> const</tspan><tspan fill="#f3f4f6"> rlmResearcher </tspan><tspan fill="#ecd36a">= actor</tspan><tspan fill="#f3f4f6">({</tspan></text>
+      <text x="151" y="214"><tspan fill="#65d2ff">name</tspan><tspan fill="#f3f4f6">: </tspan><tspan fill="#b6e879">"rlm-researcher"</tspan><tspan fill="#f3f4f6">,</tspan></text>
+      <text x="151" y="244"><tspan fill="#65d2ff">methods</tspan><tspan fill="#f3f4f6">: agentMethods,</tspan></text>
+      <text x="151" y="274"><tspan fill="#65d2ff">components</tspan><tspan fill="#f3f4f6">: [</tspan><tspan fill="#c9a5ff">infer</tspan><tspan fill="#f3f4f6">([</tspan></text>
+      <text x="197" y="304"><tspan fill="#65d2ff">system</tspan><tspan fill="#f3f4f6">(</tspan><tspan fill="#b6e879">"Research the given topic and cite your sources."</tspan><tspan fill="#f3f4f6">),</tspan></text>
+      <text x="197" y="334"><tspan fill="#65d2ff">compaction</tspan><tspan fill="#f3f4f6">(),</tspan></text>
+      <text x="197" y="364"><tspan fill="#65d2ff">budget</tspan><tspan fill="#f3f4f6">([</tspan><tspan fill="#c9a5ff">codeMode</tspan><tspan fill="#f3f4f6">([</tspan></text>
+      <text x="243" y="394"><tspan fill="#65d2ff">agentsPackage</tspan><tspan fill="#f3f4f6">(),</tspan></text>
+      <text x="243" y="424"><tspan fill="#65d2ff">workspacePackage</tspan><tspan fill="#f3f4f6">()</tspan></text>
+      <text x="197" y="454" fill="#f3f4f6">])]),</text>
+      <text x="197" y="484"><tspan fill="#65d2ff">nativeOutput</tspan></text>
+      <text x="151" y="514" fill="#f3f4f6">])]</text>
+      <text x="105" y="544" fill="#f3f4f6">})</text>
+    </g>
+  </g>
+
+  <text x="1168" y="608" fill="#526073" font-family="'.SF NS Mono', Menlo, Monaco, monospace" font-size="20" text-anchor="end">tardigrade.sh</text>
+
+</svg>

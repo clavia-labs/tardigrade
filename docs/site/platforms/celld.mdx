@@ -1,0 +1,32 @@
+---
+title: Celld
+description: Deploy Tardigrade actors to a self-hosted Celld fleet.
+route: /docs/platforms/celld
+section: Platforms
+sectionOrder: 3
+order: 3
+---
+
+Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted fleet. Tardigrade uses the same actor definition, Durable Object lifecycle, alarms, and HTTP routes on Cloudflare and Celld.
+
+## Configure
+
+`tdg init` creates `celld.jsonc` beside `wrangler.jsonc`. Run `tdg setup` to write model connections to both platform manifests while preserving the other Celld settings.
+
+Celld reads its fleet bucket from `--bucket` or `CELLD_BUCKET`. It supports S3-compatible buckets, Google Cloud Storage buckets, and Azure Blob Storage containers.
+
+## Validate and deploy
+
+Validate the project without publishing it:
+
+```bash variant="single"
+celld deploy --config celld.jsonc --bucket s3://actors --dry-run
+```
+
+Publish the deployment:
+
+```bash variant="single"
+celld deploy --config celld.jsonc --bucket s3://actors
+```
+
+Each Celld node needs the Worker variables that hold the Tardigrade token and model provider credentials. It also needs the Worker Loader binding when the actor uses Code Mode.

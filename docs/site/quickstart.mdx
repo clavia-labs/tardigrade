@@ -2,8 +2,8 @@
 title: Quickstart
 description: Build and deploy your first Tardie agent
 route: /docs/quickstart
-section: Introduction
-sectionOrder: 1
+section: Getting Started
+sectionOrder: 2
 order: 1
 ---
 
@@ -65,7 +65,7 @@ Within `actor.ts`, you will see the following code:
 ```ts expanded
 import { Effect, actor, agentMessageMethod, infer, nativeOutput, system, tool } from "tardie"
 
-const actorName = "weather-agent"
+const actorName = "my-agent"
 
 const actorInstructions = `
 Answer questions about the weather.
@@ -96,18 +96,25 @@ export default actor({
 A Tardigrade component has the following interface:
 
 ```ts
-interface AgentComponent {
-  name: string
-  derive: (log: Event[]) => {
-    view: AgentView
-    transitions: Transition[]
+interface ComponentDefinition<State, View, Requirements = never> {
+  readonly name: string
+  readonly initial: () => State
+  readonly step: (state: State, event: Event) => State
+  readonly output: (state: State) => {
+    readonly view: View
+    readonly transitions: ReadonlyArray<Transition<never, Requirements>>
   }
+  readonly cancelState?: (
+    state: State,
+    cancellation: InvocationCancellation
+  ) => ReadonlyArray<Transition<never, Requirements>>
+  readonly keys?: KeyFragment
 }
 ```
 
-Components are pure functions over the agent log that define the agent's behaviors. For example, tool calling is a behavior where when a model makes a tool call response, a `ToolCalled` event is appended to the log. The `tool` component "reacts" to the `ToolCalled` event by running the associated effect and appending `ToolReturned` as the response. In the case of weather, it returns dummy weather data.&#x20;
+`initial` creates private component state. `step` folds each event into that state. `output` derives the component's view and enabled transitions. When components are composed, Tardigrade combines their views and reconciles their transitions. The `Requirements` type records the Effect services needed to execute those transitions.
 
-In the Quickstart actor, weather is defined as a tool component, which is a higher level component that abstracts the core component interface. It automatically adds the tool to the agent view and defines a transition that reacts to tool calls by the model.
+The `weather` component contributes `get_weather` to the agent's view and keeps its specification beside its Effect handler:
 
 ```ts
 const weather = tool({
@@ -120,7 +127,7 @@ const weather = tool({
 })
 ```
 
-As you build with Tardigrade, you would realize that this simple way of defining behavior could compose to describe more complex behaviors like compaction, subagents and so on. In fact, user message is just another type of event and nothing special at all! In this case, we run inference on a model with the provided input.&#x20;
+When the model selects `get_weather`, Tardigrade records `ToolCalled`. The inference component finds the handler in the current view, runs its Effect, and records `ToolReturned`. The next model request includes the result.
 </Tip>
 
 ### Running it locally
@@ -156,21 +163,25 @@ export default actor({
 })
 ```
 
-In Tardigrade, a method defines the typed interface of an actor. Different actors can expose different methods. A typical agent accepts text and an optional model, then returns text.
+An actor method defines a typed, durable call boundary. Its input and output schemas validate the public API, its event function records the call, and its projection derives the current call state from events. A method can also define how cancellation is recorded.
 
 ```ts
-message: {
-  input: {
-    text: string
-    input?: unknown
-    model?: {
-      provider: string
-      model_id: string
-    }
-  }
-  output: string
-}
+const AgentMessageInput = Schema.Struct({
+  text: Schema.String,
+  input: Schema.optionalKey(Schema.Unknown),
+  model: Schema.optionalKey(ModelRef)
+})
+
+const agentMessageMethod = actorMethod({
+  input: AgentMessageInput,
+  output: Schema.String,
+  event,
+  projection,
+  cancellation: { event: cancellationEvent }
+})
 ```
+
+Each `message` call remains pending until the method projection observes a completed, failed, or cancelled turn. The Quickstart command appends `MessageReceived`, and a later `TurnCompleted` resolves the call with its string output.
 </Tip>
 
 ### Inspecting the actor logs

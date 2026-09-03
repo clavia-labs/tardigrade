@@ -1,0 +1,30 @@
+---
+title: Bun
+description: Run Tardigrade actors locally or on a Bun server.
+route: /docs/platforms/bun
+section: Platforms
+sectionOrder: 3
+order: 1
+---
+
+The Bun platform runs a Tardigrade actor as a process backed by SQLite. Each actor instance has a directory database, and each thread has its own event log, workspace, runtime, and alarm state.
+
+## Run locally
+
+`tdg dev` builds `actor.ts`, starts the Bun host, and serves the actor API and Voyager:
+
+```bash variant="single"
+tdg dev
+```
+
+The server listens on port `4242` by default. Its health endpoint is available at `/healthz`.
+
+## Storage
+
+The default actor database is `.tardigrade/actor.sqlite`. Thread databases live beside it under `.tardigrade/actor.sqlite.threads/`. The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
+
+## Configure
+
+`tdg setup` writes model configuration to `wrangler.jsonc` and local credentials to `.dev.vars`. The Bun host reads those files during local development. A hosted process can provide the same credential names through its environment.
+
+Set `PORT` to change the HTTP port and `TARDIGRADE_DB` to change the SQLite database path.

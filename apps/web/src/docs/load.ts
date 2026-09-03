@@ -3,7 +3,13 @@ import type { ComponentType } from "react"
 import Cli, { frontmatter as cliFrontmatter } from "@docs/cli.mdx"
 import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/concepts.mdx"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
+import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
+import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.mdx"
+import Cloudflare, { frontmatter as cloudflareFrontmatter } from "@docs/platforms/cloudflare.mdx"
 import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/quickstart.mdx"
+import Sdk, { frontmatter as sdkFrontmatter } from "@docs/sdk.mdx"
+import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/Welcome.mdx"
+import Why, { frontmatter as whyFrontmatter } from "@docs/Why.mdx"
 
 type DocFrontmatter = {
   readonly title: string
@@ -14,6 +20,7 @@ type DocFrontmatter = {
   readonly order: number
   readonly draft?: boolean | undefined
   readonly articleClass?: string | undefined
+  readonly hideDescription?: boolean | undefined
 }
 
 export type Doc = {
@@ -29,9 +36,15 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
+  { default: Welcome, frontmatter: welcomeFrontmatter, source: "Welcome.mdx" },
+  { default: Why, frontmatter: whyFrontmatter, source: "Why.mdx" },
   { default: Quickstart, frontmatter: quickstartFrontmatter, source: "quickstart.mdx" },
   { default: Concepts, frontmatter: conceptsFrontmatter, source: "concepts.mdx" },
+  { default: Bun, frontmatter: bunFrontmatter, source: "platforms/bun.mdx" },
+  { default: Cloudflare, frontmatter: cloudflareFrontmatter, source: "platforms/cloudflare.mdx" },
+  { default: Celld, frontmatter: celldFrontmatter, source: "platforms/celld.mdx" },
   { default: Cli, frontmatter: cliFrontmatter, source: "cli.mdx" },
+  { default: Sdk, frontmatter: sdkFrontmatter, source: "sdk.mdx" },
   { default: Rlm, frontmatter: rlmFrontmatter, source: "examples/rlm.mdx" }
 ]
 
@@ -56,6 +69,8 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
   if (articleClass !== undefined && typeof articleClass !== "string") throw new Error(`${source}: frontmatter.articleClass must be a string`)
   const draft = fields.draft
   if (draft !== undefined && typeof draft !== "boolean") throw new Error(`${source}: frontmatter.draft must be a boolean`)
+  const hideDescription = fields.hideDescription
+  if (hideDescription !== undefined && typeof hideDescription !== "boolean") throw new Error(`${source}: frontmatter.hideDescription must be a boolean`)
   return {
     title: stringField(fields, "title", source),
     description: stringField(fields, "description", source),
@@ -64,7 +79,8 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
     sectionOrder: numberField(fields, "sectionOrder", source),
     order: numberField(fields, "order", source),
     draft,
-    articleClass
+    articleClass,
+    hideDescription
   }
 }
 
@@ -91,7 +107,7 @@ export const docSections: ReadonlyArray<readonly [string, ReadonlyArray<Doc>]> =
   return grouped
 }, new Map()).entries()]
 
-export const DEFAULT_DOC_ROUTE = "/docs/quickstart"
+export const DEFAULT_DOC_ROUTE = "/docs/welcome"
 
 export const docAt = (pathname: string): Doc | undefined =>
   docs.find((doc) => doc.frontmatter.route === (pathname === "/docs" ? DEFAULT_DOC_ROUTE : pathname))

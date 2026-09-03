@@ -5,7 +5,7 @@ export const ActorDiagram = (): ReactElement => (
     className="actor-diagram"
     viewBox="0 0 720 640"
     role="img"
-    aria-label="A caller interacts with an actor through methods. Methods append input events and expose call state. Components read the log, derive transitions, and interact with external services through effects whose outcomes return as events."
+    aria-label="A caller interacts with an actor through methods. Methods append input events and expose call state. Component projections advance from events, produce views and transitions, and interact with external services through effects whose outcomes return as events."
   >
     <defs>
       <marker id="actor-diagram-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -40,8 +40,8 @@ export const ActorDiagram = (): ReactElement => (
 
     <g className="actor-diagram-node" transform="translate(210 444)">
       <rect width="300" height="68" />
-      <text className="actor-diagram-node-kind" x="18" y="22">components</text>
-      <text className="actor-diagram-node-value" x="18" y="48">behavior</text>
+      <text className="actor-diagram-node-kind" x="18" y="22">component projections</text>
+      <text className="actor-diagram-node-value" x="18" y="48">views + transitions</text>
     </g>
 
     <g className="actor-diagram-node actor-diagram-external" transform="translate(230 568)">
@@ -59,7 +59,7 @@ export const ActorDiagram = (): ReactElement => (
     <g className="actor-diagram-edge-labels" aria-hidden="true">
       <text x="380" y="92">call ↓ · result ↑</text>
       <text x="380" y="246">input event ↓ · call state ↑</text>
-      <text x="380" y="420">events ↓ · transitions ↑</text>
+      <text x="380" y="420">events ↓ · output ↑</text>
       <text x="380" y="548">effect ↓ · outcome ↑</text>
     </g>
   </svg>

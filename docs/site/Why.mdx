@@ -1,0 +1,136 @@
+---
+title: "Why Tardigrade?"
+description: Understand why Tardigrade builds agent harnesses from components over an immutable event log.
+hideDescription: true
+route: /docs/why
+section: Start Here
+sectionOrder: 1
+order: 2
+---
+
+Building an agent is challenging. As tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex. Tardigrade presents a way to simplify this complexity, by proposing a new way of thinking about agent harnesses.
+
+In a typical agent harness, your core model loop would be something like this:
+
+```ts
+type AgentPolicy = {
+  readonly contextWindow: number
+  readonly compactAt: number
+  readonly maxTurns: number
+}
+
+const runAgent = async (
+  messages: Message[],
+  policy: AgentPolicy
+): Promise<string> => {
+  let turns = 0
+
+  while (turns < policy.maxTurns) {
+    if (tokenCount(messages) >= policy.contextWindow * policy.compactAt) {
+      messages = await compact(messages)
+    }
+
+    const response = await model.generate({ messages, system, tools })
+    messages.push(response)
+
+    if (response.toolCalls.length === 0) return response.text
+
+    for (const call of response.toolCalls) {
+      const result = await canUseTool(call)
+        ? await tools.execute(call)
+        : toolDenied(call)
+      messages.push(result)
+    }
+
+    turns += 1
+  }
+
+  throw new Error("Turn limit reached")
+}
+```
+
+It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, budgets and permissions for subagents), it starts to add up. It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
+
+### A composable way to author behavior
+
+Tardigrade grew out of the realization that an agent harness isn't very different from a traditional user interface. Just like how traditional user interfaces help humans interact with the digital world, agent harnesses help agents interact with the physical world. Once you frame it this way, it become a rendering problem and the frontend community had already solved for this!&#x20;
+
+React defined the user interface as a component tree, and each component was a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a state machine, with state as projections from an immutable event log.
+
+<InterfaceComparisonDiagram />
+
+### The Tardigrade pattern
+
+If you asked me to compress Tardigrade's single most important insight, it is this:
+
+<Math expression="\text{behavior} = f(\text{immutable event log})" />
+
+If you can describe the behavior you want to see in simple english, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
+
+<div className="harness-diagram-frame">
+  <HarnessDiagram />
+</div>
+
+### Example: Compaction
+
+For example, let's take compaction. In simple english, you could describe compaction as follows:
+
+> When the token count of the conversation sent to inference reaches a certain threshold, use a language model to summarize part of the conversation. Append the summary to the event log as `CompactionCompleted`. For each subsequent model call, attach the summary and a tail of the conversation.
+
+As a state machine written over the event log, it looks like this:
+
+<div className="compaction-machine-frame">
+  <CompactionMachineDiagram />
+</div>
+
+Once you've defined this behavior, now you can composed it with other such behaviors defined in a similar manner.
+
+```ts highlight="12"
+const boundedContext = compaction({
+  contextWindowTokens: 128_000,
+  fireRatio: 0.8,
+  keepRatio: 0.5
+})
+
+export const researcher = actor({
+  name: "researcher",
+  methods: agentMethods,
+  components: [infer([
+    system("Research the given topic and cite your sources."),
+    boundedContext,
+    nativeOutput
+  ])]
+})
+```
+
+You can simply plug this out of your agent or test various other compaction policies without affecting the other defined behaviors of the agent. Composition is possible because each state machine is defined as a typed state machine using Effect TS. A component has the following interface:
+
+```ts
+interface ComponentDefinition<State, View, Requirements = never> {
+  readonly name: string
+  readonly initial: () => State
+  readonly step: (state: State, event: Event) => State
+  readonly output: (state: State) => {
+    readonly view: View
+    readonly transitions: ReadonlyArray<Transition<never, Requirements>>
+  }
+  readonly cancelState?: (
+    state: State,
+    cancellation: InvocationCancellation
+  ) => ReadonlyArray<Transition<never, Requirements>>
+  readonly keys?: KeyFragment
+}
+```
+
+Tardigrade composes behavior by reconciling the transitions enabled by each component. Effect composes the runtime services those transitions require.
+
+```text variant="diagram"
+                    ┌── event history remembered as private state
+                    │      ┌── value observed by the parent
+                    │      │     ┌── Effect services its transitions may require
+                    │      │     │
+                    ▼      ▼     ▼
+ComponentDefinition<State, View, Requirements>
+```
+
+We can extend this approach to build subagents, codemode, recursive language models and so on. Your imagination is the limit here! Continue to the [Quickstart](/docs/quickstart) to start building.

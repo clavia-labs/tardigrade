@@ -1,10 +1,16 @@
-import { Children, cloneElement, isValidElement, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
+import { Children, cloneElement, isValidElement, useLayoutEffect, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
+import { renderToString } from "katex"
 
-import { ActorDiagram } from "../../ActorDiagram"
-import { ComponentDiagram } from "../../ComponentDiagram"
-import { MethodDiagram } from "../../MethodDiagram"
-import { TransitionLoop } from "../../TransitionLoop"
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
+import { ActorDiagram } from "./diagrams/ActorDiagram"
+import { ComponentDiagram } from "./diagrams/ComponentDiagram"
+import { CompactionMachineDiagram } from "./diagrams/CompactionMachineDiagram"
+import { HarnessDiagram } from "./diagrams/HarnessDiagram"
+import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagram"
+import { MethodDiagram } from "./diagrams/MethodDiagram"
+import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
+import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { TransitionLoop } from "./diagrams/TransitionLoop"
 
 const BulbIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M8.5 15.5A7 7 0 1 1 15.5 15.5C14.6 16.2 14 17 14 18h-4c0-1-.6-1.8-1.5-2.5Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
@@ -45,17 +51,69 @@ const languageOf = (children: ReactNode): string => {
 type CodeProps = ComponentPropsWithoutRef<"pre"> & {
   readonly expanded?: boolean | undefined
   readonly highlight?: number | string | undefined
-  readonly variant?: "multi" | "single" | undefined
+  readonly variant?: "diagram" | "multi" | "single" | undefined
 }
 
 const Code = ({ children, expanded = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
   const [copied, copy] = useCopy()
+  const codeRoot = useRef<HTMLDivElement>(null)
   const language = languageOf(children)
+  const lineHeight = 20
   const highlightedLine = Number(highlight)
-  const highlightStyle = Number.isInteger(highlightedLine) && highlightedLine > 0
-    ? { "--docs-highlight-offset": `${(highlightedLine - 1) * 1.7}em` } as CSSProperties
-    : undefined
+  const hasHighlight = Number.isInteger(highlightedLine) && highlightedLine > 0
+  const codeStyle = {
+    "--docs-code-line-height": `${lineHeight}px`,
+    ...(hasHighlight ? { "--docs-highlight-offset": `${(highlightedLine - 1) * lineHeight}px` } : {})
+  } as CSSProperties
   const source = textFrom(children).trimEnd()
+  useLayoutEffect(() => {
+    if (!hasHighlight) return
+    const root = codeRoot.current
+    const pre = root?.querySelector("pre")
+    const code = pre?.querySelector("code")
+    if (root === null || root === undefined || pre === null || pre === undefined || code === null || code === undefined) return
+    const position = (): void => {
+      const lines = code.textContent?.split("\n") ?? []
+      const target = lines[highlightedLine - 1]
+      if (target === undefined) return
+      const lineStart = lines.slice(0, highlightedLine - 1).reduce((length, line) => length + line.length + 1, 0)
+      const firstContent = target.search(/\S/)
+      const targetOffset = lineStart + (firstContent < 0 ? 0 : firstContent)
+      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
+      let offset = 0
+      let node = walker.nextNode()
+      while (node !== null) {
+        const text = node.textContent ?? ""
+        if (targetOffset < offset + text.length) {
+          const range = document.createRange()
+          const start = targetOffset - offset
+          range.setStart(node, start)
+          range.setEnd(node, globalThis.Math.min(start + 1, text.length))
+          const character = range.getBoundingClientRect()
+          const preRect = pre.getBoundingClientRect()
+          const scale = pre.offsetHeight === 0 ? 1 : preRect.height / pre.offsetHeight
+          const renderedTop = (character.top - preRect.top) / scale
+          const renderedHeight = character.height / scale
+          const renderedLineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight)
+          root.style.setProperty("--docs-highlight-position", `${renderedTop - (renderedLineHeight - renderedHeight) / 2}px`)
+          return
+        }
+        offset += text.length
+        node = walker.nextNode()
+      }
+    }
+    position()
+    const observer = new ResizeObserver(position)
+    observer.observe(pre)
+    let active = true
+    void document.fonts.ready.then(() => {
+      if (active) position()
+    })
+    return () => {
+      active = false
+      observer.disconnect()
+    }
+  }, [children, hasHighlight, highlightedLine])
   if (variant === "single") {
     return (
       <div className="install-command docs-code-single" aria-label={`${language} command`}>
@@ -67,8 +125,11 @@ const Code = ({ children, expanded = false, highlight, variant = "multi", ...pro
       </div>
     )
   }
+  if (variant === "diagram") {
+    return <div className="docs-text-diagram"><pre {...props}>{children}</pre></div>
+  }
   return (
-    <div className="concept-code docs-code" data-expanded={expanded} data-highlight={highlightStyle === undefined ? undefined : "true"} style={highlightStyle}>
+    <div ref={codeRoot} className="concept-code docs-code" data-expanded={expanded} data-highlight={hasHighlight ? "true" : undefined} style={codeStyle}>
       <div className="docs-code-header"><span>{language}</span></div>
       <pre {...props}>{children}</pre>
       <button type="button" aria-label={copied ? "Code copied" : "Copy code"} onClick={() => void copy(source)}>
@@ -102,9 +163,16 @@ const FileIcon = ({ kind }: { readonly kind: FileIconKind }): ReactElement => {
 const withFileIcons = (node: ReactNode): ReactNode => {
   if (Array.isArray(node)) return Children.map(node, withFileIcons)
   if (!isValidElement<{ readonly children?: ReactNode }>(node)) return node
-  if (node.type === InlineCode) {
-    const name = textFrom(node.props.children)
-    return cloneElement(node, undefined, <><FileIcon kind={fileIconKindOf(name)} />{node.props.children}</>)
+  if (node.type === "li") {
+    const children = Children.toArray(node.props.children)
+    const fileIndex = children.findIndex((child) => isValidElement(child) && child.type === InlineCode)
+    if (fileIndex === -1) return node
+    const file = children[fileIndex] as ReactElement<{ readonly children?: ReactNode }>
+    const name = textFrom(file.props.children)
+    return cloneElement(node, undefined,
+      cloneElement(file, undefined, <><FileIcon kind={fileIconKindOf(name)} />{file.props.children}</>),
+      <span className="docs-filesystem-description">{children.slice(fileIndex + 1)}</span>
+    )
   }
   return cloneElement(node, undefined, withFileIcons(node.props.children))
 }
@@ -128,6 +196,13 @@ const ConceptSection = ({ children, kind }: { readonly children: ReactNode; read
   <section className={`concept-section concept-section-${kind}`}>{children}</section>
 )
 
+const Math = ({ expression }: { readonly expression: string }): ReactElement => (
+  <div
+    className="docs-math"
+    dangerouslySetInnerHTML={{ __html: renderToString(expression, { displayMode: true, throwOnError: false }) }}
+  />
+)
+
 const Tip = ({ children, title }: { readonly children: ReactNode; readonly title: string }): ReactElement => (
   <details className="docs-tip">
     <summary><BulbIcon /><span>{title}</span><ChevronIcon /></summary>
@@ -135,25 +210,20 @@ const Tip = ({ children, title }: { readonly children: ReactNode; readonly title
   </details>
 )
 
-const RlmDiagram = (): ReactElement => (
-  <div className="rlm-diagram" role="img" aria-label="A long context enters a code environment that makes recursive model calls and returns a final answer">
-    <div className="rlm-context-card"><span>context as data</span><div aria-hidden="true"><i /><i /><i /><i /><i /></div><code>context[0..n]</code></div>
-    <div className="rlm-diagram-arrow" aria-hidden="true" />
-    <div className="rlm-program-card"><span>code environment</span><code>inspect(context)</code><code>partition(context)</code><strong>recursive model calls</strong><div className="rlm-subcalls" aria-hidden="true"><i>LM 01</i><i>LM 02</i><i>LM 03</i></div></div>
-    <div className="rlm-diagram-arrow" aria-hidden="true" />
-    <div className="rlm-answer-card"><span>result</span><strong>final answer</strong></div>
-  </div>
-)
-
 export const mdxComponents = {
   ActorDiagram,
   Command,
   ComponentDiagram,
+  CompactionMachineDiagram,
   ConceptInterface,
   ConceptSection,
   EventLog,
   Filesystem,
+  HarnessDiagram,
+  InterfaceComparisonDiagram,
+  Math,
   MethodDiagram,
+  PrimitiveDiagram,
   RlmDiagram,
   Tip,
   TransitionLoop,
