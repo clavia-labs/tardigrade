@@ -11,6 +11,7 @@ import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagra
 import { MethodDiagram } from "./diagrams/MethodDiagram"
 import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
 import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { TrajectoryBranchesDiagram } from "./diagrams/TrajectoryBranchesDiagram"
 import { TransitionLoop } from "./diagrams/TransitionLoop"
 
 const BulbIcon = (): ReactElement => (
@@ -55,16 +56,28 @@ type CodeProps = ComponentPropsWithoutRef<"pre"> & {
   readonly variant?: "diagram" | "multi" | "single" | undefined
 }
 
+const highlightLines = (value: number | string | undefined): { readonly first: number; readonly count: number } | undefined => {
+  const match = /^(\d+)(?:-(\d+))?$/.exec(String(value ?? ""))
+  if (match === null) return undefined
+  const first = Number(match[1])
+  const last = Number(match[2] ?? match[1])
+  return first > 0 && last >= first ? { first, count: last - first + 1 } : undefined
+}
+
 const Code = ({ children, expanded = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
   const [copied, copy] = useCopy()
   const codeRoot = useRef<HTMLDivElement>(null)
   const language = languageOf(children)
   const lineHeight = 20
-  const highlightedLine = Number(highlight)
-  const hasHighlight = Number.isInteger(highlightedLine) && highlightedLine > 0
+  const highlighted = highlightLines(highlight)
+  const highlightedLine = highlighted?.first ?? 0
+  const hasHighlight = highlighted !== undefined
   const codeStyle = {
     "--docs-code-line-height": `${lineHeight}px`,
-    ...(hasHighlight ? { "--docs-highlight-offset": `${(highlightedLine - 1) * lineHeight}px` } : {})
+    ...(highlighted === undefined ? {} : {
+      "--docs-highlight-height": `${highlighted.count * lineHeight}px`,
+      "--docs-highlight-offset": `${(highlighted.first - 1) * lineHeight}px`
+    })
   } as CSSProperties
   const source = textFrom(children).trimEnd()
   useLayoutEffect(() => {
@@ -211,6 +224,11 @@ const Tip = ({ children, title }: { readonly children: ReactNode; readonly title
   </details>
 )
 
+const Link = ({ href, ...props }: ComponentPropsWithoutRef<"a">): ReactElement => {
+  const external = href?.startsWith("https://") === true || href?.startsWith("http://") === true
+  return <a href={href} {...props} {...(external ? { rel: "noopener noreferrer", target: "_blank" } : {})} />
+}
+
 export const mdxComponents = {
   ActorDiagram,
   BehaviorTrajectoryDiagram,
@@ -228,8 +246,9 @@ export const mdxComponents = {
   PrimitiveDiagram,
   RlmDiagram,
   Tip,
+  TrajectoryBranchesDiagram,
   TransitionLoop,
-  a: (props: ComponentPropsWithoutRef<"a">) => <a {...props} />,
+  a: Link,
   code: InlineCode,
   pre: Code
 }
