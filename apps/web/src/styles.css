@@ -119,7 +119,8 @@ svg { display: block; }
   72% { transform: translateY(1px); }
 }
 .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 24px; color: var(--ink-2); }
-.guide-link { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
+.guide-link { position: relative; font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
+.nav-brand-group > .guide-link::before { position: absolute; top: 50%; right: calc(100% + 12px); width: 1px; height: 18px; background: rgb(var(--accent-rgb) / 28%); content: ""; transform: translateY(-50%); }
 .guide-link[aria-current="page"] { color: var(--moss-ink); }
 .github-link, .discord-link { width: 24px; height: 24px; }
 .github-link svg, .discord-link svg { width: 100%; height: 100%; }
