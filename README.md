@@ -20,11 +20,11 @@ As models get increasingly smart, they will be capable of writing their own harn
 
 We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). A Tardigrade component is a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine) over events. It updates its state for each event, then derives a view and transitions from that state.
 
-$$S_0 = \mathrm{initial}()$$
+<p align="center"><code>S₀ = initial()</code></p>
 
-$$S_{n+1} = \mathrm{step}(S_n, e_{n+1})$$
+<p align="center"><code>Sₙ₊₁ = step(Sₙ, eₙ₊₁)</code></p>
 
-$$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = \mathrm{output}(S_n)$$
+<p align="center"><code>{ view, transitions } = output(Sₙ)</code></p>
 
 ## Why Tardigrade
 
@@ -251,7 +251,7 @@ The actor provider and default model must match the binding. The binding states 
 
 Every message, model action, tool result, and checkpoint lands in the log. Component machines consume those events and derive keyed transitions from their current state.
 
-$$S_{n+1} = \mathrm{step}(S_n, e_{n+1})$$
+<p align="center"><code>Sₙ₊₁ = step(Sₙ, eₙ₊₁)</code></p>
 
 The host runs transitions with unrecorded keys. It appends their events and repeats until the agent rests.
 
