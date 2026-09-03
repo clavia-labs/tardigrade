@@ -44,7 +44,7 @@ const runAgent = async (messages, policy: AgentPolicy) => {
 }
 ```
 
-It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, *budgets and permissions for subagents*), it starts to add up.
+This seems manageable at first. As you add more stateful conditions (permissions, budgets, *budgets and permissions for subagents*), the complexity starts to add up.
 
 It is not obvious which parts of your code led to a specific agent behavior or how those parts interact with each other.
 
@@ -52,9 +52,9 @@ It is not obvious which parts of your code led to a specific agent behavior or h
 
 Tardigrade grew out of the realization that an agent harness is very similar to a user interface.
 
-User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and the frontend community had already solved for it!
+User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and the frontend community has already solved it!
 
-[React](https://react.dev/) defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of behaviors. Each behavior is a state machine, with its state as a projection from an immutable event log.
+[React](https://react.dev/) defines a user interface as a component tree, with each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of behaviors. Each behavior is a state machine whose state is a projection of an immutable event log.
 
 <InterfaceComparisonDiagram />
 
@@ -66,9 +66,9 @@ If you asked me to compress Tardigrade's single most important insight, it is th
 
 <BehaviorTrajectoryDiagram />
 
-This idea has roots in [automata theory](https://en.wikipedia.org/wiki/Automata_theory). A component in tardigrade is a [finite-state machine](https://en.wikipedia.org/wiki/Finite-state_machine) whose current output value is determined only by its current state. This is also known as a [Moore Machine](https://en.wikipedia.org/wiki/Moore_machine).
+This idea has roots in [automata theory](https://en.wikipedia.org/wiki/Automata_theory). A component in Tardigrade is a [finite-state machine](https://en.wikipedia.org/wiki/Finite-state_machine) whose current output value is determined only by its current state. This is also known as a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine).
 
-If you can describe the behavior you want to see in relation to what has happened, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
+If you can describe the behavior you want to see based on what has happened, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
 <div className="harness-diagram-frame">
   <HarnessDiagram />
@@ -78,9 +78,9 @@ If you can describe the behavior you want to see in relation to what has happene
 
 For example, let's take compaction. You could describe it as follows:
 
-> **When** the token count of the conversation sent to a model reaches a certain threshold, use a model to summarize part of the conversation.
+> **When** the conversation sent to a model reaches a certain token threshold, use a model to summarize part of the conversation.
 >
-> **Then**, append the summary to the event log in a `CompactionCompleted` event. For subsequent model calls, send the summary and a tail of the conversation derived in relation to the compaction event.
+> **Then**, append the summary to the event log in a `CompactionCompleted` event. For subsequent model calls, send the summary and a tail of the conversation derived relative to the compaction event.
 
 As a state machine written over the event log, it looks like this:
 
@@ -106,7 +106,7 @@ export const researcher = actor({
 })
 ```
 
-Composition is possible because each state machine is defined as a typed state machine using [Effect TS](https://effect.website/).
+Composition is possible because each component is defined as a typed state machine using [Effect TS](https://effect.website/).
 
 A component has the following interface:
 
@@ -138,4 +138,4 @@ Tardigrade composes behavior by reconciling the transitions enabled by each comp
 ComponentDefinition<State, View, Requirements>
 ```
 
-We can use this approach to compose complex behaviors such as subagents, codemode, and recursive language models. Your imagination is the limit here. Continue to the [Quickstart](/docs/quickstart) to start building!
+We can use this approach to compose complex behaviors such as subagents, codemode, and recursive language models. Your imagination is the limit here. Continue to the [Quickstart](/docs/quickstart) to begin building!
