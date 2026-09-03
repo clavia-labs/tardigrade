@@ -1,15 +1,25 @@
 import type { ComponentType } from "react"
 
 import Cli, { frontmatter as cliFrontmatter } from "@docs/cli.mdx"
+import cliMarkdown from "@docs/cli.mdx?doc-source"
 import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/concepts.mdx"
+import conceptsMarkdown from "@docs/concepts.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
+import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
 import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
+import bunMarkdown from "@docs/platforms/bun.mdx?doc-source"
 import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.mdx"
+import celldMarkdown from "@docs/platforms/celld.mdx?doc-source"
 import Cloudflare, { frontmatter as cloudflareFrontmatter } from "@docs/platforms/cloudflare.mdx"
+import cloudflareMarkdown from "@docs/platforms/cloudflare.mdx?doc-source"
 import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/quickstart.mdx"
+import quickstartMarkdown from "@docs/quickstart.mdx?doc-source"
 import Sdk, { frontmatter as sdkFrontmatter } from "@docs/sdk.mdx"
+import sdkMarkdown from "@docs/sdk.mdx?doc-source"
 import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/Welcome.mdx"
+import welcomeMarkdown from "@docs/Welcome.mdx?doc-source"
 import Why, { frontmatter as whyFrontmatter } from "@docs/Why.mdx"
+import whyMarkdown from "@docs/Why.mdx?doc-source"
 
 type DocFrontmatter = {
   readonly title: string
@@ -26,26 +36,28 @@ type DocFrontmatter = {
 export type Doc = {
   readonly Content: ComponentType
   readonly frontmatter: DocFrontmatter
+  readonly markdown: string
   readonly source: string
 }
 
 type DocModule = {
   readonly default: ComponentType
   readonly frontmatter: unknown
+  readonly markdown: string
   readonly source: string
 }
 
 const modules: ReadonlyArray<DocModule> = [
-  { default: Welcome, frontmatter: welcomeFrontmatter, source: "Welcome.mdx" },
-  { default: Why, frontmatter: whyFrontmatter, source: "Why.mdx" },
-  { default: Quickstart, frontmatter: quickstartFrontmatter, source: "quickstart.mdx" },
-  { default: Concepts, frontmatter: conceptsFrontmatter, source: "concepts.mdx" },
-  { default: Bun, frontmatter: bunFrontmatter, source: "platforms/bun.mdx" },
-  { default: Cloudflare, frontmatter: cloudflareFrontmatter, source: "platforms/cloudflare.mdx" },
-  { default: Celld, frontmatter: celldFrontmatter, source: "platforms/celld.mdx" },
-  { default: Cli, frontmatter: cliFrontmatter, source: "cli.mdx" },
-  { default: Sdk, frontmatter: sdkFrontmatter, source: "sdk.mdx" },
-  { default: Rlm, frontmatter: rlmFrontmatter, source: "examples/rlm.mdx" }
+  { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "Welcome.mdx" },
+  { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "Why.mdx" },
+  { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "quickstart.mdx" },
+  { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "concepts.mdx" },
+  { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
+  { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
+  { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
+  { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "cli.mdx" },
+  { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "sdk.mdx" },
+  { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" }
 ]
 
 const stringField = (value: Record<string, unknown>, field: string, source: string): string => {
@@ -88,7 +100,7 @@ const docs: ReadonlyArray<Doc> = modules
   .map((module) => {
     const frontmatter = readFrontmatter(module.frontmatter, module.source)
     if (frontmatter.draft === true) throw new Error(`${module.source}: draft docs cannot enter the public registry`)
-    return { Content: module.default, frontmatter, source: module.source }
+    return { Content: module.default, frontmatter, markdown: module.markdown, source: module.source }
   })
   .sort((left, right) => left.frontmatter.sectionOrder - right.frontmatter.sectionOrder || left.frontmatter.order - right.frontmatter.order)
 

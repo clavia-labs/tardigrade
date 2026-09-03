@@ -2,8 +2,7 @@ import type { ReactElement } from "react"
 import { PostalStamp } from "./PostalStamp"
 
 export const ComponentBridge = (): ReactElement => (
-  <svg className="component-bridge" viewBox="0 0 320 320" role="img" aria-labelledby="component-bridge-title component-bridge-description">
-    <title id="component-bridge-title">Component</title>
+  <svg className="component-bridge" viewBox="0 0 320 320" role="img" aria-label="Component" aria-describedby="component-bridge-description">
     <desc id="component-bridge-description">The component derives work from log events, interacts with the world, and returns new events to the log.</desc>
     <defs>
       <marker id="component-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">

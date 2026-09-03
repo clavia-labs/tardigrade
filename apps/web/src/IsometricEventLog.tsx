@@ -158,10 +158,10 @@ export const IsometricEventLog = ({ derivedSequence, onSelect, selectedSequence 
     className="isometric-log"
     viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`}
     role="group"
-    aria-labelledby="isometric-log-title isometric-log-description"
+    aria-label="Agent event log"
+    aria-describedby="isometric-log-description"
     shapeRendering="geometricPrecision"
   >
-    <title id="isometric-log-title">Agent event log</title>
     <desc id="isometric-log-description">Five immutable events. Select an event to inspect the component projection it activates.</desc>
     {SHOW_LOG_STRUCTURE && (
       <g className="actor-envelope-surfaces" aria-hidden="true">
@@ -183,6 +183,7 @@ export const IsometricEventLog = ({ derivedSequence, onSelect, selectedSequence 
           className={`event-log-row${selected ? " is-selected" : ""}${derived ? " is-derived" : ""}${dimmed ? " is-dimmed" : ""}`}
           data-event-sequence={block.sequence}
           role="button"
+          aria-label={`${block.name}: ${block.value}`}
           tabIndex={0}
           aria-pressed={selected}
           key={block.sequence}
@@ -193,7 +194,6 @@ export const IsometricEventLog = ({ derivedSequence, onSelect, selectedSequence 
             onSelect(block.sequence)
           }}
         >
-          <title>{`${block.name}: ${block.value}`}</title>
           {SHOW_LOG_STRUCTURE && (
             <>
               <Face d={block.top} tint={tint} />

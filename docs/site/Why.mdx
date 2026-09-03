@@ -1,6 +1,6 @@
 ---
 title: "Why Tardigrade?"
-description: Understand why Tardigrade builds agent harnesses from components over an immutable event log.
+description: Learn how Tardigrade builds composable agent harnesses from components over an immutable event log.
 hideDescription: true
 route: /docs/why
 section: Start Here
@@ -76,7 +76,9 @@ If you can describe the behavior you want to see based on what has happened, you
 
 ### Example: Compaction
 
-For example, let's take compaction. You could describe it as follows:
+For example, take compaction. A model's context window is bounded, but conversations can be unbounded. At some point, you are going to hit a limit. Compaction is a workaround to have a continuous conversation thread despite this constraint.
+
+You could describe it as follows:
 
 > **When** the conversation sent to a model reaches a certain token threshold, use a model to summarize part of the conversation.
 >
