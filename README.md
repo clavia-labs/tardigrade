@@ -174,13 +174,13 @@ const releaseAnalyst = actor({
 })
 ```
 
-1. `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless the actor narrows it with `models`.
+- `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless the actor narrows it with `models`.
 
-2. `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
+- `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
 
-3. `codeMode([...components])` exposes its packages through one `execute` tool.
+- `codeMode([...components])` exposes its packages through one `execute` tool.
 
-4. `budget([...components])` meters tool calls within its subtree. `caller()` sends escalation requests to the invoking actor, and `budgetAuthority()` handles them locally.
+- `budget([...components])` meters tool calls within its subtree. `caller()` sends escalation requests to the invoking actor, and `budgetAuthority()` handles them locally.
 
 This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
 
