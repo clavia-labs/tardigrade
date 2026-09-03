@@ -16,9 +16,7 @@ export const ServerlessDiagram = (): ReactElement => (
     aria-label="Small serverless workers form a connected graph."
   >
     <g className="serverless-graph" aria-hidden="true">
-      <path d="M100 48L49 96L101 158L158 104L100 48Z" />
-      <path d="M49 96L158 104" />
-      <path d="M100 48L101 158" />
+      <path d="M96 55L57 88M104 55L150 93M56 108L95 146M151 112L107 145M63 97L144 103M100 56L101 142" />
     </g>
     <Cube x={86} y={24} />
     <Cube x={35} y={80} />
