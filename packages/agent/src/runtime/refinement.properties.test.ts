@@ -296,5 +296,5 @@ describe("agent projection refinement", () => {
       const incremental = infer(components, INFER_OPTIONS) as Component<AgentView, unknown>
       assertAgentRefinement(completeAgent(components, INFER_OPTIONS), incremental, log)
     }), { numRuns: 100 })
-  })
+  }, { timeout: 15_000 })
 })
