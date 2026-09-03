@@ -329,14 +329,8 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-nodes rect:last-child { fill: var(--moss-wash); stroke: var(--moss); }
 .trajectory-exit { fill: none; stroke: var(--moss); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.trajectory-branches-diagram { width: 100%; height: auto; margin: 22px 0 30px; display: block; overflow: visible; }
-.trajectory-branches-paths { fill: none; stroke: rgb(var(--accent-rgb) / 30%); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.trajectory-branches-paths .trajectory-branches-lead { stroke: var(--moss); stroke-width: 1.25; }
-.trajectory-branches-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.trajectory-branches-nodes .trajectory-branches-origin { fill: var(--moss-wash); stroke: var(--moss); }
-.trajectory-branches-uncertainty { fill: var(--faint); font-family: var(--mono); font-size: 11px; opacity: .72; }
-.trajectory-branches-time text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
-.trajectory-branches-time path { fill: none; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.guide-article > p:has(> img[src*="trajectory-branches.svg"]) { width: 100%; max-width: none; margin: 22px 0 30px; line-height: 0; }
+.guide-article > p > img[src*="trajectory-branches.svg"] { width: 100%; height: auto; display: block; }
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
 .behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }

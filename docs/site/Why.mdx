@@ -10,9 +10,9 @@ order: 2
 
 Building an agent can be challenging, especially as the horizon over which they operate is ever expanding. Tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
 
-Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses.
+![Possible agent trajectories](/images/trajectory-branches.svg)
 
-<TrajectoryBranchesDiagram />
+Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses.
 
 In a typical agent harness, your core model loop would be something like this:
 
@@ -74,7 +74,7 @@ If you can describe the behavior you want to see in simple English, you should b
 
 ### Example: Compaction
 
-For example, let's take compaction. In simple English, you could describe compaction as follows:
+For example, let's take compaction. You could describe it as follows:
 
 > **When** the token count of the conversation sent to a model reaches a certain threshold, use a model to summarize part of the conversation.
 >
@@ -105,8 +105,6 @@ export const researcher = actor({
   ])]
 })
 ```
-
-You can simply remove this from your agent or test various other compaction policies without affecting the other defined behaviors of the agent.
 
 Composition is possible because each state machine is defined as a typed state machine using Effect TS.
 
