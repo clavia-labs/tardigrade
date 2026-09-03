@@ -66,7 +66,9 @@ If you asked me to compress Tardigrade's single most important insight, it is th
 
 <BehaviorTrajectoryDiagram />
 
-This idea has roots in [automata theory](https://en.wikipedia.org/wiki/Automata_theory). A component in Tardigrade is a [finite-state machine](https://en.wikipedia.org/wiki/Finite-state_machine) whose current output value is determined only by its current state. This is also known as a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine).
+This idea has roots in [automata theory](https://en.wikipedia.org/wiki/Automata_theory), the study of abstract machines that receive inputs and transition between states.
+
+A Tardigrade component is a state machine whose output is determined solely by its current state. This structure is also known as a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine).
 
 If you can describe the behavior you want to see based on what has happened, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
