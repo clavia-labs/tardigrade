@@ -337,6 +337,7 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-branches-horizon text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
 .behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.behavior-trajectory-future { stroke-dasharray: 4 4; }
 .behavior-trajectory-direction { fill: none; stroke: var(--moss); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points .behavior-trajectory-current { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.25; }
