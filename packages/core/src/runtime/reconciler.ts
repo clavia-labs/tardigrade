@@ -110,22 +110,34 @@ interface ProjectionCache<R> {
   readonly events: Array<Event>
   readonly recorded: Set<string>
   readonly states: Map<ErasedTransitionProjection<R>, unknown>
-  actorState: unknown
-  trigger: Tracer.ExternalSpan | undefined
-  watermark: number
+  readonly actorState: unknown
+  readonly trigger: Tracer.ExternalSpan | undefined
+  readonly watermark: number
 }
 
-const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: ReadonlyArray<Event>): void => {
+// advanceCache publishes a complete next cache after every projection accepts the tail (runtime/incremental-reconciler.properties.test.ts, "a failed tail update retries from the published prefix").
+const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: ReadonlyArray<Event>): ProjectionCache<R> => {
+  const recorded = new Set(cache.recorded)
+  const states = new Map(cache.states)
+  let actorState = cache.actorState
+  let trigger = cache.trigger
   for (const event of events) {
-    cache.events.push(event)
     const key = a.keyOf(event)
-    if (key !== undefined) cache.recorded.add(key)
-    cache.trigger = linkOf(event) ?? cache.trigger
+    if (key !== undefined) recorded.add(key)
+    trigger = linkOf(event) ?? trigger
     for (const projection of a.projections) {
-      cache.states.set(projection, projection.step(cache.states.get(projection), event))
+      states.set(projection, projection.step(states.get(projection), event))
     }
-    if (a.projection !== undefined) cache.actorState = a.projection.step(cache.actorState, event)
-    cache.watermark += 1
+    if (a.projection !== undefined) actorState = a.projection.step(actorState, event)
+  }
+  for (const event of events) cache.events.push(event)
+  return {
+    events: cache.events,
+    recorded,
+    states,
+    actorState,
+    trigger,
+    watermark: cache.watermark + events.length
   }
 }
 
@@ -141,8 +153,7 @@ const projectionCache = <R>(a: Actor<R>, events: ReadonlyArray<Event>): Projecti
   for (const projection of a.projections) {
     cache.states.set(projection, projection.initial())
   }
-  advanceCache(a, cache, events)
-  return cache
+  return advanceCache(a, cache, events)
 }
 
 const interruptedBy = (signal: AbortSignal): Effect.Effect<never> =>
@@ -269,7 +280,7 @@ export const createActorReconciler = <R>(a: Actor<R>): ActorReconciler<R> => {
       cache = projectionCache(a, yield* log.read)
       return cache
     }
-    advanceCache(a, cache, yield* log.readFrom(cache.watermark))
+    cache = advanceCache(a, cache, yield* log.readFrom(cache.watermark))
     return cache
   })
   return { settle: Effect.gen(function* () {

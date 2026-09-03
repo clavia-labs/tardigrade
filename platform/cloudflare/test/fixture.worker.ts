@@ -1,9 +1,9 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
-import { actor, legacyActorMethod, legacyComponent } from "tardie"
+import { actor, actorMethod, component } from "tardie"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect } from "@clavia/tardigrade-core/runtime"
+import { effect } from "@clavia/tardigrade-core/effect"
 import {
   ActorDO,
   ThreadDO,
@@ -110,25 +110,51 @@ const encryptedEventCodec = (thread: string, key: Promise<CryptoKey>): Cloudflar
   decode: (events) => Effect.promise(() => openAll(key, thread, events))
 })
 
-const echo = legacyActorMethod({
+interface EchoState {
+  readonly requests: ReadonlyMap<string, string>
+  readonly completions: ReadonlyMap<string, string>
+}
+
+const initialEchoState = (): EchoState => ({ requests: new Map(), completions: new Map() })
+
+const stepEchoState = (state: EchoState, event: Event): EchoState => {
+  const value = event as { readonly id?: unknown; readonly text?: unknown }
+  const id = String(value.id ?? "")
+  if (event.type === "EchoRequested") {
+    if (state.requests.get(id) === String(value.text ?? "")) return state
+    return { ...state, requests: new Map(state.requests).set(id, String(value.text ?? "")) }
+  }
+  if (event.type === "EchoCompleted") {
+    if (state.completions.get(id) === String(value.text ?? "")) return state
+    return { ...state, completions: new Map(state.completions).set(id, String(value.text ?? "")) }
+  }
+  return state
+}
+
+const echo = actorMethod({
   input: Schema.Struct({ text: Schema.String }),
   output: Schema.String,
   event: ({ invocation, input, at }) => ({ type: "EchoRequested", id: invocation.id, text: input.text, at }),
-  state: (events, invocation) => {
-    const event = events.find((candidate) =>
-      candidate.type === "EchoCompleted" && (candidate as { readonly id?: unknown }).id === invocation.id
-    ) as { readonly text?: unknown } | undefined
-    if (event !== undefined) return { status: "completed" as const, output: String(event.text) }
-    return events.some((candidate) =>
-      candidate.type === "EchoRequested" && (candidate as { readonly id?: unknown }).id === invocation.id
-    ) ? { status: "pending" as const } : undefined
+  projection: {
+    initial: initialEchoState,
+    step: stepEchoState,
+    output: (state) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation) => {
+        if (!state.requests.has(invocation.id)) return undefined
+        const completed = state.completions.get(invocation.id)
+        return completed === undefined
+          ? { status: "pending" as const }
+          : { status: "completed" as const, output: completed }
+      }
+    })
   }
 })
 
 const worker = cloudflareWorker(actor({
   name: "echo",
   methods: { echo },
-  components: [legacyComponent({
+  components: [component({
     name: "echo",
     keys: {
       prefixes: ["echo-request:", "echo-complete:", "indexed-record:"],
@@ -140,24 +166,21 @@ const worker = cloudflareWorker(actor({
         return undefined
       }
     },
-    derive: (events) => ({ view: undefined, transitions: events.flatMap((event) => {
-      if (event.type !== "EchoRequested") return []
-      const request = event as { readonly id?: unknown; readonly text?: unknown }
-      const id = String(request.id)
-      if (events.some((candidate) =>
-        candidate.type === "EchoCompleted" && (candidate as { readonly id?: unknown }).id === id
-      )) return []
-      return [effect({
+    initial: initialEchoState,
+    step: stepEchoState,
+    output: (state) => ({
+      view: undefined,
+      transitions: [...state.requests].flatMap(([id, text]) => state.completions.has(id) ? [] : [effect({
         key: `echo-complete:${id}`,
-        input: { id, text: String(request.text) },
+        input: { id, text },
         act: (input) => Effect.gen(function* () {
           const application = yield* ThreadApplication
           application.calls += 1
           yield* Effect.promise(() => scheduler.wait(50))
           return [{ type: "EchoCompleted", ...input, text: `${application.prefix}:${application.thread}:${application.calls}:${input.text}` }]
         })
-      })]
-    }) })
+      })])
+    })
   })]
 }), {
   modelAdapters: modelAdapters(openAICompatibleAdapter),

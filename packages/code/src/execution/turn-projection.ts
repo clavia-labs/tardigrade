@@ -98,7 +98,9 @@ const reduceTurn = (state: TurnProjectionState, event: Event): TurnProjectionSta
   const failedEpoch = event.type === "TurnResumed"
     ? Number((event as { readonly failedEpoch?: unknown }).failedEpoch ?? 0)
     : undefined
-  const resumed = failedEpoch === undefined ? previous.resumed : HashSet.add(previous.resumed, failedEpoch)
+  const resumed = failedEpoch === undefined || eventEpoch !== failedEpoch + 1
+    ? previous.resumed
+    : HashSet.add(previous.resumed, failedEpoch)
   const terminals = terminal(event) ? HashMap.set(previous.terminals, eventEpoch, event) : previous.terminals
   const record = {
     events: Chunk.append(previous.events, event),

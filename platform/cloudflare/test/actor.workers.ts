@@ -170,6 +170,113 @@ describe("cloudflare actor", () => {
     expect(decoded).toEqual([1])
   })
 
+  test("a cold empty thread reports rest before settlement", async () => {
+    const resting = await runInDurableObject(threadStub("cold-resting"), async (_instance, state) => {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.cold-resting",
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      })
+      const result = await host.resting()
+      await host.close()
+      return result
+    })
+
+    expect(resting).toBe(true)
+  })
+
+  test("method-less actors retain outgoing call deadlines", async () => {
+    const deadlineAt = Date.now() - 1
+    const result = await runInDurableObject(threadStub("method-less-deadline"), async (_instance, state) => {
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: "ag.method-less-deadline",
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      })
+      await host.commitRoot({
+        type: "CallDispatched",
+        id: "outgoing-1",
+        method: "inspect",
+        target: "remote:main:shared",
+        input: {},
+        timeoutMs: 10,
+        deadlineAt,
+        at: deadlineAt - 10
+      })
+      const deadline = await host.nextMethodDeadline()
+      await host.recordAlarm(deadlineAt)
+      const events = await host.read()
+      await host.close()
+      return { deadline, events }
+    })
+
+    expect(result.deadline).toBe(deadlineAt)
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: "AlarmFired",
+      scheduledFor: deadlineAt
+    }))
+  })
+
+  test("the creation cache follows the record accepted by storage", async () => {
+    const target = { actor: "echo", instance: "main", thread: "ag.creation-cache" }
+    const source = { actor: "echo", instance: "main", thread: "ag.requested-parent" }
+    const storedParent = { actor: "echo", instance: "main", thread: "ag.stored-parent" }
+    const result = await runInDurableObject(threadStub("creation-cache"), async (_instance, state) => {
+      let injected = false
+      const host = await createCloudflareThreadHost({
+        storage: state.storage,
+        actorName: "echo",
+        actorInstance: "main",
+        thread: target.thread,
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
+        store: {
+          codec: {
+            encode: (events) => Effect.sync(() => {
+              if (!injected && events.some((event) => event.type === "ThreadCreated")) {
+                injected = true
+                state.storage.sql.exec(
+                  `INSERT INTO events (seq, key, event) VALUES (1, 'thread:created', '${JSON.stringify({
+                    type: "ThreadCreated",
+                    address: target,
+                    parent: storedParent,
+                    depth: 1,
+                    at: 1
+                  })}')`
+                )
+              }
+              return events
+            }),
+            decode: Effect.succeed
+          },
+          indexKey: Effect.succeed
+        }
+      })
+      let message = ""
+      try {
+        await host.commit({
+          link: { source, target },
+          event: { type: "MessageReceived", id: "creation-race", at: 2 },
+          lineage: { parent: source, depth: 1 }
+        })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      }
+      const events = await host.read()
+      await host.close()
+      return { message, events }
+    })
+
+    expect(result.message).toContain("already has different lineage")
+    expect(result.events[0]).toEqual(expect.objectContaining({
+      type: "ThreadCreated",
+      parent: storedParent
+    }))
+  })
+
   test("background tasks belong to the configured owner", () => {
     expect(backgroundTaskOwnerOf(undefined)).toBe(DEFAULT_BACKGROUND_TASK_OWNER)
     expect(backgroundTaskOwnerOf("request", "host")).toBe("request")

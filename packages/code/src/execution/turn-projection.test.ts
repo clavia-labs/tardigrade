@@ -62,4 +62,16 @@ describe("incremental turn projection", () => {
     expect(turnViewFrom(state)).toEqual(turnView(log))
     expect(trajectoryFrom(state)).toEqual(trajectoryOf(log))
   })
+
+  test("a resume cannot skip execution epochs", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m0" } as Event,
+      { type: "TurnFailed", turn: "m0" } as Event,
+      { type: "TurnResumed", turn: "m0", failedEpoch: 0, epoch: 7 } as Event
+    ]
+    const state = log.reduce(reduceTurnProjection, initialTurnProjection())
+
+    expect(turnViewFrom(state)).toEqual(turnView(log))
+    expect(trajectoryFrom(state)).toEqual(trajectoryOf(log))
+  })
 })

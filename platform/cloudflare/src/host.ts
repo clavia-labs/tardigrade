@@ -21,6 +21,7 @@ import {
   Self,
   createActorReconciler,
   effectInterruptionRegistry,
+  restingActor,
   type Actor
 } from "@clavia/tardigrade-core/runtime"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
@@ -138,7 +139,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       }
       const opened = created === undefined ? threadCreated(target, lineage, at as number) : undefined
       const result = yield* events.append(opened === undefined ? [landed] : [opened, landed])
-      if (result.appended > 0 && opened !== undefined) creation = opened
+      if (opened !== undefined) {
+        const first = yield* events.first
+        creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
+      }
       if (result.appended > 0) interruptions.interrupt([landed])
       if (result.appended > 0) driver.mark(options.thread)
       if (flush) yield* syncCommit(result)
@@ -184,10 +188,12 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
     .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>
   const reconciler = createActorReconciler(options.actor)
+  let reconcilerSettled = false
   const driver = createThreadDriver({
     serve: async (thread) => {
       if (thread !== options.thread) throw new Error(`driver received foreign thread ${JSON.stringify(thread)}`)
       await Effect.runPromise(reconciler.settle.pipe(Effect.provide(layers)))
+      reconcilerSettled = true
     }
   })
   let tail: Promise<void> = Promise.resolve()
@@ -201,10 +207,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     await drive()
   }
   const nextMethodDeadline = async (): Promise<number | undefined> => {
-    return methods === undefined ? undefined : earliestDeadlineOf(await Effect.runPromise(events.read), methods)
+    return earliestDeadlineOf(await Effect.runPromise(events.read), methods)
   }
   const recordAlarm = async (at: number): Promise<void> => {
-    const deadline = methods === undefined ? undefined : earliestDeadlineOf(await Effect.runPromise(events.read), methods)
+    const deadline = earliestDeadlineOf(await Effect.runPromise(events.read), methods)
     if (deadline !== undefined && deadline <= at) {
       const result = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
       if (result.appended > 0) driver.mark(options.thread)
@@ -214,7 +220,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     }
   }
   const resting = async (): Promise<boolean> => {
-    return reconciler.isResting() && driver.resting()
+    if (!driver.resting()) return false
+    return reconcilerSettled
+      ? reconciler.isResting()
+      : restingActor(options.actor, await Effect.runPromise(events.read))
   }
   return {
     identity,

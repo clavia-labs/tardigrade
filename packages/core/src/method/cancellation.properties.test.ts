@@ -15,13 +15,28 @@ import {
 import { completeTransitionProjection, type CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorInvocation } from "./call"
-import { actorMethod, cancellationStateOf, type ActorMethods } from "./method"
+import {
+  actorMethod,
+  cancellationStateOf,
+  initialMethodStates,
+  reduceMethodStates,
+  type ActorMethodDeclaration,
+  type ActorMethods
+} from "./method"
+import { legacyActorMethod } from "./legacy"
 import {
   actorCancellationProjection,
+  cancellationMethodFor,
   cancellationKeys,
   cancellationTransitionsOf,
   cancelsInvocation
 } from "./cancellation"
+import {
+  alarmFired,
+  initialMethodTimeoutState,
+  methodTimeoutTransitions,
+  reduceMethodTimeoutState
+} from "./timeout"
 
 const actorFromCompleteDerivations = <R = never>(
   derivations: ReadonlyArray<CompleteTransitionDerivation<R>>,
@@ -99,6 +114,76 @@ const method = () => actorMethod({
   }
 })
 
+const projectedMethod = (options: {
+  readonly cancellationState: boolean
+  readonly cancellationEvent: boolean
+}): ActorMethodDeclaration => {
+  const projection = {
+    initial: () => ({ started: new Set<string>(), cancelled: new Set<string>() }),
+    step: (state: { readonly started: ReadonlySet<string>; readonly cancelled: ReadonlySet<string> }, event: Event) => {
+      const invocation = invocationOf(event)
+      if (invocation === undefined) return state
+      const key = JSON.stringify(invocation)
+      if (event.type === "InvocationStarted") return { ...state, started: new Set([...state.started, key]) }
+      if (event.type === "InvocationCancelled") return { ...state, cancelled: new Set([...state.cancelled, key]) }
+      return state
+    },
+    output: (state: { readonly started: ReadonlySet<string>; readonly cancelled: ReadonlySet<string> }) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation: ActorInvocation) => {
+        const key = JSON.stringify(invocation)
+        if (!state.started.has(key)) return undefined
+        return state.cancelled.has(key)
+          ? { status: "cancelled" as const, cause: "requested" as const }
+          : { status: "pending" as const }
+      },
+      ...(options.cancellationState
+        ? {
+          cancellationState: (invocation: ActorInvocation) => {
+            const key = JSON.stringify(invocation)
+            if (!state.started.has(key)) return undefined
+            return state.cancelled.has(key) ? "cancelled" as const : "running" as const
+          }
+        }
+        : {})
+    })
+  }
+  const definition = {
+    input: Schema.Void,
+    output: Schema.Void,
+    event: ({ invocation, at }: { readonly invocation: ActorInvocation; readonly at: number }) => started(invocation, at),
+    projection
+  }
+  return options.cancellationEvent
+    ? actorMethod({ ...definition, cancellation: { event: (current, at) => cancelled(current.invocation, at) } })
+    : actorMethod(definition)
+}
+
+const legacyCancellationMethod = () => legacyActorMethod({
+  input: Schema.Void,
+  output: Schema.Void,
+  event: ({ invocation, at }) => started(invocation, at),
+  state: (events, invocation) => {
+    if (!events.some((event) => event.type === "InvocationStarted" &&
+      invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))) return undefined
+    return events.some((event) => event.type === "InvocationCancelled" &&
+      invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))
+      ? { status: "cancelled", cause: "requested" }
+      : { status: "pending" }
+  },
+  cancellation: {
+    state: (events, invocation) => {
+      if (!events.some((event) => event.type === "InvocationStarted" &&
+        invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))) return undefined
+      return events.some((event) => event.type === "InvocationCancelled" &&
+        invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))
+        ? "cancelled"
+        : "running"
+    },
+    event: (current, at) => cancelled(current.invocation, at)
+  }
+})
+
 const methods: ActorMethods = { message: method(), inspect: method() }
 
 const request = (id: string, invocation: ActorInvocation, at: number): Event => ({
@@ -116,6 +201,74 @@ const terminalKeyOf = (event: Event): string | undefined => {
 }
 
 describe("cancellation properties", () => {
+  test("legacy and projected declarations normalize to one cancellation capability", () => {
+    const cases = [
+      { name: "legacy only", method: legacyCancellationMethod(), cancellable: true },
+      {
+        name: "projected state only",
+        method: projectedMethod({ cancellationState: true, cancellationEvent: false }),
+        cancellable: false
+      },
+      {
+        name: "projected state and event",
+        method: projectedMethod({ cancellationState: true, cancellationEvent: true }),
+        cancellable: true
+      },
+      {
+        name: "neither",
+        method: projectedMethod({ cancellationState: false, cancellationEvent: false }),
+        cancellable: false
+      }
+    ] as const
+    const head = {
+      ...started(parent, 1),
+      call: { invocation: parent, deadlineAt: 10 }
+    } as Event
+    const cancellation = request("x1", parent, 2)
+    const alarm = alarmFired({ scheduledFor: 10, at: 10 })
+    const linked = {
+      type: "InvocationLinked",
+      parent,
+      child: { invocation: child, parent },
+      target: "worker:main:child",
+      at: 2
+    } as Event
+
+    for (const current of cases) {
+      const methods = { message: current.method }
+      const control = actorCancellationProjection(methods, [], terminalKeyOf)!
+      const controlState = [head, cancellation].reduce(control.step, control.initial())
+      expect(control.output(controlState).residuals?.map((transition) => transition.key), current.name)
+        .toEqual(current.cancellable
+          ? [`cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`]
+          : undefined)
+      const linkedState = [head, linked, cancellation].reduce(control.step, control.initial())
+      expect(control.output(linkedState).residuals?.map((transition) => transition.key), current.name)
+        .toEqual(current.cancellable ? ["cxsend:cancel/x1/inspect/m1/0"] : undefined)
+
+      const cancelMethod = cancellationMethodFor(methods)
+      const cancelInvocation = { method: "$cancel", id: "x1", epoch: 0 }
+      const accepted = replayProjection(cancelMethod.projection, [head, cancellation]).invocationState(cancelInvocation)
+      expect(accepted, current.name).toEqual(current.cancellable
+        ? { status: "pending" }
+        : { status: "failed", error: 'method "message" is not cancellable' })
+      const completed = replayProjection(cancelMethod.projection, [head, cancellation, cancelled(parent, 3)])
+        .invocationState(cancelInvocation)
+      expect(completed, current.name).toEqual(current.cancellable
+        ? { status: "completed", output: { cancelled: true } }
+        : { status: "failed", error: 'method "message" is not cancellable' })
+
+      let methodStates = initialMethodStates(methods)
+      let timeoutState = initialMethodTimeoutState()
+      for (const event of [head, alarm]) {
+        methodStates = reduceMethodStates(methods, methodStates, event)
+        timeoutState = reduceMethodTimeoutState(timeoutState, event)
+      }
+      expect(methodTimeoutTransitions(methods, methodStates, timeoutState).map((transition) => transition.key), current.name)
+        .toEqual(current.cancellable ? [`cx:${JSON.stringify([parent.method, parent.id, parent.epoch])}`] : [])
+    }
+  })
+
   test("the control projection agrees with complete cancellation replay", () => {
     const projection = actorCancellationProjection(methods, [], terminalKeyOf)!
     const legacy = actorFromCompleteDerivations(

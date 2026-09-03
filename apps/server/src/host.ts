@@ -626,8 +626,10 @@ export const layerActorThreads = (
 
 const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
   const raw = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as Partial<ActorArtifactManifest>
+  if (raw.schema !== ACTOR_ARTIFACT_VERSION) {
+    throw new Error(`unsupported actor artifact schema ${String(raw.schema)} in ${directory}`)
+  }
   if (
-    raw.schema !== ACTOR_ARTIFACT_VERSION ||
     typeof raw.name !== "string" ||
     typeof raw.module !== "string" ||
     typeof raw.digest !== "string"

@@ -121,6 +121,69 @@ describe("actor reconciliation", () => {
     expect(tailMarks).toEqual([1, 3])
   })
 
+  test("a failed tail update retries from the published prefix", async () => {
+    const events: Array<Event> = [{ type: "Seed" } as Event]
+    const tailMarks: Array<number> = []
+    const log = Layer.succeed(EventLog, {
+      append: (batch: ReadonlyArray<Event>) => Effect.sync(() => { events.push(...batch) }),
+      read: Effect.sync(() => [...events]),
+      head: Effect.sync(() => events.length),
+      readFrom: (mark: number) => Effect.sync(() => {
+        tailMarks.push(mark)
+        return events.slice(mark)
+      })
+    })
+    const observed: Array<number> = []
+    const counter = transitionProjection({
+      initial: () => 0,
+      step: (count: number) => count + 1,
+      output: (count: number) => {
+        observed.push(count)
+        return []
+      }
+    })
+    let fails = true
+    const fragile = transitionProjection({
+      initial: () => 0,
+      step: (count: number, event: Event) => {
+        if (event.type === "Tail" && fails) {
+          fails = false
+          throw new Error("projection failed")
+        }
+        return count + 1
+      },
+      output: () => []
+    })
+    const reconciler = createActorReconciler(actorFromProjections({
+      transitions: [counter, fragile],
+      keyOf: () => undefined
+    }))
+
+    await Effect.runPromise(reconciler.settle.pipe(Effect.provide(log)))
+    events.push({ type: "Tail" } as Event)
+    await expect(Effect.runPromise(reconciler.settle.pipe(Effect.provide(log))))
+      .rejects.toThrow("projection failed")
+    await Effect.runPromise(reconciler.settle.pipe(Effect.provide(log)))
+
+    const replayed: Array<number> = []
+    const fresh = createActorReconciler(actorFromProjections({
+      transitions: [transitionProjection({
+        initial: () => 0,
+        step: (count: number) => count + 1,
+        output: (count: number) => {
+          replayed.push(count)
+          return []
+        }
+      })],
+      keyOf: () => undefined
+    }))
+    await Effect.runPromise(fresh.settle.pipe(Effect.provide(log)))
+
+    expect(observed).toEqual([1, 2])
+    expect(observed.at(-1)).toBe(replayed.at(-1))
+    expect(tailMarks).toEqual([1, 1])
+  })
+
   test("a reconciler reports whether its last settlement reached rest", async () => {
     const quiet = createActorReconciler(actorFromProjections({ transitions: [], keyOf: () => undefined }))
     expect(quiet.isResting()).toBe(false)

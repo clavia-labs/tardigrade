@@ -422,7 +422,7 @@ export type ModelCatalogUnpricedOrder = typeof MODEL_CATALOG_UNPRICED_ORDERS[num
 
 export const ActorArtifact = Schema.Struct({
   manifest: Schema.Struct({
-    schema: Schema.Literal(3),
+    schema: Schema.Literal(4),
     name: Schema.String,
     module: Schema.String,
     digest: Schema.String
