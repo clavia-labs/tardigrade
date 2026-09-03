@@ -1,9 +1,0 @@
-{
-  "id": "mdx-editor",
-  "name": "MDX Editor",
-  "version": "0.1.0",
-  "minAppVersion": "1.7.2",
-  "description": "Edit MDX files with a visual editor and source mode.",
-  "author": "Tardigrade",
-  "isDesktopOnly": false
-}
