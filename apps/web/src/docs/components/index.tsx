@@ -11,6 +11,7 @@ import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagra
 import { MethodDiagram } from "./diagrams/MethodDiagram"
 import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
 import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { TrajectoryBranchesDiagram } from "./diagrams/TrajectoryBranchesDiagram"
 import { TransitionLoop } from "./diagrams/TransitionLoop"
 
 const BulbIcon = (): ReactElement => (
@@ -228,6 +229,7 @@ export const mdxComponents = {
   PrimitiveDiagram,
   RlmDiagram,
   Tip,
+  TrajectoryBranchesDiagram,
   TransitionLoop,
   a: (props: ComponentPropsWithoutRef<"a">) => <a {...props} />,
   code: InlineCode,
