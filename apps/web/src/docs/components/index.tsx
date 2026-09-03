@@ -6,13 +6,19 @@ import { ActorDiagram } from "./diagrams/ActorDiagram"
 import { BehaviorTrajectoryDiagram } from "./diagrams/BehaviorTrajectoryDiagram"
 import { ComponentDiagram } from "./diagrams/ComponentDiagram"
 import { CompactionMachineDiagram } from "./diagrams/CompactionMachineDiagram"
+import { ComposableHarnessDiagram } from "./diagrams/ComposableHarnessDiagram"
+import { ForkingDiagram } from "./diagrams/ForkingDiagram"
 import { HarnessDiagram } from "./diagrams/HarnessDiagram"
 import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagram"
+import { InfiniteMemoryDiagram } from "./diagrams/InfiniteMemoryDiagram"
+import { LetItCrashDiagram } from "./diagrams/LetItCrashDiagram"
 import { MethodDiagram } from "./diagrams/MethodDiagram"
 import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
 import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { ServerlessDiagram } from "./diagrams/ServerlessDiagram"
 import { TrajectoryBranchesDiagram } from "./diagrams/TrajectoryBranchesDiagram"
 import { TransitionLoop } from "./diagrams/TransitionLoop"
+import { TypedEffectDiagram } from "./diagrams/TypedEffectDiagram"
 
 const BulbIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M8.5 15.5A7 7 0 1 1 15.5 15.5C14.6 16.2 14 17 14 18h-4c0-1-.6-1.8-1.5-2.5Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
@@ -235,19 +241,25 @@ export const mdxComponents = {
   Command,
   ComponentDiagram,
   CompactionMachineDiagram,
+  ComposableHarnessDiagram,
   ConceptInterface,
   ConceptSection,
   EventLog,
   Filesystem,
+  ForkingDiagram,
   HarnessDiagram,
   InterfaceComparisonDiagram,
+  InfiniteMemoryDiagram,
+  LetItCrashDiagram,
   Math,
   MethodDiagram,
   PrimitiveDiagram,
   RlmDiagram,
+  ServerlessDiagram,
   Tip,
   TrajectoryBranchesDiagram,
   TransitionLoop,
+  TypedEffectDiagram,
   a: Link,
   code: InlineCode,
   pre: Code

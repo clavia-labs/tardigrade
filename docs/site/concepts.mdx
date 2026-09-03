@@ -72,7 +72,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
     ```
   </ConceptInterface>
 
-  <p className="concept-bridge-copy">Component authors keep their state type through <code>incrementalComponent</code>. Tardigrade erases that private type only when it composes different component machines.</p>
+  <p className="concept-bridge-copy">Component authors keep their state type through `incrementalComponent`. Tardigrade erases that private type only when it composes different component machines.</p>
 
   <ConceptInterface>
     ```ts
@@ -91,7 +91,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
 
   <div className="compaction-example-copy">
     <h3>Example: compaction</h3>
-    <p>The compaction component tracks the model context as events arrive. At 104k tokens, it crosses the 80% threshold of a 128k window and enables an effect that summarizes the older span. The effect appends <code>CompactionCompleted</code>. Later model requests use its summary with a 64k-token tail, while the full event log remains available.</p>
+    <p>The compaction component tracks the model context as events arrive. At 104k tokens, it crosses the 80% threshold of a 128k window and enables an effect that summarizes the older span. The effect appends `CompactionCompleted`. Later model requests use its summary with a 64k-token tail, while the full event log remains available.</p>
   </div>
 
   <div className="component-diagram-frame">
