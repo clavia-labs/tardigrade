@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title description">
-  <title id="title">Behavior from an immutable event log</title>
-  <description id="description">Behavior is a function of an immutable event log. A point on a trajectory is derived from all previous points.</description>
+  <title id="title">Behavior from an event log</title>
+  <description id="description">Behavior is a function of an event log. A point on a trajectory is derived from all previous points.</description>
 
   <rect width="1200" height="630" fill="#f8f7f2"/>
 
   <text x="600" y="188" fill="#101521" font-family="Georgia, 'Times New Roman', serif" font-size="48" text-anchor="middle">
-    behavior = <tspan font-style="italic">f</tspan>(immutable event log)
+    behavior = <tspan font-style="italic">f</tspan><tspan dx="4">(event log)</tspan>
   </text>
 
   <g transform="translate(66 240) scale(1.48)">

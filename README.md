@@ -18,13 +18,9 @@ Tardigrade is a typescript framework for building modular agents around an immut
 ### Agents that can self-improve
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). A Tardigrade component is a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine) over events. It updates its state for each event, then derives a view and transitions from that state.
+We took inspiration from React. React derives its component tree and declared effects from state. Tardigrade applies the same idea to agent harnesses. Each component derives a view and enabled transitions from an event log.
 
-<p align="center"><code>S₀ = initial()</code></p>
-
-<p align="center"><code>Sₙ₊₁ = step(Sₙ, eₙ₊₁)</code></p>
-
-<p align="center"><code>{ view, transitions } = output(Sₙ)</code></p>
+<p align="center"><code>{ view, transitions } = f(event log)</code></p>
 
 ## Why Tardigrade
 
