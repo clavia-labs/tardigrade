@@ -3,6 +3,7 @@ import { renderToString } from "katex"
 
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
 import { ActorDiagram } from "./diagrams/ActorDiagram"
+import { BehaviorTrajectoryDiagram } from "./diagrams/BehaviorTrajectoryDiagram"
 import { ComponentDiagram } from "./diagrams/ComponentDiagram"
 import { CompactionMachineDiagram } from "./diagrams/CompactionMachineDiagram"
 import { HarnessDiagram } from "./diagrams/HarnessDiagram"
@@ -10,6 +11,7 @@ import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagra
 import { MethodDiagram } from "./diagrams/MethodDiagram"
 import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
 import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { TrajectoryBranchesDiagram } from "./diagrams/TrajectoryBranchesDiagram"
 import { TransitionLoop } from "./diagrams/TransitionLoop"
 
 const BulbIcon = (): ReactElement => (
@@ -212,6 +214,7 @@ const Tip = ({ children, title }: { readonly children: ReactNode; readonly title
 
 export const mdxComponents = {
   ActorDiagram,
+  BehaviorTrajectoryDiagram,
   Command,
   ComponentDiagram,
   CompactionMachineDiagram,
@@ -226,6 +229,7 @@ export const mdxComponents = {
   PrimitiveDiagram,
   RlmDiagram,
   Tip,
+  TrajectoryBranchesDiagram,
   TransitionLoop,
   a: (props: ComponentPropsWithoutRef<"a">) => <a {...props} />,
   code: InlineCode,

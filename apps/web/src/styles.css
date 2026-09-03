@@ -121,8 +121,9 @@ svg { display: block; }
 .nav-actions { margin-left: auto; display: flex; align-items: center; gap: 24px; color: var(--ink-2); }
 .guide-link { font-size: 16px; font-weight: 500; letter-spacing: -.01em; }
 .guide-link[aria-current="page"] { color: var(--moss-ink); }
-.github-link { width: 24px; height: 24px; }
-.github-link svg { width: 100%; height: 100%; }
+.github-link, .discord-link { width: 24px; height: 24px; }
+.github-link svg, .discord-link svg { width: 100%; height: 100%; }
+.header-theme-toggle { display: grid; place-items: center; }
 .console-link { padding: 9px 14px; border: 1px solid rgb(var(--accent-rgb) / 38%); color: var(--moss-ink); font-family: var(--mono); font-size: 14px; }
 .console-link[aria-current="page"] { background: var(--moss-wash); }
 .mobile-menu-trigger, .mobile-nav-panel { display: none; }
@@ -328,6 +329,20 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-nodes rect:last-child { fill: var(--moss-wash); stroke: var(--moss); }
 .trajectory-exit { fill: none; stroke: var(--moss); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trajectory-branches-diagram { width: 100%; height: auto; margin: 22px 0 30px; display: block; overflow: visible; }
+.trajectory-branches-paths { fill: none; stroke: rgb(var(--accent-rgb) / 30%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trajectory-branches-paths .trajectory-branches-lead { stroke: var(--moss); stroke-width: 1.25; }
+.trajectory-branches-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.trajectory-branches-nodes .trajectory-branches-origin { fill: var(--moss-wash); stroke: var(--moss); }
+.trajectory-branches-uncertainty { fill: var(--faint); font-family: var(--mono); font-size: 11px; opacity: .72; }
+.trajectory-branches-time text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
+.trajectory-branches-time path { fill: none; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
+.behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.behavior-trajectory-points { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.behavior-trajectory-points .behavior-trajectory-current { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.25; }
+.behavior-trajectory-annotation text { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; text-anchor: middle; }
+.behavior-trajectory-annotation path { fill: none; stroke: var(--moss); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .observability-log { align-self: center; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); font-family: var(--mono); }
 .observability-log-header { min-height: 42px; padding: 0 13px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgb(var(--accent-rgb) / 28%); color: var(--ink-2); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
 .observability-live { display: inline-flex; align-items: center; gap: 7px; color: var(--moss-ink); }
@@ -610,17 +625,31 @@ h1 span { display: block; white-space: nowrap; }
 .component-diagram-detail { fill: var(--ink-2); font-family: var(--mono); font-size: 11px; }
 .component-diagram-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#component-diagram-arrow); vector-effect: non-scaling-stroke; }
 .component-diagram marker path { fill: var(--moss-ink); }
-.compaction-machine-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
-.compaction-machine-diagram { min-width: 540px; width: min(100%, 640px); height: auto; margin: 10px auto 0; display: block; }
-.compaction-machine-node rect, .compaction-machine-state rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.compaction-machine-state rect { fill: var(--moss-wash); stroke: var(--moss); }
-.compaction-machine-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-.compaction-machine-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
-.compaction-machine-detail { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; }
-.compaction-machine-code { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; text-anchor: end; }
-.compaction-machine-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#compaction-machine-arrow); vector-effect: non-scaling-stroke; }
-.compaction-machine-diagram marker path { fill: var(--moss-ink); }
-.compaction-machine-labels { fill: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; }
+.compaction-machine-frame { width: 100%; margin-bottom: 32px; overflow-x: auto; overscroll-behavior-inline: contain; }
+.compaction-machine-diagram { position: relative; min-width: 698px; width: min(100%, 740px); margin: 24px auto 0; padding-bottom: 58px; display: grid; grid-template-columns: 230px 54px 230px 54px 130px; align-items: center; }
+.compaction-flow-stage { min-width: 0; }
+.compaction-flow-kind { display: block; color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
+.compaction-flow-event-log { width: 100%; margin-top: 10px; }
+.compaction-flow-event-log li { min-height: 28.125px; padding: 3px 12px; gap: 6px; box-sizing: border-box; }
+.compaction-flow-event-log li::before { width: 24px; font-size: 9px; }
+.compaction-flow-event-log code { font-size: 11px; }
+.compaction-flow-event-log code + code { font-size: 9px; }
+.compaction-flow-arrow { display: grid; justify-items: center; gap: 5px; color: var(--faint); }
+.compaction-flow-arrow span { font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.compaction-flow-arrow svg { width: 48px; height: 20px; overflow: visible; }
+.compaction-flow-arrow path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.compaction-flow-context-value { margin-top: 10px; display: grid; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); box-sizing: border-box; }
+.compaction-flow-context-type { padding: 10px 12px; border-bottom: 1px dashed rgb(var(--accent-rgb) / 26%); color: var(--faint); font-family: var(--mono); font-size: 9px; }
+.compaction-flow-context-section > span { display: block; padding: 9px 12px 5px; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .05em; text-transform: uppercase; }
+.compaction-flow-context-section > div { min-height: 42px; padding: 8px 12px; display: grid; grid-template-columns: 52px minmax(0, 1fr); align-items: center; gap: 8px; border-top: 1px dashed rgb(var(--accent-rgb) / 26%); box-sizing: border-box; }
+.compaction-flow-context-section code { color: var(--moss-ink); font-family: var(--mono); font-size: 9px; }
+.compaction-flow-context-section p { margin: 0; overflow: hidden; color: var(--ink); font-family: var(--mono); font-size: 10px; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+.compaction-flow-context-summary { background: var(--moss-wash); }
+.compaction-flow-context-tail { background: rgb(var(--accent-rgb) / 9%); }
+.compaction-flow-inference { min-height: 90px; padding: 16px; display: grid; align-content: center; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); box-sizing: border-box; }
+.compaction-flow-return { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+.compaction-flow-return path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-linecap: square; stroke-linejoin: miter; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.compaction-flow-return text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; text-anchor: middle; }
 .harness-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .harness-diagram { min-width: 540px; width: min(100%, 640px); height: auto; margin: 8px auto 0; display: block; }
 .harness-diagram-node rect, .harness-diagram-component rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -674,7 +703,7 @@ h1 span { display: block; white-space: nowrap; }
 
 @media (max-width: 800px) {
   .nav-brand-group > .guide-link { display: none; }
-  .brand > span, .console-link, .github-link { display: none; }
+  .brand > span, .console-link, .github-link, .discord-link, .header-theme-toggle { display: none; }
   .mobile-menu-trigger { min-height: 38px; padding: 7px 10px; display: inline-flex; align-items: center; gap: 8px; border: 1px dashed rgb(var(--accent-rgb) / 48%); background: var(--surface); color: var(--ink); cursor: pointer; font-size: 13px; font-weight: 500; transition: transform 140ms var(--ease-out), background-color 160ms ease, border-color 160ms ease; }
   .mobile-menu-trigger:active { transform: scale(.97); }
   .mobile-menu-icon { position: relative; width: 14px; height: 12px; display: block; }
@@ -703,8 +732,8 @@ h1 span { display: block; white-space: nowrap; }
   .guide-sidebar > span:first-child, .guide-sidebar > .guide-sidebar-section, .guide-sidebar > .guide-coming-soon { display: none; }
   .guide-article { min-width: 0; }
   .guide-article { padding-top: 44px; }
-  :is(.transition-loop-frame, .component-diagram-frame, .compaction-machine-frame, .harness-diagram-frame, .primitive-diagram-frame, .method-diagram-frame) { overflow-x: hidden; }
-  :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { min-width: 0; width: min(100%, 560px); margin-top: 0; }
+  :is(.transition-loop-frame, .component-diagram-frame, .harness-diagram-frame, .primitive-diagram-frame, .method-diagram-frame) { overflow-x: hidden; }
+  :is(.actor-diagram, .transition-loop, .component-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { min-width: 0; width: min(100%, 560px); margin-top: 0; }
   .cli-command-row { grid-template-columns: 1fr; gap: 6px; }
   .concept-section { grid-template-columns: 1fr; gap: 24px; }
   .concept-section-actors .actor-concept-illustration { grid-template-columns: minmax(220px, .9fr) 60px minmax(250px, 1.1fr); }
@@ -721,8 +750,9 @@ h1 span { display: block; white-space: nowrap; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
   .copy-markdown { width: 44px; padding: 11px; justify-content: center; }
   .copy-markdown span { display: none; }
+  .behavior-trajectory-annotation text { font-size: 18px; }
   .interface-comparison { padding: 16px; }
-  :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
+  :is(.actor-diagram, .transition-loop, .component-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
   .guide-command { width: 100%; }
   .example-source-heading { margin-top: 24px; }
   .example-source-heading > a { font-size: 0; }
