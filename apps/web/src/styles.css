@@ -337,9 +337,10 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-branches-horizon text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
 .behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.behavior-trajectory-direction { fill: none; stroke: var(--moss); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points .behavior-trajectory-current { fill: var(--moss-wash); stroke: var(--moss); stroke-width: 1.25; }
-.behavior-trajectory-annotation text { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; text-anchor: middle; }
+.behavior-trajectory-annotation text { fill: var(--moss-ink); font-family: var(--mono); font-size: 11px; text-anchor: middle; }
 .behavior-trajectory-annotation path { fill: none; stroke: var(--moss); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .observability-log { align-self: center; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); font-family: var(--mono); }
 .observability-log-header { min-height: 42px; padding: 0 13px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid rgb(var(--accent-rgb) / 28%); color: var(--ink-2); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
