@@ -13,7 +13,7 @@ export const MessageReceived = Schema.Struct({
   from: Schema.optional(Schema.String),
   // The turn's declared output contract carries its schema identity and JSON Schema.
   output: Schema.optional(Schema.Struct({ name: Schema.String, schema: Schema.Unknown })),
-  // outcome marks a method response. Method responses are not method calls because no declared method projects state for their ids (actor/method/response.test.ts, "returns a terminal through the accepted call link").
+  // outcome marks a method response. Method responses are not method calls because no declared method projects state for their ids (method/response.test.ts, "returns a terminal through the accepted call link").
   outcome: Schema.optional(Schema.Literals(["completed", "failed", "cancelled", "requesting"])),
   input: Schema.optional(Schema.Unknown),
   // model carries consumer-owned selection data. The receiving actor defines its shape and meaning.

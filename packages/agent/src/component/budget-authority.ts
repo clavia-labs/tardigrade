@@ -1,8 +1,8 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { HashMap, HashSet, Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
-import { handles, incrementalComponent, type Component } from "@clavia/tardigrade-core/actor"
+import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
+import { handles, component, type Component } from "@clavia/tardigrade-core/actor"
 import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { BudgetDecision } from "../actor/budget"
 import { budgetRequestDecided, budgetRequestFailed } from "../log/events"
@@ -133,7 +133,7 @@ const authorityTransition = (
 // budgetAuthority handles requestBudget with a pure local decision policy.
 export const budgetAuthority = (options: BudgetAuthorityOptions = {}): Component<undefined> => {
   const decide = options.decide ?? DEFAULT_BUDGET_DECISION
-  return handles(requestBudgetMethod, incrementalComponent({
+  return handles(requestBudgetMethod, component({
     name: "budget-authority",
     keys: budgetAuthorityKeys,
     initial: (): BudgetAuthorityState => ({ next: 0, pending: HashMap.empty(), settled: HashSet.empty() }),

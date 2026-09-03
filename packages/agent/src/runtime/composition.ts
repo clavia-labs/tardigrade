@@ -1,11 +1,11 @@
-import type { Transition } from "@clavia/tardigrade-core/reconciliation"
+import type { Transition } from "@clavia/tardigrade-core/runtime"
 import type { TransitionProjection } from "@clavia/tardigrade-core/transition"
 import {
   composeComponents,
   deriveComponent,
   handles,
   inheritComponentContract,
-  incrementalComponent,
+  component,
   type Component,
   type ComponentRequirements,
   type ViewAlgebra
@@ -230,7 +230,7 @@ export const infer = <
     (view) => checkedTools(view.tools) as ReadonlyArray<AgentTool<R>>
   )
   const toolsMachine = incrementalTools.machine
-  const root = incrementalComponent({
+  const root = component({
     name: "infer",
     keys: rootKeys(combined.keys),
     initial: () => ({

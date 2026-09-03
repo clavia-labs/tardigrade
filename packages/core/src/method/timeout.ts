@@ -1,8 +1,9 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../../log"
-import { incrementalComponent, legacyComponent, type Component } from "@clavia/tardigrade-core/component"
+import type { KeyFragment } from "../log"
+import { component, type Component } from "@clavia/tardigrade-core/component"
 import {
   CANCELLATION_CONTROL_METHOD,
   cancellationRequested,
@@ -10,7 +11,7 @@ import {
   type CancellationDispatched
 } from "./cancellation"
 import type { ActorInvocation, ActorInvocationContext } from "./call"
-import { initialMethodStates, reduceMethodStates, type ActorMethods } from "./definition"
+import { cancellationStateOf, initialMethodStates, reduceMethodStates, type ActorMethods } from "./method"
 
 // AlarmFired records the platform alarm crossing in an actor's private log.
 export interface AlarmFired extends Event {
@@ -207,8 +208,8 @@ const deadlineCancellationTransition = (invocation: ActorInvocation, deadlineAt:
   })]
 })
 
-// methodTimeoutReactor turns alarm facts into method terminals without reading a clock.
-export const methodTimeoutReactor: CompleteTransitionDerivation = (log) => {
+// methodTimeoutDerivation turns alarm facts into method terminals without reading a clock.
+export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
   const terminal = terminalCalls(log)
   const alarms = alarmsOf(log)
   return dispatchesOf(log).flatMap((dispatch) => {
@@ -218,20 +219,28 @@ export const methodTimeoutReactor: CompleteTransitionDerivation = (log) => {
   })
 }
 
-// methodDeadlineCancellationReactor turns an accepted invocation deadline into the same durable cancellation used by callers.
-export const methodDeadlineCancellationReactor = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
+// methodDeadlineCancellationDerivation turns an accepted invocation deadline into the same durable cancellation used by callers.
+export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
   const alarms = alarmsOf(log)
   return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
     const cancellation = methods[invocation.method]?.cancellation
     if (cancellation === undefined || invocationSettled(log, invocation)) return []
     const alarm = alarmFor(alarms, deadlineAt)
-    if (alarm === undefined || cancellation.state(log, invocation) !== "running") return []
+    const method = methods[invocation.method]
+    if (alarm === undefined || method === undefined ||
+      cancellationStateOf(method, replayProjection(method.projection, log), invocation) !== "running") return []
     return [deadlineCancellationTransition(invocation, deadlineAt)]
   })
 }
 
-interface IncrementalTimeoutState {
-  readonly methods: ReadonlyMap<string, unknown>
+/** @deprecated Use methodTimeoutDerivation. This compatibility name describes a complete-history transition derivation. */
+export const methodTimeoutReactor: CompleteTransitionDerivation = (log) => methodTimeoutDerivation(log)
+
+/** @deprecated Use methodDeadlineCancellationDerivation. This compatibility name describes a complete-history transition derivation. */
+export const methodDeadlineCancellationReactor = (methods: ActorMethods): CompleteTransitionDerivation =>
+  methodDeadlineCancellationDerivation(methods)
+
+export interface MethodTimeoutProjectionState {
   readonly dispatches: ReadonlyMap<string, Dispatch>
   readonly terminalCalls: ReadonlySet<string>
   readonly alarms: ReadonlyArray<AlarmFired>
@@ -239,86 +248,97 @@ interface IncrementalTimeoutState {
   readonly settledInvocations: ReadonlySet<string>
 }
 
+// initialMethodTimeoutState constructs method deadline bookkeeping.
+export const initialMethodTimeoutState = (): MethodTimeoutProjectionState => ({
+  dispatches: new Map(),
+  terminalCalls: new Set(),
+  alarms: [],
+  deadlines: new Map(),
+  settledInvocations: new Set()
+})
+
+// reduceMethodTimeoutState advances method deadline bookkeeping with one event.
+export const reduceMethodTimeoutState = (
+  state: MethodTimeoutProjectionState,
+  event: Event
+): MethodTimeoutProjectionState => {
+  const dispatches = new Map(state.dispatches)
+  for (const dispatch of dispatchesOf([event])) {
+    if (!dispatches.has(dispatch.call)) dispatches.set(dispatch.call, dispatch)
+  }
+  const terminalCalls = new Set(state.terminalCalls)
+  if (event.type === "ResponseReceived" || event.type === "CallTimedOut") {
+    terminalCalls.add(String((event as { readonly call?: unknown }).call ?? ""))
+  }
+  const deadlines = new Map(state.deadlines)
+  for (const deadline of invocationDeadlinesOf([event])) {
+    const key = invocationKey(deadline.invocation)
+    if (!deadlines.has(key)) deadlines.set(key, deadline)
+  }
+  const settledInvocations = new Set(state.settledInvocations)
+  const cancellation = cancellationRequestedOf(event)
+  if (cancellation !== undefined) settledInvocations.add(invocationKey(cancellation.invocation))
+  if (event.type === "ResponseDelivered") {
+    const method = String((event as { readonly method?: unknown }).method ?? "")
+    const id = String((event as { readonly call?: unknown }).call ?? "")
+    for (const deadline of deadlines.values()) {
+      if (deadline.invocation.method === method && deadline.invocation.id === id) {
+        settledInvocations.add(invocationKey(deadline.invocation))
+      }
+    }
+  }
+  return {
+    dispatches,
+    terminalCalls,
+    alarms: event.type === "AlarmFired" ? [...state.alarms, event as AlarmFired] : state.alarms,
+    deadlines,
+    settledInvocations
+  }
+}
+
+// methodTimeoutTransitions derives caller timeouts and invocation deadline cancellations.
+export const methodTimeoutTransitions = (
+  methods: ActorMethods,
+  methodStates: ReadonlyMap<string, unknown>,
+  state: MethodTimeoutProjectionState
+): ReadonlyArray<ReturnType<typeof intent>> => {
+  const transitions = [] as Array<ReturnType<typeof intent>>
+  for (const dispatch of state.dispatches.values()) {
+    if (state.terminalCalls.has(dispatch.call)) continue
+    const alarm = alarmFor(state.alarms, dispatch.deadlineAt)
+    if (alarm !== undefined) transitions.push(timeoutTransition(dispatch, alarm.at))
+  }
+  for (const deadline of state.deadlines.values()) {
+    const invocation = deadline.invocation
+    const method = methods[invocation.method]
+    if (method?.cancellation === undefined) continue
+    const view = method.projection.output(methodStates.get(invocation.method))
+    const current = view.invocationState(invocation)
+    if (state.settledInvocations.has(invocationKey(invocation)) || current?.status !== "pending") continue
+    const alarm = alarmFor(state.alarms, deadline.deadlineAt)
+    if (alarm === undefined || cancellationStateOf(method, view, invocation) !== "running") continue
+    transitions.push(deadlineCancellationTransition(invocation, deadline.deadlineAt))
+  }
+  return transitions
+}
+
 // methodTimeoutComponent mounts durable method deadlines on every actor.
 export const methodTimeoutComponent = (methods: ActorMethods): Component<undefined> => {
-  const entries = Object.entries(methods)
-  if (!entries.every(([, method]) => method.incremental !== undefined)) {
-    return legacyComponent({
-      name: "actor.method-timeouts",
-      keys: methodTimeoutKeys,
-      derive: (log) => ({
-        view: undefined,
-        transitions: [...methodTimeoutReactor(log), ...methodDeadlineCancellationReactor(methods)(log)]
-      })
-    })
+  interface State {
+    readonly methods: ReadonlyMap<string, unknown>
+    readonly timeout: MethodTimeoutProjectionState
   }
-  return incrementalComponent<IncrementalTimeoutState, undefined>({
+  return component<State, undefined>({
     name: "actor.method-timeouts",
     keys: methodTimeoutKeys,
     initial: () => ({
       methods: initialMethodStates(methods),
-      dispatches: new Map(),
-      terminalCalls: new Set(),
-      alarms: [],
-      deadlines: new Map(),
-      settledInvocations: new Set()
+      timeout: initialMethodTimeoutState()
     }),
-    step: (state, event) => {
-      const projected = reduceMethodStates(methods, state.methods, event)
-      const dispatches = new Map(state.dispatches)
-      for (const dispatch of dispatchesOf([event])) {
-        if (!dispatches.has(dispatch.call)) dispatches.set(dispatch.call, dispatch)
-      }
-      const terminalCalls = new Set(state.terminalCalls)
-      if (event.type === "ResponseReceived" || event.type === "CallTimedOut") {
-        terminalCalls.add(String((event as { readonly call?: unknown }).call ?? ""))
-      }
-      const deadlines = new Map(state.deadlines)
-      for (const deadline of invocationDeadlinesOf([event])) {
-        const key = invocationKey(deadline.invocation)
-        if (!deadlines.has(key)) deadlines.set(key, deadline)
-      }
-      const settledInvocations = new Set(state.settledInvocations)
-      const cancellation = cancellationRequestedOf(event)
-      if (cancellation !== undefined) settledInvocations.add(invocationKey(cancellation.invocation))
-      if (event.type === "ResponseDelivered") {
-        const method = String((event as { readonly method?: unknown }).method ?? "")
-        const id = String((event as { readonly call?: unknown }).call ?? "")
-        for (const deadline of deadlines.values()) {
-          if (deadline.invocation.method === method && deadline.invocation.id === id) {
-            settledInvocations.add(invocationKey(deadline.invocation))
-          }
-        }
-      }
-      return {
-        methods: projected,
-        dispatches,
-        terminalCalls,
-        alarms: event.type === "AlarmFired" ? [...state.alarms, event as AlarmFired] : state.alarms,
-        deadlines,
-        settledInvocations
-      }
-    },
-    output: (state) => {
-      const transitions = [] as Array<ReturnType<typeof intent>>
-      for (const dispatch of state.dispatches.values()) {
-        if (state.terminalCalls.has(dispatch.call)) continue
-        const alarm = alarmFor(state.alarms, dispatch.deadlineAt)
-        if (alarm !== undefined) transitions.push(timeoutTransition(dispatch, alarm.at))
-      }
-      for (const deadline of state.deadlines.values()) {
-        const invocation = deadline.invocation
-        const method = methods[invocation.method]
-        const projection = method?.incremental
-        if (method?.cancellation === undefined || projection?.cancellation === undefined) continue
-        const projectedState = state.methods.get(invocation.method)
-        const current = projection.state(projectedState, invocation)
-        if (state.settledInvocations.has(invocationKey(invocation)) || current?.status !== "pending") continue
-        const alarm = alarmFor(state.alarms, deadline.deadlineAt)
-        if (alarm === undefined || projection.cancellation(projectedState, invocation) !== "running") continue
-        transitions.push(deadlineCancellationTransition(invocation, deadline.deadlineAt))
-      }
-      return { view: undefined, transitions }
-    }
+    step: (state, event) => ({
+      methods: reduceMethodStates(methods, state.methods, event),
+      timeout: reduceMethodTimeoutState(state.timeout, event)
+    }),
+    output: (state) => ({ view: undefined, transitions: methodTimeoutTransitions(methods, state.methods, state.timeout) })
   })
 }

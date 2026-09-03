@@ -4,7 +4,9 @@ import fc from "fast-check"
 import {
   actorFromProjections,
   createActorReconciler,
-  enabled
+  enabled,
+  type Actor,
+  type ActorProjection
 } from "./index"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -16,23 +18,29 @@ import { EventLog, withWatermark } from "../log"
 const actorFromCompleteDerivations = <R = never>(
   derivations: ReadonlyArray<CompleteTransitionDerivation<R>>,
   keyOf: (event: Event) => string | undefined = () => undefined,
-  cancellationOf?: Parameters<typeof actorFromProjections<R>>[2],
-  cancellationResiduals?: Parameters<typeof actorFromProjections<R>>[3],
+  cancellationOf?: Actor<R>["cancellationOf"],
+  cancellationResiduals?: Actor<R>["cancellationResiduals"],
   guards?: ReadonlyArray<CompleteTransitionDerivation<R>>,
-  control?: Parameters<typeof actorFromProjections<R>>[5]
+  projection?: ActorProjection<R>
 ) => {
   const projections = derivations.map(completeTransitionProjection)
-  return actorFromProjections(
-    projections,
+  return actorFromProjections({
+    transitions: projections,
     keyOf,
-    cancellationOf,
-    cancellationResiduals,
-    guards?.map((guard) => {
+    ...(guards === undefined ? {} : { guards: guards.map((guard) => {
       const index = derivations.indexOf(guard)
       return index === -1 ? completeTransitionProjection(guard) : projections[index]!
-    }),
-    control
-  )
+    }) }),
+    ...(projection === undefined ? {} : { control: projection }),
+    ...(cancellationOf === undefined && cancellationResiduals === undefined
+      ? {}
+      : {
+        legacy: {
+          ...(cancellationOf === undefined ? {} : { cancellationOf }),
+          ...(cancellationResiduals === undefined ? {} : { cancellationResiduals })
+        }
+      })
+  })
 }
 
 const memoryLog = (initial: ReadonlyArray<Event> = []) =>
@@ -90,7 +98,7 @@ describe("actor reconciliation", () => {
         return events.slice(mark)
       })
     })
-    const reactor = transitionProjection({
+    const projection = transitionProjection({
       initial: () => 0,
       step: (count: number) => {
         reductions += 1
@@ -98,7 +106,10 @@ describe("actor reconciliation", () => {
       },
       output: () => []
     })
-    const reconciler = createActorReconciler(actorFromProjections([reactor], () => undefined))
+    const reconciler = createActorReconciler(actorFromProjections({
+      transitions: [projection],
+      keyOf: () => undefined
+    }))
 
     await Effect.runPromise(reconciler.settle.pipe(Effect.provide(log)))
     events.push({ type: "Added" } as Event, { type: "Added" } as Event)
@@ -111,7 +122,7 @@ describe("actor reconciliation", () => {
   })
 
   test("a reconciler reports whether its last settlement reached rest", async () => {
-    const quiet = createActorReconciler(actorFromProjections([], () => undefined))
+    const quiet = createActorReconciler(actorFromProjections({ transitions: [], keyOf: () => undefined }))
     expect(quiet.isResting()).toBe(false)
     await Effect.runPromise(quiet.settle.pipe(Effect.provide(memoryLog())))
     expect(quiet.isResting()).toBe(true)
@@ -134,13 +145,16 @@ describe("actor reconciliation", () => {
     })
     const control = {
       initial: () => 0,
-      reduce: (count: unknown) => {
+      step: (count: unknown) => {
         reductions += 1
         return Number(count) + 1
       },
-      cancellationOf: () => undefined,
-      suppresses: () => false,
-      residuals: () => undefined
+      output: () => ({
+        continuations: [],
+        cancellationOf: () => undefined,
+        suppresses: () => false,
+        residuals: undefined
+      })
     }
     const reconciler = createActorReconciler(actorFromCompleteDerivations(
       [],
@@ -169,10 +183,13 @@ describe("actor reconciliation", () => {
       undefined,
       {
         initial: () => undefined,
-        reduce: (state) => state,
-        cancellationOf: () => undefined,
-        suppresses: () => false,
-        residuals: () => undefined
+        step: (state) => state,
+        output: () => ({
+          continuations: [],
+          cancellationOf: () => undefined,
+          suppresses: () => false,
+          residuals: undefined
+        })
       }
     )
 

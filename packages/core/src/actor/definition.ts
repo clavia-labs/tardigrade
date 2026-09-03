@@ -1,4 +1,3 @@
-import type { Event } from "@clavia/tardigrade-core/event"
 import { actorFromProjections, type Actor as ReconciledActor, type Self } from "@clavia/tardigrade-core/runtime/reconciler"
 import {
   transitionProjectionOf,
@@ -11,22 +10,18 @@ import { actorContractErrors, actorContractOf, type ActorContract } from "./cont
 import {
   actorMethodsOf,
   methodCallKeys,
-  methodResponseComponent,
   methodResponseKeys,
   methodInputValidationComponents,
-  methodTimeoutComponent,
   methodTimeoutKeys,
   type ActorMethods
-} from "./method/index"
-import type { ActorInvocation } from "./method"
+} from "../method/index"
 import {
   CANCELLATION_CONTROL_METHOD,
-  actorCancellationProjection,
   childCancellationTimeoutOf,
   cancellationKeys,
-  cancellationMethodFor,
-  cancellationTransitionsOf
-} from "./method/cancellation"
+  cancellationMethodFor
+} from "../method/cancellation"
+import { actorProjection } from "./projection"
 
 export const ACTOR_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u
 
@@ -78,26 +73,20 @@ const fromOptions = <
   const components = options.components as ReadonlyArray<Component<unknown, R>>
   const inputValidation = methodInputValidationComponents(methods)
   const fragments = [...inputValidation, ...components].flatMap((component) => component.keys === undefined ? [] : [component.keys])
-  const responses = methodResponseComponent({
+  const responseMethods = {
     ...methods,
     [CANCELLATION_CONTROL_METHOD]: cancellationMethodFor(methods)
-  })
+  }
   const contract = actorContractOf(methods, options.components as ReadonlyArray<Component<unknown, unknown>>)
   const keyOf = composeKeys(...fragments, cancellationKeys, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
-  const cancellationOf = (events: ReadonlyArray<Event>, invocation: ActorInvocation) =>
-    methods[invocation.method]?.cancellation?.state(events, invocation)
-  const cancellationResiduals = (events: ReadonlyArray<Event>) =>
-    cancellationTransitionsOf(events, methods, components, keyOf, cancellation.childTimeoutMs)
-  const control = actorCancellationProjection(methods, components, keyOf, cancellation.childTimeoutMs)
+  const projection = actorProjection(methods, responseMethods, components, keyOf, cancellation.childTimeoutMs)
   const validationProjections = inputValidation.map(transitionProjectionOf)
-  const runtime = actorFromProjections<R>(
-    [...components.map(transitionProjectionOf), ...validationProjections, transitionProjectionOf(methodTimeoutComponent(methods)), transitionProjectionOf(responses)],
-    keyOf,
-    cancellationOf,
-    cancellationResiduals,
-    validationProjections,
-    control
-  )
+  const runtime = actorFromProjections<R>({
+    transitions: validationProjections,
+    guards: validationProjections,
+    control: projection,
+    keyOf
+  })
   return {
     ...runtime,
     name: options.name,

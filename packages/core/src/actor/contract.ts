@@ -1,5 +1,5 @@
 import type { ActorRef } from "./reference"
-import type { ActorMethodDeclaration, ActorMethods } from "./method"
+import type { ActorMethodDeclaration, ActorMethods } from "../method"
 import type { Component } from "@clavia/tardigrade-core/component"
 
 export const COMPONENT_CONTRACT = Symbol.for("tardigrade.component.contract")

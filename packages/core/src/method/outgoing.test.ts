@@ -1,15 +1,16 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog, withWatermark } from "../../log"
-import { threadAddressOf } from "../../communication/endpoint"
-import { Router } from "../../communication/router"
-import { Self } from "../../runtime"
-import { DEFAULT_ACTOR_METHOD_TIMEOUT_MS, actorMethod } from "./definition"
+import { EventLog, withWatermark } from "../log"
+import { threadAddressOf } from "../communication/endpoint"
+import { Router } from "../communication/router"
+import { Self } from "../runtime"
+import { DEFAULT_ACTOR_METHOD_TIMEOUT_MS } from "./method"
+import { legacyActorMethod } from "./legacy"
 import { actorCall } from "./outgoing"
 import { CANCELLATION_CONTROL_METHOD } from "./cancellation"
 
-const inspect = actorMethod({
+const inspect = legacyActorMethod({
   input: Schema.Struct({ value: Schema.String }),
   output: Schema.String,
   event: ({ invocation, input, at }): Event => ({ type: "InspectionRequested", id: invocation.id, value: input.value, at }),
@@ -22,7 +23,7 @@ const target = {
   methods: { inspect }
 }
 
-const cancellableInspect = actorMethod({
+const cancellableInspect = legacyActorMethod({
   input: Schema.Struct({ value: Schema.String }),
   output: Schema.String,
   event: ({ invocation, input, at }): Event => ({ type: "InspectionRequested", id: invocation.id, value: input.value, at }),

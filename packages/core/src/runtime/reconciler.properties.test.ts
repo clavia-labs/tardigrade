@@ -4,7 +4,8 @@ import fc from "fast-check"
 import {
   actorFromProjections,
   enabled,
-  settleActor
+  settleActor,
+  type Actor
 } from "./index"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -15,14 +16,20 @@ import { EventLog, withWatermark } from "../log"
 const actorFromCompleteDerivations = <R = never>(
   derivations: ReadonlyArray<CompleteTransitionDerivation<R>>,
   keyOf: (event: Event) => string | undefined = () => undefined,
-  cancellationOf?: Parameters<typeof actorFromProjections<R>>[2],
-  cancellationResiduals?: Parameters<typeof actorFromProjections<R>>[3]
-) => actorFromProjections(
-  derivations.map(completeTransitionProjection),
+  cancellationOf?: Actor<R>["cancellationOf"],
+  cancellationResiduals?: Actor<R>["cancellationResiduals"]
+) => actorFromProjections({
+  transitions: derivations.map(completeTransitionProjection),
   keyOf,
-  cancellationOf,
-  cancellationResiduals
-)
+  ...(cancellationOf === undefined && cancellationResiduals === undefined
+    ? {}
+    : {
+      legacy: {
+        ...(cancellationOf === undefined ? {} : { cancellationOf }),
+        ...(cancellationResiduals === undefined ? {} : { cancellationResiduals })
+      }
+    })
+})
 
 const memoryLog = (initial: ReadonlyArray<Event> = []) =>
   Layer.effect(
@@ -141,7 +148,7 @@ describe("actor reconciliation", () => {
   test("a committed intent invalidates every remaining transition from its snapshot", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 20 }), async (siblings) => {
-        const reactor: CompleteTransitionDerivation = (log) => {
+        const projection: CompleteTransitionDerivation = (log) => {
           if (log.some((event) => event.type === "SnapshotAdvanced")) return []
           return [
             intent({
@@ -158,7 +165,7 @@ describe("actor reconciliation", () => {
             )
           ]
         }
-        const runtime = actorFromCompleteDerivations([reactor], (event) => {
+        const runtime = actorFromCompleteDerivations([projection], (event) => {
           if (event.type === "SnapshotAdvanced") return "advance"
           if (event.type === "StaleCommitted") return `stale:${String((event as { id?: unknown }).id)}`
           return undefined

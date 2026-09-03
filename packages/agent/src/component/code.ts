@@ -1,10 +1,10 @@
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { Chunk } from "effect"
-import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
+import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
 import {
   composeComponents,
   inheritComponentContract,
-  incrementalComponent,
+  component as defineComponent,
   type ComponentRequirements,
   type InvocationCancellation
 } from "@clavia/tardigrade-core/actor"
@@ -160,7 +160,7 @@ export const codeMode = <
   }
   const staticSystem = typeof options.system === "string" ? options.system : undefined
   const dynamicSystem = typeof options.system === "function" ? options.system : undefined
-  const component = incrementalComponent({
+  const component = defineComponent({
         ...common,
         initial: () => {
           const children = childMachine.initial()

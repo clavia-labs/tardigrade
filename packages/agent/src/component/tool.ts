@@ -1,6 +1,6 @@
 import { Clock, Effect } from "effect"
-import { effect } from "@clavia/tardigrade-core/reconciliation"
-import { incrementalComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
+import { effect } from "@clavia/tardigrade-core/runtime"
+import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { toolReturned } from "../log/events"
 import type { ToolSpec } from "../inference/request"
@@ -58,7 +58,7 @@ export const tool = <R = never>(
     })
   return typeof system === "function"
     ? legacyComponent({ name: "tools", derive: (log) => derive(system(log)) })
-    : incrementalComponent({
+    : component({
         name: "tools",
         initial: () => system,
         step: (state: string) => state,

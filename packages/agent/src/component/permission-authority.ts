@@ -1,8 +1,8 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { HashMap, HashSet, Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { intent, type Transition } from "@clavia/tardigrade-core/reconciliation"
-import { externallyHandled, handles, incrementalComponent, type Component } from "@clavia/tardigrade-core/actor"
+import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
+import { externallyHandled, handles, component as defineComponent, type Component } from "@clavia/tardigrade-core/actor"
 import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { PermissionDecision, requestPermissionMethod } from "../actor/permission"
 import { permissionRequestDecided, permissionRequestFailed } from "../log/events"
@@ -122,7 +122,7 @@ const authorityTransition = (
 }
 
 const authorityComponent = (decide?: DecidePermission): Component<undefined> => {
-  const component: Component<undefined> = incrementalComponent({
+  const component: Component<undefined> = defineComponent({
     name: "permission-authority",
     keys: permissionAuthorityKeys,
     initial: (): PermissionAuthorityState => ({ next: 0, pending: HashMap.empty(), settled: HashSet.empty() }),

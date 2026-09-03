@@ -4,11 +4,11 @@ import fc from "fast-check"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { enabled } from "../runtime"
+import { actor } from "../actor"
 import {
-  actor,
   composeComponents,
   deriveComponent,
-  incrementalComponent,
+  component,
   legacyComponent,
   type Component,
   type TransitionReconciler,
@@ -59,7 +59,7 @@ const leafComponent = (leaf: Leaf): Component<Facts> => {
 const incrementalLeafComponent = (leaf: Leaf): Component<Facts> => {
   const name = `leaf-${leaf.id}`
   const key = `${name}:work`
-  return incrementalComponent({
+  return component({
     name,
     keys: {
       prefixes: [`${name}:`],

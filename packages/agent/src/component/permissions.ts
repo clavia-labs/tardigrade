@@ -4,12 +4,12 @@ import {
   calls,
   composeComponents,
   inheritComponentContract,
-  incrementalComponent,
+  component as defineComponent,
   type ActorRef,
   type ComponentRequirements
 } from "@clavia/tardigrade-core/actor"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { Self, type Transition } from "@clavia/tardigrade-core/reconciliation"
+import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
 import { requestPermissionMethod } from "../actor/permission"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
@@ -110,7 +110,7 @@ export const permissions = <
     name: "permissions",
     ...(combined.keys === undefined ? {} : { keys: combined.keys })
   }
-  const component: AgentComponent<R | Router | Self> = incrementalComponent({
+  const component: AgentComponent<R | Router | Self> = defineComponent({
     ...common,
     initial: machine.initial,
     step: machine.step,

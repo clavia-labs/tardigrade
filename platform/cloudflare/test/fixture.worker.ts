@@ -1,9 +1,9 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
-import { actor, actorMethod, legacyComponent } from "tardie"
+import { actor, legacyActorMethod, legacyComponent } from "tardie"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { effect } from "@clavia/tardigrade-core/reconciliation"
+import { effect } from "@clavia/tardigrade-core/runtime"
 import {
   ActorDO,
   ThreadDO,
@@ -110,7 +110,7 @@ const encryptedEventCodec = (thread: string, key: Promise<CryptoKey>): Cloudflar
   decode: (events) => Effect.promise(() => openAll(key, thread, events))
 })
 
-const echo = actorMethod({
+const echo = legacyActorMethod({
   input: Schema.Struct({ text: Schema.String }),
   output: Schema.String,
   event: ({ invocation, input, at }) => ({ type: "EchoRequested", id: invocation.id, text: input.text, at }),

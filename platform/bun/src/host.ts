@@ -25,7 +25,7 @@ import {
   methodIngressKeyOf,
   type ActorInvocationContext,
   type ActorMethods
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 import {
   EffectInterruptions,
   Self,
@@ -33,7 +33,7 @@ import {
   effectInterruptionRegistry,
   restingActor,
   type Actor
-} from "@clavia/tardigrade-core/reconciliation"
+} from "@clavia/tardigrade-core/runtime"
 import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"

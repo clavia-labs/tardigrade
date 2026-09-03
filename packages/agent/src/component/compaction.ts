@@ -1,5 +1,5 @@
 import { Clock, Effect, HashSet } from "effect"
-import { effect, Self, type Transition } from "@clavia/tardigrade-core/reconciliation"
+import { effect, Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { compactionCompleted } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -10,7 +10,7 @@ import {
   turnViewFrom,
   type TurnProjectionState
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { incrementalComponent } from "@clavia/tardigrade-core/actor"
+import { component } from "@clavia/tardigrade-core/actor"
 import {
   projectedOutput,
   transcriptProjection,
@@ -496,7 +496,7 @@ export const compaction = (policy: Partial<CompactionPolicy> = {}): AgentCompone
     const span = suffix.slice(keepFromIndex(suffix, prior.keepFrom), cut.index)
     return compactionTransition(resolved, model, prior.summary, cut.keepFrom, span)
   }
-  return incrementalComponent({
+  return component({
     name: "compaction",
     initial,
     step: reduce,

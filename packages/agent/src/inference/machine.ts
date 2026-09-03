@@ -1,7 +1,7 @@
 import { Cause, Clock, Effect } from "effect"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { HashMap, Option } from "effect"
-import { intent, effect, Self } from "@clavia/tardigrade-core/reconciliation"
+import { intent, effect, Self } from "@clavia/tardigrade-core/runtime"
 import { transitionProjection, type CompleteTransitionDerivation, type TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { modelCalled, outputRejected, outputRepaired, textReturned, turnFailed } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -283,7 +283,7 @@ interface InferDerivation {
   readonly renderAfter: (event: Event) => ReturnType<Render>
 }
 
-const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivation): ReadonlyArray<import("@clavia/tardigrade-core/reconciliation").Transition<never, Infer | EventLog | Self>> => {
+const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivation): ReadonlyArray<import("@clavia/tardigrade-core/runtime").Transition<never, Infer | EventLog | Self>> => {
   const giveUpAfter = policy.giveUpAfter ?? DEFAULT_INFER_POLICY.giveUpAfter
   const slice = derived.slice
   if (slice.length === 0 || awaitingTool(slice) || terminated(slice)) return []

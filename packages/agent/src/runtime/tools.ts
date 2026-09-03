@@ -1,4 +1,4 @@
-import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
+import { intent, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { toolReturned } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -6,7 +6,7 @@ import { turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
 import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import type { InvocationCancellation } from "@clavia/tardigrade-core/actor"
 import type { Component, ComponentMachine } from "@clavia/tardigrade-core/actor"
-import { incrementalComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
+import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
 import { Chunk, HashMap, Option } from "effect"
 import {
   initialTurnProjection,
@@ -178,7 +178,7 @@ export const incrementalToolsComponentFrom = <V, R = never>(
   empty: V,
   child: ComponentMachine<V, R>,
   toolsOf: (view: V) => ReadonlyArray<ProjectedTool<R>>
-): Component<V, R> => incrementalComponent<IncrementalToolsState<R>, V, R>({
+): Component<V, R> => component<IncrementalToolsState<R>, V, R>({
   name: "tools",
   initial: (): IncrementalToolsState => ({
     child: child.initial(),

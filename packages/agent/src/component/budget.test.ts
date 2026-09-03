@@ -4,8 +4,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { actor } from "@clavia/tardigrade-core/actor"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
-import { Self, settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { Self, enabled, settleActor } from "@clavia/tardigrade-core/runtime"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { threadAddressOf, parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -29,8 +28,7 @@ const assembled = <R>(component: import("../runtime/composition").AgentComponent
 })
 
 const rootActor = assembled(infer([budget([codeMode()]), compaction(), nativeOutput], TEST_MODEL))
-const rootProjection = rootActor.projections[0]!
-const rootReactor = (events: ReadonlyArray<Event>) => replayProjection(rootProjection, events)
+const rootReactor = (events: ReadonlyArray<Event>) => enabled(rootActor, events)
 
 // rest supplies the environment required by effect transitions in this assembled agent.
 const rest = Layer.mergeAll(
@@ -92,12 +90,12 @@ describe("budget admission reacts to BudgetExhausted", () => {
   })
 
   test("the exported default and a turn override decide the wall", () => {
-    const defaultTwoProjection = actor({
+    const defaultTwoActor = actor({
       name: "default-two",
       methods: agentMethods,
       components: [infer([budget([codeMode()], { limit: 2 }), nativeOutput], TEST_MODEL)]
-    }).projections[0]!
-    const defaultTwo = (events: ReadonlyArray<Event>) => replayProjection(defaultTwoProjection, events)
+    })
+    const defaultTwo = (events: ReadonlyArray<Event>) => enabled(defaultTwoActor, events)
 
     expect(defaultTwo(turn(2)).some((transition) => transition.key.startsWith("bw:"))).toBe(false)
     expect(defaultTwo(turn(3)).map((transition) => transition.key)).toContain("bw:m1/2")
@@ -192,8 +190,8 @@ describe("the budget component boundary", () => {
   ])
 
   test("a non-code child is admitted by the same tool-call policy", () => {
-    const projection = assembled(infer([budget([readTool], { limit: 1 }), nativeOutput], TEST_MODEL)).projections[0]!
-    const root = (events: ReadonlyArray<Event>) => replayProjection(projection, events)
+    const definition = assembled(infer([budget([readTool], { limit: 1 }), nativeOutput], TEST_MODEL))
+    const root = (events: ReadonlyArray<Event>) => enabled(definition, events)
     const log: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },
       { type: "ToolCalled", callId: "r1", name: "read", arguments: {}, turn: "m1", at: 1 },

@@ -18,7 +18,7 @@ import {
   type ProviderEndpoint
 } from "@clavia/tardigrade-core/communication/endpoint"
 import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { methodIngressKeyOf, type ActorInvocationContext } from "@clavia/tardigrade-core/actor/method"
+import { methodIngressKeyOf, type ActorInvocationContext } from "@clavia/tardigrade-core/method"
 import {
   EffectInterruptions,
   Self,
@@ -26,7 +26,7 @@ import {
   effectInterruptionRegistry,
   restingActor,
   type Actor
-} from "@clavia/tardigrade-core/reconciliation"
+} from "@clavia/tardigrade-core/runtime"
 import { deadlocks, victimOf, type EdgesOf } from "./deadlock"
 import { providerTransportFrom, type Provider } from "./communication/provider"
 import { createThreadDriver, type DriverPolicy } from "./driver"

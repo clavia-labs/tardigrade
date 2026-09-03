@@ -2,14 +2,13 @@ import { describe, expect, test } from "bun:test"
 import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { send, settleActor, effect } from "@clavia/tardigrade-core/reconciliation"
+import { send, settleActor, effect, enabled } from "@clavia/tardigrade-core/runtime"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox/service"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { Self } from "@clavia/tardigrade-core/reconciliation"
+import { Self } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { Infer, receive } from "./turn"
 import { modelRequest } from "../inference/request"
@@ -51,8 +50,7 @@ const assembled = <R>(component: AgentComponent<R>) => actor({
 const agentWith = (packages: ReadonlyArray<Package>) =>
   assembled(infer([budget([codeMode(packages)]), compaction(), nativeOutput], TEST_MODEL))
 const rlmAgent = agentWith([])
-const rootProjection = rlmAgent.projections[0]!
-const rootReactor = (events: ReadonlyArray<Event>) => replayProjection(rootProjection, events)
+const rootReactor = (events: ReadonlyArray<Event>) => enabled(rlmAgent, events)
 // The agent end to end: the model writes code, the code calls packages, every call is recorded,
 // and the turn completes. The sandbox test binding runs real JS with the package objects in
 // scope; no isolation is needed to test the machinery.
@@ -915,7 +913,8 @@ describe("the mind on a native surface", () => {
             nativeOutput
     ], TEST_MODEL))
     expect(mind.components).toHaveLength(1)
-    expect(mind.projections).toHaveLength(4)
+    expect(mind.projections).toHaveLength(1)
+    expect(mind.projection).toBeDefined()
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,

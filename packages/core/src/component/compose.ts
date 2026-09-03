@@ -5,34 +5,53 @@ import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { ViewAlgebra } from "@clavia/tardigrade-core/view"
 import { composeKeys } from "../log/keys"
 import {
-  incrementalComponent,
   type Component,
-  type ComponentMachine,
-  type ComponentRequirements,
-  type InvocationCancellation
+  type ComponentRequirements
 } from "./component"
+import {
+  component,
+  type ComponentMachine,
+  type InvocationCancellation
+} from "./machine"
+import {
+  reconcileComponentOutput,
+  type TransitionReconciler
+} from "./reconciliation"
+import {
+  buildOutputTree,
+  replaceOutputTree,
+  type OutputTree
+} from "./tree"
 import { COMPONENT_CONTRACT, mergeComponentContracts } from "../actor/contract"
 
 export type { ViewAlgebra } from "@clavia/tardigrade-core/view"
-
-// TransitionReconciler selects work from the complete child transition set before external effects begin. It returns only transitions it received, each at most once (component.test.ts, "composition refuses work a reconciler did not receive" and "composition refuses a transition selected more than once").
-export type TransitionReconciler<R = never> = (
-  log: ReadonlyArray<Event>,
-  transitions: ReadonlyArray<Transition<never, R>>
-) => ReadonlyArray<Transition<never, R>>
-
-// independentTransitions preserves every transition in child order.
-export const independentTransitions = <R>(
-  _log: ReadonlyArray<Event>,
-  transitions: ReadonlyArray<Transition<never, R>>
-): ReadonlyArray<Transition<never, R>> => transitions
+export type { TransitionReconciler } from "./reconciliation"
+export { independentTransitions } from "./reconciliation"
 
 // CompositionOptions sets the reconciliation policy at this component boundary.
 export interface CompositionOptions<R = never> {
   readonly reconcile?: TransitionReconciler<R>
 }
 
-// composeComponents combines child views and reconciles their complete transition set.
+/**
+ * composeComponents constructs one product machine from a component tree.
+ *
+ *   Event
+ *     ↓
+ *   Composed ComponentMachine
+ *     ├── step every child machine once
+ *     ├── retain unchanged child identities
+ *     ├── update changed output-tree branches
+ *     ├── combine child views
+ *     ├── concatenate child transitions
+ *     └── reconcile enabled work
+ *     ↓
+ *   ComponentOutput
+ *     ├── combined view
+ *     └── selected transitions
+ *
+ * Composition is the synchronous product of its children, and regrouping preserves observable output (component/compose.properties.test.ts, "the composed machine is the synchronous product of its children" and "every grouping agrees with the flat composition"). Stable child identity reuses cached branches (component/compose.test.ts, "composition reuses branches whose child state identities are stable").
+ */
 export const composeComponents = <
   View,
   const Components extends ReadonlyArray<Component<View, never> | Component<View, unknown>>
@@ -46,19 +65,10 @@ export const composeComponents = <
   type Machine = ComponentMachine<View, Requirements>
   type ChildState = MaterializedProjectionState<unknown, ReturnType<Machine["output"]>>
   type Output = ReturnType<Machine["output"]>
-  type CompositionNode =
-    | { readonly kind: "empty"; readonly end: 0; readonly output: Output }
-    | { readonly kind: "leaf"; readonly index: number; readonly end: number; readonly output: Output }
-    | {
-        readonly kind: "branch"
-        readonly end: number
-        readonly left: CompositionNode
-        readonly right: CompositionNode
-        readonly output: Output
-      }
   interface CompositionState {
     readonly children: ReadonlyArray<ChildState>
-    readonly root: CompositionNode
+    readonly root: OutputTree<Output>
+    // TODO: Give reconciliation its own projection state so composition does not retain the complete event history.
     readonly history: Chunk.Chunk<Event>
     readonly output: Output
   }
@@ -80,55 +90,9 @@ export const composeComponents = <
     transitions: [...left.transitions, ...right.transitions]
   })
 
-  const branch = (left: CompositionNode, right: CompositionNode): CompositionNode => ({
-    kind: "branch",
-    end: right.end,
-    left,
-    right,
-    output: combine(left.output, right.output)
-  })
-
-  const build = (children: ReadonlyArray<ChildState>, start: number, end: number): CompositionNode => {
-    if (start === end) return { kind: "empty", end: 0, output: { view: algebra.empty, transitions: [] } }
-    if (end - start === 1) {
-      return { kind: "leaf", index: start, end, output: children[start]!.value }
-    }
-    const middle = start + Math.floor((end - start) / 2)
-    return branch(build(children, start, middle), build(children, middle, end))
-  }
-
-  const replace = (node: CompositionNode, index: number, output: Output): CompositionNode => {
-    if (node.kind === "leaf") return { kind: "leaf", index, end: node.end, output }
-    if (node.kind === "empty") return node
-    return index < node.left.end
-      ? branch(replace(node.left, index, output), node.right)
-      : branch(node.left, replace(node.right, index, output))
-  }
-
-  const reconcileOutput = (
-    output: Output,
-    history: Chunk.Chunk<Event>
-  ): Output => {
-    const transitions = output.transitions
-    if (reconcile === undefined || transitions.length === 0) return output
-    const resolved = reconcile(Chunk.toReadonlyArray(history), transitions)
-    const received = new Set(transitions)
-    const seen = new Set<Transition<never, Requirements>>()
-    for (const selected of resolved) {
-      if (!received.has(selected)) {
-        throw new Error(`component "${name}" reconciler returned work outside its transition set`)
-      }
-      if (seen.has(selected)) {
-        throw new Error(`component "${name}" reconciler returned transition "${selected.key}" more than once`)
-      }
-      seen.add(selected)
-    }
-    return { view: output.view, transitions: resolved }
-  }
-
   const cancel = (
     state: CompositionState,
-    node: CompositionNode,
+    node: OutputTree<Output>,
     cancellation: InvocationCancellation
   ): ReadonlyArray<Transition<never, Requirements>> => {
     if (node.kind === "empty") return []
@@ -138,15 +102,20 @@ export const composeComponents = <
     return [...cancel(state, node.left, cancellation), ...cancel(state, node.right, cancellation)]
   }
 
-  return incrementalComponent<CompositionState, View, Requirements>({
+  return component<CompositionState, View, Requirements>({
     name,
     ...(keys === undefined ? {} : { keys }),
     [COMPONENT_CONTRACT]: mergeComponentContracts(members),
     initial: () => {
       const children = materialized.map((machine) => machine.initial())
-      const root = build(children, 0, children.length)
+      const root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
       const history = Chunk.empty<Event>()
-      return { children, root, history, output: reconcileOutput(root.output, history) }
+      return {
+        children,
+        root,
+        history,
+        output: reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(history), root.output)
+      }
     },
     step: (state, event) => {
       let children: Array<ChildState> | undefined
@@ -164,9 +133,9 @@ export const composeComponents = <
       if (children !== undefined) {
         const replacementCost = changed.length * Math.max(1, Math.ceil(Math.log2(children.length)))
         if (replacementCost >= children.length) {
-          root = build(children, 0, children.length)
+          root = buildOutputTree(children.map((child) => child.value), { view: algebra.empty, transitions: [] }, combine)
         } else {
-          for (const index of changed) root = replace(root, index, children[index]!.value)
+          for (const index of changed) root = replaceOutputTree(root, index, children[index]!.value, combine)
         }
       }
       const history = reconcile === undefined ? state.history : Chunk.append(state.history, event)
@@ -174,7 +143,7 @@ export const composeComponents = <
         children: children ?? state.children,
         root,
         history,
-        output: reconcileOutput(root.output, history)
+        output: reconcileComponentOutput(name, reconcile, Chunk.toReadonlyArray(history), root.output)
       }
     },
     output: (state) => state.output,

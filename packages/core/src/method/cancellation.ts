@@ -2,24 +2,28 @@ import { Clock, Effect, Schema } from "effect"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
-import { Self, type ActorControlProjection } from "@clavia/tardigrade-core/runtime/reconciler"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { Self, type ActorProjection } from "@clavia/tardigrade-core/runtime/reconciler"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../../log/keys"
-import { methodEnvelopeOf } from "../../communication/envelope"
-import { parseThreadAddress } from "../../communication/endpoint"
-import { linkOf } from "../../communication/link"
-import { Router } from "../../communication/router"
-import type { ThreadLineage } from "../../thread"
+import type { KeyFragment } from "../log/keys"
+import { methodEnvelopeOf } from "../communication/envelope"
+import { parseThreadAddress } from "../communication/endpoint"
+import { linkOf } from "../communication/link"
+import { Router } from "../communication/router"
+import type { ThreadLineage } from "../thread"
 import { cancelComponent, type Component } from "@clavia/tardigrade-core/component"
 import { ActorInvocationSchema, type ActorInvocation } from "./call"
 import {
   actorMethod,
+  cancellationStateOf,
   initialMethodStates,
   reduceMethodStates,
-  type ActorMethodCancellationState,
   type ActorMethodDeclaration,
   type ActorMethods
-} from "./definition"
+} from "./method"
+import type { ActorMethodCancellationState } from "./view"
+
+// TODO: Split cancellation state projection, request protocol, and transition construction into separate modules.
 
 // DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS bounds how long a parent waits for a child cancellation response.
 export const DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS = 30_000
@@ -131,7 +135,7 @@ export const cancellationDispositionOf = (
   method: ActorMethodDeclaration,
   invocation: ActorInvocation
 ): CancellationDisposition | undefined => {
-  const state = method.cancellation?.state(events, invocation)
+  const state = cancellationStateOf(method, replayProjection(method.projection, events), invocation)
   if (state === undefined) return undefined
   if (state === "cancelled") return "cancelled"
   if (state === "terminal") return "settled"
@@ -139,7 +143,7 @@ export const cancellationDispositionOf = (
 }
 
 const methodCancellationOf = (methods: ActorMethods, cancellation: InvocationCancellation) =>
-  methods[cancellation.invocation.method]?.cancellation
+  methods[cancellation.invocation.method]
 
 const invocationKeyOf = (invocation: ActorInvocation): string =>
   JSON.stringify([invocation.method, invocation.id, invocation.epoch])
@@ -157,8 +161,12 @@ const pendingCancellationsOf = (
     const cancellation = cancellationRequestedOf(event)
     if (cancellation === undefined) return []
     const method = methodCancellationOf(methods, cancellation)
-    const before = method?.state(events.slice(0, index), cancellation.invocation)
-    const current = method?.state(events, cancellation.invocation)
+    const before = method === undefined
+      ? undefined
+      : cancellationStateOf(method, replayProjection(method.projection, events.slice(0, index)), cancellation.invocation)
+    const current = method === undefined
+      ? undefined
+      : cancellationStateOf(method, replayProjection(method.projection, events), cancellation.invocation)
     const pending = current === "running" && (before === undefined || before === "running")
     if (!pending) return []
     const key = invocationKeyOf(cancellation.invocation)
@@ -173,7 +181,7 @@ const terminalTransitionOf = <R>(
   methods: ActorMethods,
   keyOf: (event: Event) => string | undefined
 ): Transition<never, R> => {
-  const method = methodCancellationOf(methods, cancellation)!
+  const method = methodCancellationOf(methods, cancellation)!.cancellation!
   const sample = method.event(cancellation, 0)
   const key = keyOf(sample)
   if (key === undefined) {
@@ -324,6 +332,19 @@ interface ActorCancellationProjectionState {
   readonly recorded: ReadonlySet<string>
 }
 
+// actorCancellationMethodStates exposes the method states owned by the actor control projection.
+export const actorCancellationMethodStates = (state: unknown): ReadonlyMap<string, unknown> =>
+  (state as ActorCancellationProjectionState).methods
+
+// actorCancellationComponentTransitions derives ordinary component work from actor control state.
+export const actorCancellationComponentTransitions = <R>(
+  state: unknown,
+  components: ReadonlyArray<Component<unknown, R>>
+): ReadonlyArray<Transition<never, R>> => {
+  const projected = state as ActorCancellationProjectionState
+  return components.flatMap((component, index) => component.machine.output(projected.components[index]).transitions)
+}
+
 const callKeyOf = (method: string, call: string): string => JSON.stringify([method, call])
 
 const projectedChildCancellationTransitionsOf = <R>(
@@ -340,19 +361,13 @@ const projectedChildCancellationTransitionsOf = <R>(
       : state.dispatchedCancellations.has(request) ? "dispatched" : "ready"
 )
 
-// actorCancellationProjection constructs the control-plane quotient when every cancellation observer is incremental.
+// actorCancellationProjection constructs the control-plane quotient from method and component projections.
 export const actorCancellationProjection = <R>(
   methods: ActorMethods,
   components: ReadonlyArray<Component<unknown, R>>,
   keyOf: (event: Event) => string | undefined,
   childTimeoutMs = DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS
-): ActorControlProjection<R | Router | Self> | undefined => {
-  const entries = Object.entries(methods)
-  const supported = entries.every(([, method]) =>
-    method.incremental !== undefined &&
-    (method.cancellation === undefined || method.incremental.cancellation !== undefined)
-  )
-  if (!supported) return undefined
+): ActorProjection<R | Router | Self> | undefined => {
   const timeoutMs = childCancellationTimeoutOf(childTimeoutMs)
   const initial = (): ActorCancellationProjectionState => ({
     methods: initialMethodStates(methods),
@@ -370,10 +385,13 @@ export const actorCancellationProjection = <R>(
       ? state.requests
       : [...state.requests, {
           cancellation: request,
-          accepted: methods[request.invocation.method]?.incremental?.cancellation?.(
-            state.methods.get(request.invocation.method),
-            request.invocation
-          )
+          accepted: methods[request.invocation.method] === undefined
+            ? undefined
+            : cancellationStateOf(
+                methods[request.invocation.method],
+                methods[request.invocation.method]!.projection.output(state.methods.get(request.invocation.method)),
+                request.invocation
+              )
         }]
     const methodsState = reduceMethodStates(methods, state.methods, event)
     const componentsState = components.map((component, index) =>
@@ -423,7 +441,13 @@ export const actorCancellationProjection = <R>(
     }
   }
   const cancellationOf = (state: ActorCancellationProjectionState, invocation: ActorInvocation) =>
-    methods[invocation.method]?.incremental?.cancellation?.(state.methods.get(invocation.method), invocation)
+    methods[invocation.method] === undefined
+      ? undefined
+      : cancellationStateOf(
+          methods[invocation.method],
+          methods[invocation.method]!.projection.output(state.methods.get(invocation.method)),
+          invocation
+        )
   const pending = (state: ActorCancellationProjectionState): ReadonlyArray<InvocationCancellation> => {
     const seen = new Set<string>()
     const result: Array<InvocationCancellation> = []
@@ -438,30 +462,36 @@ export const actorCancellationProjection = <R>(
     }
     return result
   }
+  const residuals = (state: ActorCancellationProjectionState) => {
+    const cancellations = pending(state)
+    if (cancellations.length === 0) return undefined
+    const terminals: Array<Transition<never, R | Router | Self>> = []
+    const obligations: Array<Transition<never, R | Router | Self>> = []
+    for (const cancellation of cancellations) {
+      const child = projectedChildCancellationTransitionsOf<R>(state, cancellation, timeoutMs)
+      const component = components.flatMap((entry, index) =>
+        entry.machine.cancel?.(state.components[index], cancellation) ?? []
+      )
+      const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
+      if (outstanding.length === 0) terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
+      else obligations.push(...outstanding)
+    }
+    return [...terminals, ...obligations]
+  }
   return {
     initial,
-    reduce: (state, event) => reduce(state as ActorCancellationProjectionState, event),
-    cancellationOf: (state, invocation) => cancellationOf(state as ActorCancellationProjectionState, invocation),
-    suppresses: (state, invocation) => (state as ActorCancellationProjectionState).requests.some((record) =>
-      sameInvocation(record.cancellation.invocation, invocation) &&
-      (record.accepted === "running" || cancellationOf(state as ActorCancellationProjectionState, invocation) === "running")
-    ),
-    residuals: (erased) => {
+    step: (state, event) => reduce(state as ActorCancellationProjectionState, event),
+    output: (erased) => {
       const state = erased as ActorCancellationProjectionState
-      const cancellations = pending(state)
-      if (cancellations.length === 0) return undefined
-      const terminals: Array<Transition<never, R | Router | Self>> = []
-      const obligations: Array<Transition<never, R | Router | Self>> = []
-      for (const cancellation of cancellations) {
-        const child = projectedChildCancellationTransitionsOf<R>(state, cancellation, timeoutMs)
-        const component = components.flatMap((entry, index) =>
-          entry.machine.cancel?.(state.components[index], cancellation) ?? []
-        )
-        const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
-        if (outstanding.length === 0) terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
-        else obligations.push(...outstanding)
+      return {
+        continuations: [],
+        cancellationOf: (invocation: ActorInvocation) => cancellationOf(state, invocation),
+        suppresses: (invocation: ActorInvocation) => state.requests.some((record) =>
+          sameInvocation(record.cancellation.invocation, invocation) &&
+          (record.accepted === "running" || cancellationOf(state, invocation) === "running")
+        ),
+        residuals: residuals(state)
       }
-      return [...terminals, ...obligations]
     }
   }
 }
@@ -521,6 +551,27 @@ const cancellationMethodState = (
   return { status: "completed" as const, output: { cancelled: current === "cancelled" } }
 }
 
+// cancellationMethodStateOf derives the control method state from the actor control projection.
+export const cancellationMethodStateOf = (
+  methods: ActorMethods,
+  state: unknown,
+  invocation: ActorInvocation
+) => {
+  const projected = state as ActorCancellationProjectionState
+  const record = projected.requests.find((entry) => entry.cancellation.request === invocation.id)
+  if (record === undefined) return undefined
+  const target = record.cancellation.invocation
+  const method = methods[target.method]
+  const current = method === undefined
+    ? undefined
+    : cancellationStateOf(
+        method,
+        method.projection.output(projected.methods.get(target.method)),
+        target
+      )
+  return cancellationMethodState(target, method?.cancellation !== undefined, record.accepted, current)
+}
+
 export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
   input: CancellationInput,
   output: CancellationResult,
@@ -531,55 +582,53 @@ export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
     ...(input.reason === undefined ? {} : { reason: input.reason }),
     at
   }),
-  ...(Object.values(methods).every((method) => method.incremental !== undefined)
-    ? {
-        incremental: {
-          initial: (): CancellationMethodState => ({
-            methods: initialMethodStates(methods),
-            requests: new Map()
-          }),
-          reduce: (state: CancellationMethodState, event: Event): CancellationMethodState => {
-            const requests = new Map(state.requests)
-            const request = cancellationRequestedOf(event)
-            if (request !== undefined && !requests.has(request.request)) {
-              const method = methods[request.invocation.method]
-              const projected = state.methods.get(request.invocation.method)
-              requests.set(request.request, {
-                cancellation: request,
-                accepted: method?.incremental?.cancellation?.(projected, request.invocation)
-              })
-            }
-            const projected = reduceMethodStates(methods, state.methods, event)
-            return { methods: projected, requests }
-          },
-          currentEpoch: () => 0,
-          state: (state: CancellationMethodState, invocation: ActorInvocation) => {
-            const record = state.requests.get(invocation.id)
-            if (record === undefined) return undefined
-            const target = record.cancellation.invocation
-            const method = methods[target.method]
-            const cancellation = method?.incremental?.cancellation
-            return cancellationMethodState(
-              target,
-              method?.cancellation !== undefined && cancellation !== undefined,
-              record.accepted,
-              cancellation?.(state.methods.get(target.method), target)
-            )
-          }
-        }
+  projection: {
+    initial: (): CancellationMethodState => ({
+      methods: initialMethodStates(methods),
+      requests: new Map()
+    }),
+    step: (state, event): CancellationMethodState => {
+      const requests = new Map(state.requests)
+      const request = cancellationRequestedOf(event)
+      if (request !== undefined && !requests.has(request.request)) {
+        const method = methods[request.invocation.method]
+        requests.set(request.request, {
+          cancellation: request,
+          accepted: method === undefined
+            ? undefined
+            : cancellationStateOf(
+                method,
+                method.projection.output(state.methods.get(request.invocation.method)),
+                request.invocation
+              )
+        })
       }
-    : {}),
-  state: (events, invocation) => {
-    const id = invocation.id
-    const requestAt = events.findIndex((event) => cancellationRequestedOf(event)?.request === id)
-    if (requestAt < 0) return undefined
-    const request = cancellationRequestedOf(events[requestAt]!)!
-    const cancellation = methods[request.invocation.method]?.cancellation
-    return cancellationMethodState(
-      request.invocation,
-      cancellation !== undefined,
-      cancellation?.state(events.slice(0, requestAt), request.invocation),
-      cancellation?.state(events, request.invocation)
-    )
+      return {
+        methods: reduceMethodStates(methods, state.methods, event),
+        requests
+      }
+    },
+    output: (state) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation) => {
+        const record = state.requests.get(invocation.id)
+        if (record === undefined) return undefined
+        const target = record.cancellation.invocation
+        const method = methods[target.method]
+        const current = method === undefined
+          ? undefined
+          : cancellationStateOf(
+              method,
+              method.projection.output(state.methods.get(target.method)),
+              target
+            )
+        return cancellationMethodState(
+          target,
+          method?.cancellation !== undefined,
+          record.accepted,
+          current
+        )
+      }
+    })
   }
 })

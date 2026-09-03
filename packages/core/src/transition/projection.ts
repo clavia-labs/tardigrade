@@ -7,7 +7,14 @@ export type CompleteTransitionDerivation<Requirements = never> = (
   events: ReadonlyArray<Event>
 ) => ReadonlyArray<Transition<never, Requirements>>
 
-// TransitionProjection derives enabled work from incrementally maintained event state.
+/**
+ * TransitionProjection derives enabled work from incrementally maintained event state.
+ *
+ *   TransitionProjection<State, Requirements>
+ *                        │          │
+ *                        │          └─ services its effects may require
+ *                        └──────────── event history remembered by the projection
+ */
 export interface TransitionProjection<State, Requirements = never>
   extends Projection<State, ReadonlyArray<Transition<never, Requirements>>> {}
 

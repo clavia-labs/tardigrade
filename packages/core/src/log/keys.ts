@@ -1,16 +1,20 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 
-// KeyFragment is one package's key derivation for its own alphabet, its prefixes declared as
-// data so composition can prove disjointness. The package owns the derivation because it knows
-// which field names an occurrence and what scope the id is unique in. The platform owns the
-// minting and composition. The caller never supplies a key because identity derives from intent.
+/**
+ * KeyFragment derives stable event keys for one event alphabet.
+ *
+ *   KeyFragment
+ *     ├── prefixes   namespaces claimed by the fragment
+ *     └── keyOf      key derived from an event
+ *
+ * A package owns its key derivation because it knows which fields identify an occurrence. Duplicate prefixes throw during composition.
+ */
 export interface KeyFragment {
   readonly prefixes: ReadonlyArray<string>
   readonly keyOf: (e: Event) => string | undefined
 }
 
-// composeKeys folds fragments into one derivation, first answer wins. Two fragments claiming a
-// prefix is a construction-time error because the collision would cross-absorb packages' events.
+// composeKeys combines disjoint key fragments into one event-key derivation. Duplicate prefixes throw during construction.
 export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Event) => string | undefined) => {
   const claimed = new Map<string, number>()
   fragments.forEach((fragment, i) => {

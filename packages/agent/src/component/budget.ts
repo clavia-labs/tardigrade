@@ -1,11 +1,11 @@
-import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/reconciliation"
+import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import {
   actorCall,
   actorInvocationContextOf,
   calls,
   composeComponents,
   inheritComponentContract,
-  incrementalComponent,
+  component as defineComponent,
   type ActorRef,
   type ComponentRequirements
 } from "@clavia/tardigrade-core/actor"
@@ -368,7 +368,7 @@ export const budget = <
     readonly turns: TurnProjectionState
     readonly communication: Chunk.Chunk<Event>
   }
-  const component: AgentComponent<R | Router | Self> = incrementalComponent<BudgetState, AgentView, R | Router | Self>({
+  const component: AgentComponent<R | Router | Self> = defineComponent<BudgetState, AgentView, R | Router | Self>({
     ...common,
     initial: () => ({
       children: childMachine.initial(),

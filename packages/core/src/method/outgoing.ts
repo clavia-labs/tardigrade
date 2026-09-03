@@ -4,18 +4,18 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { Self } from "@clavia/tardigrade-core/runtime/reconciler"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../../log"
-import { methodEnvelopeOf } from "../../communication/envelope"
-import { formatThreadAddress } from "../../communication/endpoint"
-import { linkOf } from "../../communication/link"
-import { Router } from "../../communication/router"
-import type { ThreadLineage } from "../../thread"
+import type { KeyFragment } from "../log"
+import { methodEnvelopeOf } from "../communication/envelope"
+import { formatThreadAddress } from "../communication/endpoint"
+import { linkOf } from "../communication/link"
+import { Router } from "../communication/router"
+import type { ThreadLineage } from "../thread"
 import {
   CANCELLATION_CONTROL_METHOD,
   type CancellationResult,
   cancellationMethodFor
 } from "./cancellation"
-import type { ActorRef } from "../reference"
+import type { ActorRef } from "../actor/reference"
 import {
   ActorInvocationSchema,
   decodeActorInvocationContext,
@@ -28,8 +28,8 @@ import type {
   ActorMethodInput,
   ActorMethodOutput,
   ActorMethods
-} from "./definition"
-import { actorMethodTimeoutOf } from "./definition"
+} from "./method"
+import { actorMethodTimeoutOf } from "./method"
 import type { ActorMethodState } from "./state"
 import type { ResponseReceived } from "./response"
 import type { CallTimedOut } from "./timeout"

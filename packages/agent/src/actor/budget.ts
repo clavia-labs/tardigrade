@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { actorMethod } from "@clavia/tardigrade-core/actor/method"
+import { actorMethod } from "@clavia/tardigrade-core/method"
 import { budgetRequestReceived } from "../log/events"
 
 const PositiveInteger = Schema.Int.pipe(
@@ -51,9 +51,9 @@ export const requestBudgetMethod = actorMethod({
   input: BudgetRequestInput,
   output: BudgetDecision,
   event: ({ invocation, input, at }) => budgetRequestReceived({ id: invocation.id, ...input, at }),
-  incremental: {
+  projection: {
     initial: (): BudgetMethodProjection => ({ received: new Set(), decided: new Map(), failed: new Map() }),
-    reduce: (state, event): BudgetMethodProjection => {
+    step: (state, event): BudgetMethodProjection => {
       const received = new Set(state.received)
       const decided = new Map(state.decided)
       const failed = new Map(state.failed)
@@ -74,32 +74,9 @@ export const requestBudgetMethod = actorMethod({
       }
       return { received, decided, failed }
     },
-    currentEpoch: () => 0,
-    state: (state, invocation) => budgetStateFrom(state, invocation.id)
-  },
-  state: (events, invocation) => {
-    const { id } = invocation
-    const requested = events.some((event) =>
-      event.type === "BudgetRequestReceived" && String((event as { readonly id?: unknown }).id) === id
-    )
-    if (!requested) return undefined
-    const decided = events.find((event) =>
-      event.type === "BudgetRequestDecided" && String((event as { readonly callId?: unknown }).callId) === id
-    ) as { readonly grant?: unknown; readonly reason?: unknown } | undefined
-    const failed = events.find((event) =>
-      event.type === "BudgetRequestFailed" && String((event as { readonly callId?: unknown }).callId) === id
-    ) as { readonly error?: unknown } | undefined
-    if (failed !== undefined) return { status: "failed", error: String(failed.error ?? "budget authority failed") }
-    if (decided === undefined) return { status: "pending" }
-    const grant = Number(decided.grant ?? 0)
-    return grant > 0
-      ? { status: "completed", output: { granted: grant } }
-      : {
-          status: "completed",
-          output: {
-            denied: true as const,
-            ...(typeof decided.reason === "string" && decided.reason !== "" ? { reason: decided.reason } : {})
-          }
-        }
+    output: (state) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation) => budgetStateFrom(state, invocation.id)
+    })
   }
 })

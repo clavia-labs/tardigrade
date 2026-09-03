@@ -15,14 +15,14 @@ import {
   methodIngressKeyOf,
   type ActorInvocationContext,
   type ActorMethods
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 import {
   EffectInterruptions,
   Self,
   createActorReconciler,
   effectInterruptionRegistry,
   type Actor
-} from "@clavia/tardigrade-core/reconciliation"
+} from "@clavia/tardigrade-core/runtime"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"

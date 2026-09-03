@@ -9,7 +9,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { actorFromProjections, type Actor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { methodTimeoutKeys, methodTimeoutReactor } from "@clavia/tardigrade-core/actor/method"
+import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/method"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -324,10 +324,10 @@ describe("the bun host", () => {
 
   test("recovery rearms a durable method deadline and records its observed alarm", async () => {
     const path = freshPath()
-    const timeoutActor = actorFromProjections(
-      [completeTransitionProjection(methodTimeoutReactor)],
-      methodTimeoutKeys.keyOf
-    )
+    const timeoutActor = actorFromProjections({
+      transitions: [completeTransitionProjection(methodTimeoutDerivation)],
+      keyOf: methodTimeoutKeys.keyOf
+    })
     const firstAlarm = new ManualAlarmScheduler()
     const first = await createBunHost({
       database: path,

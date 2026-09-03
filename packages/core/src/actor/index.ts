@@ -8,7 +8,7 @@ export {
 } from "./definition"
 export * from "./contract"
 export * from "@clavia/tardigrade-core/component"
-export * from "./method/index"
+export * from "../method/index"
 export * from "./reference"
 export * from "./registry"
 export * from "./events"

@@ -111,7 +111,7 @@ describe("cloudflare actor", () => {
         actorName: "echo",
         actorInstance: "main",
         thread: "ag.commit-observer",
-        actor: actorFromProjections([], () => undefined),
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
         commitObserver: {
           onCommit: ({ head }) => Effect.sync(() => {
             seen.push(head)
@@ -142,7 +142,7 @@ describe("cloudflare actor", () => {
         actorName: "echo",
         actorInstance: "main",
         thread: "ag.incremental-ingress",
-        actor: actorFromProjections([], () => undefined),
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
         store: {
           codec: {
             encode: plaintextEventCodec.encode,

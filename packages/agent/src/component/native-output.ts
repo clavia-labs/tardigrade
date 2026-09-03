@@ -1,9 +1,9 @@
 import { NativeOutputSupport } from "../inference/contract"
 import type { AgentComponent } from "../runtime/composition"
-import { incrementalComponent } from "@clavia/tardigrade-core/actor"
+import { component } from "@clavia/tardigrade-core/actor"
 
 // nativeOutput selects provider-native structured output and carries its model-layer requirement into the host type.
-export const nativeOutput: AgentComponent<NativeOutputSupport> = incrementalComponent({
+export const nativeOutput: AgentComponent<NativeOutputSupport> = component({
   name: "output.native",
   initial: () => undefined,
   step: (state: undefined) => state,

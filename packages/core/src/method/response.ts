@@ -3,26 +3,26 @@ import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { Self } from "@clavia/tardigrade-core/runtime/reconciler"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
-import type { KeyFragment } from "../../log"
-import { Router } from "../../communication/router"
-import { boundaryEvent } from "../../communication/message"
-import { envelopeOf } from "../../communication/envelope"
-import { reverseLink, type Link } from "../../communication/link"
+import type { KeyFragment } from "../log"
+import { Router } from "../communication/router"
+import { boundaryEvent } from "../communication/message"
+import { envelopeOf } from "../communication/envelope"
+import { reverseLink, type Link } from "../communication/link"
 import {
   formatThreadAddress,
   isThreadAddress,
   isProviderEndpoint,
   type ThreadAddress,
   type ProviderEndpoint
-} from "../../communication/endpoint"
+} from "../communication/endpoint"
 import {
   initialMethodStates,
   reduceMethodStates,
   type ActorMethodDeclaration,
   type ActorMethods
-} from "./definition"
+} from "./method"
 import type { ActorMethodState } from "./state"
-import { incrementalComponent, legacyComponent, type Component } from "@clavia/tardigrade-core/component"
+import { component, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorInvocation } from "./call"
 
 // ActorMethodResponse is the terminal response correlated to one method call.
@@ -195,9 +195,13 @@ const responseTransition = (response: ActorMethodResponse, link: Link<unknown, T
         })
     })
 
-// methodResponseReactor derives method reports from linked calls and their declared state projections.
-export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> => (log) =>
+// methodResponseDerivation derives method reports from linked calls and their declared state projections.
+export const methodResponseDerivation = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> => (log) =>
   linkedCalls(log, methods).slice(0, 1).map(({ response, link }) => responseTransition(response, link))
+
+/** @deprecated Use methodResponseDerivation. This compatibility name describes a complete-history transition derivation. */
+export const methodResponseReactor = (methods: ActorMethods): CompleteTransitionDerivation<Router | Self> =>
+  methodResponseDerivation(methods)
 
 interface IncrementalResponseCall {
   readonly id: string
@@ -219,51 +223,77 @@ const responseCallOf = (event: Event): IncrementalResponseCall | undefined => {
   return { id, ...(invocation === undefined ? {} : { invocation }), link: candidate.link as Link<unknown, ThreadAddress> }
 }
 
-interface IncrementalResponseState {
-  readonly methods: ReadonlyMap<string, unknown>
+export interface MethodResponseProjectionState {
   readonly calls: ReadonlyArray<IncrementalResponseCall>
   readonly delivered: ReadonlySet<string>
 }
 
+// initialMethodResponseState constructs response delivery bookkeeping.
+export const initialMethodResponseState = (): MethodResponseProjectionState => ({
+  calls: [],
+  delivered: new Set()
+})
+
+// reduceMethodResponseState advances response delivery bookkeeping with one event.
+export const reduceMethodResponseState = (
+  state: MethodResponseProjectionState,
+  event: Event
+): MethodResponseProjectionState => {
+  const delivered = new Set(state.delivered)
+  if (event.type === "ResponseDelivered") {
+    delivered.add(`${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}`)
+  }
+  const accepted = responseCallOf(event)
+  return { calls: accepted === undefined ? state.calls : [...state.calls, accepted], delivered }
+}
+
+// methodResponseTransitions derives the next terminal delivery from projected method views.
+export const methodResponseTransitions = (
+  methods: ActorMethods,
+  state: MethodResponseProjectionState,
+  invocationStateOf: (
+    name: string,
+    method: ActorMethodDeclaration,
+    invocation: ActorInvocation
+  ) => ActorMethodState<unknown> | undefined
+): ReadonlyArray<ReturnType<typeof responseTransition>> => {
+  for (const call of state.calls) {
+    for (const [name, method] of Object.entries(methods)) {
+      if (call.invocation !== undefined && call.invocation.method !== name) continue
+      const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
+      const current = invocationStateOf(name, method, invocation)
+      if (current === undefined || current.status === "pending" || state.delivered.has(`${name}:${call.id}`)) continue
+      const response = responseOf(name, call.id, terminalOf(name, method, current))
+      return [responseTransition(response, call.link)]
+    }
+  }
+  return []
+}
+
 // methodResponseComponent adapts declared method states into response transitions.
 export const methodResponseComponent = (methods: ActorMethods): Component<undefined, Router | Self> => {
-  const entries = Object.entries(methods)
-  if (!entries.every(([, method]) => method.incremental !== undefined)) {
-    return legacyComponent({
-      name: "actor.methods",
-      keys: methodResponseKeys,
-      derive: (log) => ({ view: undefined, transitions: methodResponseReactor(methods)(log) })
-    })
+  interface State {
+    readonly methods: ReadonlyMap<string, unknown>
+    readonly response: MethodResponseProjectionState
   }
-  return incrementalComponent<IncrementalResponseState, undefined, Router | Self>({
+  return component<State, undefined, Router | Self>({
     name: "actor.methods",
     keys: methodResponseKeys,
     initial: () => ({
       methods: initialMethodStates(methods),
-      calls: [],
-      delivered: new Set()
+      response: initialMethodResponseState()
     }),
-    step: (state, event) => {
-      const projected = reduceMethodStates(methods, state.methods, event)
-      const delivered = new Set(state.delivered)
-      if (event.type === "ResponseDelivered") {
-        delivered.add(`${String((event as { readonly method?: unknown }).method)}:${String((event as { readonly call?: unknown }).call)}`)
-      }
-      const accepted = responseCallOf(event)
-      return { methods: projected, calls: accepted === undefined ? state.calls : [...state.calls, accepted], delivered }
-    },
-    output: (state) => {
-      for (const call of state.calls) {
-        for (const [name, method] of entries) {
-          if (call.invocation !== undefined && call.invocation.method !== name) continue
-          const invocation = call.invocation ?? { method: name, id: call.id, epoch: 0 }
-          const current = method.incremental!.state(state.methods.get(name), invocation)
-          if (current === undefined || current.status === "pending" || state.delivered.has(`${name}:${call.id}`)) continue
-          const response = responseOf(name, call.id, terminalOf(name, method, current))
-          return { view: undefined, transitions: [responseTransition(response, call.link)] }
-        }
-      }
-      return { view: undefined, transitions: [] }
-    }
+    step: (state, event) => ({
+      methods: reduceMethodStates(methods, state.methods, event),
+      response: reduceMethodResponseState(state.response, event)
+    }),
+    output: (state) => ({
+      view: undefined,
+      transitions: methodResponseTransitions(
+        methods,
+        state.response,
+        (name, method, invocation) => method.projection.output(state.methods.get(name)).invocationState(invocation)
+      )
+    })
   })
 }

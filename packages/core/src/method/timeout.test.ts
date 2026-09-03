@@ -3,11 +3,11 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import {
   alarmFired,
   earliestDeadlineOf,
-  methodDeadlineCancellationReactor,
+  methodDeadlineCancellationDerivation,
   methodTimeoutKeys,
-  methodTimeoutReactor
+  methodTimeoutDerivation
 } from "./timeout"
-import { actorMethod } from "./definition"
+import { legacyActorMethod } from "./legacy"
 import { Schema } from "effect"
 
 const dispatched = (
@@ -55,7 +55,7 @@ describe("method alarms", () => {
   })
 
   test("an accepted invocation deadline requests method cancellation", () => {
-    const work = actorMethod({
+    const work = legacyActorMethod({
       input: Schema.String,
       output: Schema.String,
       event: ({ invocation, at }) => ({
@@ -82,7 +82,7 @@ describe("method alarms", () => {
       log[0]!,
       { type: "WorkCompleted", id: "work-1", at: 20 } as Event
     ], { work })).toBeUndefined()
-    const transition = methodDeadlineCancellationReactor({ work })(log)[0]
+    const transition = methodDeadlineCancellationDerivation({ work })(log)[0]
     expect(transition?.kind).toBe("intent")
     if (transition?.kind !== "intent") return
     expect(transition.events(transition.input, 43)).toEqual([{
@@ -96,7 +96,7 @@ describe("method alarms", () => {
   })
 
   test("an alarm crossing produces one caller timeout without reading a clock", () => {
-    const transition = methodTimeoutReactor([
+    const transition = methodTimeoutDerivation([
       dispatched("inspect-1", 40),
       { type: "AlarmFired", scheduledFor: 40, at: 43 }
     ])[0]
@@ -114,11 +114,11 @@ describe("method alarms", () => {
   })
 
   test("an early alarm and a completed call derive no timeout", () => {
-    expect(methodTimeoutReactor([
+    expect(methodTimeoutDerivation([
       dispatched("inspect-1", 40),
       { type: "AlarmFired", scheduledFor: 30, at: 30 }
     ])).toEqual([])
-    expect(methodTimeoutReactor([
+    expect(methodTimeoutDerivation([
       dispatched("inspect-1", 40),
       {
         type: "ResponseReceived",
@@ -140,7 +140,7 @@ describe("method alarms", () => {
       { type: "AlarmFired", scheduledFor: 40, at: 43 },
       dispatched("inspect-1", 40)
     ]
-    const project = (events: ReadonlyArray<Event>) => methodTimeoutReactor(events).map((transition) => ({
+    const project = (events: ReadonlyArray<Event>) => methodTimeoutDerivation(events).map((transition) => ({
       key: transition.key,
       input: transition.input,
       events: transition.kind === "intent" ? transition.events(transition.input, 999) : []

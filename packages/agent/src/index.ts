@@ -11,6 +11,7 @@ export {
   actorMethod,
   actorMethodTimeoutOf,
   actorMethodsOf,
+  legacyActorMethod,
   type ActorInvocation,
   type ActorMethod,
   type ActorMethodCancellation,
@@ -21,8 +22,9 @@ export {
   type ActorMethodInput,
   type ActorMethodOutput,
   type ActorMethods,
-  type ActorMethodState
-} from "@clavia/tardigrade-core/actor/method"
+  type ActorMethodState,
+  type LegacyActorMethodDefinition
+} from "@clavia/tardigrade-core/method"
 export { AgentMessageInput, agentMessageMethod } from "./actor/message"
 export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
@@ -281,6 +283,7 @@ export {
   externallyHandled,
   handles,
   inheritComponentContract,
+  component,
   incrementalComponent,
   independentTransitions,
   legacyComponent,
@@ -299,6 +302,7 @@ export {
   type ComponentRequirements,
   type CompositionOptions,
   type ComponentOutput,
+  type ComponentDefinition,
   type IncrementalComponentDefinition,
   type LegacyComponentDefinition,
   type TransitionReconciler,

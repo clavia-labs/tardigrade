@@ -1,19 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import { effect } from "@clavia/tardigrade-core/effect"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { intent } from "@clavia/tardigrade-core/intent"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import {
   cancelComponent,
   composeComponents,
   deriveComponent,
-  incrementalComponent,
+  component as defineComponent,
   legacyComponent,
   transitionProjectionOf,
   type Component,
   type ViewAlgebra
 } from "./index"
-import type { Event } from "@clavia/tardigrade-core/event"
 
 interface Facts {
   readonly names: ReadonlyArray<string>
@@ -159,7 +159,7 @@ describe("components", () => {
   })
 
   test("composition preserves incremental child projections", () => {
-    const member = (name: string) => incrementalComponent({
+    const member = (name: string) => defineComponent({
       name,
       initial: () => false,
       step: (ready: boolean, event: Event) => ready || event.type === "Ready",
@@ -187,7 +187,7 @@ describe("components", () => {
         return facts.combine(left, right)
       }
     }
-    const member = (name: string, eventType: string) => incrementalComponent({
+    const member = (name: string, eventType: string) => defineComponent({
       name,
       initial: () => false,
       step: (ready: boolean, event: Event) => ready || event.type === eventType,
@@ -234,7 +234,7 @@ describe("components", () => {
   })
 
   test("cached composition passes child state to cancellation projections", () => {
-    const child = incrementalComponent({
+    const child = defineComponent({
       name: "cancellable",
       initial: () => 0,
       step: (count: number, event: Event) => event.type === "Observed" ? count + 1 : count,

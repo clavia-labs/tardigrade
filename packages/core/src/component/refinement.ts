@@ -1,7 +1,8 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { InvocationCancellation } from "../actor/method/cancellation"
-import type { Component, ComponentOutput } from "./component"
+import type { InvocationCancellation } from "../method/cancellation"
+import type { Component } from "./component"
+import type { ComponentOutput } from "./output"
 
 // CompleteComponentProjection defines the complete-history behavior used as a refinement oracle during migration.
 export interface CompleteComponentProjection<View, Requirements = never> {

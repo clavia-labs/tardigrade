@@ -4,7 +4,7 @@ import {
   reduceTurnProjection,
   turnViewFrom
 } from "@clavia/tardigrade-code/execution/turn-projection"
-import { incrementalComponent } from "@clavia/tardigrade-core/actor"
+import { component } from "@clavia/tardigrade-core/actor"
 import { correctionAttemptsErrors, declaredOutputOf, type OutputFallback } from "../output/contract"
 import { defineOutputFallback, type OutputFallbackComponent } from "../runtime/composition"
 
@@ -56,7 +56,7 @@ const declaredSystem = (view: ReadonlyArray<Event>): { readonly system?: string 
 // outputRepairFor derives the framework correction loop under a stated policy.
 export const outputRepairFor = (policy: Partial<RepairPolicy> = {}): OutputFallbackComponent => {
   const fallback = repairFallback(policy)
-  return defineOutputFallback(incrementalComponent({
+  return defineOutputFallback(component({
     name: "output.repair",
     initial: initialTurnProjection,
     step: reduceTurnProjection,
@@ -79,7 +79,7 @@ export const outputRepair: OutputFallbackComponent = outputRepairFor()
 export const VALIDATE_ONCE_FALLBACK: OutputFallback = { kind: "local", name: "validate-once" }
 
 // outputValidateOnce contributes one local validation and its contract instruction (turn.test.ts, "the validate-once implementation").
-export const outputValidateOnce: OutputFallbackComponent = defineOutputFallback(incrementalComponent({
+export const outputValidateOnce: OutputFallbackComponent = defineOutputFallback(component({
   name: "output.validate-once",
   initial: initialTurnProjection,
   step: reduceTurnProjection,

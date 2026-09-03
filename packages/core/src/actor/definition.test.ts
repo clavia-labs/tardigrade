@@ -1,18 +1,19 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { replayProjection } from "@clavia/tardigrade-core/projection"
-import { legacyComponent } from "@clavia/tardigrade-core/component"
+import { component as defineComponent, legacyComponent } from "@clavia/tardigrade-core/component"
+import { enabled } from "@clavia/tardigrade-core/runtime/reconciler"
 import { actor, validateActor } from "./definition"
 import { actorRef } from "./reference"
-import { actorMethod, actorMethodsOf } from "./method/definition"
-import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "./method/cancellation"
-import { alarmFired } from "./method/timeout"
+import { actorMethod, actorMethodsOf } from "../method/method"
+import { legacyActorMethod } from "../method/legacy"
+import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../method/cancellation"
+import { alarmFired } from "../method/timeout"
 import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
 const component = legacyComponent({ name: "inspect", derive: () => ({ view: undefined, transitions: [] }) })
 const methods = actorMethodsOf({
-  inspect: actorMethod({
+  inspect: legacyActorMethod({
     input: Schema.Struct({ value: Schema.String }),
     output: Schema.String,
     event: ({ invocation, input, at }): Event => ({ type: "Inspected", id: invocation.id, value: input.value, at }),
@@ -27,7 +28,8 @@ describe("actor", () => {
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
     expect(definition.cancellation).toEqual({ childTimeoutMs: DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS })
-    expect(definition.projections).toHaveLength(3)
+    expect(definition.projections).toHaveLength(0)
+    expect(definition.projection).toBeDefined()
     expect(actorRef(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
@@ -51,7 +53,7 @@ describe("actor", () => {
 
   test("mounts durable method timeout behavior on every actor", () => {
     const definition = actor({ name: "release-analyst", methods, components: [component] })
-    const transitions = definition.projections.flatMap((projection) => replayProjection(projection, [{
+    const transitions = enabled(definition, [{
       type: "CallDispatched",
       id: "inspect-1",
       method: "inspect",
@@ -60,8 +62,47 @@ describe("actor", () => {
       timeoutMs: 20,
       deadlineAt: 21,
       at: 1
-    }, alarmFired({ scheduledFor: 21, at: 21 })]))
+    }, alarmFired({ scheduledFor: 21, at: 21 })])
     expect(transitions.some((transition) => transition.key === "mterm:inspect-1")).toBe(true)
+  })
+
+  test("steps each method and component projection once per event", () => {
+    let methodSteps = 0
+    let componentSteps = 0
+    const projectedMethod = actorMethod({
+      input: Schema.Void,
+      output: Schema.Void,
+      event: ({ invocation, at }): Event => ({ type: "Invoked", id: invocation.id, at }),
+      projection: {
+        initial: () => 0,
+        step: (state) => {
+          methodSteps += 1
+          return state + 1
+        },
+        output: () => ({ currentEpoch: () => 0, invocationState: () => undefined })
+      }
+    })
+    const projectedComponent = defineComponent({
+      name: "projected",
+      initial: () => 0,
+      step: (state: number) => {
+        componentSteps += 1
+        return state + 1
+      },
+      output: () => ({ view: undefined, transitions: [] })
+    })
+    const definition = actor({
+      name: "projected",
+      methods: { work: projectedMethod },
+      components: [projectedComponent]
+    })
+    enabled(definition, [
+      { type: "One" } as Event,
+      { type: "Two" } as Event,
+      { type: "Three" } as Event
+    ])
+    expect(methodSteps).toBe(3)
+    expect(componentSteps).toBe(3)
   })
 
   test("refuses an invalid actor name", () => {

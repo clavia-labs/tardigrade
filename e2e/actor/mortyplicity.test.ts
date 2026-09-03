@@ -3,7 +3,7 @@ import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
-import { alarmFired } from "@clavia/tardigrade-core/actor/method"
+import { alarmFired } from "@clavia/tardigrade-core/method"
 import type { Action } from "tardie/log/events"
 import {
   actor,

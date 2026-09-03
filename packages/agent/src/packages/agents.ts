@@ -1,6 +1,6 @@
 import { Clock, Effect, Schema } from "effect"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { Self } from "@clavia/tardigrade-core/reconciliation"
+import { Self } from "@clavia/tardigrade-core/runtime"
 import {
   invocationLinked,
   type ActorInvocationContext

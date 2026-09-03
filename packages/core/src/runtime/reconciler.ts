@@ -1,11 +1,12 @@
 import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
-import type { ActorInvocation, ActorMethodCancellationState } from "@clavia/tardigrade-core/actor/method"
-import { cancelsInvocation } from "@clavia/tardigrade-core/actor/method/cancellation"
+import type { ActorInvocation, ActorMethodCancellationState } from "@clavia/tardigrade-core/method"
+import { cancelsInvocation } from "@clavia/tardigrade-core/method/cancellation"
 import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import type { ExternalEffect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/log"
 import { linkOf } from "@clavia/tardigrade-core/log/trace"
+import type { Projection } from "@clavia/tardigrade-core/projection"
 import type { ErasedTransitionProjection, Transition } from "@clavia/tardigrade-core/transition"
 
 // Actor runtime gives one log a single writer and derives all state from that log
@@ -40,7 +41,7 @@ export const effectInterruptionRegistry = (): EffectInterruptionRegistry => {
   }
 }
 
-// Actor carries transition projections and the key projection used for commitment and redelivery deduplication.
+// Actor carries its runtime projection, validation guards, and durable key projection.
 export interface Actor<R = never> {
   readonly projections: ReadonlyArray<ErasedTransitionProjection<R>>
   readonly guardProjections?: ReadonlyArray<ErasedTransitionProjection<R>>
@@ -52,33 +53,47 @@ export interface Actor<R = never> {
   readonly cancellationResiduals?: (
     events: ReadonlyArray<Event>
   ) => ReadonlyArray<Transition<never, R>> | undefined
-  readonly control?: ActorControlProjection<R>
+  readonly projection?: ActorProjection<R>
 }
 
-// ActorControlProjection incrementally answers cancellation queries outside ordinary reactors.
-export interface ActorControlProjection<R = never> {
-  readonly initial: () => unknown
-  readonly reduce: (state: unknown, event: Event) => unknown
-  readonly cancellationOf: (state: unknown, invocation: ActorInvocation) => ActorMethodCancellationState | undefined
-  readonly suppresses: (state: unknown, invocation: ActorInvocation) => boolean
-  readonly residuals: (state: unknown) => ReadonlyArray<Transition<never, R>> | undefined
+// ActorProjectionOutput contains ordinary work and cancellation queries derived from actor state.
+export interface ActorProjectionOutput<R = never> {
+  readonly continuations: ReadonlyArray<Transition<never, R>>
+  readonly cancellationOf: (invocation: ActorInvocation) => ActorMethodCancellationState | undefined
+  readonly suppresses: (invocation: ActorInvocation) => boolean
+  readonly residuals: ReadonlyArray<Transition<never, R>> | undefined
+}
+
+// ActorProjection derives the runtime behavior of an actor from its event stream.
+export interface ActorProjection<R = never> extends Projection<unknown, ActorProjectionOutput<R>> {}
+
+// ActorRuntimeOptions names the transition, guard, and control projections supplied to an actor runtime.
+export interface ActorRuntimeOptions<R = never> {
+  readonly transitions: ReadonlyArray<ErasedTransitionProjection<R>>
+  readonly keyOf: Actor<R>["keyOf"]
+  readonly guards?: ReadonlyArray<ErasedTransitionProjection<R>>
+  readonly control?: ActorProjection<R>
+  // legacy carries complete-log cancellation callbacks for compatibility actors.
+  readonly legacy?: {
+    readonly cancellationOf?: Actor<R>["cancellationOf"]
+    readonly cancellationResiduals?: Actor<R>["cancellationResiduals"]
+  }
 }
 
 // actorFromProjections constructs the runtime surface from transition projections.
-export const actorFromProjections = <R = never>(
-  projections: ReadonlyArray<ErasedTransitionProjection<R>>,
-  keyOf: (e: Event) => string | undefined,
-  cancellationOf?: Actor<R>["cancellationOf"],
-  cancellationResiduals?: Actor<R>["cancellationResiduals"],
-  guardProjections?: Actor<R>["guardProjections"],
-  control?: Actor<R>["control"]
-): Actor<R> => ({
-  projections,
+export const actorFromProjections = <R = never>({
+  transitions,
   keyOf,
-  ...(cancellationOf === undefined ? {} : { cancellationOf }),
-  ...(cancellationResiduals === undefined ? {} : { cancellationResiduals }),
-  ...(guardProjections === undefined ? {} : { guardProjections }),
-  ...(control === undefined ? {} : { control })
+  guards,
+  control,
+  legacy
+}: ActorRuntimeOptions<R>): Actor<R> => ({
+  projections: transitions,
+  keyOf,
+  ...(legacy?.cancellationOf === undefined ? {} : { cancellationOf: legacy.cancellationOf }),
+  ...(legacy?.cancellationResiduals === undefined ? {} : { cancellationResiduals: legacy.cancellationResiduals }),
+  ...(guards === undefined ? {} : { guardProjections: guards }),
+  ...(control === undefined ? {} : { projection: control })
 })
 
 const recordedKeys = (events: ReadonlyArray<Event>, keyOf: Actor["keyOf"]): Set<string> => {
@@ -91,10 +106,11 @@ const recordedKeys = (events: ReadonlyArray<Event>, keyOf: Actor["keyOf"]): Set<
 }
 
 interface ProjectionCache<R> {
+  // TODO: Remove complete-log retention after compatibility cancellation callbacks no longer require replay.
   readonly events: Array<Event>
   readonly recorded: Set<string>
   readonly states: Map<ErasedTransitionProjection<R>, unknown>
-  control: unknown
+  actorState: unknown
   trigger: Tracer.ExternalSpan | undefined
   watermark: number
 }
@@ -108,7 +124,7 @@ const advanceCache = <R>(a: Actor<R>, cache: ProjectionCache<R>, events: Readonl
     for (const projection of a.projections) {
       cache.states.set(projection, projection.step(cache.states.get(projection), event))
     }
-    if (a.control !== undefined) cache.control = a.control.reduce(cache.control, event)
+    if (a.projection !== undefined) cache.actorState = a.projection.step(cache.actorState, event)
     cache.watermark += 1
   }
 }
@@ -118,7 +134,7 @@ const projectionCache = <R>(a: Actor<R>, events: ReadonlyArray<Event>): Projecti
     events: [],
     recorded: new Set(),
     states: new Map(),
-    control: a.control?.initial(),
+    actorState: a.projection?.initial(),
     trigger: undefined,
     watermark: 0
   }
@@ -178,16 +194,16 @@ const runExternalEffect = <R>(
 export const enabled = <R>(a: Actor<R>, events: ReadonlyArray<Event>): ReadonlyArray<Transition<never, R>> => {
   const recorded = recordedKeys(events, a.keyOf)
   const states = new Map<ErasedTransitionProjection<R>, unknown>()
-  let control = a.control?.initial()
+  let actorState = a.projection?.initial()
   for (const projection of a.projections) {
     let state = projection.initial()
     for (const event of events) state = projection.step(state, event)
     states.set(projection, state)
   }
-  if (a.control !== undefined) {
-    for (const event of events) control = a.control.reduce(control, event)
+  if (a.projection !== undefined) {
+    for (const event of events) actorState = a.projection.step(actorState, event)
   }
-  return enabledFrom(a, events, recorded, states, control)
+  return enabledFrom(a, events, recorded, states, actorState)
 }
 
 const enabledFrom = <R>(
@@ -195,29 +211,32 @@ const enabledFrom = <R>(
   events: ReadonlyArray<Event>,
   recorded: ReadonlySet<string>,
   states: ReadonlyMap<ErasedTransitionProjection<R>, unknown>,
-  control: unknown
+  actorState: unknown
 ): ReadonlyArray<Transition<never, R>> => {
   const guards = (a.guardProjections ?? []).flatMap((projection) => projection.output(states.get(projection)))
     .filter((transition) => !recorded.has(transition.key))
   const guarded = new Set(a.guardProjections ?? [])
-  const continuations = (guards.length > 0 ? guards : a.projections.flatMap((projection) =>
-    guarded.has(projection)
-      ? []
-      : projection.output(states.get(projection))
-  )).filter((transition) => {
+  const actorOutput = a.projection?.output(actorState)
+  const continuations = (guards.length > 0
+    ? guards
+    : [
+        ...a.projections.flatMap((projection) =>
+          guarded.has(projection) ? [] : projection.output(states.get(projection))),
+        ...(actorOutput?.continuations ?? [])
+      ]).filter((transition) => {
     if (transition.invocation === undefined) return true
-    const suppressed = a.control === undefined
+    const suppressed = a.projection === undefined
       ? events.some((event, index) =>
           cancelsInvocation(event, transition.invocation!) &&
           (a.cancellationOf?.(events.slice(0, index), transition.invocation!) === "running" ||
             a.cancellationOf?.(events, transition.invocation!) === "running")
         )
-      : a.control.suppresses(control, transition.invocation)
+      : actorOutput!.suppresses(transition.invocation)
     return !suppressed
   })
-  const residualTransitions = a.control === undefined
+  const residualTransitions = a.projection === undefined
     ? a.cancellationResiduals?.(events)
-    : a.control.residuals(control)
+    : actorOutput!.residuals
   const residuals = (residualTransitions ?? []).map((transition) =>
     transition.kind === "effect" ? { ...transition, concurrent: true } : transition
   )
@@ -259,7 +278,7 @@ export const createActorReconciler = <R>(a: Actor<R>): ActorReconciler<R> => {
     while (true) {
       const current = yield* synchronize(log)
       const events = current.events
-      const fires = enabledFrom(a, events, current.recorded, current.states, current.control)
+      const fires = enabledFrom(a, events, current.recorded, current.states, current.actorState)
       if (fires.length === 0) {
         resting = true
         return
@@ -274,9 +293,9 @@ export const createActorReconciler = <R>(a: Actor<R>): ActorReconciler<R> => {
         }
         const effectMark = t.kind === "effect" ? before : undefined
         const cancellable = t.invocation !== undefined &&
-          (a.control === undefined
+          (a.projection === undefined
             ? a.cancellationOf?.(events, t.invocation)
-            : a.control.cancellationOf(current.control, t.invocation)) === "running"
+            : a.projection.output(current.actorState).cancellationOf(t.invocation)) === "running"
         const attempted = t.kind === "intent"
           ? t.events(t.input, yield* Clock.currentTimeMillis)
           : yield* runExternalEffect(t, cancellable)

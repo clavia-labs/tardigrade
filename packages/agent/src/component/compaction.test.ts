@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Ref } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/reconciliation"
+import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { Infer } from "../inference/contract"
 import { composeKeys } from "@clavia/tardigrade-core/log"
@@ -122,10 +122,10 @@ describe("the compaction pass", () => {
     const ref = Ref.makeUnsafe<ReadonlyArray<Event>>(initial)
     let briefed = ""
     let model: unknown
-    const actor = actorFromProjections<Infer | EventLog | Self>(
-      [completeTransitionProjection(compactionReactor(policy))],
-      agentActorKeys
-    )
+    const actor = actorFromProjections<Infer | EventLog | Self>({
+      transitions: [completeTransitionProjection(compactionReactor(policy))],
+      keyOf: agentActorKeys
+    })
     const layers = Layer.mergeAll(
       Layer.succeed(
         EventLog,

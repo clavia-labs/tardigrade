@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Self } from "../../runtime"
-import { Router } from "../../communication/router"
-import { threadAddressOf } from "../../communication/endpoint"
-import { linkOf } from "../../communication/link"
-import { actorMethod, actorMethodsOf } from "./definition"
-import { methodResponseReactor } from "./response"
-import { EventLog, withWatermark } from "../../log"
+import { Self } from "../runtime"
+import { Router } from "../communication/router"
+import { threadAddressOf } from "../communication/endpoint"
+import { linkOf } from "../communication/link"
+import { actorMethodsOf } from "./method"
+import { legacyActorMethod } from "./legacy"
+import { methodResponseDerivation } from "./response"
+import { EventLog, withWatermark } from "../log"
 
 const source = threadAddressOf("parent", "main", "root")
 const target = threadAddressOf("child", "main", "worker")
@@ -22,7 +23,7 @@ const call = {
 } as Event
 
 const methods = actorMethodsOf({
-  ask: actorMethod({
+  ask: legacyActorMethod({
     input: Schema.String,
     output: Schema.String,
     event: ({ invocation, input, at }): Event => ({ type: "Asked", id: invocation.id, input, at }),
@@ -40,10 +41,10 @@ const methods = actorMethodsOf({
   })
 })
 
-describe("methodResponseReactor", () => {
+describe("methodResponseDerivation", () => {
   test("returns a terminal through the accepted call link", async () => {
     const sent: unknown[] = []
-    const transition = methodResponseReactor(methods)([
+    const transition = methodResponseDerivation(methods)([
       call,
       { type: "Answered", call: "call-1", output: "done", at: 2 } as Event
     ])[0]!
@@ -84,19 +85,19 @@ describe("methodResponseReactor", () => {
       { type: "Answered", call: "call-1", output: "done", at: 2 } as Event,
       { type: "ResponseDelivered", method: "ask", call: "call-1", at: 3 } as Event
     ]
-    expect(methodResponseReactor(methods)(log)).toEqual([])
+    expect(methodResponseDerivation(methods)(log)).toEqual([])
   })
 
   test("invalid output becomes a failed response before crossing the link", () => {
     const invalid = actorMethodsOf({
-      ask: actorMethod({
+      ask: legacyActorMethod({
         input: Schema.String,
         output: Schema.String,
         event: ({ invocation, input, at }): Event => ({ type: "Asked", id: invocation.id, input, at }),
         state: () => ({ status: "completed", output: 42 as never })
       })
     })
-    const transition = methodResponseReactor(invalid)([call])[0]
+    const transition = methodResponseDerivation(invalid)([call])[0]
     expect(transition?.input).toEqual(expect.objectContaining({
       response: expect.objectContaining({
         state: expect.objectContaining({ status: "failed", error: expect.stringContaining("invalid ask output") })

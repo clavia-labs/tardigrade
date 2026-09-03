@@ -94,9 +94,9 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
-import { incrementalComponent, type AgentComponent, type AgentView } from "tardie"
+import { component, type AgentComponent, type AgentView } from "tardie"
 
-const deploys: AgentComponent = incrementalComponent<undefined, AgentView>({
+const deploys: AgentComponent = component<undefined, AgentView>({
   name: "deploys",
   initial: () => undefined,
   step: (state, _event) => state,

@@ -4,11 +4,18 @@ import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { intent } from "@clavia/tardigrade-core/intent"
-import { actorFromProjections, effectInterruptionRegistry, enabled } from "../../runtime"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
+import {
+  actorFromProjections,
+  effectInterruptionRegistry,
+  enabled,
+  type Actor,
+  type ActorProjection
+} from "../runtime"
 import { completeTransitionProjection, type CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import { legacyComponent, type Component } from "@clavia/tardigrade-core/component"
 import type { ActorInvocation } from "./call"
-import { actorMethod, type ActorMethods } from "./definition"
+import { actorMethod, cancellationStateOf, type ActorMethods } from "./method"
 import {
   actorCancellationProjection,
   cancellationKeys,
@@ -18,19 +25,25 @@ import {
 
 const actorFromCompleteDerivations = <R = never>(
   derivations: ReadonlyArray<CompleteTransitionDerivation<R>>,
-  keyOf: Parameters<typeof actorFromProjections<R>>[1],
-  cancellationOf?: Parameters<typeof actorFromProjections<R>>[2],
-  cancellationResiduals?: Parameters<typeof actorFromProjections<R>>[3],
+  keyOf: Actor<R>["keyOf"],
+  cancellationOf?: Actor<R>["cancellationOf"],
+  cancellationResiduals?: Actor<R>["cancellationResiduals"],
   guards?: ReadonlyArray<CompleteTransitionDerivation<R>>,
-  control?: Parameters<typeof actorFromProjections<R>>[5]
-) => actorFromProjections(
-  derivations.map(completeTransitionProjection),
+  projection?: ActorProjection<R>
+) => actorFromProjections({
+  transitions: derivations.map(completeTransitionProjection),
   keyOf,
-  cancellationOf,
-  cancellationResiduals,
-  guards?.map(completeTransitionProjection),
-  control
-)
+  ...(guards === undefined ? {} : { guards: guards.map(completeTransitionProjection) }),
+  ...(projection === undefined ? {} : { control: projection }),
+  ...(cancellationOf === undefined && cancellationResiduals === undefined
+    ? {}
+    : {
+      legacy: {
+        ...(cancellationOf === undefined ? {} : { cancellationOf }),
+        ...(cancellationResiduals === undefined ? {} : { cancellationResiduals })
+      }
+    })
+})
 
 const parent = { method: "message", id: "m1", epoch: 0 } as const
 const nextEpoch = { method: "message", id: "m1", epoch: 1 } as const
@@ -59,10 +72,9 @@ const method = () => actorMethod({
   input: Schema.Void,
   output: Schema.Void,
   event: ({ invocation, at }) => started(invocation, at),
-  state: () => ({ status: "pending" }),
-  incremental: {
+  projection: {
     initial: () => ({ started: new Set<string>(), cancelled: new Set<string>() }),
-    reduce: (state, event) => {
+    step: (state, event) => {
       const started = new Set(state.started)
       const cancelled = new Set(state.cancelled)
       const invocation = invocationOf(event)
@@ -71,22 +83,18 @@ const method = () => actorMethod({
       if (event.type === "InvocationCancelled") cancelled.add(JSON.stringify(invocation))
       return { started, cancelled }
     },
-    currentEpoch: () => 0,
-    state: () => ({ status: "pending" }),
-    cancellation: (state, invocation) => {
-      const key = JSON.stringify(invocation)
-      if (!state.started.has(key)) return undefined
-      return state.cancelled.has(key) ? "cancelled" : "running"
-    }
+    output: (state) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation) => {
+        const key = JSON.stringify(invocation)
+        if (!state.started.has(key)) return undefined
+        return state.cancelled.has(key)
+          ? { status: "cancelled" as const, cause: "requested" as const }
+          : { status: "pending" as const }
+      }
+    })
   },
   cancellation: {
-    state: (events, invocation) => {
-      if (!events.some((event) => event.type === "InvocationStarted" &&
-        invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))) return undefined
-      if (events.some((event) => event.type === "InvocationCancelled" &&
-        invocationOf(event) !== undefined && sameInvocation(invocationOf(event)!, invocation))) return "cancelled"
-      return "running"
-    },
     event: (request, at) => cancelled(request.invocation, at)
   }
 })
@@ -113,7 +121,12 @@ describe("cancellation properties", () => {
     const legacy = actorFromCompleteDerivations(
       [],
       terminalKeyOf,
-      (events, invocation) => methods[invocation.method]?.cancellation?.state(events, invocation),
+      (events, invocation) => {
+        const method = methods[invocation.method]
+        return method === undefined
+          ? undefined
+          : cancellationStateOf(method, replayProjection(method.projection, events), invocation)
+      },
       (events) => cancellationTransitionsOf(events, methods, [], terminalKeyOf)
     )
     const incremental = actorFromCompleteDerivations(

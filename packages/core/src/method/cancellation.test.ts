@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Router } from "../../communication/router"
-import { EventLog, withWatermark } from "../../log"
+import { Router } from "../communication/router"
+import { EventLog, withWatermark } from "../log"
 import { intent } from "@clavia/tardigrade-core/intent"
-import { Self } from "../../runtime"
+import { Self } from "../runtime"
 import { legacyComponent, type Component } from "@clavia/tardigrade-core/component"
-import { actorMethod } from "./definition"
+import { legacyActorMethod } from "./legacy"
 import {
   CancellationRequested,
   cancellationKeys,
@@ -16,9 +16,9 @@ import {
   cancellationTransitionsOf,
   cancellationMethodFor
 } from "./cancellation"
-import { alarmFired, earliestDeadlineOf, methodTimeoutReactor } from "./timeout"
+import { alarmFired, earliestDeadlineOf, methodTimeoutDerivation } from "./timeout"
 
-const work = actorMethod({
+const work = legacyActorMethod({
   input: Schema.String,
   output: Schema.String,
   event: ({ invocation, at }) => ({ type: "WorkStarted", id: invocation.id, at }),
@@ -285,7 +285,7 @@ describe("actor cancellation", () => {
     expect(cancellationTransitionsOf(beforeDeadline, { work }, [], keyOf, 7)?.map((item) => item.key))
       .toEqual(["cxwait:cancel/x1/work/child/0"])
     const alarm = alarmFired({ scheduledFor: dispatch.deadlineAt, at: dispatch.deadlineAt })
-    const timeout = methodTimeoutReactor([...beforeDeadline, alarm])[0]
+    const timeout = methodTimeoutDerivation([...beforeDeadline, alarm])[0]
     if (timeout?.kind !== "intent") throw new Error("expected the cancellation timeout intent")
     const timedOut = timeout.events(timeout.input, dispatch.deadlineAt)
     expect(timedOut[0]).toMatchObject({

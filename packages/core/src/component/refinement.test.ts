@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { incrementalComponent } from "./component"
+import { component as defineComponent } from "./machine"
 import { componentRefinementTrace } from "./refinement"
 import { intent } from "@clavia/tardigrade-core/intent"
 
@@ -17,7 +17,7 @@ describe("component refinement trace", () => {
         events: () => []
       })]
     }
-    const component = incrementalComponent({
+    const component = defineComponent({
       name: "count",
       initial: () => 0,
       step: (count: number, event: Event) => count + (event.type === "Counted" ? 1 : 0),

@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Machine } from "@clavia/tardigrade-core/machine"
-import { incrementalComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
+import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
 import type { AgentComponent } from "../runtime/composition"
 
 export type SystemText = string | ((log: ReadonlyArray<Event>) => string)
@@ -20,7 +20,7 @@ export const system = <State = never>(text: SystemText | SystemProjection<State>
     transitions: []
   })
   if (typeof text === "object") {
-    return incrementalComponent({
+    return component({
       name: "system",
       initial: text.initial,
       step: text.step,
@@ -29,7 +29,7 @@ export const system = <State = never>(text: SystemText | SystemProjection<State>
   }
   return typeof text === "function"
     ? legacyComponent({ name: "system", derive: (log) => derive(text(log)) })
-    : incrementalComponent({
+    : component({
         name: "system",
         initial: () => text,
         step: (state: string) => state,
