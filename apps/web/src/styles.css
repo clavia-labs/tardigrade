@@ -397,12 +397,12 @@ h1 span { display: block; white-space: nowrap; }
 .serverless-graph path { fill: none; stroke: rgb(var(--accent-rgb) / 34%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .serverless-cube path { stroke: rgb(var(--accent-rgb) / 48%); stroke-linejoin: round; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .serverless-cube-top { fill: var(--surface); }
-.serverless-cube-left { fill: rgb(var(--accent-rgb) / 5%); }
-.serverless-cube-right { fill: rgb(var(--accent-rgb) / 10%); }
+.serverless-cube-left { fill: var(--sunken); }
+.serverless-cube-right { fill: var(--bg); }
 .serverless-cube-active path { stroke: var(--moss); }
 .serverless-cube-active .serverless-cube-top { fill: var(--moss-wash); }
-.serverless-cube-active .serverless-cube-left { fill: rgb(var(--accent-rgb) / 14%); }
-.serverless-cube-active .serverless-cube-right { fill: rgb(var(--accent-rgb) / 20%); }
+.serverless-cube-active .serverless-cube-left { fill: var(--sunken); }
+.serverless-cube-active .serverless-cube-right { fill: var(--surface); }
 .forking-diagram { width: 104px; height: auto; display: block; overflow: visible; }
 .forking-paths path { fill: none; stroke: rgb(var(--accent-rgb) / 36%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .forking-paths .forking-path-main { stroke: var(--moss); }
