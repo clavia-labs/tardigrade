@@ -811,6 +811,7 @@ h1 span { display: block; white-space: nowrap; }
   .mobile-nav-panel-inner { width: min(100%, var(--container)); margin: 0 auto; padding: 20px var(--gutter) 24px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(180px, .55fr); gap: 32px; }
   .mobile-nav-primary { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
   .mobile-nav-primary a { min-height: 46px; padding: 12px 4px; display: flex; align-items: center; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); color: var(--ink-2); font-size: 16px; font-weight: 500; }
+  .mobile-nav-primary a:last-child { border-bottom: 0; }
   .mobile-nav-console { gap: 8px; color: var(--moss-ink); }
   .mobile-nav-console svg { width: 17px; height: 17px; }
   .mobile-nav-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }

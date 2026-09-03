@@ -722,6 +722,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
   const headerRef = useRef<HTMLElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
   const docs = pathname.startsWith("/docs")
+  const closeMobileMenu = (): void => setMobileMenuOpen(false)
 
   useEffect(() => {
     if (!mobileMenuOpen) return
@@ -769,12 +770,12 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
         <nav className="mobile-nav-panel-inner" aria-label="Mobile navigation">
           <div className="mobile-nav-primary">
             <div className="mobile-nav-sections">
-              <Link to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
+              <Link to="/docs" aria-current={docs ? "page" : undefined} onClick={closeMobileMenu}>Docs</Link>
             </div>
           </div>
           <div className="mobile-nav-resources">
-            <a href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
-            <a href="https://discord.gg/Z74jwRxz4k" aria-label="Tardigrade on Discord" rel="noreferrer" target="_blank"><Discord /></a>
+            <a href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank" onClick={closeMobileMenu}><Github /></a>
+            <a href="https://discord.gg/Z74jwRxz4k" aria-label="Tardigrade on Discord" rel="noreferrer" target="_blank" onClick={closeMobileMenu}><Discord /></a>
             <ThemeToggle />
           </div>
         </nav>
