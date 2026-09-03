@@ -62,7 +62,7 @@
     },
     "apps/*": {
       "project": [
-        "src/**/*.ts"
+        "src/**/*.{ts,tsx}"
       ]
     },
     "apps/cli": {

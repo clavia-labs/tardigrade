@@ -1,18 +1,161 @@
 ---
-title: Core Concepts
-description: Thinking in Tardigrade.
+title: Concepts
+description: Understand the primitives that make up a Tardigrade actor.
 route: /docs/concepts
-section: Introduction
-sectionOrder: 1
+section: Getting Started
+sectionOrder: 2
 order: 2
 articleClass: concepts-article
 ---
 
-<ConceptSection kind="actor">
+Tardigrade builds an agent harness from a small set of primitives. Events record what happened. Projections turn those events into state. Components compose projections into views and enabled work. The runtime executes that work and records its outcome as more events.
+
+<PrimitiveDiagram />
+
+<ConceptSection kind="events">
+  <div className="concept-copy">
+    <h2>Events</h2>
+    <p>An event is an immutable fact. Every input, decision, and durable outcome is appended to a thread's event log. Existing events never change.</p>
+    <p>The event log is the source of truth. A process can stop, move to another host, or start again and recover the same behavior from the stored events.</p>
+  </div>
+
+  <ConceptInterface>
+    ```ts
+    interface Event {
+      type: string
+      [field: string]: unknown
+    }
+    ```
+  </ConceptInterface>
+</ConceptSection>
+
+<ConceptSection kind="projections">
+  <div className="concept-copy">
+    <h2>Projections</h2>
+    <p>A projection is a Moore-style machine whose inputs are events. It creates an initial state, steps that state forward for each event, and reads a value from the current state.</p>
+    <p>The state is a compact summary of the history that can still affect the projection's output. During replay, Tardigrade folds the complete log through the machine. During live execution, it retains the state and steps only the new event tail.</p>
+  </div>
+
+  <ConceptInterface>
+    ```ts
+    interface Machine<Input, State, Output> {
+      initial(): State
+      step(state: State, input: Input): State
+      output(state: State): Output
+    }
+
+    type Projection<State, Value> =
+      Machine<Event, State, Value>
+    ```
+  </ConceptInterface>
+</ConceptSection>
+
+<ConceptSection kind="components">
+  <div className="concept-copy">
+    <h2>Components</h2>
+    <p>A component is a named projection. Its output contains a view for its parent and the transitions that are enabled in the current state.</p>
+    <p>Components are pure. Given the same state, they produce the same output without performing external work. Components can contain other components, which lets an actor combine inference, tools, budgets, compaction, permissions, and output policies.</p>
+  </div>
+
+  <ConceptInterface>
+    ```ts
+    interface ComponentOutput<View, Requirements> {
+      view: View
+      transitions: ReadonlyArray<Transition>
+    }
+
+    interface Component<View, Requirements> {
+      name: string
+      machine: Projection<unknown,
+        ComponentOutput<View, Requirements>>
+    }
+    ```
+  </ConceptInterface>
+
+  <p className="concept-bridge-copy">Component authors keep their state type through <code>incrementalComponent</code>. Tardigrade erases that private type only when it composes different component machines.</p>
+
+  <ConceptInterface>
+    ```ts
+    incrementalComponent({
+      name: "counter",
+      initial: () => 0,
+      step: (count, event) =>
+        event.type === "Counted" ? count + 1 : count,
+      output: (count) => ({
+        view: count,
+        transitions: []
+      })
+    })
+    ```
+  </ConceptInterface>
+
+  <div className="compaction-example-copy">
+    <h3>Example: compaction</h3>
+    <p>The compaction component tracks the model context as events arrive. At 104k tokens, it crosses the 80% threshold of a 128k window and enables an effect that summarizes the older span. The effect appends <code>CompactionCompleted</code>. Later model requests use its summary with a 64k-token tail, while the full event log remains available.</p>
+  </div>
+
+  <div className="component-diagram-frame">
+    <ComponentDiagram />
+  </div>
+</ConceptSection>
+
+<ConceptSection kind="views">
+  <div className="concept-copy">
+    <h2>Views</h2>
+    <p>A view is the value a component exposes to its parent. A system component contributes instructions. A tool component contributes tool definitions. A transcript projection contributes model messages.</p>
+    <p>A parent combines child views through an associative view algebra. This gives each component a small interface while the complete component tree produces the context needed by inference or another parent.</p>
+  </div>
+
+  <ConceptInterface>
+    ```ts
+    interface ViewAlgebra<View> {
+      empty: View
+      combine(left: View, right: View): View
+    }
+    ```
+  </ConceptInterface>
+</ConceptSection>
+
+<ConceptSection kind="transitions">
+  <div className="concept-copy">
+    <h2>Transitions</h2>
+    <p>A transition describes one unit of work enabled by projected state. An intent proposes events without contacting the outside world. An effect performs external work and returns events that record its outcome.</p>
+    <p>Every transition has a durable key. The runtime compares that key with recorded event keys, executes work that is still owed, commits its events, and advances the projections. The actor is settled when no transition remains enabled.</p>
+  </div>
+
+  <ConceptInterface>
+    ```ts
+    type Transition = Intent | ExternalEffect
+
+    interface Intent {
+      kind: "intent"
+      key: string
+      events(input, at): ReadonlyArray<Event>
+    }
+
+    interface ExternalEffect {
+      kind: "effect"
+      key: string
+      act(input, signal): Effect<ReadonlyArray<Event>>
+    }
+    ```
+  </ConceptInterface>
+
+  <div className="transition-example-copy">
+    <h3>Example: a tool-calling agent</h3>
+    <p>A message enables inference. A model tool call enables service work. Its result enables inference again. A final response completes the method call.</p>
+  </div>
+
+  <div className="transition-loop-frame">
+    <TransitionLoop />
+  </div>
+</ConceptSection>
+
+<ConceptSection kind="actors">
   <div className="concept-copy">
     <h2>Actors</h2>
-    <p>The core primitive of Tardigrade is an actor. At a high level, an actor is an addressable entity with state and behavior. Its history is recorded as an append-only log of events, and its current state is derived from that log.</p>
-    <p>Methods let the world call an actor. Components read the log and derive transitions, the units of work that define how the actor responds.</p>
+    <p>An actor gives the composed machines an identity and a callable interface. Each actor instance can own many threads, and each thread has its own event log and projected state.</p>
+    <p>Methods accept work from callers. Components define how the actor responds. The runtime keeps executing enabled transitions until the thread settles.</p>
   </div>
 
   <ConceptInterface>
@@ -28,76 +171,20 @@ articleClass: concepts-article
   <ActorDiagram />
 </ConceptSection>
 
-<ConceptSection kind="transitions">
-  <div className="concept-copy">
-    <h2>Transitions</h2>
-    <p>A transition describes one unit of work enabled by the actor's log. The runtime executes enabled transitions and records their outcomes as new events.</p>
-    <p>Transitions come in two types. An intent proposes events without external work. An external effect interacts with the world and returns events that record its outcome. Each transition has a key, which lets the runtime determine whether its result is already in the log.</p>
-  </div>
-
-  <ConceptInterface>
-    ```ts
-    type Transition =
-      | { kind: "intent", key, events }
-      | { kind: "effect", key, act }
-    ```
-  </ConceptInterface>
-
-  <div className="transition-example-copy">
-    <h3>Example: a tool-calling agent</h3>
-    <p>A message starts inference. A tool call starts service work. Its result enables inference again. A final response completes the method call.</p>
-  </div>
-
-  <div className="transition-loop-frame">
-    <TransitionLoop />
-  </div>
-
-  <p className="concept-bridge-copy">The actor runs enabled transitions until none remain, at which point it has settled. A component packages the logic that derives those transitions from the log.</p>
-</ConceptSection>
-
-<ConceptSection kind="components">
-  <div className="concept-copy">
-    <h2>Components</h2>
-    <p>A component packages part of an actor's behavior as a named, pure function over the log. It derives two things. Its view is the value its parent component consumes. Its transitions describe the work currently enabled.</p>
-    <p>Given the same log, a component returns the same view and transitions without performing external work. External work stays inside effect transitions, which the runtime executes. Components can compose other components, so an actor's behavior can be assembled from smaller parts.</p>
-  </div>
-
-  <ConceptInterface>
-    ```ts
-    component({
-      name: string,
-      keys?: KeyFragment,
-      derive(log): { view, transitions }
-    })
-    ```
-  </ConceptInterface>
-
-  <p className="concept-bridge-copy">In the tool-calling agent, an inference component derives the language model transition, while a tool component derives the service transition. Events in the shared log connect them: a model response enables the tool component, and a tool result enables the inference component again.</p>
-
-  <div className="compaction-example-copy">
-    <h3>Example: compaction</h3>
-    <p>At 104k tokens, the log has crossed the 80% threshold of a 128k window. Compaction derives a transition that summarizes the older span. The transition appends `CompactionCompleted` to the log, and later model requests use its summary with a 64k-token tail. The full log remains unchanged.</p>
-  </div>
-
-  <div className="component-diagram-frame">
-    <ComponentDiagram />
-  </div>
-
-  <p className="concept-bridge-copy">Components define this internal behavior. Methods expose it to callers.</p>
-</ConceptSection>
-
 <ConceptSection kind="methods">
   <div className="concept-copy">
     <h2>Methods</h2>
-    <p>Methods define the actor's callable interface. Each method declares input and output schemas, turns a valid call into an event, and derives the call's pending, completed, or failed state from the log.</p>
+    <p>Methods define the actor's typed callable surface. Each method validates its input, turns a valid call into an event, and projects the call's pending, completed, failed, or cancelled state.</p>
+    <p>A caller supplies a call identifier. Repeating that call is absorbed by the log, and the caller can read the same durable result after a retry or process restart.</p>
   </div>
 
   <ConceptInterface>
     ```ts
     actorMethod({
-      input, output, timeoutMs?,
+      input,
+      output,
       event(call): Event,
-      state(log, id): MethodState
+      state(log, invocation): MethodState
     })
     ```
   </ConceptInterface>
@@ -105,6 +192,4 @@ articleClass: concepts-article
   <div className="method-diagram-frame">
     <MethodDiagram />
   </div>
-
-  <p className="concept-bridge-copy">For the tool-calling agent, the `message` method records the user's message. That event starts the transition loop. When the log contains a final response, the method returns its typed output. Each call has an identifier that links its input to its result and lets the log absorb duplicate deliveries.</p>
 </ConceptSection>

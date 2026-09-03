@@ -5,7 +5,7 @@ export const ComponentDiagram = (): ReactElement => (
     className="component-diagram"
     viewBox="0 0 720 680"
     role="img"
-    aria-label="A 104,000-token event log enables the compaction component to derive a summarization effect. The effect appends a CompactionCompleted event. Later model requests use its summary and a retained 64,000-token tail."
+    aria-label="Events advance the compaction projection to 104,000 tokens and enable a summarization effect. The effect appends a CompactionCompleted event. Later model requests use its summary and a retained 64,000-token tail."
   >
     <defs>
       <marker id="component-diagram-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
@@ -22,9 +22,9 @@ export const ComponentDiagram = (): ReactElement => (
 
     <g className="component-diagram-component" transform="translate(160 158)">
       <rect width="400" height="106" />
-      <text className="component-diagram-kind" x="20" y="25">component · compaction</text>
-      <text className="component-diagram-function" x="20" y="59">derive(log)</text>
-      <text className="component-diagram-detail" x="20" y="86">pure · observes the log</text>
+      <text className="component-diagram-kind" x="20" y="25">component projection · compaction</text>
+      <text className="component-diagram-function" x="20" y="59">initial · step · output</text>
+      <text className="component-diagram-detail" x="20" y="86">pure · advances one event at a time</text>
     </g>
 
     <g className="component-diagram-node component-diagram-transition" transform="translate(210 318)">

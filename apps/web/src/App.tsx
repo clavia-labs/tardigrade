@@ -544,10 +544,7 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const headerRef = useRef<HTMLElement>(null)
   const menuButtonRef = useRef<HTMLButtonElement>(null)
-  const guide = pathname === "/docs/quickstart"
-  const cli = pathname === "/docs/cli"
-  const concepts = pathname === "/docs/concepts"
-  const examples = pathname.startsWith("/docs/examples/")
+  const docs = pathname.startsWith("/docs")
   const consolePage = pathname === "/console"
 
   useEffect(() => {
@@ -580,19 +577,9 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
       <nav className="nav-inner" aria-label="Main navigation">
         <div className="nav-brand-group">
           <Link className="brand" to="/" aria-label="Tardigrade home"><Mark /><span>Tardigrade</span></Link>
-          <Link className="guide-link" to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
-          <Link className="guide-link" to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
-          <Link className="guide-link" to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
-          <Link className="guide-link" to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
-        </div>
-        <div className="nav-links">
-          <Link to="/docs/$" params={{ _splat: "quickstart" }}>Quickstart</Link>
-          <a href={`${REPOSITORY}/tree/main/docs`} rel="noreferrer" target="_blank">Reference</a>
-          <a href={`${REPOSITORY}/blob/main/docs/how-to/cli.md`} rel="noreferrer" target="_blank">CLI</a>
-          <a href={`${REPOSITORY}/tree/main/apps/voyager`} rel="noreferrer" target="_blank">Voyager</a>
+          <Link className="guide-link" to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
         </div>
         <div className="nav-actions">
-          <Link className="docs-link" to="/docs">Docs</Link>
           <Link className="console-link" to="/console" aria-current={consolePage ? "page" : undefined}>Console</Link>
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
           <button className="mobile-menu-trigger" type="button" aria-controls="mobile-navigation" aria-expanded={mobileMenuOpen} ref={menuButtonRef} onClick={() => setMobileMenuOpen((open) => !open)}>
@@ -606,15 +593,11 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
           <div className="mobile-nav-primary">
             <Link className="mobile-nav-console" to="/console" aria-current={consolePage ? "page" : undefined}><ConsoleIcon />Console</Link>
             <div className="mobile-nav-sections">
-              <Link to="/docs/$" params={{ _splat: "quickstart" }} aria-current={guide ? "page" : undefined}>Quickstart</Link>
-              <Link to="/docs/$" params={{ _splat: "concepts" }} aria-current={concepts ? "page" : undefined}>Concepts</Link>
-              <Link to="/docs/$" params={{ _splat: "cli" }} aria-current={cli ? "page" : undefined}>CLI</Link>
-              <Link to="/docs/$" params={{ _splat: "examples/rlm" }} aria-current={examples ? "page" : undefined}>Examples</Link>
+              <Link to="/docs" aria-current={docs ? "page" : undefined}>Docs</Link>
             </div>
           </div>
           <div className="mobile-nav-resources">
             <span>Resources</span>
-            <Link to="/docs">Docs</Link>
             <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
             <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
           </div>
