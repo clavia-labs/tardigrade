@@ -653,6 +653,8 @@ h1 span { display: block; white-space: nowrap; }
 .compaction-flow-event-log li::before { width: 24px; font-size: 9px; }
 .compaction-flow-event-log code { font-size: 11px; }
 .compaction-flow-event-log code + code { font-size: 9px; }
+.compaction-flow-event-log .compaction-flow-checkpoint { background: var(--moss-wash); }
+.compaction-flow-event-log .compaction-flow-checkpoint code:first-of-type { color: var(--moss-ink); font-weight: 500; }
 .compaction-flow-arrow { display: grid; justify-items: center; gap: 5px; color: var(--faint); }
 .compaction-flow-arrow span { font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
 .compaction-flow-arrow svg { width: 48px; height: 20px; overflow: visible; }
