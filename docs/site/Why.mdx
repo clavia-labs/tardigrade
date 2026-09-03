@@ -88,19 +88,17 @@ As a state machine written over the event log, it looks like this:
 
 Once you've defined this behavior, you can compose it with other such behaviors defined in a similar manner.
 
-```ts highlight="12"
-const boundedContext = compaction({
-  contextWindowTokens: 128_000,
-  fireRatio: 0.8,
-  keepRatio: 0.5
-})
-
+```ts highlight="6-10"
 export const researcher = actor({
   name: "researcher",
   methods: agentMethods,
   components: [infer([
     system("Research the given topic and cite your sources."),
-    boundedContext,
+    compaction({
+      contextWindowTokens: 128_000,
+      fireRatio: 0.8,
+      keepRatio: 0.5
+    }),
     nativeOutput
   ])]
 })
