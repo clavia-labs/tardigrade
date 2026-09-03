@@ -224,6 +224,11 @@ const Tip = ({ children, title }: { readonly children: ReactNode; readonly title
   </details>
 )
 
+const Link = ({ href, ...props }: ComponentPropsWithoutRef<"a">): ReactElement => {
+  const external = href?.startsWith("https://") === true || href?.startsWith("http://") === true
+  return <a href={href} {...props} {...(external ? { rel: "noopener noreferrer", target: "_blank" } : {})} />
+}
+
 export const mdxComponents = {
   ActorDiagram,
   BehaviorTrajectoryDiagram,
@@ -243,7 +248,7 @@ export const mdxComponents = {
   Tip,
   TrajectoryBranchesDiagram,
   TransitionLoop,
-  a: (props: ComponentPropsWithoutRef<"a">) => <a {...props} />,
+  a: Link,
   code: InlineCode,
   pre: Code
 }
