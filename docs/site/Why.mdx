@@ -8,7 +8,7 @@ sectionOrder: 1
 order: 2
 ---
 
-Building an agent is challenging. This is especially true as the horizons over which they operate is ever expanding. As tasks get harder, behaviors become harder to reason about. The harnesses we build around our agents get ever more complex. Tardigrade presents a new way of thinking about agent harnesses, and as a result, a way to simplify this complexity.
+Building an agent is challenging. As tasks get harder, behaviors become harder to reason about, and the harness we build around our agents get ever more complex. Tardigrade presents a way to simplify this complexity, by proposing a new way of thinking about agent harnesses.
 
 In a typical agent harness, your core model loop would be something like this:
 
@@ -49,9 +49,11 @@ const runAgent = async (
 }
 ```
 
-It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets for tool calls and tokens, subagents, sandboxed code execution), it starts to add up. It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
+It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, subagents), it starts to add up. It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
 
-What if there was a more declarative  and composable way to author behavior, something like react? Once you frame an agent's harness as an interface for agents, it become a rendering problem and the frontend community had already solved for this! React defined the user interface as a component tree, and each component was a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a function of state, projected from an immutable event log.
+What if there was a more declarative  and composable way to author behavior? Tardigrade grew out of the realization that an agent harness isn't very different from a user interface. A harness is simply an interface for an agent to effectively interact with the world and accomplish goals. Just like how traditional user interfaces help humans effectively interact with the digital world. Once you frame it this way, it become a rendering problem and the frontend community had already solved for this!&#x20;
+
+React defined the user interface as a component tree, and each component was a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a state machine, with state as projections from an immutable event log.
 
 ### The Tardigrade pattern
 
@@ -59,7 +61,7 @@ If you asked me to compress Tardigrade's single most important insight, it is th
 
 <Math expression="\text{behavior} = f(\text{immutable event log})" />
 
-An agent harness could be viewed as a composition of behaviors, which are defined as pure functions over an immutable log. This idea grew out of the realization that building an agent harness is not much different from building a user interface. A harness is an interface built for an agent to effectively interact with the world. Interacting with the world means making state changes given an existing state.
+If you can describe the behavior you want to see in simple english, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
 <div className="harness-diagram-frame">
   <HarnessDiagram />
@@ -67,7 +69,21 @@ An agent harness could be viewed as a composition of behaviors, which are define
 
 ### Example: Compaction
 
-For example, let's take compaction. With tardigrade, adding compaction to your agent looks like this:
+For example, let's take compaction. In simple english, you could describe compaction as follows:
+
+> When the token count of the conversation sent to inference reaches a certain threshold, use a language model to summarise a certain chunk of the conversation. Once summarized, append it to the event log as
+>
+> `CompactionCompleted`
+>
+>  holding the summary. And then for every subsequent model call, attach this summary and a tail of the existing conversation.
+
+As a state machine written over the event log, it looks like this:
+
+<div className="compaction-machine-frame">
+  <CompactionMachineDiagram />
+</div>
+
+Once you've defined this behavior, now you can composed it with other such behaviors defined in a similar manner.
 
 ```ts highlight="12"
 const boundedContext = compaction({
@@ -102,9 +118,5 @@ interface IncrementalComponentDefinition<State, View, Requirements = never> {
 ```
 
 Compaction follows the same pattern. Each event updates its state. When the context grows too large, it asks the runtime to summarize older events and uses that summary in future model calls.
-
-<div className="compaction-machine-frame">
-  <CompactionMachineDiagram />
-</div>
 
 We can extend this approach to build subagents, codemode, recursive language models and so on. Your imagination is the limit here!
