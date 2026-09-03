@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.20.0](https://github.com/clavia-labs/tardigrade/compare/v0.19.0...v0.20.0) (2026-09-03)
+
+
+### Features
+
+* **core:** add incremental projections ([#333](https://github.com/clavia-labs/tardigrade/issues/333)) ([6261af2](https://github.com/clavia-labs/tardigrade/commit/6261af211dd12feb450683e01ea382a2f9db4d9a))
+* **web:** render MDX docs ([#322](https://github.com/clavia-labs/tardigrade/issues/322)) ([a402047](https://github.com/clavia-labs/tardigrade/commit/a4020470430bffe5d14ecbc62dfa9450e1198ee2))
+
+
+### Bug Fixes
+
+* **ci:** link Vercel project ([#327](https://github.com/clavia-labs/tardigrade/issues/327)) ([722aa7f](https://github.com/clavia-labs/tardigrade/commit/722aa7f3c72353a7e9ffd697ef0f4435c61d9cd8))
+* **ci:** target Vercel preset ([#329](https://github.com/clavia-labs/tardigrade/issues/329)) ([72779cb](https://github.com/clavia-labs/tardigrade/commit/72779cb4b1f8e876f4429856e9dc1cb3666200c2))
+* **docs:** render machine equations ([#335](https://github.com/clavia-labs/tardigrade/issues/335)) ([2aa37e5](https://github.com/clavia-labs/tardigrade/commit/2aa37e5c73b59fae255dd90061cc2499e7a0cd05))
+* **docs:** simplify machine equations ([#337](https://github.com/clavia-labs/tardigrade/issues/337)) ([352d8d4](https://github.com/clavia-labs/tardigrade/commit/352d8d4b241b9a4bbcfb0ae2c0be9b10cbb0c4d5))
+* smooth quickstart flow ([#330](https://github.com/clavia-labs/tardigrade/issues/330)) ([8e82c18](https://github.com/clavia-labs/tardigrade/commit/8e82c185e97f68b2d66a064474a1175ac01ea7b1))
+
 ## [0.19.0](https://github.com/clavia-labs/tardigrade/compare/v0.18.0...v0.19.0) (2026-09-01)
 
 
