@@ -115,7 +115,7 @@ export interface ActorThreads {
   readonly settled: Effect.Effect<void>
 }
 
-// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/core/src/actor/method/definition.ts, ActorMethodDeclaration).
+// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/core/src/method/method.ts, ActorMethodDeclaration).
 export class Threads extends Context.Service<
   Threads,
   {
@@ -383,7 +383,7 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
     throw new Error(`actor artifact name does not match ${JSON.stringify(expected.name)}`)
   }
   if (
-    !Array.isArray(candidate.reactors) ||
+    !Array.isArray(candidate.projections) ||
     typeof candidate.keyOf !== "function" ||
     !Array.isArray(candidate.components)
   ) {
@@ -626,8 +626,10 @@ export const layerActorThreads = (
 
 const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
   const raw = JSON.parse(await readFile(join(directory, "manifest.json"), "utf8")) as Partial<ActorArtifactManifest>
+  if (raw.schema !== ACTOR_ARTIFACT_VERSION) {
+    throw new Error(`unsupported actor artifact schema ${String(raw.schema)} in ${directory}`)
+  }
   if (
-    raw.schema !== ACTOR_ARTIFACT_VERSION ||
     typeof raw.name !== "string" ||
     typeof raw.module !== "string" ||
     typeof raw.digest !== "string"

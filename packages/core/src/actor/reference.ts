@@ -1,6 +1,6 @@
 import { threadAddressOf, type ThreadAddress } from "../communication/endpoint"
 import type { Actor } from "./definition"
-import type { ActorMethods } from "./method"
+import type { ActorMethods } from "../method"
 
 // ActorRef identifies one callable actor thread and preserves its declared method surface.
 export interface ActorRef<Methods extends ActorMethods = ActorMethods> {

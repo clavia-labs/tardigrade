@@ -15,15 +15,15 @@ import {
   methodIngressKeyOf,
   type ActorInvocationContext,
   type ActorMethods
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 import {
   EffectInterruptions,
   Self,
+  createActorReconciler,
   effectInterruptionRegistry,
   restingActor,
-  settleActor,
   type Actor
-} from "@clavia/tardigrade-core/reconciliation"
+} from "@clavia/tardigrade-core/runtime"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/thread"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -89,12 +89,13 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
   const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
-  const readEffect = events.read
   const sync = Effect.promise(() => options.storage.sync())
   const commitDispatcher = options.commitObserver === undefined
     ? undefined
     : new CommitDispatcher(options.commitObserver, options.retainCommitTask)
   let stagedHead = 0
+  let creation: ReturnType<typeof threadCreated> | undefined
+  let creationLoaded = false
   const publish = (head: number): Effect.Effect<void> => Effect.sync(() => {
     commitDispatcher?.offer({ ...identity, head })
   })
@@ -120,12 +121,15 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
         )
       }
       const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
-      const stamped =
-        currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
-          ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
-          : event
-      const current = yield* readEffect
-      const created = threadCreatedForDelivery(current, target, lineage, link?.source)
+      const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
+        ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
+        : event
+      if (!creationLoaded) {
+        const first = yield* events.first
+        creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
+        creationLoaded = true
+      }
+      const created = threadCreatedForDelivery(creation === undefined ? [] : [creation], target, lineage, link?.source)
       const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
         ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
         : stamped
@@ -133,7 +137,12 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
         return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
       }
-      const result = yield* events.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+      const opened = created === undefined ? threadCreated(target, lineage, at as number) : undefined
+      const result = yield* events.append(opened === undefined ? [landed] : [opened, landed])
+      if (opened !== undefined) {
+        const first = yield* events.first
+        creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
+      }
       if (result.appended > 0) interruptions.interrupt([landed])
       if (result.appended > 0) driver.mark(options.thread)
       if (flush) yield* syncCommit(result)
@@ -178,10 +187,13 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   )
   const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
     .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>
+  const reconciler = createActorReconciler(options.actor)
+  let reconcilerSettled = false
   const driver = createThreadDriver({
     serve: async (thread) => {
       if (thread !== options.thread) throw new Error(`driver received foreign thread ${JSON.stringify(thread)}`)
-      await Effect.runPromise(settleActor(options.actor).pipe(Effect.provide(layers)))
+      await Effect.runPromise(reconciler.settle.pipe(Effect.provide(layers)))
+      reconcilerSettled = true
     }
   })
   let tail: Promise<void> = Promise.resolve()
@@ -195,10 +207,10 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     await drive()
   }
   const nextMethodDeadline = async (): Promise<number | undefined> => {
-    return earliestDeadlineOf(await Effect.runPromise(readEffect), methods)
+    return earliestDeadlineOf(await Effect.runPromise(events.read), methods)
   }
   const recordAlarm = async (at: number): Promise<void> => {
-    const deadline = earliestDeadlineOf(await Effect.runPromise(readEffect), methods)
+    const deadline = earliestDeadlineOf(await Effect.runPromise(events.read), methods)
     if (deadline !== undefined && deadline <= at) {
       const result = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
       if (result.appended > 0) driver.mark(options.thread)
@@ -208,11 +220,14 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     }
   }
   const resting = async (): Promise<boolean> => {
-    return restingActor(options.actor, await Effect.runPromise(readEffect)) && driver.resting()
+    if (!driver.resting()) return false
+    return reconcilerSettled
+      ? reconciler.isResting()
+      : restingActor(options.actor, await Effect.runPromise(events.read))
   }
   return {
     identity,
-    read: () => Effect.runPromise(readEffect),
+    read: () => Effect.runPromise(events.read),
     readPage: (mark, limit) => Effect.runPromise(events.readPage(mark, limit)),
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     stage: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call, false)),

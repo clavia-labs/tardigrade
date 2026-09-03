@@ -48,10 +48,12 @@ import {
   cancellationDispositionOf,
   cancellationRequested,
   cancellationRequestIdOf
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
-import { actorFromReactors, effect, restingActor, settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { effect, restingActor, settleActor } from "@clavia/tardigrade-core/runtime"
+import { actorFromProjections } from "@clavia/tardigrade-core/runtime"
+import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
 import {
   layerWorkerLoaderSandbox,
@@ -114,8 +116,8 @@ const registeredKeyOf = (thread: string): string => `thread:registered:${thread}
 const actorSupervisorOf = (
   env: Env,
   identity: { readonly actor: string; readonly instance: string }
-) => actorFromReactors([
-  (events) => {
+) => actorFromProjections({
+  transitions: [completeTransitionProjection((events) => {
     const actorEvents = actorEventsOf(events)
     const registered = new Set(actorEvents.flatMap((event) => event.type === "ThreadRegistered" ? [event.thread] : []))
     const registrations = actorEvents.flatMap((event) => {
@@ -139,8 +141,9 @@ const actorSupervisorOf = (
       })]
     })
     return registrations
-  }
-], actorEventKeyOf)
+  })],
+  keyOf: actorEventKeyOf
+})
 
 const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<ActorThreadNode> => {
   const entries = new Map<string, Omit<ActorThreadNode, "children">>()

@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { completeTransitionProjection, transitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
+import type { Actor } from "@clavia/tardigrade-core/runtime"
 import { createHost } from "./host"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -34,8 +36,8 @@ const rallyKeys = (e: Event): string | undefined => {
   return undefined
 }
 
-const playerReactor = (me: string, opponent: string): Reactor<Router> =>
-  (events) => {
+const playerProjection = (me: string, opponent: string): ErasedTransitionProjection<Router> =>
+  completeTransitionProjection((events) => {
     const answered = new Set(
       events.filter((e) => e.type === "Answered").map((e) => str((e as { id?: unknown }).id))
     )
@@ -63,19 +65,42 @@ const playerReactor = (me: string, opponent: string): Reactor<Router> =>
           })
       })
     ]
-  }
+  })
 
 const rally = () => {
   const host = createHost<Router>({
     actorFor: (thread) =>
-      thread === "a" ? { reactors: [playerReactor("a", "mem:main:b")], keyOf: rallyKeys }
-      : thread === "b" ? { reactors: [playerReactor("b", "mem:main:a")], keyOf: rallyKeys }
+      thread === "a" ? { projections: [playerProjection("a", "mem:main:b")], keyOf: rallyKeys }
+      : thread === "b" ? { projections: [playerProjection("b", "mem:main:a")], keyOf: rallyKeys }
       : undefined
   })
   return host
 }
 
 describe("the host", () => {
+  test("reuses an incremental projection across drives", async () => {
+    let reductions = 0
+    const actor: Actor = {
+      keyOf: () => undefined,
+      projections: [transitionProjection({
+        initial: () => 0,
+        step: (count: number) => {
+          reductions += 1
+          return count + 1
+        },
+        output: () => []
+      })]
+    }
+    const host = createHost({ actorFor: () => actor })
+
+    host.commitRoot("mem:main:root", { type: "First", at: 1 } as Event)
+    await host.drive()
+    host.commitRoot("mem:main:root", { type: "Second", at: 2 } as Event)
+    await host.drive()
+
+    expect(reductions).toBe(host.read("root").length)
+  })
+
   test("a committed interruption stops live external work", async () => {
     const started = signal()
     const release = signal()
@@ -91,7 +116,7 @@ describe("the host", () => {
         : event.type === "CancellationRequested"
           ? "cancel:message/m1/0"
           : undefined,
-      reactors: [(events) => {
+      projections: [completeTransitionProjection((events) => {
         if (events.some((event) => event.type === "CancellationRequested")) return []
         if (!events.some((event) => event.type === "MessageReceived")) return []
         return [effect({
@@ -108,7 +133,7 @@ describe("the host", () => {
             return [{ type: "LateResult", at: 2 } as Event]
           })
         })]
-      }]
+      })]
     }
     const host = createHost({ actorFor: () => actor, keyOf: actor.keyOf })
     host.commitRoot("mem:main:root", { type: "MessageReceived", id: "m1", at: 1 } as Event)
@@ -136,7 +161,7 @@ describe("the host", () => {
     let started = 0
     const actor: Actor = {
       keyOf: (event) => event.type === "Done" ? `done:${str((event as { id?: unknown }).id)}` : undefined,
-      reactors: [(events) =>
+      projections: [completeTransitionProjection((events) =>
         events
           .filter((event) => event.type === "MessageReceived")
           .map((event) => {
@@ -154,7 +179,7 @@ describe("the host", () => {
                 return [{ type: "Done", id: input, at: 1 } as Event]
               })
             })
-          })]
+          }))]
     }
     const host = createHost({
       actorFor: () => actor,

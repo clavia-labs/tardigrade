@@ -1,33 +1,27 @@
-import type { Actor as ReconciledActor } from "../reconciliation"
-import type { Event } from "../log/event"
-import { actorFromReactors, type Self } from "../reconciliation"
+import { actorFromProjections, type Actor as ReconciledActor, type Self } from "@clavia/tardigrade-core/runtime/reconciler"
 import {
-  reactorOf,
+  transitionProjectionOf,
   type Component,
   type ComponentRequirements
-} from "./component"
+} from "@clavia/tardigrade-core/component"
 import { composeKeys } from "../log"
 import type { Router } from "../communication/router"
 import { actorContractErrors, actorContractOf, type ActorContract } from "./contract"
 import {
   actorMethodsOf,
   methodCallKeys,
-  methodResponseComponent,
   methodResponseKeys,
   methodInputValidationComponents,
-  methodInputValidationTransitions,
-  methodTimeoutComponent,
   methodTimeoutKeys,
   type ActorMethods
-} from "./method/index"
-import type { ActorInvocation } from "./method"
+} from "../method/index"
 import {
   CANCELLATION_CONTROL_METHOD,
   childCancellationTimeoutOf,
   cancellationKeys,
-  cancellationMethodFor,
-  cancellationTransitionsOf
-} from "./method/cancellation"
+  cancellationMethodFor
+} from "../method/cancellation"
+import { actorProjection } from "./projection"
 
 export const ACTOR_NAME_PATTERN = /^[a-z][a-z0-9-]{0,62}$/u
 
@@ -79,33 +73,20 @@ const fromOptions = <
   const components = options.components as ReadonlyArray<Component<unknown, R>>
   const inputValidation = methodInputValidationComponents(methods)
   const fragments = [...inputValidation, ...components].flatMap((component) => component.keys === undefined ? [] : [component.keys])
-  const responses = methodResponseComponent({
+  const responseMethods = {
     ...methods,
     [CANCELLATION_CONTROL_METHOD]: cancellationMethodFor(methods)
-  })
+  }
   const contract = actorContractOf(methods, options.components as ReadonlyArray<Component<unknown, unknown>>)
   const keyOf = composeKeys(...fragments, cancellationKeys, methodCallKeys, methodTimeoutKeys, methodResponseKeys)
-  const cancellationOf = (events: ReadonlyArray<Event>, invocation: ActorInvocation) =>
-    methods[invocation.method]?.cancellation?.state(events, invocation)
-  const cancellationResiduals = (events: ReadonlyArray<Event>) =>
-    cancellationTransitionsOf(events, methods, components, keyOf, cancellation.childTimeoutMs)
-  const guarded = components.map((component) => {
-    const derive = reactorOf(component)
-    return (log: Parameters<typeof derive>[0]) => {
-      const recorded = new Set(log.flatMap((event) => {
-        const key = keyOf(event)
-        return key === undefined ? [] : [key]
-      }))
-      const invalid = methodInputValidationTransitions(methods, log).some((transition) => !recorded.has(transition.key))
-      return invalid ? [] : derive(log)
-    }
+  const projection = actorProjection(methods, responseMethods, components, keyOf, cancellation.childTimeoutMs)
+  const validationProjections = inputValidation.map(transitionProjectionOf)
+  const runtime = actorFromProjections<R>({
+    transitions: validationProjections,
+    guards: validationProjections,
+    control: projection,
+    keyOf
   })
-  const runtime = actorFromReactors<R>(
-    [...guarded, ...inputValidation.map(reactorOf), reactorOf(methodTimeoutComponent(methods)), reactorOf(responses)],
-    keyOf,
-    cancellationOf,
-    cancellationResiduals
-  )
   return {
     ...runtime,
     name: options.name,

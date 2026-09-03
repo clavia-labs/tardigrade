@@ -1,8 +1,11 @@
-import type { Transition, Reactor } from "@clavia/tardigrade-core/reconciliation"
+import type { Transition } from "@clavia/tardigrade-core/runtime"
+import type { TransitionProjection } from "@clavia/tardigrade-core/transition"
 import {
   composeComponents,
+  deriveComponent,
   handles,
-  inheritComponent,
+  inheritComponentContract,
+  component,
   type Component,
   type ComponentRequirements,
   type ViewAlgebra
@@ -13,10 +16,11 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ToolSpec } from "../inference/request"
 import { fallbackOf, type OutputFallback } from "../output/contract"
 import { agentKeys } from "../log/events"
-import { inferReactorFor, type InferPolicy } from "../inference/reactor"
+import type { InferPolicy } from "../inference/contract"
+import { inferenceMachine } from "../inference/machine"
 import { modelPolicyOverrideOf, type ModelPolicyOverride } from "../inference/access"
-import { toolsComponentFrom, type Answer, type PendingCall } from "./tools"
-import type { ContextPolicy } from "../components/compaction"
+import { incrementalToolsComponentFrom, type Answer, type PendingCall } from "./tools"
+import type { ContextPolicy } from "../component/compaction"
 import type { AgentR } from "./turn"
 import { agentMessageMethod } from "../actor/message"
 
@@ -59,7 +63,7 @@ export interface FallbackOutputFragment {
 export type OutputFragment = NativeOutputFragment | FallbackOutputFragment
 
 // AgentView is the view the infer root interprets. Arrays retain component order and
-// postpone collision policy until the complete derivation is available.
+// postpone collision policy until the complete component output is available.
 export interface AgentView {
   readonly system: ReadonlyArray<string>
   readonly tools: ReadonlyArray<AgentTool<unknown>>
@@ -77,16 +81,16 @@ export type OutputFallbackComponent<R = never> = AgentComponent<R> & { readonly 
 
 // defineOutputFallback validates and marks a component that always contributes one fallback.
 export const defineOutputFallback = <R>(component: AgentComponent<R>): OutputFallbackComponent<R> => {
-  const derive: AgentComponent<R>["derive"] = (log) => {
-    const derived = component.derive(log)
+  const output = (state: unknown) => {
+    const derived = component.machine.output(state)
     const output = derived.view.output
     if (output.length !== 1 || output[0]?.kind !== "fallback" || fallbackOf(output[0].fallback) === undefined) {
       throw new Error(`output fallback component ${component.name} must declare one applicable fallback for every log`)
     }
     return derived
   }
-  derive([])
-  return { ...component, derive, [OutputFallbackMarker]: true }
+  output(component.machine.initial())
+  return { ...component, machine: { ...component.machine, output }, [OutputFallbackMarker]: true }
 }
 
 // AGENT_VIEW_ALGEBRA preserves every view contribution in component order. renderOf
@@ -149,27 +153,9 @@ const viewFrom = <const Cs extends ReadonlyArray<AgentComponent<never> | AgentCo
   components: Cs,
   log: ReadonlyArray<Event>
 ): AgentView =>
-  composeComponents("agent.view", AGENT_VIEW_ALGEBRA, components).derive(log).view
+  deriveComponent(composeComponents("agent.view", AGENT_VIEW_ALGEBRA, components), log).view
 
-// offerLogFor returns the prefix from which inference offered a pending call's tools. ModelCalled
-// is appended before inference, so the preceding prefix is exactly the log passed to render
-// (infer.ts, inferReactorFor; tla/runtime/Component.tla, OfferedIsRoutable). Calls created outside
-// inference have no mark and use the prefix before the call.
-const offerLogFor = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<Event> => {
-  const called = log.findIndex(
-    (event) => event.type === "ToolCalled" && String((event as { callId?: unknown }).callId) === call.callId
-  )
-  if (called === -1) return log
-  for (let index = called - 1; index >= 0; index--) {
-    const event = log[index]!
-    if (event.type !== "ModelCalled") continue
-    const turn = (event as { turn?: unknown }).turn
-    if (call.turn === undefined || turn === undefined || String(turn) === call.turn) return log.slice(0, index)
-  }
-  return log.slice(0, called)
-}
-
-// Rendered is what one derivation offers the model: the prompt, the tool table, the truncation
+// Rendered is what one component output offers the model: the prompt, the tool table, the truncation
 // policy, and the fallback for a declared output contract native output cannot serve. `output` is
 // absent when the assembly selects native output.
 export interface Rendered {
@@ -218,7 +204,7 @@ export interface InferOptions extends Partial<Omit<InferPolicy, "models">> {
 
 // infer composes an agent's child components and adds the model loop over their final view.
 // Inference and dispatch derive from the same child projection, so a tool remains routed against
-// the view that offered it while every child transition remains part of the root derivation.
+// the view that offered it while every child transition remains part of the root output.
 export const infer = <
   const Cs extends ReadonlyArray<AgentComponent<never> | AgentComponent<unknown>>
 >(
@@ -228,46 +214,52 @@ export const infer = <
   type ComponentR = ComponentRequirements<Cs[number]>
   type R = AgentR | ComponentR
   const combined = composeComponents("infer.children", AGENT_VIEW_ALGEBRA, components) as AgentComponent<ComponentR>
-  const viewOf = (log: ReadonlyArray<Event>): AgentView => combined.derive(log).view
-
-  const toolsOf = (log: ReadonlyArray<Event>): ReadonlyArray<AgentTool<unknown>> => checkedTools(viewOf(log).tools)
-  const offeredTools = (log: ReadonlyArray<Event>, call: PendingCall): ReadonlyArray<AgentTool<unknown>> =>
-    toolsOf(offerLogFor(log, call))
-  const serve = (call: PendingCall, log: ReadonlyArray<Event>, answer: Answer) => {
-    const tool = offeredTools(log, call).find((offered) => offered.spec.name === call.name)
-    return tool?.serve(call, log, answer) as ReadonlyArray<Transition<never, R>> | undefined
-  }
-
-  renderView(viewOf([]))
+  const childMachine = combined.machine
+  renderView(childMachine.output(childMachine.initial()).view)
   const { models: rawModels, ...policy } = options
   const models = modelPolicyOverrideOf(rawModels)
-  const inference = inferReactorFor({ ...policy, models }, (log) => renderView(viewOf(log))) as Reactor<R>
-  const tools = toolsComponentFrom<AgentView, R>(
+  const inferPolicy = { ...policy, models }
+  const incrementalInference = inferenceMachine(inferPolicy, {
+    initial: childMachine.initial,
+    step: childMachine.step,
+    output: (state) => renderView(childMachine.output(state).view)
+  }) as TransitionProjection<unknown, R>
+  const incrementalTools = incrementalToolsComponentFrom(
     AGENT_VIEW_ALGEBRA.empty,
-    serve,
-    (log, call) => offeredTools(log, call).map((tool) => tool.spec)
+    childMachine,
+    (view) => checkedTools(view.tools) as ReadonlyArray<AgentTool<R>>
   )
-  const cancellable = composeComponents(
-    "infer.cancellable",
-    AGENT_VIEW_ALGEBRA,
-    [combined, tools]
-  ) as AgentComponent<R>
-
-  return handles(agentMessageMethod, inheritComponent({
+  const toolsMachine = incrementalTools.machine
+  const root = component({
     name: "infer",
     keys: rootKeys(combined.keys),
-    derive: (log) => {
-      const children = combined.derive(log)
-      const inferred = inference(log)
+    initial: () => ({
+      children: childMachine.initial(),
+      inference: incrementalInference.initial(),
+      tools: toolsMachine.initial()
+    }),
+    step: (state, event) => ({
+      children: childMachine.step(state.children, event),
+      inference: incrementalInference.step(state.inference, event),
+      tools: toolsMachine.step(state.tools, event)
+    }),
+    cancelState: (state, cancellation) => [
+      ...(childMachine.cancel?.(state.children, cancellation) ?? []),
+      ...(toolsMachine.cancel?.(state.tools, cancellation) ?? [])
+    ],
+    output: (state) => {
+      const children = childMachine.output(state.children)
+      const inferred = incrementalInference.output(state.inference)
       const resolvingModel = inferred.some((transition) => transition.key.startsWith("mr:"))
       return {
         view: children.view,
         transitions: resolvingModel ? inferred : [
           ...inferred,
-          ...tools.derive(log).transitions,
+          ...toolsMachine.output(state.tools).transitions,
           ...children.transitions
         ]
       }
     }
-  }, cancellable))
+  }) as AgentComponent<R>
+  return handles(agentMessageMethod, inheritComponentContract(root, combined))
 }

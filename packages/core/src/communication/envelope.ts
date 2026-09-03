@@ -1,9 +1,9 @@
-import type { Event as CoreEvent } from "../log/event"
+import type { Event as CoreEvent } from "@clavia/tardigrade-core/event"
 import type { ThreadLineage } from "../thread"
 import type { ThreadAddress, Endpoint, ProviderEndpoint } from "./endpoint"
 import type { Link } from "./link"
 import type { MessageReceived } from "./message"
-import { decodeActorInvocationContext, type ActorInvocationContext } from "../actor/method/call"
+import { decodeActorInvocationContext, type ActorInvocationContext } from "../method/call"
 
 // Envelope carries one event through a logical link without interpreting placement or transport.
 export interface Envelope<Source = unknown, Event = MessageReceived, Target = ThreadAddress> {

@@ -1,5 +1,6 @@
 import { Schema } from "effect"
-import { actorMethod } from "@clavia/tardigrade-core/actor/method"
+import type { Event } from "@clavia/tardigrade-core/event"
+import { actorMethod } from "@clavia/tardigrade-core/method"
 import { permissionRequestReceived } from "../log/events"
 
 export const PermissionRequestInput = Schema.Struct({
@@ -20,33 +21,60 @@ export const PermissionDecision = Schema.Union([
 
 export type PermissionDecision = typeof PermissionDecision.Type
 
+interface PermissionMethodProjection {
+  readonly received: ReadonlySet<string>
+  readonly decided: ReadonlyMap<string, { readonly granted?: unknown; readonly reason?: unknown }>
+  readonly failed: ReadonlyMap<string, string>
+}
+
+const reducePermissionMethod = (state: PermissionMethodProjection, event: Event): PermissionMethodProjection => {
+  const received = new Set(state.received)
+  const decided = new Map(state.decided)
+  const failed = new Map(state.failed)
+  if (event.type === "PermissionRequestReceived") received.add(String((event as { readonly id?: unknown }).id ?? ""))
+  if (event.type === "PermissionRequestDecided") {
+    decided.set(
+      String((event as { readonly callId?: unknown }).callId ?? ""),
+      event as { readonly granted?: unknown; readonly reason?: unknown }
+    )
+  }
+  if (event.type === "PermissionRequestFailed") {
+    failed.set(
+      String((event as { readonly callId?: unknown }).callId ?? ""),
+      String((event as { readonly error?: unknown }).error ?? "permission authority failed")
+    )
+  }
+  return { received, decided, failed }
+}
+
+const permissionStateFrom = (state: PermissionMethodProjection, id: string) => {
+  if (!state.received.has(id)) return undefined
+  const failure = state.failed.get(id)
+  if (failure !== undefined) return { status: "failed" as const, error: failure }
+  const decision = state.decided.get(id)
+  if (decision === undefined) return { status: "pending" as const }
+  return decision.granted === true
+    ? { status: "completed" as const, output: { granted: true as const } }
+    : {
+        status: "completed" as const,
+        output: {
+          denied: true as const,
+          ...(typeof decision.reason === "string" && decision.reason !== "" ? { reason: decision.reason } : {})
+        }
+      }
+}
+
 // requestPermissionMethod exposes one-shot tool authorization as a unary actor call.
 export const requestPermissionMethod = actorMethod({
   input: PermissionRequestInput,
   output: PermissionDecision,
   event: ({ invocation, input, at }) => permissionRequestReceived({ id: invocation.id, ...input, at }),
-  state: (events, invocation) => {
-    const { id } = invocation
-    const received = events.some((event) =>
-      event.type === "PermissionRequestReceived" && String((event as { readonly id?: unknown }).id) === id
-    )
-    if (!received) return undefined
-    const decided = events.find((event) =>
-      event.type === "PermissionRequestDecided" && String((event as { readonly callId?: unknown }).callId) === id
-    ) as { readonly granted?: unknown; readonly reason?: unknown } | undefined
-    const failed = events.find((event) =>
-      event.type === "PermissionRequestFailed" && String((event as { readonly callId?: unknown }).callId) === id
-    ) as { readonly error?: unknown } | undefined
-    if (failed !== undefined) return { status: "failed", error: String(failed.error ?? "permission authority failed") }
-    if (decided === undefined) return { status: "pending" }
-    return decided.granted === true
-      ? { status: "completed", output: { granted: true as const } }
-      : {
-          status: "completed",
-          output: {
-            denied: true as const,
-            ...(typeof decided.reason === "string" && decided.reason !== "" ? { reason: decided.reason } : {})
-          }
-        }
+  projection: {
+    initial: (): PermissionMethodProjection => ({ received: new Set(), decided: new Map(), failed: new Map() }),
+    step: reducePermissionMethod,
+    output: (state) => ({
+      currentEpoch: () => 0,
+      invocationState: (invocation) => permissionStateFrom(state, invocation.id)
+    })
   }
 })

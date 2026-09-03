@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
-import { Self } from "@clavia/tardigrade-core/reconciliation"
+import { Self } from "@clavia/tardigrade-core/runtime"
 import { createHost } from "@clavia/tardigrade-host/host"
 import { boundaryId, replyId } from "@clavia/tardigrade-core/communication/message"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
@@ -18,7 +18,7 @@ import type { Link } from "@clavia/tardigrade-core/communication/link"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { threadCreated } from "@clavia/tardigrade-core/thread"
-import { codeSystemFor } from "../components/code"
+import { codeSystemFor } from "../component/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
 // a host does and the same value runs anywhere.

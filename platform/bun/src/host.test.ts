@@ -6,8 +6,10 @@ import { join } from "node:path"
 import { Effect, Layer, Tracer } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { actorFromReactors, effect, type Actor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
-import { methodTimeoutKeys, methodTimeoutReactor } from "@clavia/tardigrade-core/actor/method"
+import { effect } from "@clavia/tardigrade-core/effect"
+import { actorFromProjections, type Actor } from "@clavia/tardigrade-core/runtime"
+import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
+import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/method"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -43,7 +45,7 @@ const keyOf = (e: Event): string | undefined =>
   e.type === "Done" ? `dn:${String((e as { id?: unknown }).id)}` : undefined
 
 // One reactor: every MessageReceived owes one keyed Done.
-const echoReactor: Reactor = (events) =>
+const echoProjection = completeTransitionProjection((events) =>
   events
     .filter((e) => e.type === "MessageReceived")
     .map((e) => {
@@ -53,9 +55,9 @@ const echoReactor: Reactor = (events) =>
         input: id,
         act: (input: string) => Effect.succeed([{ type: "Done", id: input, at: 1 } as Event])
       })
-    })
+    }))
 
-const echo: Actor = { reactors: [echoReactor], keyOf }
+const echo: Actor = { projections: [echoProjection], keyOf }
 
 const dir = mkdtempSync(join(tmpdir(), "tardigrade-bun-"))
 let n = 0
@@ -174,7 +176,7 @@ describe("the bun host", () => {
   test("runs actor code in its process sandbox", async () => {
     const actor: Actor = {
       keyOf,
-      reactors: [(events) => events
+      projections: [completeTransitionProjection((events) => events
         .filter((event) => event.type === "MessageReceived")
         .map((event) => {
           const id = String((event as { id?: unknown }).id)
@@ -187,7 +189,7 @@ describe("the bun host", () => {
               return [{ type: "Done", id: input, value: outcome.result, at: 1 } as Event]
             })
           })
-        })]
+        }))]
     }
     const h = await createBunHost({
       database: freshPath(),
@@ -216,7 +218,7 @@ describe("the bun host", () => {
     let started = 0
     const actor: Actor = {
       keyOf,
-      reactors: [(events) =>
+      projections: [completeTransitionProjection((events) =>
         events
           .filter((event) => event.type === "MessageReceived")
           .map((event) => {
@@ -234,7 +236,7 @@ describe("the bun host", () => {
                 return [{ type: "Done", id: input, at: 1 } as Event]
               })
             })
-          })]
+          }))]
     }
     const h = await createBunHost({
       database: freshPath(),
@@ -322,7 +324,10 @@ describe("the bun host", () => {
 
   test("recovery rearms a durable method deadline and records its observed alarm", async () => {
     const path = freshPath()
-    const timeoutActor = actorFromReactors([methodTimeoutReactor], methodTimeoutKeys.keyOf)
+    const timeoutActor = actorFromProjections({
+      transitions: [completeTransitionProjection(methodTimeoutDerivation)],
+      keyOf: methodTimeoutKeys.keyOf
+    })
     const firstAlarm = new ManualAlarmScheduler()
     const first = await createBunHost({
       database: path,
@@ -472,8 +477,8 @@ const workspaceKeyOf = (e: Event): string | undefined =>
 const reactorOver = (
   type: string,
   act: (id: string) => Effect.Effect<Event, KeyValueStore.KeyValueStoreError, KeyValueStore.KeyValueStore>
-): Reactor<KeyValueStore.KeyValueStore> =>
-(events) =>
+): ErasedTransitionProjection<KeyValueStore.KeyValueStore> =>
+completeTransitionProjection((events) =>
   events
     .filter((e) => e.type === "MessageReceived")
     .map((e) => {
@@ -483,16 +488,16 @@ const reactorOver = (
         input: id,
         act: (input: string) => act(input).pipe(Effect.map((event) => [event]), Effect.orDie)
       })
-    })
+    }))
 
 const spiller: Actor<KeyValueStore.KeyValueStore> = {
   keyOf: workspaceKeyOf,
-  reactors: [reactorOver("Spilled", (id) => Effect.as(spill(REF, VALUE), { type: "Spilled", id, at: 1 } as Event))]
+  projections: [reactorOver("Spilled", (id) => Effect.as(spill(REF, VALUE), { type: "Spilled", id, at: 1 } as Event))]
 }
 
 const loader: Actor<KeyValueStore.KeyValueStore> = {
   keyOf: workspaceKeyOf,
-  reactors: [
+  projections: [
     reactorOver("Loaded", (id) =>
       Effect.map(Effect.all([hydrate(REF), refs()]), ([value, held]) => ({ type: "Loaded", id, value, refs: held, at: 1 } as Event)))
   ]
@@ -625,8 +630,8 @@ type Answer = { rows?: ReadonlyArray<Record<string, unknown>>; truncated?: boole
 // back, so a test reads the answers a model would read.
 const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStore> => ({
   keyOf: askKeyOf,
-  reactors: [
-    (events) =>
+  projections: [
+    completeTransitionProjection((events) =>
       events
         .filter((e) => e.type === "MessageReceived")
         .map((e) => {
@@ -656,7 +661,7 @@ const asker = (queries: ReadonlyArray<string>): Actor<KeyValueStore.KeyValueStor
                 ]
               }).pipe(Effect.orDie)
           })
-        })
+        }))
   ]
 })
 

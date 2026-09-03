@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import fc from "fast-check"
-import { composeComponents } from "@clavia/tardigrade-core/actor"
+import { composeComponents, deriveComponent } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
   definePackage,
@@ -34,7 +34,25 @@ const regroup = (
 }
 
 const namesOf = (component: CodeComponent): ReadonlyArray<string> =>
-  component.derive([]).view.packages.map((pkg) => pkg.name)
+  deriveComponent(component, []).view.packages.map((pkg) => pkg.name)
+
+describe("code view algebra laws", () => {
+  test("empty is an identity and combine is associative", () => {
+    const viewArbitrary = fc.array(fc.stringMatching(/^[a-z][a-z0-9_]{0,12}$/), { maxLength: 12 })
+      .map((names) => ({ packages: names.map(packageFor) }))
+
+    fc.assert(
+      fc.property(viewArbitrary, viewArbitrary, viewArbitrary, (left, middle, right) => {
+        expect(CODE_VIEW_ALGEBRA.combine(CODE_VIEW_ALGEBRA.empty, left)).toEqual(left)
+        expect(CODE_VIEW_ALGEBRA.combine(left, CODE_VIEW_ALGEBRA.empty)).toEqual(left)
+        expect(CODE_VIEW_ALGEBRA.combine(CODE_VIEW_ALGEBRA.combine(left, middle), right)).toEqual(
+          CODE_VIEW_ALGEBRA.combine(left, CODE_VIEW_ALGEBRA.combine(middle, right))
+        )
+      }),
+      { numRuns: 500 }
+    )
+  })
+})
 
 describe("recursive code component composition", () => {
   test("every grouping preserves package identity and order", () => {
@@ -48,8 +66,8 @@ describe("recursive code component composition", () => {
           const nested = regroup(leaves, choices)
 
           expect(namesOf(nested)).toEqual(namesOf(flat))
-          expect(nested.derive([]).view.packages).toEqual(leaves)
-          expect(nested.derive([]).transitions).toEqual([])
+          expect(deriveComponent(nested, []).view.packages).toEqual(leaves)
+          expect(deriveComponent(nested, []).transitions).toEqual([])
         }
       ),
       { numRuns: 500 }

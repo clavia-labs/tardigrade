@@ -9,7 +9,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
-import { Infer, type InferRequest } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, Infer, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
@@ -531,7 +531,7 @@ describe("actors", () => {
       isolatedCatalog,
       Layer.provide(layerThreads({ infer: layerScripted }), [isolatedConfig, isolatedCatalog])
     ])
-    const module = `export default { name: "reviewer", methods: {}, components: [], reactors: [], keyOf: () => undefined }\n`
+    const module = `export default { name: "reviewer", methods: {}, components: [], projections: [], keyOf: () => undefined }\n`
     const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
     try {
       const result = await Effect.gen(function*() {
@@ -540,15 +540,27 @@ describe("actors", () => {
         const port = address._tag === "TcpAddress" ? address.port : 0
         const base = `http://127.0.0.1:${port}`
         return yield* Effect.promise(async () => {
-          const pushed = await put(base, "/v1/definitions", {
+          const incompatible = await put(base, "/v1/definitions", {
             manifest: { schema: 3, name: "reviewer", module: "actor.mjs", digest },
+            module
+          })
+          const pushed = await put(base, "/v1/definitions", {
+            manifest: { schema: ACTOR_ARTIFACT_VERSION, name: "reviewer", module: "actor.mjs", digest },
             module
           })
           const summary = await pushed.json()
           const actors = await (await get(base, "/v1/definitions")).json()
-          return { pushStatus: pushed.status, summary, actors }
+          return {
+            incompatible: { status: incompatible.status, body: await incompatible.json() },
+            pushStatus: pushed.status,
+            summary,
+            actors
+          }
         })
       }).pipe(Effect.provide(isolatedApp), Effect.scoped, Effect.runPromise)
+      expect(result.incompatible.status).toBe(400)
+      expect(result.incompatible.body).toMatchObject({ status: 400, title: "Invalid Request" })
+      expect((result.incompatible.body as { detail: string }).detail).toContain("`manifest.schema`")
       expect(result.pushStatus).toBe(200)
       expect(result.summary).toEqual({ name: "reviewer", builtIn: false, digest })
       expect(result.actors).toContainEqual({ name: "reviewer", builtIn: false, digest })

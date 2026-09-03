@@ -53,7 +53,7 @@ const directActor: Actor<never> = {
   name: "reviewer",
   methods: {},
   components: [],
-  reactors: [],
+  projections: [],
   keyOf: () => undefined
 }
 
@@ -100,7 +100,7 @@ const booted = <A>(
 
 // installActor performs the final atomic directory swap of a local push.
 const installActor = (root: string, name: string, revision: string): string => {
-  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, methods: {}, components: [], reactors: [], keyOf: () => undefined }\n`
+  const module = `export default { name: ${JSON.stringify(name)}, revision: ${JSON.stringify(revision)}, methods: {}, components: [], projections: [], keyOf: () => undefined }\n`
   const digest = `sha256:${createHash("sha256").update(module).digest("hex")}`
   const destination = join(root, name)
   const incoming = `${destination}.incoming`

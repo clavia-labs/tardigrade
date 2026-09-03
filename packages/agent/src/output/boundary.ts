@@ -50,7 +50,7 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | 
   return undefined
 }
 
-// outputOf reads a completed turn's result under the contract that turn declared. It returns undefined for a pending or failed turn and throws when the declaration or stored result cannot satisfy the supplied contract (boundary.test.ts, "a turn that declared nothing is never reinterpreted"; inference/reactor.ts, completionOf).
+// outputOf reads a completed turn's result under the contract that turn declared. It returns undefined for a pending or failed turn and throws when the declaration or stored result cannot satisfy the supplied contract (boundary.test.ts, "a turn that declared nothing is never reinterpreted"; inference/machine.ts, completionOf).
 export const outputOf = <T>(
   contract: OutputContract<T>,
   log: ReadonlyArray<Event>,

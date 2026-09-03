@@ -1,18 +1,18 @@
 import { Clock, Effect } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import { send, type Actor } from "@clavia/tardigrade-core/reconciliation"
+import { send, type Actor } from "@clavia/tardigrade-core/runtime"
 import type { Router } from "@clavia/tardigrade-core/communication/router"
-import type { Self } from "@clavia/tardigrade-core/reconciliation"
-import type { Infer, InferPolicy } from "../inference/reactor"
+import type { Self } from "@clavia/tardigrade-core/runtime"
+import type { Infer, InferPolicy } from "../inference/contract"
 import type { OutputContract } from "../output/contract"
-import type { BudgetPolicy } from "../components/budget"
-import type { CompactionPolicy } from "../components/compaction"
+import type { BudgetPolicy } from "../component/budget"
+import type { CompactionPolicy } from "../component/compaction"
 import type { CodePolicy } from "@clavia/tardigrade-code/execution/reactor"
 import type { WorkspacePolicy } from "@clavia/tardigrade-code/package/workspace"
 import type { ModelRef } from "../inference/reference"
 
-export { Infer } from "../inference/reactor"
+export { Infer } from "../inference/contract"
 
 // AgentR is the infer root's needs: Infer for the model, EventLog for settle, Router and Self for
 // communication, and

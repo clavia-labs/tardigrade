@@ -4,7 +4,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, composeKeys, withWatermark } from "@clavia/tardigrade-core/log"
-import { settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { settleActor } from "@clavia/tardigrade-core/runtime"
 import { messageKeys } from "@clavia/tardigrade-core/communication/message"
 import { definePackage, type Package } from "../package/definition"
 import { Park } from "./errors"
@@ -77,7 +77,7 @@ const runAttempt = async (completions: ReadonlyArray<Completion>): Promise<Reado
   const running = Effect.runPromise(
     Effect.gen(function* () {
       yield* settleActor({
-        reactors: [codeReactorFor({}, [probePackage])],
+        projections: [codeReactorFor({}, [probePackage])],
         keyOf: composeKeys(messageKeys, codeKeys)
       })
       return yield* Effect.flatMap(EventLog, (log) => log.read)

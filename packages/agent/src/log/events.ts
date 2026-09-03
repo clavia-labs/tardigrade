@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { CancellationRequested } from "@clavia/tardigrade-core/actor/method"
+import { CancellationRequested } from "@clavia/tardigrade-core/method"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 
@@ -18,7 +18,7 @@ import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
 export { MessageReceived } from "@clavia/tardigrade-core/communication/message"
-export { CancellationRequested, cancellationRequested } from "@clavia/tardigrade-core/actor/method"
+export { CancellationRequested, cancellationRequested } from "@clavia/tardigrade-core/method"
 
 // Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
 // `provider` and `model` are the configuration's own effective coordinates, so a replay reads
@@ -54,7 +54,7 @@ export const ToolCalled = Schema.Struct({
   endpoint: Schema.optional(Endpoint),
   // A tool call may be one response in a turn that declares final output. Its effective mode is
   // recorded here so replay does not decide how this attempt ran from a current capability
-  // (inference/reactor.ts, consequenceOf).
+  // (inference/machine.ts, consequenceOf).
   mode: Schema.optional(Schema.Unknown),
   epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
@@ -142,12 +142,12 @@ export type TurnFailureCause = (typeof TURN_FAILURE_CAUSES)[number]
 // OutputRejected is one final response judged against the turn's declared output contract and
 // found wanting. It is the typed state a correcting implementation runs on: the framework loop
 // counts these against its recorded bound, and a delegated one derives whatever it likes from
-// them (src/components/repair.ts). A turn under the native or local implementation records none:
+// them (src/component/repair.ts). A turn under the native or local implementation records none:
 // a mismatch there is a terminal.
 //
 // `mode` is how the attempt that produced it obtained the contract, recorded here because
 // exhaustion, the park, and the history projection are all read off this event and must not
-// change when a deployment mounts a different fallback (src/output/contract.ts, projectedOutput).
+// change when a deployment mounts a different fallback (src/projection/transcript.ts, projectedOutput).
 export const OutputRejected = Schema.Struct({
   type: Schema.Literal("OutputRejected"),
   contract: Schema.String, // the schema identity the response missed
@@ -168,7 +168,7 @@ export const OutputRejected = Schema.Struct({
 // that dies between this record and the inference leaves a request nobody served, and the
 // `ModelCalled` that follows is the durable fact that the ask began (ModelCalled above).
 //
-// It exists so a delegated implementation owns its own loop: the infer reactor parks a delegated
+// It exists so a delegated implementation owns its own loop: the inference machine parks a delegated
 // turn on its rejection and only this event releases it, and the render shows `feedback` rather
 // than any framework sentence. `decision` is the component's own serializable record of why,
 // stamped so a replay reads the same choice (src/output/contract.ts, OutputFallback).
@@ -178,6 +178,16 @@ export const OutputRetryRequested = Schema.Struct({
   feedback: Schema.String,
   by: Schema.String, // the component that decided
   decision: Schema.optional(Schema.Unknown),
+  epoch: Schema.optional(Schema.Finite),
+  turn: Schema.optional(Schema.String),
+  at: Schema.Finite
+})
+
+// OutputRepaired records that one successful attempt replaces one rejected attempt in the model transcript (src/output/contract.test.ts, "an explicit repair projects the replaced attempt").
+export const OutputRepaired = Schema.Struct({
+  type: Schema.Literal("OutputRepaired"),
+  replaced: Schema.String,
+  replacement: Schema.String,
   epoch: Schema.optional(Schema.Finite),
   turn: Schema.optional(Schema.String),
   at: Schema.Finite
@@ -221,7 +231,7 @@ export const TurnResumed = Schema.Struct({
 })
 
 // BudgetExhausted records the wall when a component subtree passes the turn's budget. The budget
-// wrapper withdraws its tools and refuses the pending call (components/budget.test.ts, "settling an
+// wrapper withdraws its tools and refuses the pending call (component/budget.test.ts, "settling an
 // over-budget execute records the wall and never dispatches the call").
 export const BudgetExhausted = Schema.Struct({
   type: Schema.Literal("BudgetExhausted"),
@@ -303,7 +313,7 @@ export const BudgetGranted = Schema.Struct({
   type: Schema.Literal("BudgetGranted"),
   amount: Schema.Finite, // the tool calls added to this turn's budget
   // The BudgetRequested this grant answers. The dedup key reads it: a grant is summed into the
-  // ceiling (components/budget.ts), so a redelivered grant landing twice would silently
+  // ceiling (component/budget.ts), so a redelivered grant landing twice would silently
   // double the budget; keyed by the request it answers, the store absorbs the repeat.
   callId: Schema.optional(Schema.String),
   turn: Schema.optional(Schema.String),
@@ -327,6 +337,7 @@ export const AgentEvent = Schema.Union([
   ToolReturned,
   OutputRejected,
   OutputRetryRequested,
+  OutputRepaired,
   TurnCompleted,
   TurnFailed,
   CancellationRequested,
@@ -347,8 +358,8 @@ export type AgentEvent = typeof AgentEvent.Type
 
 // Action is what the model reacts with: ask the world, or end the turn. `text` is the prose the
 // model emitted alongside a call; it records as `TextReturned`. A `complete` under a declared
-// output contract carries the final response verbatim, and the infer reactor judges it against
-// the contract before any terminal is recorded (inference/reactor.ts).
+// output contract carries the final response verbatim, and the inference machine judges it against
+// the contract before any terminal is recorded (inference/machine.ts).
 // AttemptEndpoint is the binding's report of who served the attempt, carried on every action so
 // the consequence records it whether or not the endpoint reported any spend.
 export interface AttemptEndpoint {
@@ -360,7 +371,7 @@ export interface AttemptEndpoint {
 
 // `mode` is how an attempt obtained a declared output contract. A binding answering a turn that
 // declared one must state it: the reactor records it and reads it back on replay, and it refuses
-// to invent one (inference/reactor.ts, completionOf).
+// to invent one (inference/machine.ts, completionOf).
 type Served = {
   readonly usage?: Usage
   readonly endpoint?: AttemptEndpoint
@@ -387,7 +398,7 @@ export type Action =
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
-  prefixes: ["tr:", "bdec:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:"],
+  prefixes: ["tr:", "bdec:", "tn:", "rs:", "mr:", "mc:", "bw:", "br:", "cc:", "or:", "oq:", "op:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
@@ -422,6 +433,8 @@ export const agentKeys: KeyFragment = {
       case "OutputRetryRequested":
         // One decision per rejection, whichever component made it.
         return `oq:${String(v.rejection)}`
+      case "OutputRepaired":
+        return `op:${String(v.replaced)}/${String(v.replacement)}`
       case "CompactionCompleted":
         // The checkpoint's occurrence is the identity it keeps from.
         return `cc:${String(v.keepFrom)}`
@@ -488,8 +501,8 @@ export const outputRejected = (
 ): Event => ({ type: "OutputRejected", ...fields }) as Event
 
 // outputRetryRequested records one component's decision to ask again after a rejection, with the
-// feedback that component chose. Any component may append it; the infer reactor reads only
-// whether the rejection it answers has one (inference/reactor.ts).
+// feedback that component chose. Any component may append it; the inference machine reads only
+// whether the rejection it answers has one (inference/machine.ts).
 export const outputRetryRequested = (
   fields: {
     readonly rejection: string
@@ -498,6 +511,14 @@ export const outputRetryRequested = (
     readonly decision?: unknown
   } & EpochStamp
 ): Event => ({ type: "OutputRetryRequested", ...fields }) as Event
+
+// outputRepaired constructs an OutputRepaired event.
+export const outputRepaired = (
+  fields: {
+    readonly replaced: string
+    readonly replacement: string
+  } & EpochStamp
+): Event => ({ type: "OutputRepaired", ...fields }) as Event
 
 export const turnFailed = (
   fields: {

@@ -1,13 +1,15 @@
-import { describe, expect, test } from "bun:test"
+import { describe, expect, expectTypeOf, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { settleActor, type Reactor } from "@clavia/tardigrade-core/reconciliation"
+import { settleActor } from "@clavia/tardigrade-core/runtime"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
+import type { TransitionProjection } from "@clavia/tardigrade-core/transition"
 import { messageKeys } from "@clavia/tardigrade-core/communication/message"
 import { definePackage, type Package } from "../package/definition"
 import { guestBindings, Sandbox, type Bindings } from "../sandbox/service"
-import { DEFAULT_PACKAGE_CALL_POLICY, codeReactor, codeReactorFor, packageCallPolicyOf } from "./reactor"
+import { DEFAULT_PACKAGE_CALL_POLICY, codeReactor, codeReactorFor, packageCallPolicyOf, type CodeProjectionState } from "./reactor"
 import { codeKeys } from "./events"
 
 // The shadow router rule, over the one funnel every package call crosses: `executeRecorded`. A
@@ -75,7 +77,7 @@ const settled = async (head: Event): Promise<ReadonlyArray<Event>> => {
   const log: Event[] = [head, { type: "CodeDispatched", execId: "e1", code, turn: "t1", at: 2 }]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ projections: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
     }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
   )
@@ -113,7 +115,7 @@ describe("package call failure policy", () => {
     const events = await Effect.runPromise(
       Effect.gen(function* () {
         yield* settleActor({
-          reactors: [codeReactorFor({ call: { retryDelaysMs: [0] } }, [flakyPackage])],
+          projections: [codeReactorFor({ call: { retryDelaysMs: [0] } }, [flakyPackage])],
           keyOf: composeKeys(messageKeys, codeKeys)
         })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
@@ -151,7 +153,7 @@ describe("package call failure policy", () => {
     const events = await Effect.runPromise(
       Effect.gen(function* () {
         yield* settleActor({
-          reactors: [codeReactorFor({ call: { attemptTimeoutMs: 10, retryDelaysMs: [1, 2] } }, [hangingPackage])],
+          projections: [codeReactorFor({ call: { attemptTimeoutMs: 10, retryDelaysMs: [1, 2] } }, [hangingPackage])],
           keyOf: composeKeys(messageKeys, codeKeys)
         })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
@@ -192,7 +194,7 @@ describe("the replay guard", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
@@ -215,7 +217,7 @@ describe("the replay guard", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
@@ -252,7 +254,7 @@ describe("the replay guard", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [codeReactorFor({}, [worldPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>
     )
@@ -298,7 +300,7 @@ describe("the spill bound", () => {
     const drive = (reactor: typeof codeReactor) =>
       Effect.runPromise(
         Effect.gen(function* () {
-          yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
+          yield* settleActor({ projections: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
           return yield* Effect.flatMap(EventLog, (l) => l.read)
         }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
           ReadonlyArray<Event>
@@ -322,7 +324,7 @@ describe("the pointer's note", () => {
   const drive = (log: Event[], reactor: typeof codeReactor) =>
     Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [reactor], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(Effect.provide(Layer.mergeAll(memoryLog(log), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<
         ReadonlyArray<Event>
@@ -410,7 +412,7 @@ describe("a package's requirements ride its type", () => {
     ]
     const events = await Effect.runPromise(
       Effect.gen(function* () {
-        yield* settleActor({ reactors: [codeReactorFor({}, [tickerPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
+        yield* settleActor({ projections: [codeReactorFor({}, [tickerPackage])], keyOf: composeKeys(messageKeys, codeKeys) })
         return yield* Effect.flatMap(EventLog, (l) => l.read)
       }).pipe(
         Effect.provide(
@@ -432,12 +434,11 @@ describe("a package's requirements ride its type", () => {
 
   test("the reactor a service-needing package builds cannot stand where the service is missing", () => {
     // The packages are values, so the reactor's environment is derived from them: mounting the
-    // ticker package makes a Reactor<KeyValueStore | Ticker>, and the powerless environment has
+    // ticker package makes a transition projection that requires KeyValueStore and Ticker, and the powerless environment has
     // nowhere to read Ticker from. The type says so before anything runs.
-    const powered: Reactor<KeyValueStore.KeyValueStore | Ticker> = codeReactorFor({}, [tickerPackage])
-    // @ts-expect-error a Reactor<KeyValueStore | Ticker> is not a Reactor<KeyValueStore>
-    const powerless: Reactor<KeyValueStore.KeyValueStore> = powered
-    expect(powerless([])).toEqual([])
+    const powered: TransitionProjection<CodeProjectionState, KeyValueStore.KeyValueStore | Ticker> = codeReactorFor({}, [tickerPackage])
+    expectTypeOf(powered).not.toMatchTypeOf<TransitionProjection<CodeProjectionState, KeyValueStore.KeyValueStore>>()
+    expect(replayProjection(powered, [])).toEqual([])
   })
 
   test("two packages under one name fail at construction", () => {

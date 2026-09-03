@@ -128,6 +128,17 @@ export class CloudflareEventStore implements ThreadEventStore {
       )
   }
 
+  get first(): Effect.Effect<Event | undefined> {
+    return this.sql
+      .unsafe<{ readonly event: string }>("SELECT event FROM events ORDER BY seq LIMIT 1")
+      .pipe(
+        Effect.map((rows) => rows.map((row) => JSON.parse(row.event) as Event)),
+        Effect.flatMap((events) => this.decode(events)),
+        Effect.map((events) => events[0]),
+        Effect.orDie
+      )
+  }
+
   readFrom(mark: number): Effect.Effect<ReadonlyArray<Event>> {
     return this.sql
       .unsafe<{ readonly event: string }>("SELECT event FROM events WHERE seq > ? ORDER BY seq", [mark])

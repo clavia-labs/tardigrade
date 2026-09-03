@@ -25,15 +25,15 @@ import {
   methodIngressKeyOf,
   type ActorInvocationContext,
   type ActorMethods
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 import {
   EffectInterruptions,
   Self,
+  createActorReconciler,
   effectInterruptionRegistry,
   restingActor,
-  settleActor,
   type Actor
-} from "@clavia/tardigrade-core/reconciliation"
+} from "@clavia/tardigrade-core/runtime"
 import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
@@ -328,6 +328,10 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   const storeKeyOf = (event: Event): string | undefined =>
     methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
   const runtimes = new Map<string, Promise<BunThreadRuntime>>()
+  const reconciliations = new Map<string, {
+    readonly actor: Actor<R>
+    readonly reconciler: ReturnType<typeof createActorReconciler<R>>
+  }>()
 
   const openThread = async (thread: string): Promise<BunThreadRuntime> => {
     const filename = pathOf(thread)
@@ -570,7 +574,17 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const actor = options.actorFor(thread)
       if (actor === undefined) return
       const threadRuntime = await runtimeOf(thread)
-      await threadRuntime.runtime.runPromise(settleActor(actor).pipe(Effect.provide(await layersOf(thread))))
+      let reconciliation = reconciliations.get(thread)
+      if (reconciliation?.actor !== actor) {
+        reconciliation = {
+          actor,
+          reconciler: createActorReconciler(actor)
+        }
+        reconciliations.set(thread, reconciliation)
+      }
+      await threadRuntime.runtime.runPromise(
+        reconciliation.reconciler.settle.pipe(Effect.provide(await layersOf(thread)))
+      )
       await synchronizeAlarm(thread)
     }
   })

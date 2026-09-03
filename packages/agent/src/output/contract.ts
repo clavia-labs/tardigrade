@@ -413,7 +413,7 @@ export const fingerprintOf = (contract: OutputContract): string => {
   return `${low.toString(16).padStart(8, "0")}${high.toString(16).padStart(8, "0")}`
 }
 
-// DeclaredOutput is the validated output declaration on a message. Invalid declarations become preflight terminals (inference/reactor.ts, inferReactorFor).
+// DeclaredOutput is the validated output declaration on a message. Invalid declarations become preflight terminals (inference/machine.ts, inferenceFromHistory).
 export type DeclaredOutput =
   | { readonly kind: "none" }
   | { readonly kind: "contract"; readonly contract: OutputContract }
@@ -474,7 +474,7 @@ export const NATIVE_MODE: OutputMode = { kind: "native", name: "native" }
 // correctionsOf returns the framework-managed correction limit for one turn epoch.
 export const correctionsOf = (mode: OutputMode): number => (mode.kind === "repair" ? mode.attempts : 0)
 
-// asksAgain reports whether the infer reactor schedules another attempt after a rejection.
+// asksAgain reports whether the inference machine schedules another attempt after a rejection.
 export const asksAgain = (mode: OutputMode): boolean => mode.kind === "repair"
 
 // projectsHistory reports whether a corrected exchange stops rendering once the turn completes.
@@ -536,7 +536,7 @@ export const fallbackOf = (value: unknown): OutputFallback | undefined => {
   return mode === undefined || mode.kind === "native" ? undefined : mode
 }
 
-// correctionAttemptsErrors reports invalid correction bounds (components/repair.ts, repairPolicyOf).
+// correctionAttemptsErrors reports invalid correction bounds (component/repair.ts, repairPolicyOf).
 export const correctionAttemptsErrors = (attempts: unknown): ReadonlyArray<string> =>
   typeof attempts === "number" && Number.isInteger(attempts) && attempts >= 0
     ? []
@@ -547,25 +547,3 @@ export const correctionText = (errors: ReadonlyArray<string>): string =>
   `Your reply did not match this turn's output schema:\n${errors.map((e) => `- ${e}`).join("\n")}\n` +
   `Reply again with JSON that satisfies the schema, and nothing else. Send values in their declared types: ` +
   `an array is a JSON array, never a string holding one.`
-
-// projectedOutput removes completed correction exchanges from model input, context measurement, and summaries when their recorded policy requests projection (request.ts, renderMessages; components/compaction.ts).
-export const projectedOutput = (events: ReadonlyArray<Event>): ReadonlyArray<Event> => {
-  if (!events.some((event) => event.type === "OutputRejected")) return events
-  const completed = new Set(
-    events.filter((e) => e.type === "TurnCompleted").map((e) => String((e as { turn?: unknown }).turn))
-  )
-  const hidden = new Set<string>()
-  for (const event of events) {
-    if (event.type !== "OutputRejected" || !completed.has(String((event as { turn?: unknown }).turn))) continue
-    const mode = modeOf((event as { mode?: unknown }).mode)
-    const attempt = (event as { attempt?: unknown }).attempt
-    if (mode !== undefined && projectsHistory(mode) && typeof attempt === "string") hidden.add(attempt)
-  }
-  return events.filter((event) => {
-    if (event.type === "OutputRejected") return !hidden.has(String((event as { attempt?: unknown }).attempt))
-    if (event.type === "OutputRetryRequested") {
-      return !hidden.has(String((event as { rejection?: unknown }).rejection))
-    }
-    return true
-  })
-}

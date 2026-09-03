@@ -6,8 +6,8 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { Self, effect, settleActor } from "@clavia/tardigrade-core/reconciliation"
-import { actor, composeComponents } from "@clavia/tardigrade-core/actor"
+import { Self, effect, settleActor } from "@clavia/tardigrade-core/runtime"
+import { actor, composeComponents, deriveComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
   definePackage,
@@ -16,15 +16,18 @@ import {
 } from "@clavia/tardigrade-code/package/definition"
 import { fetchPackage } from "@clavia/tardigrade-code/package/fetch"
 import { defineOutputFallback, infer, renderOf, type AgentComponent, type AgentView } from "./composition"
-import { CODE_SYSTEM, codeMode, codeSystemFor } from "../components/code"
-import { budget } from "../components/budget"
-import { compaction } from "../components/compaction"
+import { CODE_SYSTEM, codeMode, codeSystemFor } from "../component/code"
+import { budget } from "../component/budget"
+import { compaction } from "../component/compaction"
 import { agentMethods } from "../actor/methods"
-import { tool } from "../components/tool"
-import { nativeOutput } from "../components/native-output"
-import { system } from "../components/system"
+import { tool } from "../component/tool"
+import { nativeOutput } from "../component/native-output"
+import { system } from "../component/system"
+import { permissions } from "../component/permissions"
+import { requestPermissionMethod } from "../actor/permission"
 import { receive } from "./turn"
-import { Infer, NativeOutputSupport, selectedModelOf, type InferRequest } from "../inference/reactor"
+import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
+import { selectedModelOf } from "../inference/machine"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
@@ -75,12 +78,20 @@ const echoTable = tool([
 const viewComponent = (
   name: string,
   view: AgentView | ((log: ReadonlyArray<Event>) => AgentView)
-): AgentComponent => ({
+): AgentComponent => legacyComponent({
   name,
   derive: (log) => ({ view: typeof view === "function" ? view(log) : view, transitions: [] })
 })
 
 describe("infer component", () => {
+  test("the built-in agent root exposes an incremental projection", () => {
+    const component = infer([budget([codeMode()]), compaction(), nativeOutput], TEST_MODEL)
+    expect(component.machine).toBeDefined()
+    const definition = assembled(component)
+    expect(definition.projections.every((reactor) => "initial" in reactor)).toBe(true)
+    expect(definition.projection).toBeDefined()
+  })
+
   test("the actor owns model selection", () => {
     const fallback = { provider: "cloudflare", model_id: "openai/gpt-5.6-luna" } as const
     const message = {
@@ -291,10 +302,10 @@ describe("infer component", () => {
         ? [{ component: "changing-output", kind: "fallback", fallback: { kind: "local", name: "validate-once" } }]
         : []
     })))
-    expect(() => changing.derive([{ type: "Ready" }])).toThrow("must declare one applicable fallback for every log")
+    expect(() => deriveComponent(changing, [{ type: "Ready" }])).toThrow("must declare one applicable fallback for every log")
   })
 
-  test("the render is the composed derivation, and the request carries it to the model", async () => {
+  test("the render is the composed output, and the request carries it to the model", async () => {
     const seen: InferRequest[] = []
     const mind = Layer.succeed(Infer, {
       react: (request: InferRequest) => {
@@ -394,7 +405,8 @@ describe("infer component", () => {
     const agent = assembled(infer([echoTable, later, nativeOutput], TEST_MODEL))
 
     expect(agent.components).toHaveLength(1)
-    expect(agent.reactors).toHaveLength(4)
+    expect(agent.projections).toHaveLength(1)
+    expect(agent.projection).toBeDefined()
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 
@@ -459,7 +471,7 @@ describe("infer component", () => {
     expect(render.system.indexOf("execute")).toBeLessThan(render.system.indexOf("echo"))
   })
 
-  test("a system fragment is a projection: it reads the log renderOf was handed", () => {
+  test("a legacy system projection observes replay prefixes through the requested log", () => {
     const seen: ReadonlyArray<Event>[] = []
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }, { type: "PackageInstalled", name: "slack" }]
     const catalog = viewComponent(
@@ -475,7 +487,7 @@ describe("infer component", () => {
       }
     )
     const render = renderOf([catalog, echoTable, nativeOutput], log)
-    expect(seen).toEqual([log])
+    expect(seen).toEqual([[], log.slice(0, 1), log])
     expect(render.system).toContain("packages: github, slack")
     // A constant fragment stays what it says, beside the derived one.
     expect(render.system).toContain("echo")
@@ -483,13 +495,33 @@ describe("infer component", () => {
 
   test("system contributes static or projected instructions as a component", () => {
     const log: ReadonlyArray<Event> = [{ type: "PackageInstalled", name: "github" }]
+    const fixed = system("review the repository")
+    const projected = system((events) => `recorded events: ${events.length}`)
+    const incremental = system({
+      initial: () => 0,
+      step: (count, event) => count + (event.type === "PackageInstalled" ? 1 : 0),
+      output: (count) => `installed packages: ${count}`
+    })
     const render = renderOf([
-      system("review the repository"),
-      system((events) => `recorded events: ${events.length}`),
+      fixed,
+      projected,
+      incremental,
       nativeOutput
     ], log)
 
-    expect(render.system).toBe("review the repository\nrecorded events: 1")
+    expect(render.system).toBe("review the repository\nrecorded events: 1\ninstalled packages: 1")
+    expect(fixed.machine).toBeDefined()
+    expect(projected.machine).toBeDefined()
+    expect(incremental.machine).toBeDefined()
+    expect(nativeOutput.machine).toBeDefined()
+    expect(echoTable.machine).toBeDefined()
+    expect(permissions([echoTable], {
+      authority: {
+        address: parseThreadAddress("permission:main:root"),
+        methods: { requestPermission: requestPermissionMethod }
+      },
+      request: () => undefined
+    }).machine).toBeDefined()
   })
 
   test("renderOf over one log is deterministic", () => {
@@ -509,7 +541,7 @@ describe("infer component", () => {
 
   test("a mounted package names itself in the system fragment", () => {
     // The model is told what the code can name, from the same values the code reactor mounts:
-    // package prose followed by each documented input and output shape (components/code.ts,
+    // package prose followed by each documented input and output shape (component/code.ts,
     // codeSystemFor).
     const notes: Package = definePackage({
       name: "notes",
@@ -535,7 +567,7 @@ describe("infer component", () => {
     expect(system).toContain("notes: the team's notes")
     expect(system).toContain("notes.put({text: string}) -> {ok: boolean, error?: string}: Save one note.")
     expect(system).not.toContain("none")
-    // An explicit fragment still wins over the derivation.
+    // An explicit fragment still wins over the component output.
     expect(renderOf([codeMode([notes], { system: "my own scope" }), nativeOutput], []).system).toBe("my own scope")
   })
 
@@ -558,7 +590,7 @@ describe("infer component", () => {
       description: "the team's index",
       methods: { find: () => Effect.succeed(null) }
     })
-    const upkeep: CodeComponent = {
+    const upkeep: CodeComponent = legacyComponent({
       name: "upkeep",
       keys: {
         prefixes: ["up:"],
@@ -574,10 +606,10 @@ describe("infer component", () => {
           })
         ]
       })
-    }
+    })
     const nested = composeComponents("knowledge", CODE_VIEW_ALGEBRA, [notes, upkeep, search])
     const component = codeMode([nested])
-    const derived = component.derive([])
+    const derived = deriveComponent(component, [])
 
     expect(derived.view.system[0]).toContain("notes: the team's notes\nsearch: the team's index")
     expect(derived.transitions.map((transition) => transition.key)).toEqual(["up:daily"])
@@ -596,7 +628,7 @@ describe("infer component", () => {
     // Compile-time only: the const type parameter infers the component tuple, so R is the spill
     // store plus exactly what the listed packages require. A widened
     // `ReadonlyArray<Package<Ticker>>` would fail the empty-scope assertions below
-    // (components/code.ts, codeMode).
+    // (component/code.ts, codeMode).
     const ticker: Package<Ticker> = definePackage({
       name: "ticker",
       description: "the clock",

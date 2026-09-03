@@ -18,9 +18,13 @@ Tardigrade is a typescript framework for building durable, modular agents that c
 ### Agents that can self-improve
 As models get increasingly smart, they will be capable of writing their own harnesses to improve themselves ([Meta-Harness](https://arxiv.org/abs/2603.28052)). A harness that is too rigid and complex is a bottleneck to this. We need something more composable, and easy to author.
 
-We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). Tardigrade derives a view and transitions from the event log, an idea with roots in [Harel's statecharts](https://www.sciencedirect.com/science/article/pii/0167642387900359).
+We took inspiration from React. React derives its component tree and declared effects from state (`{ UI, effects } = f(state)`). A Tardigrade component is a [Moore machine](https://en.wikipedia.org/wiki/Moore_machine) over events. It updates its state for each event, then derives a view and transitions from that state.
 
-$$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = f(\mathrm{log})$$
+$$S_0 = \operatorname{initial}()$$
+
+$$S_{n+1} = \operatorname{step}(S_n, e_{n+1})$$
+
+$$\lbrace\mathrm{view},\ \mathrm{transitions}\rbrace = \operatorname{output}(S_n)$$
 
 ## Why Tardigrade
 
@@ -87,14 +91,16 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 
 ### Create a component
 
-An agent is made of components. A component derives a view and transitions from the log. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
+An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
-import type { AgentComponent } from "tardie"
+import { component, type AgentComponent, type AgentView } from "tardie"
 
-const deploys: AgentComponent = {
+const deploys: AgentComponent = component<undefined, AgentView>({
   name: "deploys",
-  derive: () => ({
+  initial: () => undefined,
+  step: (state, _event) => state,
+  output: () => ({
     view: {
       system: ["Inspect recent deployments when a release may explain an incident."],
       tools: [{
@@ -112,10 +118,10 @@ const deploys: AgentComponent = {
     },
     transitions: []
   })
-}
+})
 ```
 
-`derive` is a pure log projection. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` constructs the intent that records the result. Replace the sample result with a call to your deployment API.
+`initial` creates private component state. `step` receives each event and returns the next state. This fixed component ignores events, so it preserves the same state identity. `output` is a pure projection from state to the component's view and enabled transitions. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` constructs the intent that records the result. Replace the sample result with a call to your deployment API.
 
 The call follows one route:
 
@@ -251,13 +257,13 @@ The actor provider and default model must match the binding. The binding states 
 
 ## How durability works
 
-Every message, model action, tool result, and checkpoint lands in the log. Reactors read that log and derive keyed transitions.
+Every message, model action, tool result, and checkpoint lands in the log. Component machines consume those events and derive keyed transitions from their current state.
 
-$$\lbrace\mathrm{transitions}\rbrace = f(\mathrm{log})$$
+$$S_{n+1} = \operatorname{step}(S_n, e_{n+1})$$
 
 The host runs transitions with unrecorded keys. It appends their events and repeats until the agent rests.
 
-If the process stops during `recent_deploys`, the log still contains its unanswered `ToolCalled`. `host.recover()` derives the same key and input, then runs the handler again.
+If the process stops during `recent_deploys`, the log still contains its unanswered `ToolCalled`. `host.recover()` replays the log through the component machines, derives the same key and input, then runs the handler again. Live execution only steps the machines with newly appended events.
 
 External effects have at-least-once execution. Each keyed result is recorded once. Providers can use the transition key as an idempotency key.
 

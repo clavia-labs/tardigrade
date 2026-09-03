@@ -39,7 +39,7 @@ describe("buildActor", () => {
   })
 
   test("refuses an unnamed module", async () => {
-    const path = await entry("export default { actor: { reactors: [], keyOf: () => 'root' } }")
+    const path = await entry("export default { actor: { projections: [], keyOf: () => 'root' } }")
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("name must match")
   })
 
@@ -47,7 +47,7 @@ describe("buildActor", () => {
     const path = await entry(`
       export default {
         name: "researcher",
-        components: [], reactors: [], keyOf: () => "root"
+        components: [], projections: [], keyOf: () => "root"
       }
     `)
     await expect(buildActor(path, { cwd: root, out: "output" })).rejects.toThrow("must declare its methods")

@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import { replayProjection } from "@clavia/tardigrade-core/projection"
+import { cancellationStateOf } from "@clavia/tardigrade-core/method"
 import { AgentEvent } from "../log/events"
 import { requestBudgetMethod } from "./budget"
 import { agentMessageMethod } from "./message"
@@ -70,6 +72,11 @@ describe("agentMessageMethod", () => {
     const invocation = { method: "message", id: "m1", epoch: 0 }
     const cancellation = { request: "x1", invocation, cause: "requested" as const, reason: "operator stopped it" }
     const request = { type: "CancellationRequested", ...cancellation, at: 2 } as Event
+    const state = (events: ReadonlyArray<Event>) => cancellationStateOf(
+      agentMessageMethod,
+      replayProjection(agentMessageMethod.projection, events),
+      invocation
+    )
 
     expect(agentMessageMethod.cancellation.event(cancellation, 3)).toEqual({
       type: "TurnCancelled",
@@ -79,18 +86,18 @@ describe("agentMessageMethod", () => {
       turn: "m1",
       at: 3
     })
-    expect(agentMessageMethod.cancellation.state([], invocation)).toBeUndefined()
-    expect(agentMessageMethod.cancellation.state([head, request], invocation)).toBe("running")
-    expect(agentMessageMethod.cancellation.state([
+    expect(state([])).toBeUndefined()
+    expect(state([head, request])).toBe("running")
+    expect(state([
       head,
       request,
       { type: "TurnCancelled", request: "x1", turn: "m1", cause: "requested", reason: "operator stopped it", at: 3 } as Event
-    ], invocation)).toBe("cancelled")
-    expect(agentMessageMethod.cancellation.state([
+    ])).toBe("cancelled")
+    expect(state([
       head,
       request,
       { type: "TurnCompleted", turn: "m1", output: "done", at: 3 } as Event
-    ], invocation)).toBe("terminal")
+    ])).toBe("terminal")
   })
 
   test("preserves cancellation invocation identity", () => {

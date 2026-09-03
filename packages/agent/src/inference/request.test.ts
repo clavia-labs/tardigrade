@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf } from "@clavia/tardigrade-code/execution/turns"
-import { modelRequest, renderMessages } from "./request"
+import { modelRequest } from "./request"
+import { messagesProjection, renderMessages } from "../projection/messages"
 import { budget, canonicalOf, codeMode, nativeOutput, output, outputRepairFor, renderOf, tool } from "../index"
 
 // One declared contract, used wherever a turn needs one.
@@ -23,6 +24,22 @@ const budgetedCode = (log: ReadonlyArray<Event>) => renderOf([budget([codeMode()
 // prompt policy. Both live in the domain, so they test without a provider.
 
 describe("renderMessages", () => {
+  test("the projection matches complete replay at every prefix", () => {
+    const events: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "inspect it", at: 0 },
+      { type: "TextReturned", text: "checking", turn: "m1", at: 1 },
+      { type: "ToolCalled", callId: "c1", name: "execute", arguments: { code: "return 1" }, turn: "m1", at: 1 },
+      { type: "ToolReturned", callId: "c1", result: { value: 1 }, turn: "m1", at: 2 },
+      { type: "TurnCompleted", output: "done", turn: "m1", at: 3 }
+    ]
+    const projection = messagesProjection()
+    let state = projection.initial()
+    for (let index = 0; index < events.length; index++) {
+      state = projection.step(state, events[index]!)
+      expect(projection.output(state)).toEqual(renderMessages(events.slice(0, index + 1)))
+    }
+  })
+
   test("a full turn renders as user, assistant tool call, tool result", () => {
     const trajectory: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m1", text: "add the JD", at: 1 },
@@ -103,6 +120,7 @@ describe("renderMessages", () => {
       })
     }
   })
+
 })
 
 describe("modelRequest tool and prompt policy", () => {
@@ -213,7 +231,7 @@ describe("the repair exchange in the render", () => {
 
   // The generic correction sentence belongs to the framework loop alone. A component that mounts
   // a delegated implementation decides its own feedback, and nothing is written on its behalf
-  // (output.ts, OutputFallback; inference/reactor.ts, openRejection).
+  // (output.ts, OutputFallback; inference/machine.ts, openRejection).
   test("a delegated implementation writes its own feedback, and the framework writes none", () => {
     const delegated: Event = {
       type: "OutputRejected",
@@ -259,7 +277,7 @@ describe("the repair exchange in the render", () => {
   })
 
   // The projection reads the policy recorded on the rejection, so what an old turn means cannot
-  // change when a deployment mounts a different one (output.ts, projectedOutput).
+  // change when a deployment mounts a different one (projection/transcript.ts, projectedOutput).
   test("a rejection recorded under a policy that keeps history keeps rendering", () => {
     const trajectory: Event[] = [
       { type: "MessageReceived", id: "m1", text: "go", at: 0 },

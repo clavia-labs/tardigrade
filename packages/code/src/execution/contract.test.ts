@@ -3,7 +3,7 @@ import { Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { settleActor } from "@clavia/tardigrade-core/reconciliation"
+import { settleActor } from "@clavia/tardigrade-core/runtime"
 import { messageKeys } from "@clavia/tardigrade-core/communication/message"
 import { checkInput, renderShape, renderSignature } from "./contract"
 import { definePackage, type Package } from "../package/definition"
@@ -190,7 +190,7 @@ const settled = async (code: string): Promise<ReadonlyArray<Event>> => {
   ]
   return Effect.runPromise(
     Effect.gen(function* () {
-      yield* settleActor({ reactors: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
+      yield* settleActor({ projections: [codeReactorFor({}, [notesLike])], keyOf: composeKeys(messageKeys, codeKeys) })
       return yield* Effect.flatMap(EventLog, (l) => l.read)
     }).pipe(
       Effect.provide(

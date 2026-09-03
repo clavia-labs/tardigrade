@@ -44,7 +44,17 @@ Edit the generated `agents/agent/actor.ts`. Keep the actor name stable across bu
 
 ### Instructions and tools
 
-Move static system text into `system(...)`. Pass a log projection to `system` when the prompt depends on recorded events. Keep application data out of the prompt when a scoped package can read it on demand.
+Move static system text into `system(...)`. When instructions depend on recorded events, declare their sufficient state with `initial`, `reduce`, and `render` so each event updates the projection once:
+
+```ts
+system({
+  initial: () => ({ installed: 0 }),
+  reduce: (state, event) => event.type === "PackageInstalled" ? { installed: state.installed + 1 } : state,
+  render: (state) => `Installed packages: ${state.installed}`
+})
+```
+
+Keep application data out of the prompt when a scoped package can read it on demand.
 
 Use a package component through `codeMode([...components])` when its methods are ordinary operations that the model can combine, filter, or repeat in JavaScript. This exposes one `execute` tool to the model and keeps package methods behind the code surface. Use `tool` when a provider-visible tool call, approval step, or exact tool schema is part of the application contract.
 

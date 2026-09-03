@@ -11,7 +11,7 @@ import {
   cancellationRequested,
   cancellationDispositionOf,
   cancellationRequestIdOf
-} from "@clavia/tardigrade-core/actor/method"
+} from "@clavia/tardigrade-core/method"
 
 import {
   Api,

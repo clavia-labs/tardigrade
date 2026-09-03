@@ -1,6 +1,6 @@
 import type { ActorRef } from "./reference"
-import type { ActorMethodDeclaration, ActorMethods } from "./method"
-import type { Component } from "./component"
+import type { ActorMethodDeclaration, ActorMethods } from "../method"
+import type { Component } from "@clavia/tardigrade-core/component"
 
 export const COMPONENT_CONTRACT = Symbol.for("tardigrade.component.contract")
 
@@ -64,41 +64,65 @@ export const inheritComponentContract = <V, R>(
 export const inheritComponent = <V, R>(
   component: Component<V, R>,
   child: Component<unknown, R>
-): Component<V, R> => inheritComponentContract({
-  ...component,
-  cancel: (log, cancellation) => [
-    ...(child.cancel?.(log, cancellation) ?? []),
-    ...(component.cancel?.(log, cancellation) ?? [])
-  ]
-}, child)
+): Component<V, R> => {
+  const own = component.machine
+  const inherited = child.machine
+  return inheritComponentContract({
+    ...component,
+    machine: {
+      initial: () => ({ own: own.initial(), inherited: inherited.initial() }),
+      step: (state, event) => {
+        const current = state as { readonly own: unknown; readonly inherited: unknown }
+        return {
+          own: own.step(current.own, event),
+          inherited: inherited.step(current.inherited, event)
+        }
+      },
+      output: (state) => own.output((state as { readonly own: unknown }).own),
+      ...(own.cancel === undefined && inherited.cancel === undefined
+        ? {}
+        : {
+            cancel: (state: unknown, cancellation: Parameters<NonNullable<typeof own.cancel>>[1]) => {
+              const current = state as { readonly own: unknown; readonly inherited: unknown }
+              return [
+                ...(inherited.cancel?.(current.inherited, cancellation) ?? []),
+                ...(own.cancel?.(current.own, cancellation) ?? [])
+              ]
+            }
+          })
+    }
+  }, child)
+}
+
+const updateComponentContract = <V, R>(
+  component: Component<V, R>,
+  update: (contract: ComponentContract) => ComponentContract
+): Component<V, R> => withComponentContract(component, update(componentContractOf(component)))
 
 // handles records that a component completes calls to a method locally.
 export const handles = <V, R>(
   method: ActorMethodDeclaration,
   component: Component<V, R>
-): Component<V, R> => withComponentContract(component, {
-  ...componentContractOf(component),
-  handles: [...componentContractOf(component).handles, { method, handling: "local" }]
-})
+): Component<V, R> => updateComponentContract(component, (contract) => ({
+  ...contract, handles: [...contract.handles, { method, handling: "local" }]
+}))
 
 // externallyHandled records that a component accepts a method whose completion comes from outside reconciliation.
 export const externallyHandled = <V, R>(
   method: ActorMethodDeclaration,
   component: Component<V, R>
-): Component<V, R> => withComponentContract(component, {
-  ...componentContractOf(component),
-  handles: [...componentContractOf(component).handles, { method, handling: "external" }]
-})
+): Component<V, R> => updateComponentContract(component, (contract) => ({
+  ...contract, handles: [...contract.handles, { method, handling: "external" }]
+}))
 
 // calls records an outgoing method dependency on a fixed actor or the current caller.
 export const calls = <V, R>(
   target: CalledMethod["target"],
   method: ActorMethodDeclaration,
   component: Component<V, R>
-): Component<V, R> => withComponentContract(component, {
-  ...componentContractOf(component),
-  calls: [...componentContractOf(component).calls, { target, method }]
-})
+): Component<V, R> => updateComponentContract(component, (contract) => ({
+  ...contract, calls: [...contract.calls, { target, method }]
+}))
 
 export interface ActorMethodContract {
   readonly name: string

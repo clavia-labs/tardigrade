@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import type { Event } from "../log/event"
+import type { Event } from "@clavia/tardigrade-core/event"
 import { childCreated, childLineageOf, isThreadCreated, sameThreadLineage, threadCreated, threadCreatedOf, threadKeys } from "./lineage"
 
 describe("thread creation", () => {
