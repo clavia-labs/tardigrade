@@ -127,7 +127,7 @@ interface ComponentDefinition<State, View, Requirements = never> {
 }
 ```
 
-Tardigrade composes behavior by reconciling the transitions enabled by each component. Effect composes the runtime services those transitions require.
+Tardigrade composes behavior by combining the views and reconciling the transitions enabled by each component. Effect composes the runtime services those transitions require.
 
 ```text variant="diagram"
                     ┌── event history remembered as private state
