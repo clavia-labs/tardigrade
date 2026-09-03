@@ -587,9 +587,9 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
             </div>
           </div>
           <div className="mobile-nav-resources">
-            <span>Resources</span>
-            <a href={REPOSITORY} rel="noreferrer" target="_blank"><Github />GitHub</a>
-            <a href="https://discord.gg/Z74jwRxz4k" rel="noreferrer" target="_blank"><Discord />Discord</a>
+            <a href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
+            <a href="https://discord.gg/Z74jwRxz4k" aria-label="Tardigrade on Discord" rel="noreferrer" target="_blank"><Discord /></a>
+            <ThemeToggle />
           </div>
         </nav>
       </div>
