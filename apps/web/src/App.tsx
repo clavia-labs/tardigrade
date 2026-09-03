@@ -342,7 +342,7 @@ const HowItWorks = (): ReactElement => {
       <div className="how-inner">
         <div className="how-copy">
           <h2>How it works</h2>
-          <p>Every event is written to a durable log. Each component is a pure function over the log. <span className="function-signature">f(log)</span> derives the next effect, and each result returns to the log until the turn is complete.</p>
+          <p>Every event is written to a durable log. Each component folds those events into state, then derives a view and enabled transitions. The runtime executes those transitions and appends the results to the log until the turn is complete.</p>
         </div>
         <div className="event-table-card">
           <div className={`actor-world-grid${projection === undefined ? "" : " is-tracing"}`}>
@@ -384,7 +384,7 @@ const Durability = (): ReactElement => (
   <section className="durability">
     <div className="durability-inner">
       <div className="durability-copy">
-        <h2>Extremely durable.</h2>
+        <h2>Let it crash.</h2>
         <p>Since all of an agent&apos;s state lives in a single log, Tardigrade agents are extremely durable and portable. The name comes from the nearly indestructible animals that survive extreme conditions by entering a dormant tun state.</p>
       </div>
       <figure className="durability-figure">
@@ -609,7 +609,7 @@ export const LandingPage = (): ReactElement => (
         <div className="hero-inner">
           <div className="hero-copy">
             <h1><span>Build stateful agents</span><span>from simple components.</span></h1>
-            <p>Tardigrade is a TypeScript framework for building modular agents around an immutable event log.</p>
+            <p>Tardigrade is a TypeScript framework for building modular agents around an immutable event log. Built on Effect TS.</p>
             <div className="hero-cta-stack">
               <div className="hero-actions">
                 <CopyPromptButton />

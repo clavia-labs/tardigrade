@@ -19,10 +19,8 @@
       <rect x="632.5" y="62.5" width="7" height="7"/>
       <rect x="688.5" y="50.5" width="7" height="7"/>
     </g>
-    <g fill="#2450ff" stroke="#2450ff" font-family="'IBM Plex Mono', Menlo, Monaco, monospace" font-size="10" text-anchor="middle">
-      <text x="492" y="22" stroke="none">f(previous points)</text>
-      <path d="M492 30V59M487 54l5 5 5-5" fill="none" stroke-width="1" vector-effect="non-scaling-stroke"/>
-    </g>
+    <path d="M492 68L532 46M524 46H532L529 54" fill="none" stroke="#2450ff" stroke-width="1.25" vector-effect="non-scaling-stroke"/>
+    <text x="548" y="35" fill="#2450ff" font-family="'IBM Plex Mono', Menlo, Monaco, monospace" font-size="13" text-anchor="middle">f(previous points)</text>
   </g>
 
   <text x="1140" y="584" fill="#526073" font-family="'IBM Plex Mono', Menlo, Monaco, monospace" font-size="18" text-anchor="end">tardigrade.sh</text>
