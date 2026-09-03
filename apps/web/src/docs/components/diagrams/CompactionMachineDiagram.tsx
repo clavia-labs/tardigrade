@@ -28,7 +28,7 @@ export const CompactionMachineDiagram = (): ReactElement => (
           <li><code>MessageReceived</code></li>
           <li><code>ToolCalled</code></li>
           <li><code>ToolReturned</code></li>
-          <li><code>CompactionCompleted</code><code>summary</code></li>
+          <li className="compaction-flow-checkpoint"><code>CompactionCompleted</code><code>summary</code></li>
           <li><code>MessageReceived</code></li>
           <li><code>ToolCalled</code></li>
           <li><code>MessageReceived</code></li>
