@@ -121,14 +121,15 @@ const deploys: AgentComponent = component<undefined, AgentView>({
 })
 ```
 
-`initial` creates private component state. `step` receives each event and returns the next state. This fixed component ignores events, so it preserves the same state identity. `output` is a pure projection from state to the component's view and enabled transitions. Each tool binding keeps its specification and handler together, so a tool derived for the model is routable by construction. `answer` constructs the intent that records the result. Replace the sample result with a call to your deployment API.
+`initial` creates private state. `step` updates it for each event. This component ignores events and preserves its state. `output` derives its view and enabled transitions. Each tool keeps its specification and handler together. `answer` records the result. Replace the sample result with your deployment API.
 
-The call follows one route:
+An offered tool follows this lifecycle:
 
-1. The component adds `recent_deploys` to its derived view.
-2. The model selects it and returns a tool call. Tardigrade records `ToolCalled` in the log.
-3. The infer root finds the paired handler in the view that offered the call and asks it to serve against the current log.
-4. Tardigrade records `ToolReturned`. The next model request includes the result.
+1. The component adds `recent_deploys` to the agent's composed view.
+2. `infer` includes its specification in the model request.
+3. The model calls it. Tardigrade records `ToolCalled`.
+4. Tardigrade runs the attached handler and records `ToolReturned`.
+5. `infer` includes the result in the next model request.
 
 ### Compose an agent
 
@@ -173,22 +174,13 @@ const releaseAnalyst = actor({
 })
 ```
 
-`infer` composes the components into an agent loop. With no model override it inherits the host's allowed coordinates and default. An actor can pass `models: { allow?, default? }` to narrow that set, change its default, or do both. Every effective default must belong to the effective set. `actor` binds those components to a stable name and callable interface. `agentMethods` provides `message` and `requestBudget`. Every actor method call is a durable future that remains pending until it receives one completed or failed terminal response. A message may select another allowed model with a complete `{ provider, model_id }` reference.
+1. `actor` gives the composition a stable name and callable methods. `infer` turns its child components into an agent loop and inherits the host's model policy unless the actor narrows it with `models`.
 
-`compaction(policy?)` bounds model context. The host resolves the selected model's window from its catalog snapshot. Compaction fires at 80 percent and keeps a 50 percent tail unless the actor states other ratios:
+2. `compaction()` uses the selected model's catalog window. It summarizes at 80 percent and retains a 50 percent tail. Pass `fireRatio` and `keepRatio` to change those values. Each checkpoint records the policy it applied.
 
-```ts
-const boundedContext = compaction({
-  fireRatio: 0.8,
-  keepRatio: 0.5
-})
-```
+3. `codeMode([...components])` exposes its packages through one `execute` tool.
 
-When compaction runs, its checkpoint records the applied policy with the summary.
-
-`codeMode([...components])` combines code packages behind one `execute` tool. Define a package with `definePackage(...)`. Group packages with `composeComponents(...)`.
-
-`budget([...components], { limit?, authority? })` meters calls to tools derived by its child components and closes that subtree at the limit. Components beside the wrapper remain outside that budget. An authority lets an escalatable child call `requestBudget`; `caller()` selects the actor that sent its current message. `budgetAuthority()` is the local automatic handler. Another actor can keep the same method pending while a service or human decides it.
+4. `budget([...components])` meters tool calls within its subtree. `caller()` sends escalation requests to the invoking actor, and `budgetAuthority()` handles them locally.
 
 This agent can inspect deployments and files, fetch sources, delegate research, and analyze results with JavaScript. Change the package list to create another harness.
 
