@@ -8,7 +8,9 @@ sectionOrder: 1
 order: 2
 ---
 
-Building an agent is challenging. As tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex. Tardigrade presents a way to simplify this complexity, by proposing a new way of thinking about agent harnesses.
+Building an agent is challenging. As tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
+
+Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses.
 
 In a typical agent harness, your core model loop would be something like this:
 
@@ -55,9 +57,11 @@ It is not obvious which part of your code led to a specific agent behavior, nor 
 
 ### A composable way to author behavior
 
-Tardigrade grew out of the realization that an agent harness is similar to a user interface. User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and frontend developers already know how to solve it.
+Tardigrade grew out of the realization that an agent harness is similar to a user interface.
 
-React defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a state machine, with state as projections from an immutable event log.
+User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and the frontend community had already solved it.
+
+[React](https://react.dev/) defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of components. Each component is a state machine, with state as projections from an immutable event log.
 
 <InterfaceComparisonDiagram />
 

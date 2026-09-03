@@ -633,21 +633,8 @@ h1 span { display: block; white-space: nowrap; }
 .harness-diagram-boundary path { fill: none; stroke: rgb(var(--accent-rgb) / 28%); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
 .harness-diagram-boundary text { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
 .harness-diagram-labels { fill: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; }
-.interface-comparison { width: 100%; margin-top: 30px; padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px dashed rgb(var(--accent-rgb) / 38%); box-sizing: border-box; }
-.interface-comparison-column { min-width: 0; padding: 4px 20px 0; }
-.interface-comparison-column + .interface-comparison-column { border-left: 1px dashed rgb(var(--accent-rgb) / 28%); }
-.interface-comparison-column header { width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
-.interface-comparison-column header span { color: var(--moss-ink); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
-.interface-comparison-column header strong { color: var(--ink); font-size: 14px; font-weight: 500; }
-.interface-comparison-column svg { width: 100%; height: auto; display: block; }
-.interface-comparison-copy text { font-family: var(--mono); text-anchor: middle; }
-.interface-comparison-kind { fill: var(--faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
-.interface-comparison-value, .interface-comparison-output { fill: var(--ink); font-size: 15px; }
-.interface-comparison-label { fill: var(--faint); font-size: 9px; text-anchor: start !important; }
-.interface-comparison-leaf { fill: var(--moss-ink); font-size: 11px; }
-.interface-comparison-output { fill: var(--plum); }
-.interface-comparison-paths { fill: var(--moss-ink); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.interface-comparison-paths path { fill: none; }
+.interface-comparison { width: 100%; margin-top: 30px; padding: 20px; overflow-x: auto; border: 1px dashed rgb(var(--accent-rgb) / 38%); box-sizing: border-box; overscroll-behavior-inline: contain; }
+.interface-comparison pre { width: max-content; min-width: 100%; margin: 0; color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.6; }
 .primitive-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .primitive-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 16px auto 0; display: block; }
 .primitive-diagram-node rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -706,10 +693,10 @@ h1 span { display: block; white-space: nowrap; }
   .mobile-nav-sections { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mobile-nav-sections a:nth-child(odd) { margin-right: 18px; }
   .mobile-nav-primary a[aria-current="page"] { color: var(--moss-ink); }
-  .mobile-nav-resources { display: grid; grid-template-columns: repeat(3, auto); align-content: start; align-items: center; gap: 12px 18px; }
-  .mobile-nav-resources > span { grid-column: 1 / -1; color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-  .mobile-nav-resources a { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 13px; }
-  .mobile-nav-resources svg { width: 15px; height: 15px; }
+  .mobile-nav-resources { display: flex; align-items: center; justify-content: flex-end; gap: 4px; }
+  .mobile-nav-resources a, .mobile-nav-resources .theme-toggle { width: 44px; height: 44px; display: grid; place-items: center; color: var(--ink-2); }
+  .mobile-nav-resources .theme-toggle { width: 57px; margin-left: 8px; padding: 10px 0 10px 13px; border-left: 1px solid rgb(var(--accent-rgb) / 38%); }
+  .mobile-nav-resources svg { width: 22px; height: 22px; }
   .guide-shell { min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 0; }
   .guide-sidebar { position: sticky; z-index: 8; top: 64px; width: 100%; min-width: 0; max-width: 100%; height: auto; padding: 14px 0; overflow-x: auto; flex-direction: row; align-items: center; gap: 24px; border-right: 0; border-bottom: 1px dashed rgb(var(--accent-rgb) / 36%); background: var(--bg); scrollbar-width: none; white-space: nowrap; }
   .guide-sidebar::-webkit-scrollbar { display: none; }
@@ -725,16 +712,16 @@ h1 span { display: block; white-space: nowrap; }
 
 @media (max-width: 560px) {
   .mobile-nav-panel-inner { grid-template-columns: 1fr; gap: 22px; }
-  .mobile-nav-resources { padding-top: 2px; }
+  .mobile-nav-resources { padding-top: 16px; border-top: 1px solid rgb(var(--accent-rgb) / 28%); }
   .guide-shell { padding: 0 20px; }
   .guide-sidebar { overflow-x: auto; font-size: 13px; white-space: nowrap; }
   .guide-article { padding: 36px 0 80px; }
   .guide-article h1 { font-size: 36px; }
   .guide-article h2 { font-size: 27px; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
-  .interface-comparison { padding: 16px; grid-template-columns: 1fr; }
-  .interface-comparison-column { padding: 16px 0 0; }
-  .interface-comparison-column + .interface-comparison-column { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); border-left: 0; }
+  .copy-markdown { width: 44px; padding: 11px; justify-content: center; }
+  .copy-markdown span { display: none; }
+  .interface-comparison { padding: 16px; }
   :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
   .guide-command { width: 100%; }
   .example-source-heading { margin-top: 24px; }
