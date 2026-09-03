@@ -334,7 +334,6 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-branches-paths .trajectory-branches-lead { stroke: var(--moss); stroke-width: 1.25; }
 .trajectory-branches-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-branches-nodes .trajectory-branches-origin { fill: var(--moss-wash); stroke: var(--moss); }
-.trajectory-branches-uncertainty { fill: var(--faint); font-family: var(--mono); font-size: 11px; opacity: .72; }
 .trajectory-branches-time text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
 .trajectory-branches-time path { fill: none; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }

@@ -31,7 +31,6 @@ export const TrajectoryBranchesDiagram = (): ReactElement => (
         <rect key={`${x}-${y}`} x={x - (index % 3 === 2 ? 3.5 : 2.5)} y={y - (index % 3 === 2 ? 3.5 : 2.5)} width={index % 3 === 2 ? 7 : 5} height={index % 3 === 2 ? 7 : 5} />
       ))}
     </g>
-    <text className="trajectory-branches-uncertainty" x="706" y="126">?</text>
     <g className="trajectory-branches-time" aria-hidden="true">
       <text x="24" y="220">NOW</text>
       <text x="696" y="220" textAnchor="end">LONGER HORIZON</text>
