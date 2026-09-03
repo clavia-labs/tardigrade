@@ -8,33 +8,57 @@ sectionOrder: 1
 order: 1
 ---
 
-Tardigrade is a TypeScript framework for building modular agents around an immutable event log. It is built on top of Effect TS.
+Tardigrade is a TypeScript framework for building modular agents around an immutable event log.
 
 ## Why Tardigrade?
 
-### Composable harness
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Composability</h3>
+    <p>Add tools, code execution, budgets, compaction, and replies as independent components.</p>
+  </div>
+  <ComposableHarnessDiagram />
+</div>
 
-Add tools, code execution, budgets, compaction, and replies as independent components.
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Strongly typed, built on <a href="https://effect.website/">Effect</a></h3>
+    <p>Typed services and Layers make each component's dependencies explicit. A missing service fails at compile time.</p>
+  </div>
+  <TypedEffectDiagram />
+</div>
 
-### Strongly typed, built on [Effect](https://effect.website/)
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Let it crash</h3>
+    <p>A durable host derives unfinished work from the stored log. After a crash, the agent resumes the work it still owes.</p>
+  </div>
+  <LetItCrashDiagram />
+</div>
 
-Typed services and Layers make each component's dependencies explicit. A missing service fails at compile time.
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Scalable</h3>
+    <p>Every agent can run as a durable object. Scale from a single agent to an entire civilisation.</p>
+  </div>
+  <ServerlessDiagram />
+</div>
 
-### Let it crash
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Inspect and improve every run</h3>
+    <p>The log at the core supports native debugging, replay, and experiments with state forked from any checkpoint.</p>
+  </div>
+  <ForkingDiagram />
+</div>
 
-A durable host derives unfinished work from the stored log. After a crash, the agent resumes the work it still owes.
-
-### Serverless
-
-No process has to stay alive. Any new invocation reads the log, runs the transitions it owes, and settles.
-
-### Inspect and improve every run
-
-The log at the core supports native debugging, replay, and experiments with state forked from any checkpoint.
-
-### Infinite memory
-
-The event log can serve directly as an agent's memory. It keeps model context bounded while giving the agent programmatic access to its complete history, an approach explored in [PRO-LONG](https://arxiv.org/abs/2607.20064).
+<div className="welcome-feature">
+  <div className="welcome-feature-copy">
+    <h3>Infinite memory</h3>
+    <p>The event log can serve directly as an agent's memory. It keeps model context bounded while giving the agent programmatic access to its complete history.</p>
+  </div>
+  <InfiniteMemoryDiagram />
+</div>
 
 ## Where next
 

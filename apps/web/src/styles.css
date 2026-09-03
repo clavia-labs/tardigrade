@@ -317,6 +317,39 @@ h1 span { display: block; white-space: nowrap; }
 .log-card-rule { width: 44px; }
 .durability-log-card::after { width: 22px; }
 .durability-figure figcaption { margin-top: 10px; display: flex; justify-content: space-between; gap: 24px; color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.scalability { position: relative; background: var(--bg); border-bottom: 1px dashed rgb(var(--accent-rgb) / 36%); }
+.scalability-inner { width: min(100%, var(--container)); margin: 0 auto; padding: 112px var(--gutter); display: grid; grid-template-columns: minmax(0, .9fr) minmax(440px, 1.1fr); gap: 80px; align-items: center; }
+.scalability-copy { max-width: 560px; }
+.scalability-copy h2 { margin: 0; color: var(--ink); font-family: var(--display); font-size: clamp(36px, 4vw, 48px); font-weight: 500; letter-spacing: -.045em; line-height: 1.02; }
+.scalability-copy p { margin: 28px 0 0; color: var(--ink-2); font-size: 19px; line-height: 1.58; }
+.scalability-figure { min-width: 0; margin: 0; }
+.scalability-image-frame { position: relative; overflow: visible; aspect-ratio: 4 / 3; border: 1px solid var(--hair); background: var(--sunken); }
+.scalability-image-frame::before { position: absolute; z-index: 4; inset: 14px; border-right: 1px solid rgb(var(--accent-rgb) / 18%); border-bottom: 1px solid rgb(var(--accent-rgb) / 18%); border-left: 1px solid rgb(var(--accent-rgb) / 18%); content: ""; pointer-events: none; }
+.scalability-grid-clip { position: absolute; inset: 0; clip-path: inset(-120px 14px 14px); }
+.scalability-grid { position: relative; z-index: 2; width: 100%; height: 100%; overflow: visible; display: block; transform: translateY(-56px) scale(1.18); transform-origin: center; }
+.scalability-grid-lines { fill: none; stroke: rgb(var(--accent-rgb) / 25%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scalability-road { fill: rgb(var(--accent-rgb) / 8%); stroke: rgb(var(--accent-rgb) / 25%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scalability-road-mark { fill: none; stroke: rgb(var(--accent-rgb) / 34%); stroke-dasharray: 7 8; stroke-width: 1; vector-effect: non-scaling-stroke; }
+.scalability-agent path, .scalability-agent circle { stroke: rgb(var(--accent-rgb) / 68%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.scalability-agent-top { fill: var(--moss-wash); }
+.scalability-agent-left { fill: var(--sunken); }
+.scalability-agent-right { fill: var(--surface); }
+.scalability-agent .scalability-agent-shadow { fill: rgb(var(--accent-rgb) / 11%); stroke: none; }
+.scalability-agent-detail { fill: none; stroke-linecap: round; }
+.scalability-agent-beak { fill: var(--moss-wash); }
+.scalability-agent-eye { fill: var(--moss-wash); }
+.scalability-building path { stroke: rgb(var(--accent-rgb) / 52%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.scalability-building-top { fill: var(--surface); }
+.scalability-building-left { fill: var(--sunken); }
+.scalability-building-right { fill: var(--moss-wash); }
+.scalability-building .scalability-building-windows { fill: none; stroke: rgb(var(--accent-rgb) / 42%); }
+.scalability-tree path { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 48%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.scalability-car path, .scalability-car circle { stroke: rgb(var(--accent-rgb) / 50%); stroke-linejoin: round; stroke-width: 1.1; vector-effect: non-scaling-stroke; }
+.scalability-car-top { fill: var(--surface); }
+.scalability-car-left { fill: rgb(var(--accent-rgb) / 7%); }
+.scalability-car-right { fill: rgb(var(--accent-rgb) / 13%); }
+.scalability-car circle { fill: var(--sunken); }
+.scalability-figure figcaption { margin-top: 10px; display: flex; justify-content: space-between; gap: 24px; color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
 .observability { position: relative; background: var(--bg); border-bottom: 1px dashed rgb(var(--accent-rgb) / 36%); }
 .observability-inner { width: min(100%, var(--container)); margin: 0 auto; padding: 112px var(--gutter); display: grid; grid-template-columns: minmax(0, .9fr) minmax(440px, 1.1fr); gap: 80px; align-items: center; }
 .observability-copy { max-width: 560px; }
@@ -343,6 +376,45 @@ h1 span { display: block; white-space: nowrap; }
   .trajectory-branches-horizon-labels { right: 12px; left: 12px; }
 }
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
+.welcome-feature { width: min(100%, 720px); margin: 14px 0 16px; display: grid; grid-template-columns: minmax(0, 1fr) 104px; gap: 28px; align-items: center; }
+.welcome-feature-copy { min-width: 0; }
+.guide-article .welcome-feature h3 { margin: 0 0 8px; }
+.welcome-feature p { margin: 0; }
+.composable-harness-diagram { width: 104px; height: auto; display: block; overflow: visible; }
+.composable-harness-piece path { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 44%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.composable-harness-piece-active path { fill: var(--moss-wash); stroke: var(--moss); }
+.typed-effect-diagram { width: 104px; height: auto; display: block; overflow: visible; }
+.typed-effect-layer rect { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 44%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.typed-effect-layer circle { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.typed-effect-layer-active rect { fill: var(--moss-wash); stroke: var(--moss); }
+.typed-effect-layer-active circle { stroke: var(--moss); }
+.typed-effect-layer .typed-effect-check { fill: none; stroke: var(--moss); stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; }
+.let-it-crash-diagram { width: 104px; height: auto; display: block; overflow: visible; }
+.let-it-crash-chain path { fill: none; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.let-it-crash-events rect { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 48%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.let-it-crash-events .let-it-crash-event-resumed { fill: var(--moss-wash); stroke: var(--moss); }
+.serverless-diagram { width: 104px; height: auto; display: block; overflow: visible; }
+.serverless-graph path { fill: none; stroke: rgb(var(--accent-rgb) / 34%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.serverless-cube path { stroke: rgb(var(--accent-rgb) / 48%); stroke-linejoin: round; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.serverless-cube-top { fill: var(--surface); }
+.serverless-cube-left { fill: rgb(var(--accent-rgb) / 5%); }
+.serverless-cube-right { fill: rgb(var(--accent-rgb) / 10%); }
+.serverless-cube-active path { stroke: var(--moss); }
+.serverless-cube-active .serverless-cube-top { fill: var(--moss-wash); }
+.serverless-cube-active .serverless-cube-left { fill: rgb(var(--accent-rgb) / 14%); }
+.serverless-cube-active .serverless-cube-right { fill: rgb(var(--accent-rgb) / 20%); }
+.forking-diagram { width: 104px; height: auto; display: block; overflow: visible; }
+.forking-paths path { fill: none; stroke: rgb(var(--accent-rgb) / 36%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.forking-paths .forking-path-main { stroke: var(--moss); }
+.forking-points rect { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 48%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.forking-points .forking-point-origin, .forking-points .forking-point-main { fill: var(--moss-wash); stroke: var(--moss); }
+.infinite-memory-diagram { width: 104px; height: auto; display: block; overflow: hidden; }
+.infinite-memory-frame { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.infinite-memory-window { fill: var(--moss-wash); stroke: none; }
+.infinite-memory-rows path { fill: none; stroke: rgb(var(--accent-rgb) / 22%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.infinite-memory-events rect { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 48%); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
+.infinite-memory-events .infinite-memory-event-active { fill: var(--moss-wash); stroke: var(--moss); }
+.infinite-memory-values path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-linecap: round; stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-direction { fill: none; stroke: var(--moss); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-points { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -769,6 +841,8 @@ h1 span { display: block; white-space: nowrap; }
   .guide-article h1 { font-size: 36px; }
   .guide-article h2 { font-size: 27px; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
+  .welcome-feature { grid-template-columns: minmax(0, 1fr) 80px; gap: 18px; }
+  .composable-harness-diagram, .typed-effect-diagram, .let-it-crash-diagram, .serverless-diagram, .forking-diagram, .infinite-memory-diagram { width: 80px; }
   .copy-markdown { width: 44px; padding: 11px; justify-content: center; }
   .copy-markdown span { display: none; }
   .guide-heading-actions { gap: 6px; }
@@ -823,7 +897,7 @@ h1 span { display: block; white-space: nowrap; }
   .bridge-paths-mobile, .bridge-labels-mobile { display: block; }
   .bridge-labels-mobile { text-anchor: start; }
   .world-panel { width: min(100%, 440px); margin: 0 auto; }
-  .durability-inner { grid-template-columns: 1fr; gap: 56px; }
+  .durability-inner, .scalability-inner { grid-template-columns: 1fr; gap: 56px; }
   .durability-copy { max-width: 720px; }
   .observability-inner { grid-template-columns: 1fr; gap: 56px; }
   .observability-copy { max-width: 720px; }
@@ -865,7 +939,7 @@ h1 span { display: block; white-space: nowrap; }
   .actor-world-grid { gap: 36px; }
   .component-bridge { height: 200px; }
   .world-panel { width: min(100%, 260px); }
-  .durability-inner { padding-top: 80px; padding-bottom: 80px; }
+  .durability-inner, .scalability-inner { padding-top: 80px; padding-bottom: 80px; }
   .durability-copy > p { font-size: 17px; }
   .durability-image-frame img { padding: 32px 92px 32px 8px; }
   .durability-log-cards { top: -36px; right: 44px; bottom: 10px; width: 120px; }

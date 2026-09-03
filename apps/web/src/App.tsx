@@ -401,6 +401,191 @@ const Durability = (): ReactElement => (
   </section>
 )
 
+type CityRoad = {
+  readonly axis: "u" | "v"
+  readonly center: number
+  readonly id: string
+  readonly width: number
+}
+
+type CityPoint = { readonly x: number; readonly y: number }
+type CityAgent = CityPoint & { readonly facing?: "left" | "right" }
+
+const crossingRoad: CityRoad = { id: "crossing", axis: "u", center: .3, width: .1 }
+const boulevardRoad: CityRoad = { id: "boulevard", axis: "v", center: .57, width: .1 }
+const cityRoads: ReadonlyArray<CityRoad> = [crossingRoad, boulevardRoad]
+const cityGridUnits = 6
+const cityExtent = (cityGridUnits + 1) / cityGridUnits
+const cityGridCoordinates = Array.from({ length: cityGridUnits + 2 }, (_, index) => index / cityGridUnits)
+
+const projectCityPoint = (u: number, v: number): CityPoint => ({
+  x: 320 + 304 * u - 304 * v,
+  y: 18 + 176 * u + 176 * v
+})
+
+const roadEdgePoints = (road: CityRoad): string => {
+  const low = road.center - road.width / 2
+  const high = road.center + road.width / 2
+  const points = road.axis === "u"
+    ? [projectCityPoint(low, 0), projectCityPoint(high, 0), projectCityPoint(high, cityExtent), projectCityPoint(low, cityExtent)]
+    : [projectCityPoint(0, low), projectCityPoint(cityExtent, low), projectCityPoint(cityExtent, high), projectCityPoint(0, high)]
+  return points.map(({ x, y }) => `${x},${y}`).join(" ")
+}
+
+const roadCenterPoints = (road: CityRoad): readonly [CityPoint, CityPoint] => road.axis === "u"
+  ? [projectCityPoint(road.center, 0), projectCityPoint(road.center, cityExtent)]
+  : [projectCityPoint(0, road.center), projectCityPoint(cityExtent, road.center)]
+
+const RoadNetwork = (): ReactElement => (
+  <g className="scalability-roads" aria-hidden="true">
+    {cityRoads.map((road) => {
+      const [start, end] = roadCenterPoints(road)
+      return <g key={road.id}><polygon className="scalability-road" points={roadEdgePoints(road)} /><line className="scalability-road-mark" x1={start.x} y1={start.y} x2={end.x} y2={end.y} /></g>
+    })}
+  </g>
+)
+
+const roadsideBuildings = [
+  { id: "west", road: crossingRoad, along: .68, side: -1 },
+  { id: "center", road: crossingRoad, along: .36, side: 1 },
+  { id: "east", road: boulevardRoad, along: .76, side: -1 }
+] as const
+
+const roadsideBuildingPosition = ({ road, along, side }: (typeof roadsideBuildings)[number]): CityPoint => {
+  const offset = side * (road.width / 2 + .1)
+  const point = road.axis === "u" ? projectCityPoint(road.center + offset, along) : projectCityPoint(along, road.center + offset)
+  return { x: point.x - 18, y: point.y - 68 }
+}
+
+const treeCandidates = [
+  { id: "northwest", u: .08, v: .3 },
+  { id: "northeast", u: .48, v: .15 },
+  { id: "west", u: .03, v: .92 },
+  { id: "southwest", u: .48, v: .78 },
+  { id: "southeast", u: .8, v: .72 }
+] as const
+
+const intersectsRoad = ({ u, v }: { readonly u: number; readonly v: number }): boolean => cityRoads.some((road) => {
+  const coordinate = road.axis === "u" ? u : v
+  return Math.abs(coordinate - road.center) <= road.width / 2
+})
+
+const cityTrees = treeCandidates.filter((tree) => !intersectsRoad(tree))
+
+const cityTreePosition = ({ u, v }: (typeof cityTrees)[number]): CityPoint => {
+  const point = projectCityPoint(u, v)
+  return { x: point.x - 12, y: point.y - 42 }
+}
+
+const cityAgents: ReadonlyArray<CityAgent> = [
+  { facing: "left", x: 105, y: 182 },
+  { x: 116, y: 142 },
+  { facing: "left", x: 185, y: 112 },
+  { x: 302, y: 54 },
+  { facing: "left", x: 458, y: 100 },
+  { x: 480, y: 164 },
+  { x: 150, y: 230 },
+  { facing: "left", x: 302, y: 170 },
+  { x: 450, y: 220 },
+  { facing: "left", x: 220, y: 275 },
+  { facing: "left", x: 300, y: 292 },
+  { x: 380, y: 275 }
+]
+
+const cityCars: ReadonlyArray<CityPoint> = [
+  { x: 104, y: 227 },
+  { x: 384, y: 66 },
+  { x: 334, y: 224 }
+]
+
+const IsometricAgent = ({ facing = "right", x, y }: { readonly facing?: "left" | "right"; readonly x: number; readonly y: number }): ReactElement => (
+  <g className="scalability-agent" transform={`translate(${x} ${y}) scale(.82)`}>
+    <path className="scalability-agent-shadow" d="M2 53L18 45L34 53L18 61Z" />
+    <path className="scalability-agent-top" d="M0 10L18 0L36 10L18 20Z" />
+    <path className="scalability-agent-left" d="M0 10L18 20V46L0 36Z" />
+    <path className="scalability-agent-right" d="M18 20L36 10V36L18 46Z" />
+    <path className="scalability-agent-beak" d={facing === "right" ? "M36 21L46 25L36 29Z" : "M0 21L-10 25L0 29Z"} />
+    <circle className="scalability-agent-eye" cx={facing === "right" ? 28 : 8} cy="22" r="1.8" />
+    <path className="scalability-agent-detail" d="M11 42L8 52M25 42L28 52M4 52H11M25 52H32" />
+  </g>
+)
+
+const IsometricBuilding = ({ x, y }: { readonly x: number; readonly y: number }): ReactElement => (
+  <g className="scalability-building" transform={`translate(${x} ${y}) scale(.82)`}>
+    <path className="scalability-building-top" d="M0 14L22 1L44 14L22 27Z" />
+    <path className="scalability-building-left" d="M0 14L22 27V83L0 70Z" />
+    <path className="scalability-building-right" d="M22 27L44 14V70L22 83Z" />
+    <path className="scalability-building-windows" d="M7 32L15 37M7 47L15 52M7 62L15 67M29 36L37 31M29 51L37 46M29 66L37 61" />
+  </g>
+)
+
+const IsometricTree = ({ x, y }: { readonly x: number; readonly y: number }): ReactElement => (
+  <g className="scalability-tree" transform={`translate(${x} ${y}) scale(.82)`}>
+    <path d="M14 0L27 22H21L31 39H-3L7 22H1Z" />
+    <path d="M12 39V51H17V39" />
+  </g>
+)
+
+const IsometricCar = ({ x, y }: { readonly x: number; readonly y: number }): ReactElement => (
+  <g className="scalability-car" transform={`translate(${x} ${y}) scale(.82)`}>
+    <path className="scalability-car-top" d="M0 8L18 0L38 10L20 18Z" />
+    <path className="scalability-car-left" d="M0 8L20 18V28L0 18Z" />
+    <path className="scalability-car-right" d="M20 18L38 10V20L20 28Z" />
+    <circle cx="8" cy="21" r="3" />
+    <circle cx="29" cy="24" r="3" />
+  </g>
+)
+
+const ScalabilityGrid = (): ReactElement => (
+  <figure className="scalability-figure">
+    <div className="scalability-image-frame">
+      <div className="scalability-grid-clip">
+        <svg className="scalability-grid" viewBox="0 0 640 420" role="img" aria-label="A civilisation of boxy isometric birds distributed across an isometric grid.">
+          <g className="scalability-grid-lines" aria-hidden="true">
+            <polygon points={[projectCityPoint(0, 0), projectCityPoint(cityExtent, 0), projectCityPoint(cityExtent, cityExtent), projectCityPoint(0, cityExtent)].map(({ x, y }) => `${x},${y}`).join(" ")} />
+            {cityGridCoordinates.map((coordinate) => {
+              const uStart = projectCityPoint(coordinate, 0)
+              const uEnd = projectCityPoint(coordinate, cityExtent)
+              const vStart = projectCityPoint(0, coordinate)
+              const vEnd = projectCityPoint(cityExtent, coordinate)
+              return <g key={coordinate}><line x1={uStart.x} y1={uStart.y} x2={uEnd.x} y2={uEnd.y} /><line x1={vStart.x} y1={vStart.y} x2={vEnd.x} y2={vEnd.y} /></g>
+            })}
+          </g>
+          <RoadNetwork />
+          <g className="scalability-agents">
+            {cityAgents.map((agent) => <IsometricAgent {...agent} key={`${agent.x}-${agent.y}`} />)}
+          </g>
+          <g className="scalability-buildings">
+            {roadsideBuildings.map((building) => <IsometricBuilding {...roadsideBuildingPosition(building)} key={building.id} />)}
+          </g>
+          <g className="scalability-trees">
+            {cityTrees.map((tree) => <IsometricTree {...cityTreePosition(tree)} key={tree.id} />)}
+          </g>
+          <g className="scalability-cars">
+            {cityCars.map((car) => <IsometricCar {...car} key={`${car.x}-${car.y}`} />)}
+          </g>
+        </svg>
+      </div>
+    </div>
+    <figcaption>
+      <span>FIG. 03</span>
+      <span>Agent civilisation</span>
+    </figcaption>
+  </figure>
+)
+
+const Scalability = (): ReactElement => (
+  <section className="scalability">
+    <div className="scalability-inner">
+      <div className="scalability-copy">
+        <h2>Scalable.</h2>
+        <p>Every agent can run as a durable object. Scale from a single agent to an entire civilisation.</p>
+      </div>
+      <ScalabilityGrid />
+    </div>
+  </section>
+)
+
 const TrajectoryField = (): ReactElement => (
   <svg className="trajectory-field" viewBox="0 0 260 300" role="img" aria-label="Agent trajectories" aria-describedby="trajectory-description">
     <desc id="trajectory-description">Several possible agent paths converge into the ordered event log.</desc>
@@ -622,6 +807,7 @@ export const LandingPage = (): ReactElement => (
       </section>
       <HowItWorks />
       <Durability />
+      <Scalability />
       <Observability />
       <Deployments />
   </main>
