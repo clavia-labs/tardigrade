@@ -5,7 +5,7 @@
   <rect width="1200" height="630" fill="#f8f7f2"/>
 
   <text x="600" y="188" fill="#101521" font-family="Georgia, 'Times New Roman', serif" font-size="48" text-anchor="middle">
-    harness = <tspan font-style="italic">f</tspan><tspan dx="1.5">(log)</tspan>
+    harness = <tspan font-style="italic">f</tspan><tspan dx="3.5">(log)</tspan>
   </text>
 
   <g transform="translate(66 240) scale(1.48)">
