@@ -6,15 +6,10 @@ import { CheckIcon, CopyIcon, useCopy } from "../ui/copy"
 import { mdxComponents } from "./components"
 import { docAt, docSections, type Doc } from "./load"
 
-const CopyMarkdownButton = ({ route }: { readonly route: string }): ReactElement => {
+const CopyMarkdownButton = ({ markdown }: { readonly markdown: string }): ReactElement => {
   const [copied, copy] = useCopy()
-  const copyMarkdown = async (): Promise<void> => {
-    const response = await fetch(route, { headers: { accept: "text/markdown" } })
-    if (!response.ok) throw new Error(`Markdown request failed with ${response.status}`)
-    await copy(await response.text())
-  }
   return (
-    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copyMarkdown()}>
+    <button className="copy-markdown" type="button" aria-label={copied ? "Markdown copied" : "Copy page as Markdown"} onClick={() => void copy(markdown)}>
       {copied ? <CheckIcon /> : <CopyIcon />}
       <span>{copied ? "Copied" : "Copy MD"}</span>
     </button>
@@ -45,7 +40,7 @@ export const DocsPage = ({ pathname }: { readonly pathname: string }): ReactElem
         <article className={`guide-article${frontmatter.articleClass === undefined ? "" : ` ${frontmatter.articleClass}`}`}>
           <div className="guide-heading">
             <div><h1>{frontmatter.title}</h1>{frontmatter.hideDescription === true ? null : <p className="guide-intro">{frontmatter.description}</p>}</div>
-            <CopyMarkdownButton route={frontmatter.route} />
+            <CopyMarkdownButton markdown={doc.markdown} />
           </div>
           <div className="guide-divider" />
           <MDXProvider components={mdxComponents}><Content /></MDXProvider>

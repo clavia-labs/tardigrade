@@ -402,8 +402,7 @@ const Durability = (): ReactElement => (
 )
 
 const TrajectoryField = (): ReactElement => (
-  <svg className="trajectory-field" viewBox="0 0 260 300" role="img" aria-labelledby="trajectory-title trajectory-description">
-    <title id="trajectory-title">Agent trajectories</title>
+  <svg className="trajectory-field" viewBox="0 0 260 300" role="img" aria-label="Agent trajectories" aria-describedby="trajectory-description">
     <desc id="trajectory-description">Several possible agent paths converge into the ordered event log.</desc>
     <g className="trajectory-paths">
       <path d="M0 46C46 28 52 104 92 96S158 130 232 150" />

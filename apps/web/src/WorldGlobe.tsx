@@ -1,8 +1,7 @@
 import type { ReactElement } from "react"
 
 export const WorldGlobe = (): ReactElement => (
-  <svg className="world-globe" viewBox="46 46 228 228" role="img" aria-labelledby="world-globe-title world-globe-description">
-    <title id="world-globe-title">The world</title>
+  <svg className="world-globe" viewBox="46 46 228 228" role="img" aria-label="The world" aria-describedby="world-globe-description">
     <desc id="world-globe-description">A globe representing the systems and people outside the actor.</desc>
     <defs>
       <clipPath id="world-globe-clip"><circle cx="160" cy="160" r="112" /></clipPath>

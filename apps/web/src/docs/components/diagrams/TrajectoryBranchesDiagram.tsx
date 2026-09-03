@@ -12,8 +12,7 @@ const trajectoryPoints = [
 ] as const
 
 export const TrajectoryBranchesDiagram = (): ReactElement => (
-  <svg className="trajectory-branches-diagram" viewBox="0 0 720 208" role="img" aria-labelledby="trajectory-branches-title trajectory-branches-description">
-    <title id="trajectory-branches-title">Possible agent trajectories</title>
+  <svg className="trajectory-branches-diagram" viewBox="0 0 720 208" role="img" aria-label="Possible agent trajectories" aria-describedby="trajectory-branches-description">
     <desc id="trajectory-branches-description">One current state branches into more possible trajectories as the operating horizon grows.</desc>
     <g className="trajectory-branches-paths">
       <path d="M32 112C96 92 116 44 194 55S322 29 410 48S548 20 684 28" />
