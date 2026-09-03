@@ -329,12 +329,19 @@ h1 span { display: block; white-space: nowrap; }
 .trajectory-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-nodes rect:last-child { fill: var(--moss-wash); stroke: var(--moss); }
 .trajectory-exit { fill: none; stroke: var(--moss); stroke-width: 1; vector-effect: non-scaling-stroke; }
-.trajectory-branches-diagram { width: 100%; height: auto; margin: 22px 0 30px; display: block; overflow: visible; }
+.trajectory-branches-viewport { position: relative; width: 100%; margin: 22px 0 30px; overflow: hidden; container-type: inline-size; }
+.trajectory-branches-diagram { width: 100%; height: auto; display: block; overflow: visible; }
+.trajectory-branches-diagram-mobile { display: none; }
 .trajectory-branches-paths { fill: none; stroke: rgb(var(--accent-rgb) / 30%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-branches-paths .trajectory-branches-lead { stroke: var(--moss); stroke-width: 1.25; }
 .trajectory-branches-nodes { fill: var(--bg); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .trajectory-branches-nodes .trajectory-branches-origin { fill: var(--moss-wash); stroke: var(--moss); }
-.trajectory-branches-horizon text { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; }
+.trajectory-branches-horizon-labels { position: absolute; z-index: 1; top: 0; right: 3.333%; left: 3.333%; display: flex; justify-content: space-between; color: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .08em; pointer-events: none; }
+@container (max-width: 640px) {
+  .trajectory-branches-diagram-desktop { display: none; }
+  .trajectory-branches-diagram-mobile { display: block; }
+  .trajectory-branches-horizon-labels { right: 12px; left: 12px; }
+}
 .behavior-trajectory-diagram { width: min(100%, 720px); height: auto; margin: -8px 0 26px; display: block; overflow: visible; }
 .behavior-trajectory-path { fill: none; stroke: rgb(var(--accent-rgb) / 38%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .behavior-trajectory-direction { fill: none; stroke: var(--moss); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
@@ -402,9 +409,23 @@ h1 span { display: block; white-space: nowrap; }
 .guide-heading { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 24px; align-items: start; }
 .guide-article h1 { max-width: none; margin: 0; font-size: clamp(36px, 4.2vw, 48px); font-weight: 600; letter-spacing: -.045em; }
 .guide-intro { margin: 20px 0 0; color: var(--ink-2); font-size: 18px; }
-.copy-markdown { min-height: 44px; margin-top: 4px; padding: 11px 15px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: transparent; color: var(--ink-2); cursor: pointer; font-family: var(--mono); font-size: 14px; transition: color 160ms ease; }
+.guide-heading-actions { margin-top: 4px; display: flex; align-items: flex-start; gap: 8px; }
+.copy-markdown { min-height: 44px; padding: 11px 15px; display: inline-flex; align-items: center; gap: 10px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: transparent; color: var(--ink-2); cursor: pointer; font-family: var(--mono); font-size: 14px; transition: color 160ms ease, transform 120ms var(--ease-out); }
 .copy-markdown svg { width: 20px; height: 20px; color: var(--moss-ink); }
-@media (hover: hover) and (pointer: fine) { .copy-markdown:hover { color: var(--ink); } }
+.copy-markdown:active, .ask-ai-trigger:active, .ask-ai-menu button:active { transform: scale(.97); }
+.ask-ai { position: relative; }
+.ask-ai-trigger { min-height: 44px; padding: 11px 13px; display: inline-flex; align-items: center; gap: 8px; border: 1px solid rgb(var(--accent-rgb) / 38%); background: transparent; color: var(--ink-2); cursor: pointer; font-family: var(--mono); font-size: 14px; white-space: nowrap; transition: color 160ms ease, transform 120ms var(--ease-out); }
+.ask-ai-trigger-icon { width: 19px; height: 19px; color: var(--moss-ink); }
+.ask-ai-trigger-caret { width: 13px; height: 13px; color: var(--faint); transition: transform 160ms var(--ease-out); }
+.ask-ai-trigger[aria-expanded="true"] .ask-ai-trigger-caret { transform: rotate(180deg); }
+.ask-ai-menu { position: absolute; z-index: 12; top: calc(100% + 6px); right: 0; width: 230px; padding: 5px; border: 1px solid var(--hair); background: var(--surface); box-shadow: 0 14px 32px rgb(16 21 33 / 14%); }
+.ask-ai-menu button { width: 100%; padding: 10px; display: grid; grid-template-columns: 20px minmax(0, 1fr) 15px; align-items: center; gap: 10px; border: 0; background: transparent; color: var(--ink); cursor: pointer; text-align: left; transition: background-color 120ms ease, transform 120ms var(--ease-out); }
+.ask-ai-menu button > span { display: grid; gap: 2px; }
+.ask-ai-menu strong { font-family: var(--display); font-size: 14px; font-weight: 550; }
+.ask-ai-menu small { color: var(--faint); font-family: var(--mono); font-size: 9px; }
+.ask-ai-menu button > svg:last-child { width: 15px; height: 15px; color: var(--faint); }
+.ask-ai-provider-icon { width: 18px; height: 18px; color: var(--ink-2); }
+@media (hover: hover) and (pointer: fine) { .copy-markdown:hover, .ask-ai-trigger:hover { color: var(--ink); } .ask-ai-menu button:hover { background: var(--sunken); } }
 .guide-divider { margin: 24px 0 44px; border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
 .guide-article > p:not(.guide-intro) { max-width: 720px; margin: 0; color: var(--ink); font-size: 17px; line-height: 1.62; }
 .guide-article > p:not(.guide-intro) + p:not(.guide-intro) { margin-top: 18px; }
@@ -748,6 +769,9 @@ h1 span { display: block; white-space: nowrap; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
   .copy-markdown { width: 44px; padding: 11px; justify-content: center; }
   .copy-markdown span { display: none; }
+  .guide-heading-actions { gap: 6px; }
+  .ask-ai-trigger { width: 44px; padding: 11px; justify-content: center; }
+  .ask-ai-trigger span, .ask-ai-trigger-caret { display: none; }
   .behavior-trajectory-annotation text { font-size: 18px; }
   .interface-comparison { padding: 16px; }
   :is(.actor-diagram, .transition-loop, .component-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
