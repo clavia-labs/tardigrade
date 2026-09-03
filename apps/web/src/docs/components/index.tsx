@@ -1,15 +1,16 @@
 import { Children, cloneElement, isValidElement, useLayoutEffect, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
 import { renderToString } from "katex"
 
-import { ActorDiagram } from "../../ActorDiagram"
-import { ComponentDiagram } from "../../ComponentDiagram"
-import { CompactionMachineDiagram } from "../../CompactionMachineDiagram"
-import { HarnessDiagram } from "../../HarnessDiagram"
-import { InterfaceComparisonDiagram } from "../../InterfaceComparisonDiagram"
-import { MethodDiagram } from "../../MethodDiagram"
-import { PrimitiveDiagram } from "../../PrimitiveDiagram"
-import { TransitionLoop } from "../../TransitionLoop"
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
+import { ActorDiagram } from "./diagrams/ActorDiagram"
+import { ComponentDiagram } from "./diagrams/ComponentDiagram"
+import { CompactionMachineDiagram } from "./diagrams/CompactionMachineDiagram"
+import { HarnessDiagram } from "./diagrams/HarnessDiagram"
+import { InterfaceComparisonDiagram } from "./diagrams/InterfaceComparisonDiagram"
+import { MethodDiagram } from "./diagrams/MethodDiagram"
+import { PrimitiveDiagram } from "./diagrams/PrimitiveDiagram"
+import { RlmDiagram } from "./diagrams/RlmDiagram"
+import { TransitionLoop } from "./diagrams/TransitionLoop"
 
 const BulbIcon = (): ReactElement => (
   <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 18h6M10 21h4M8.5 15.5A7 7 0 1 1 15.5 15.5C14.6 16.2 14 17 14 18h-4c0-1-.6-1.8-1.5-2.5Z" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.7" /></svg>
@@ -207,16 +208,6 @@ const Tip = ({ children, title }: { readonly children: ReactNode; readonly title
     <summary><BulbIcon /><span>{title}</span><ChevronIcon /></summary>
     <div className="docs-tip-content">{children}</div>
   </details>
-)
-
-const RlmDiagram = (): ReactElement => (
-  <div className="rlm-diagram" role="img" aria-label="A long context enters a code environment that makes recursive model calls and returns a final answer">
-    <div className="rlm-context-card"><span>context as data</span><div aria-hidden="true"><i /><i /><i /><i /><i /></div><code>context[0..n]</code></div>
-    <div className="rlm-diagram-arrow" aria-hidden="true" />
-    <div className="rlm-program-card"><span>code environment</span><code>inspect(context)</code><code>partition(context)</code><strong>recursive model calls</strong><div className="rlm-subcalls" aria-hidden="true"><i>LM 01</i><i>LM 02</i><i>LM 03</i></div></div>
-    <div className="rlm-diagram-arrow" aria-hidden="true" />
-    <div className="rlm-answer-card"><span>result</span><strong>final answer</strong></div>
-  </div>
 )
 
 export const mdxComponents = {
