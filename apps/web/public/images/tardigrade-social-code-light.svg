@@ -48,15 +48,15 @@
       <text x="151" y="214"><tspan fill="#65d2ff">name</tspan><tspan fill="#f3f4f6">: </tspan><tspan fill="#b6e879">"rlm-researcher"</tspan><tspan fill="#f3f4f6">,</tspan></text>
       <text x="151" y="244"><tspan fill="#65d2ff">methods</tspan><tspan fill="#f3f4f6">: agentMethods,</tspan></text>
       <text x="151" y="274"><tspan fill="#65d2ff">components</tspan><tspan fill="#f3f4f6">: [</tspan><tspan fill="#c9a5ff">infer</tspan><tspan fill="#f3f4f6">([</tspan></text>
-      <text x="197" y="316"><tspan fill="#65d2ff">system</tspan><tspan fill="#f3f4f6">(</tspan><tspan fill="#b6e879">"Research the given topic and cite your sources."</tspan><tspan fill="#f3f4f6">),</tspan></text>
-      <text x="197" y="350"><tspan fill="#65d2ff">compaction</tspan><tspan fill="#f3f4f6">(),</tspan></text>
-      <text x="197" y="380"><tspan fill="#65d2ff">budget</tspan><tspan fill="#f3f4f6">([</tspan><tspan fill="#c9a5ff">codeMode</tspan><tspan fill="#f3f4f6">([</tspan></text>
-      <text x="243" y="410"><tspan fill="#65d2ff">agentsPackage</tspan><tspan fill="#f3f4f6">(),</tspan></text>
-      <text x="243" y="440"><tspan fill="#65d2ff">workspacePackage</tspan><tspan fill="#f3f4f6">()</tspan></text>
-      <text x="197" y="470" fill="#f3f4f6">])]),</text>
-      <text x="197" y="500"><tspan fill="#65d2ff">nativeOutput</tspan></text>
-      <text x="151" y="530" fill="#f3f4f6">])]</text>
-      <text x="105" y="560" fill="#f3f4f6">})</text>
+      <text x="197" y="304"><tspan fill="#65d2ff">system</tspan><tspan fill="#f3f4f6">(</tspan><tspan fill="#b6e879">"Research the given topic and cite your sources."</tspan><tspan fill="#f3f4f6">),</tspan></text>
+      <text x="197" y="334"><tspan fill="#65d2ff">compaction</tspan><tspan fill="#f3f4f6">(),</tspan></text>
+      <text x="197" y="364"><tspan fill="#65d2ff">budget</tspan><tspan fill="#f3f4f6">([</tspan><tspan fill="#c9a5ff">codeMode</tspan><tspan fill="#f3f4f6">([</tspan></text>
+      <text x="243" y="394"><tspan fill="#65d2ff">agentsPackage</tspan><tspan fill="#f3f4f6">(),</tspan></text>
+      <text x="243" y="424"><tspan fill="#65d2ff">workspacePackage</tspan><tspan fill="#f3f4f6">()</tspan></text>
+      <text x="197" y="454" fill="#f3f4f6">])]),</text>
+      <text x="197" y="484"><tspan fill="#65d2ff">nativeOutput</tspan></text>
+      <text x="151" y="514" fill="#f3f4f6">])]</text>
+      <text x="105" y="544" fill="#f3f4f6">})</text>
     </g>
   </g>
 
