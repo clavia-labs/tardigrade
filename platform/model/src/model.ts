@@ -610,7 +610,11 @@ export const infer = <const C extends ModelConfig>(
       promise: Promise.resolve(undefined)
     }
     const held: { tokens?: TokenUsage } = {}
-    const fetcher = withCapture(config.fetch, keyForRung, sink, signal)
+    const attemptController = new AbortController()
+    const attemptSignal = signal === undefined
+      ? attemptController.signal
+      : AbortSignal.any([signal, attemptController.signal])
+    const fetcher = withCapture(config.fetch, keyForRung, sink, attemptSignal)
     const fallbackSystem = fallbackSystemFor(req.output, mode)
     const attempt = selectedAdapter.start({
       config,
@@ -672,6 +676,7 @@ export const infer = <const C extends ModelConfig>(
       }
       return stamped(served(withSpend(actionOf(result), usage), endpoint))
     } catch (e) {
+      attemptController.abort()
       await sink.reader?.cancel().catch(() => undefined)
       // A truncation already carries its own spend; every other failure gets the attempt's spend
       // and endpoint attached here so both survive the throw.

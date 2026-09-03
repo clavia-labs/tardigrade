@@ -1289,6 +1289,38 @@ describe("declared limits", () => {
 })
 
 describe("stream bounds", () => {
+  test("an expired bound aborts the underlying request", async () => {
+    let requestSignal: AbortSignal | undefined
+    const fetchImpl = (async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      requestSignal = init?.signal ?? undefined
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            const abort = () => controller.error(new DOMException("aborted", "AbortError"))
+            if (requestSignal?.aborted === true) abort()
+            else requestSignal?.addEventListener("abort", abort, { once: true })
+          }
+        }),
+        { status: 200, headers: { "content-type": "text/event-stream" } }
+      )
+    }) as unknown as typeof fetch
+    const layer = testInfer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "m",
+      stream: { firstChunkMs: 20, idleMs: 20, totalMs: 100 },
+      throttleRetryDelaysMs: [],
+      fetch: fetchImpl as never
+    })
+
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+
+    expect(action.kind).toBe("fail")
+    expect(requestSignal?.aborted).toBe(true)
+  })
+
   test("an invalid bound refuses at construction", () => {
     // A value outside Bun's timer range would clamp to 1ms and read as provider trouble
     // (model.ts, infer).
