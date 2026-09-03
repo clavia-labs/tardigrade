@@ -8,9 +8,11 @@ sectionOrder: 1
 order: 2
 ---
 
-Building an agent is challenging. As tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
+Building an agent can be challenging, especially as the horizon over which they operate is ever expanding. Tasks get harder, behaviors become harder to reason about, and the harnesses we build around our agents get ever more complex.
 
 Tardigrade presents a way to simplify this complexity by proposing a new way of thinking about agent harnesses.
+
+<TrajectoryBranchesDiagram />
 
 In a typical agent harness, your core model loop would be something like this:
 
@@ -21,47 +23,38 @@ type AgentPolicy = {
   readonly maxTurns: number
 }
 
-const runAgent = async (
-  messages: Message[],
-  policy: AgentPolicy
-): Promise<string> => {
-  let turns = 0
-
-  while (turns < policy.maxTurns) {
+const runAgent = async (messages, policy: AgentPolicy) => {
+  for (let turn = 0; turn < policy.maxTurns; turn++) {
     if (tokenCount(messages) >= policy.contextWindow * policy.compactAt) {
       messages = await compact(messages)
     }
 
-    const response = await model.generate({ messages, system, tools })
+    const response = await model.generate({
+      messages,
+      system,
+      tools
+    })
     messages.push(response)
 
     if (response.toolCalls.length === 0) return response.text
 
-    for (const call of response.toolCalls) {
-      const result = await canUseTool(call)
-        ? await tools.execute(call)
-        : toolDenied(call)
-      messages.push(result)
-    }
-
-    turns += 1
+    // Check permissions, run tools, and append their results.
   }
-
   throw new Error("Turn limit reached")
 }
 ```
 
 It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, *budgets and permissions for subagents*), it starts to add up.
 
-It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
+It is not obvious which parts of your code led to a specific agent behavior or how those parts interact with each other.
 
 ### A composable way to author behavior
 
-Tardigrade grew out of the realization that an agent harness is similar to a user interface.
+Tardigrade grew out of the realization that an agent harness is very similar to a user interface.
 
-User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and the frontend community had already solved it.
+User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and the frontend community had already solved for it!
 
-[React](https://react.dev/) defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of components. Each component is a state machine, with state as projections from an immutable event log.
+[React](https://react.dev/) defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of behaviors. Each behavior is a state machine, with its state as a projection from an immutable event log.
 
 <InterfaceComparisonDiagram />
 
@@ -70,6 +63,8 @@ User interfaces help humans interact with the digital world. Agent harnesses hel
 If you asked me to compress Tardigrade's single most important insight, it is this:
 
 <Math expression="\text{behavior} = f(\text{immutable event log})" />
+
+<BehaviorTrajectoryDiagram />
 
 If you can describe the behavior you want to see in simple English, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
@@ -83,7 +78,7 @@ For example, let's take compaction. In simple English, you could describe compac
 
 > **When** the token count of the conversation sent to a model reaches a certain threshold, use a model to summarize part of the conversation.
 >
-> **Then**, append the summary to the event log in a `CompactionCompleted` event. For subsequent model calls, send the summary and the retained part of the conversation.
+> **Then**, append the summary to the event log in a `CompactionCompleted` event. For subsequent model calls, send the summary and a tail of the conversation derived in relation to the compaction event.
 
 As a state machine written over the event log, it looks like this:
 
@@ -91,7 +86,7 @@ As a state machine written over the event log, it looks like this:
   <CompactionMachineDiagram />
 </div>
 
-Once you've defined this behavior, now you can composed it with other such behaviors defined in a similar manner.
+Once you've defined this behavior, you can compose it with other such behaviors defined in a similar manner.
 
 ```ts highlight="12"
 const boundedContext = compaction({
@@ -111,7 +106,11 @@ export const researcher = actor({
 })
 ```
 
-You can simply plug this out of your agent or test various other compaction policies without affecting the other defined behaviors of the agent. Composition is possible because each state machine is defined as a typed state machine using Effect TS. A component has the following interface:
+You can simply remove this from your agent or test various other compaction policies without affecting the other defined behaviors of the agent.
+
+Composition is possible because each state machine is defined as a typed state machine using Effect TS.
+
+A component has the following interface:
 
 ```ts
 interface ComponentDefinition<State, View, Requirements = never> {
@@ -141,4 +140,4 @@ Tardigrade composes behavior by reconciling the transitions enabled by each comp
 ComponentDefinition<State, View, Requirements>
 ```
 
-We can compose this approach into complex behaviors such as subagents, codemode, and recursive language models. Continue to the [Quickstart](/docs/quickstart) to start building.
+We can use this approach to compose complex behaviors such as subagents, codemode, and recursive language models. Your imagination is the limit here. Continue to the [Quickstart](/docs/quickstart) to start building!

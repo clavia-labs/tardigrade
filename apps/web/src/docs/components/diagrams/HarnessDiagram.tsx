@@ -22,14 +22,14 @@ export const HarnessDiagram = (): ReactElement => (
     <g className="harness-diagram-component" transform="translate(120 126)">
       <rect width="480" height="100" />
       <text className="harness-diagram-kind" x="24" y="27">component tree</text>
-      <text className="harness-diagram-value" x="24" y="58">system + compaction + tools + output</text>
+      <text className="harness-diagram-value" x="24" y="58">behaviors</text>
       <text className="harness-diagram-detail" x="24" y="83">state = fold(events, step)</text>
     </g>
 
     <g className="harness-diagram-node harness-diagram-view" transform="translate(30 290)">
       <rect width="300" height="76" />
       <text className="harness-diagram-kind" x="24" y="27">views</text>
-      <text className="harness-diagram-value" x="24" y="55">context + tools + output</text>
+      <text className="harness-diagram-value" x="24" y="55">derived values</text>
     </g>
 
     <g className="harness-diagram-node harness-diagram-transition" transform="translate(390 290)">

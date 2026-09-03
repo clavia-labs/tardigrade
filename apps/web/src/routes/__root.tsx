@@ -21,12 +21,12 @@ export const Route = createRootRoute({
       { property: "og:image", content: "https://tardigrade.sh/images/tardigrade-social-code-light.png" },
       { property: "og:image:width", content: "1200" },
       { property: "og:image:height", content: "630" },
-      { property: "og:image:alt", content: "A Tardie RLM researcher agent assembled from modular components." },
+      { property: "og:image:alt", content: "Behavior as a function of an immutable event log, shown as a trajectory derived from previous points." },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "Tardie Agent" },
       { name: "twitter:description", content: "A composable harness for durable agents." },
       { name: "twitter:image", content: "https://tardigrade.sh/images/tardigrade-social-code-light.png" },
-      { name: "twitter:image:alt", content: "A Tardie RLM researcher agent assembled from modular components." },
+      { name: "twitter:image:alt", content: "Behavior as a function of an immutable event log, shown as a trajectory derived from previous points." },
       { title: "Tardigrade" }
     ],
     links: [

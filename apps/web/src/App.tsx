@@ -573,6 +573,8 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
         </div>
         <div className="nav-actions">
           <a className="github-link" href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank"><Github /></a>
+          <a className="discord-link" href="https://discord.gg/Z74jwRxz4k" aria-label="Tardigrade on Discord" rel="noreferrer" target="_blank"><Discord /></a>
+          <div className="header-theme-toggle"><ThemeToggle /></div>
           <button className="mobile-menu-trigger" type="button" aria-controls="mobile-navigation" aria-expanded={mobileMenuOpen} ref={menuButtonRef} onClick={() => setMobileMenuOpen((open) => !open)}>
             <MenuIcon />
             <span>Menu</span>
