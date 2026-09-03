@@ -579,7 +579,7 @@ const Scalability = (): ReactElement => (
     <div className="scalability-inner">
       <div className="scalability-copy">
         <h2>Scalable.</h2>
-        <p>Every agent can run as a durable object. Scale from a single agent to an entire civilisation.</p>
+        <p>Every agent can run as a durable object. Scale from a single agent to swarms of agents.</p>
       </div>
       <ScalabilityGrid />
     </div>
