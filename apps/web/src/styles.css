@@ -395,6 +395,8 @@ h1 span { display: block; white-space: nowrap; }
 .guide-divider { margin: 24px 0 44px; border-top: 1px dashed rgb(var(--accent-rgb) / 28%); }
 .guide-article > p:not(.guide-intro) { max-width: 720px; margin: 0; color: var(--ink); font-size: 17px; line-height: 1.62; }
 .guide-article > p:not(.guide-intro) + p:not(.guide-intro) { margin-top: 18px; }
+.guide-article > p em { font-style: italic; }
+.guide-article > p :is(em strong, strong em) { font-weight: 700; font-style: italic; }
 .guide-article > ol, .guide-article > ul { max-width: 720px; color: var(--ink); font-size: 17px; line-height: 1.62; }
 .guide-article > p a, .guide-article > ol a, .guide-article > ul a { color: var(--moss-ink); text-decoration: underline; text-decoration-color: rgb(var(--accent-rgb) / 38%); text-decoration-thickness: 1px; text-underline-offset: 3px; transition: color 160ms ease, text-decoration-color 160ms ease; }
 .guide-article > p a:hover, .guide-article > ol a:hover, .guide-article > ul a:hover { color: var(--moss-deep); text-decoration-color: currentColor; }
@@ -453,7 +455,7 @@ h1 span { display: block; white-space: nowrap; }
 .concept-copy p { margin: 0; color: var(--ink-2); font-size: 17px; line-height: 1.62; }
 .concept-copy p + p { margin-top: 14px; }
 .concept-code { position: relative; min-width: 0; border: 1px solid rgb(var(--accent-rgb) / 38%); background: var(--surface); }
-.concept-code pre { margin: 0; padding: 20px 54px 20px 20px; overflow-x: auto; color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: 1.7; }
+.concept-code pre { margin: 0; padding: 20px 54px 20px 20px; overflow-x: auto; color: var(--ink); font-family: var(--mono); font-size: 12px; line-height: var(--docs-code-line-height, 1.7); }
 .concept-code .syntax-keyword { color: #c65334; }
 .concept-code .syntax-function { color: var(--plum); }
 .concept-code .syntax-string { color: var(--moss-ink); }
@@ -463,12 +465,15 @@ h1 span { display: block; white-space: nowrap; }
 .concept-code button svg { width: 15px; height: 15px; }
 .guide-article > .docs-code { width: min(100%, 720px); margin-top: 18px; }
 .guide-article > .docs-code-single { width: min(100%, 720px); margin-top: 18px; }
-.guide-article > :is(.docs-code, .docs-code-single, .docs-event-log, .docs-filesystem, .docs-tip) + p { margin-top: 28px; }
+.guide-article > :is(.docs-code, .docs-code-single, .docs-event-log, .docs-filesystem, .docs-text-diagram, .docs-tip) + p { margin-top: 28px; }
 .docs-code-header { height: 40px; padding: 0 14px; display: flex; align-items: center; border-bottom: 1px dashed rgb(var(--accent-rgb) / 28%); color: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.docs-code pre { max-height: 560px; padding: 18px 54px 18px 20px; }
-.docs-code[data-highlight="true"] pre { background-image: linear-gradient(90deg, rgb(207 177 66 / 42%) 2px, rgb(255 238 155 / 28%) 2px); background-position: 0 calc(15px + var(--docs-highlight-offset)); background-repeat: no-repeat; background-size: 100% 1.5em; }
+.docs-code { --docs-code-padding-top: 18px; }
+.docs-code pre { max-height: 560px; padding: var(--docs-code-padding-top) 54px 18px 20px; }
+.docs-code[data-highlight="true"] pre { background-image: linear-gradient(90deg, rgb(207 177 66 / 42%) 2px, rgb(255 238 155 / 28%) 2px); background-position: 0 var(--docs-highlight-position, calc(var(--docs-code-padding-top) + var(--docs-highlight-offset))); background-repeat: no-repeat; background-size: 100% var(--docs-code-line-height); }
 .docs-code[data-expanded="true"] pre { max-height: none; }
 .docs-code button { top: 4px; }
+.docs-text-diagram { width: min(100%, 720px); margin-top: 18px; padding: 20px; overflow-x: auto; border: 1px dashed rgb(var(--accent-rgb) / 38%); background: var(--surface); box-sizing: border-box; }
+.docs-text-diagram pre { width: max-content; min-width: 100%; margin: 0; color: var(--ink-2); font-family: var(--mono); font-size: 12px; line-height: 1.6; }
 .concept-interface .docs-code { width: auto; border: 0; }
 .concept-interface .docs-code-header { display: none; }
 .concept-interface .docs-code button { top: 8px; }
@@ -606,25 +611,20 @@ h1 span { display: block; white-space: nowrap; }
 .component-diagram-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#component-diagram-arrow); vector-effect: non-scaling-stroke; }
 .component-diagram marker path { fill: var(--moss-ink); }
 .compaction-machine-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
-.compaction-machine-diagram { min-width: 560px; width: min(100%, 720px); height: auto; margin: 10px auto 0; display: block; }
+.compaction-machine-diagram { min-width: 540px; width: min(100%, 640px); height: auto; margin: 10px auto 0; display: block; }
 .compaction-machine-node rect, .compaction-machine-state rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .compaction-machine-state rect { fill: var(--moss-wash); stroke: var(--moss); }
-.compaction-machine-view rect, .compaction-machine-inference rect { stroke: var(--run); }
-.compaction-machine-transition rect, .compaction-machine-event rect { stroke: var(--plum); }
 .compaction-machine-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .compaction-machine-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
 .compaction-machine-detail { fill: var(--ink-2); font-family: var(--mono); font-size: 12px; }
 .compaction-machine-code { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; text-anchor: end; }
 .compaction-machine-connectors path { fill: none; stroke: rgb(var(--accent-rgb) / 62%); stroke-width: 1.25; marker-end: url(#compaction-machine-arrow); vector-effect: non-scaling-stroke; }
 .compaction-machine-diagram marker path { fill: var(--moss-ink); }
-.compaction-machine-labels { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.compaction-machine-labels { fill: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; }
 .harness-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
-.harness-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 8px auto 0; display: block; }
+.harness-diagram { min-width: 540px; width: min(100%, 640px); height: auto; margin: 8px auto 0; display: block; }
 .harness-diagram-node rect, .harness-diagram-component rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .harness-diagram-component rect { fill: var(--moss-wash); stroke: var(--moss); }
-.harness-diagram-view rect { stroke: var(--moss); }
-.harness-diagram-transition rect { stroke: var(--plum); }
-.harness-diagram-runtime rect { stroke: var(--run); }
 .harness-diagram-kind { fill: var(--faint); font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
 .harness-diagram-value { fill: var(--ink); font-family: var(--mono); font-size: 16px; }
 .harness-diagram-detail { fill: var(--moss-ink); font-family: var(--mono); font-size: 12px; }
@@ -632,7 +632,22 @@ h1 span { display: block; white-space: nowrap; }
 .harness-diagram marker path { fill: var(--moss-ink); }
 .harness-diagram-boundary path { fill: none; stroke: rgb(var(--accent-rgb) / 28%); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
 .harness-diagram-boundary text { fill: var(--moss-ink); font-family: var(--mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase; }
-.harness-diagram-labels { fill: var(--faint); font-family: var(--mono); font-size: 9px; letter-spacing: .04em; }
+.harness-diagram-labels { fill: var(--faint); font-family: var(--mono); font-size: 10px; letter-spacing: .04em; }
+.interface-comparison { width: 100%; margin-top: 30px; padding: 20px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); border: 1px dashed rgb(var(--accent-rgb) / 38%); box-sizing: border-box; }
+.interface-comparison-column { min-width: 0; padding: 4px 20px 0; }
+.interface-comparison-column + .interface-comparison-column { border-left: 1px dashed rgb(var(--accent-rgb) / 28%); }
+.interface-comparison-column header { width: 100%; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.interface-comparison-column header span { color: var(--moss-ink); font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.interface-comparison-column header strong { color: var(--ink); font-size: 14px; font-weight: 500; }
+.interface-comparison-column svg { width: 100%; height: auto; display: block; }
+.interface-comparison-copy text { font-family: var(--mono); text-anchor: middle; }
+.interface-comparison-kind { fill: var(--faint); font-size: 9px; letter-spacing: .08em; text-transform: uppercase; }
+.interface-comparison-value, .interface-comparison-output { fill: var(--ink); font-size: 15px; }
+.interface-comparison-label { fill: var(--faint); font-size: 9px; text-anchor: start !important; }
+.interface-comparison-leaf { fill: var(--moss-ink); font-size: 11px; }
+.interface-comparison-output { fill: var(--plum); }
+.interface-comparison-paths { fill: var(--moss-ink); stroke: rgb(var(--accent-rgb) / 52%); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.interface-comparison-paths path { fill: none; }
 .primitive-diagram-frame { width: 100%; overflow-x: auto; overscroll-behavior-inline: contain; }
 .primitive-diagram { min-width: 560px; width: min(100%, 680px); height: auto; margin: 16px auto 0; display: block; }
 .primitive-diagram-node rect { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }
@@ -717,6 +732,9 @@ h1 span { display: block; white-space: nowrap; }
   .guide-article h1 { font-size: 36px; }
   .guide-article h2 { font-size: 27px; }
   .guide-article > p:not(.guide-intro) { font-size: 16px; }
+  .interface-comparison { padding: 16px; grid-template-columns: 1fr; }
+  .interface-comparison-column { padding: 16px 0 0; }
+  .interface-comparison-column + .interface-comparison-column { border-top: 1px dashed rgb(var(--accent-rgb) / 28%); border-left: 0; }
   :is(.actor-diagram, .transition-loop, .component-diagram, .compaction-machine-diagram, .harness-diagram, .primitive-diagram, .method-diagram) { width: 100%; }
   .guide-command { width: 100%; }
   .example-source-heading { margin-top: 24px; }

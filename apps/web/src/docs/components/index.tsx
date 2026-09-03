@@ -1,10 +1,11 @@
-import { Children, cloneElement, isValidElement, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
+import { Children, cloneElement, isValidElement, useLayoutEffect, useRef, type ComponentPropsWithoutRef, type CSSProperties, type ReactElement, type ReactNode } from "react"
 import { renderToString } from "katex"
 
 import { ActorDiagram } from "../../ActorDiagram"
 import { ComponentDiagram } from "../../ComponentDiagram"
 import { CompactionMachineDiagram } from "../../CompactionMachineDiagram"
 import { HarnessDiagram } from "../../HarnessDiagram"
+import { InterfaceComparisonDiagram } from "../../InterfaceComparisonDiagram"
 import { MethodDiagram } from "../../MethodDiagram"
 import { PrimitiveDiagram } from "../../PrimitiveDiagram"
 import { TransitionLoop } from "../../TransitionLoop"
@@ -49,17 +50,69 @@ const languageOf = (children: ReactNode): string => {
 type CodeProps = ComponentPropsWithoutRef<"pre"> & {
   readonly expanded?: boolean | undefined
   readonly highlight?: number | string | undefined
-  readonly variant?: "multi" | "single" | undefined
+  readonly variant?: "diagram" | "multi" | "single" | undefined
 }
 
 const Code = ({ children, expanded = false, highlight, variant = "multi", ...props }: CodeProps): ReactElement => {
   const [copied, copy] = useCopy()
+  const codeRoot = useRef<HTMLDivElement>(null)
   const language = languageOf(children)
+  const lineHeight = 20
   const highlightedLine = Number(highlight)
-  const highlightStyle = Number.isInteger(highlightedLine) && highlightedLine > 0
-    ? { "--docs-highlight-offset": `${(highlightedLine - 1) * 1.7}em` } as CSSProperties
-    : undefined
+  const hasHighlight = Number.isInteger(highlightedLine) && highlightedLine > 0
+  const codeStyle = {
+    "--docs-code-line-height": `${lineHeight}px`,
+    ...(hasHighlight ? { "--docs-highlight-offset": `${(highlightedLine - 1) * lineHeight}px` } : {})
+  } as CSSProperties
   const source = textFrom(children).trimEnd()
+  useLayoutEffect(() => {
+    if (!hasHighlight) return
+    const root = codeRoot.current
+    const pre = root?.querySelector("pre")
+    const code = pre?.querySelector("code")
+    if (root === null || root === undefined || pre === null || pre === undefined || code === null || code === undefined) return
+    const position = (): void => {
+      const lines = code.textContent?.split("\n") ?? []
+      const target = lines[highlightedLine - 1]
+      if (target === undefined) return
+      const lineStart = lines.slice(0, highlightedLine - 1).reduce((length, line) => length + line.length + 1, 0)
+      const firstContent = target.search(/\S/)
+      const targetOffset = lineStart + (firstContent < 0 ? 0 : firstContent)
+      const walker = document.createTreeWalker(code, NodeFilter.SHOW_TEXT)
+      let offset = 0
+      let node = walker.nextNode()
+      while (node !== null) {
+        const text = node.textContent ?? ""
+        if (targetOffset < offset + text.length) {
+          const range = document.createRange()
+          const start = targetOffset - offset
+          range.setStart(node, start)
+          range.setEnd(node, globalThis.Math.min(start + 1, text.length))
+          const character = range.getBoundingClientRect()
+          const preRect = pre.getBoundingClientRect()
+          const scale = pre.offsetHeight === 0 ? 1 : preRect.height / pre.offsetHeight
+          const renderedTop = (character.top - preRect.top) / scale
+          const renderedHeight = character.height / scale
+          const renderedLineHeight = Number.parseFloat(getComputedStyle(pre).lineHeight)
+          root.style.setProperty("--docs-highlight-position", `${renderedTop - (renderedLineHeight - renderedHeight) / 2}px`)
+          return
+        }
+        offset += text.length
+        node = walker.nextNode()
+      }
+    }
+    position()
+    const observer = new ResizeObserver(position)
+    observer.observe(pre)
+    let active = true
+    void document.fonts.ready.then(() => {
+      if (active) position()
+    })
+    return () => {
+      active = false
+      observer.disconnect()
+    }
+  }, [children, hasHighlight, highlightedLine])
   if (variant === "single") {
     return (
       <div className="install-command docs-code-single" aria-label={`${language} command`}>
@@ -71,8 +124,11 @@ const Code = ({ children, expanded = false, highlight, variant = "multi", ...pro
       </div>
     )
   }
+  if (variant === "diagram") {
+    return <div className="docs-text-diagram"><pre {...props}>{children}</pre></div>
+  }
   return (
-    <div className="concept-code docs-code" data-expanded={expanded} data-highlight={highlightStyle === undefined ? undefined : "true"} style={highlightStyle}>
+    <div ref={codeRoot} className="concept-code docs-code" data-expanded={expanded} data-highlight={hasHighlight ? "true" : undefined} style={codeStyle}>
       <div className="docs-code-header"><span>{language}</span></div>
       <pre {...props}>{children}</pre>
       <button type="button" aria-label={copied ? "Code copied" : "Copy code"} onClick={() => void copy(source)}>
@@ -173,6 +229,7 @@ export const mdxComponents = {
   EventLog,
   Filesystem,
   HarnessDiagram,
+  InterfaceComparisonDiagram,
   Math,
   MethodDiagram,
   PrimitiveDiagram,
