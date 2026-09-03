@@ -49,13 +49,15 @@ const runAgent = async (
 }
 ```
 
-It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, budgets and permissions for subagents), it starts to add up. It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
+It doesn't seem like a problem initially, but as you add more stateful conditions (permissions, budgets, *budgets and permissions for subagents*), it starts to add up.
+
+It is not obvious which part of your code led to a specific agent behavior, nor how they interact with each other.
 
 ### A composable way to author behavior
 
-Tardigrade grew out of the realization that an agent harness isn't very different from a traditional user interface. Just like how traditional user interfaces help humans interact with the digital world, agent harnesses help agents interact with the physical world. Once you frame it this way, it become a rendering problem and the frontend community had already solved for this!&#x20;
+Tardigrade grew out of the realization that an agent harness is similar to a user interface. User interfaces help humans interact with the digital world. Agent harnesses help agents interact with the real world. Framed this way, authoring a harness becomes a rendering problem, and frontend developers already know how to solve it.
 
-React defined the user interface as a component tree, and each component was a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a state machine, with state as projections from an immutable event log.
+React defined the user interface as a component tree, and each component as a function of state. Similarly, Tardigrade defines an agent harness as a composition of components, and each component is a state machine, with state as projections from an immutable event log.
 
 <InterfaceComparisonDiagram />
 
@@ -65,7 +67,7 @@ If you asked me to compress Tardigrade's single most important insight, it is th
 
 <Math expression="\text{behavior} = f(\text{immutable event log})" />
 
-If you can describe the behavior you want to see in simple english, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
+If you can describe the behavior you want to see in simple English, you should be able to define it as a function of the event log. An agent harness could then be viewed as a composition of such behaviors.
 
 <div className="harness-diagram-frame">
   <HarnessDiagram />
@@ -73,9 +75,11 @@ If you can describe the behavior you want to see in simple english, you should b
 
 ### Example: Compaction
 
-For example, let's take compaction. In simple english, you could describe compaction as follows:
+For example, let's take compaction. In simple English, you could describe compaction as follows:
 
-> When the token count of the conversation sent to inference reaches a certain threshold, use a language model to summarize part of the conversation. Append the summary to the event log as `CompactionCompleted`. For each subsequent model call, attach the summary and a tail of the conversation.
+> **When** the token count of the conversation sent to a model reaches a certain threshold, use a model to summarize part of the conversation.
+>
+> **Then**, append the summary to the event log in a `CompactionCompleted` event. For subsequent model calls, send the summary and the retained part of the conversation.
 
 As a state machine written over the event log, it looks like this:
 
@@ -133,4 +137,4 @@ Tardigrade composes behavior by reconciling the transitions enabled by each comp
 ComponentDefinition<State, View, Requirements>
 ```
 
-We can extend this approach to build subagents, codemode, recursive language models and so on. Your imagination is the limit here! Continue to the [Quickstart](/docs/quickstart) to start building.
+We can compose this approach into complex behaviors such as subagents, codemode, and recursive language models. Continue to the [Quickstart](/docs/quickstart) to start building.
