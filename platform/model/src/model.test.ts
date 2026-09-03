@@ -1259,13 +1259,13 @@ describe("declared limits", () => {
     expect(ladderOf(16_384)).toEqual([16_384])
   })
 
-  test("the compatible leg states its ceiling and request timeout on the wire", async () => {
+  test("the compatible leg states its ceiling and disables Bun's fetch timeout", async () => {
     let body: { max_tokens?: number } | undefined
     let timeout: unknown
     const fetchImpl = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
       const request = input instanceof Request ? input : new Request(String(input), init)
       body = JSON.parse(await request.text()) as { max_tokens?: number }
-      timeout = (init as (RequestInit & { timeout?: number }) | undefined)?.timeout
+      timeout = (init as (RequestInit & { timeout?: boolean }) | undefined)?.timeout
       return new Response('data: {"choices":[{"delta":{"content":"ok"},"index":0}]}\n\ndata: {"choices":[{"delta":{},"finish_reason":"stop","index":0}]}\n\ndata: [DONE]\n\n', {
         status: 200,
         headers: { "content-type": "text/event-stream" }
@@ -1284,7 +1284,7 @@ describe("declared limits", () => {
       Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(Effect.provide(layer)) as Effect.Effect<unknown>
     )
     expect(body?.max_tokens).toBe(16_384)
-    expect(timeout).toBe(600_000)
+    expect(timeout).toBe(false)
   })
 })
 

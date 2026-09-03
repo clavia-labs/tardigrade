@@ -392,7 +392,6 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
 const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
-  timeoutMs: number,
   sink: { promise: Promise<Wire | undefined>; reader?: BodyReader },
   signal?: AbortSignal
 ): FetchImpl => {
@@ -404,8 +403,8 @@ const withCapture = (
       : requestSignal === undefined || requestSignal === null
         ? signal
         : AbortSignal.any([requestSignal, signal])
-    const timed = { ...init, ...(combined === undefined ? {} : { signal: combined }), timeout: timeoutMs } as NonNullable<Parameters<FetchImpl>[1]>
-    const res = await inner(input, timed)
+    const request = { ...init, ...(combined === undefined ? {} : { signal: combined }), timeout: false } as NonNullable<Parameters<FetchImpl>[1]>
+    const res = await inner(input, request)
     if (res.body === null) return res
     const [live, copy] = res.body.tee()
     const reader = copy.getReader()
@@ -611,7 +610,7 @@ export const infer = <const C extends ModelConfig>(
       promise: Promise.resolve(undefined)
     }
     const held: { tokens?: TokenUsage } = {}
-    const fetcher = withCapture(config.fetch, keyForRung, bounds.totalMs, sink, signal)
+    const fetcher = withCapture(config.fetch, keyForRung, sink, signal)
     const fallbackSystem = fallbackSystemFor(req.output, mode)
     const attempt = selectedAdapter.start({
       config,
