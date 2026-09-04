@@ -12,7 +12,7 @@ order: 1
 ### Prerequisites
 
 1. [Bun](https://bun.sh/docs) 1.4 or above
-2. [Tardie CLI](/docs/cli) 0.18.0 or above
+2. The latest [Tardie CLI](/docs/cli)
 3. An LLM API key from a provider of your choice
 
 For the fastest setup, create an [OpenRouter API key](https://openrouter.ai/settings/keys) before you begin. For deployment, install either the [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) for Cloudflare or the [Celld CLI](https://celld.dev/docs/) for your own cloud.
@@ -230,13 +230,13 @@ tdg call message '{"text":"How about San Francisco?"}' --thread quickstart
 Now that we've tested our agent, let's deploy it. To deploy the agent on Cloudflare, run:
 
 ```bash variant="single"
-wrangler deploy
+bun run deploy:cloudflare
 ```
 
 To deploy it on your own cloud, use Celld:
 
 ```bash variant="single"
-celld deploy
+bun run deploy:celld
 ```
 
 ### Send a message to your cloud agent
