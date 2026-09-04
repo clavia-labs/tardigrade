@@ -1,7 +1,7 @@
 import { Clock, Effect, HashSet } from "effect"
 import { effect, Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
-import { compactionCompleted } from "../log/events"
+import { compactionCompleted, toolCallIdentity } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
 import {
@@ -224,7 +224,11 @@ export const keepFromIndex = (events: ReadonlyArray<Event>, keepFrom: string): n
   for (let i = 0; i < events.length; i++) {
     const e = events[i]!
     const v = e as { callId?: unknown; id?: unknown }
-    if (keepFrom.startsWith("c:") && e.type === "ToolCalled" && String(v.callId) === keepFrom.slice(2)) return i
+    if (keepFrom.startsWith("c:") && e.type === "ToolCalled") {
+      const target = keepFrom.slice(2)
+      const callId = String(v.callId)
+      if (target === callId || target === toolCallIdentity(turnOf(e), callId)) return i
+    }
     if (keepFrom.startsWith("m:") && e.type === "MessageReceived" && String(v.id) === keepFrom.slice(2)) return i
   }
   return 0
@@ -247,9 +251,13 @@ const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
   const open = turnView(log)
   if (open.length === 0) return true
   const answered = new Set(
-    open.filter((e) => e.type === "ToolReturned").map((e) => String((e as { callId?: unknown }).callId))
+    open.filter((event) => event.type === "ToolReturned")
+      .map((event) => toolCallIdentity(turnOf(event), event.callId))
   )
-  return !open.some((e) => e.type === "ToolCalled" && !answered.has(String((e as { callId?: unknown }).callId)))
+  return !open.some((event) =>
+    event.type === "ToolCalled" &&
+    !answered.has(toolCallIdentity(turnOf(event), event.callId))
+  )
 }
 
 // boundaryIdOf returns the identity a cut at this event would record: a ToolCalled keeps its
@@ -257,7 +265,7 @@ const atRoundBoundary = (log: ReadonlyArray<Event>): boolean => {
 // names an event the projection cannot see, so it is no boundary.
 const boundaryIdOf = (e: Event, served: ReadonlySet<string>): string | undefined => {
   const v = e as { callId?: unknown; id?: unknown }
-  if (e.type === "ToolCalled") return `c:${String(v.callId)}`
+  if (e.type === "ToolCalled") return `c:${toolCallIdentity(turnOf(e), v.callId)}`
   if (e.type === "MessageReceived" && served.has(String(v.id))) return `m:${String(v.id)}`
   return undefined
 }

@@ -395,6 +395,14 @@ export type Action =
 // pair; bdec names the budget request a local decision answers, so a grant and denial for one request
 // cannot both commit. A grant is summed into the ceiling, so a redelivery must also absorb. A
 // decision that carries no callId predates the stamp and lands unkeyed; the fold tolerates it.
+// toolCallIdentity keys one tool call by its turn and call id: a provider call id is unique only
+// within one model turn, so the durable identity is the pair, and an unstamped event keeps its
+// bare call id so historical logs remain readable (tools.test.ts, "reused call ids across turns
+// key distinct tool returns"). Budget decisions stay keyed by their bare call id: a budget
+// request id names one request on one thread, and approval decisions are outside this identity.
+export const toolCallIdentity = (turn: unknown, callId: unknown): string =>
+  turn === undefined ? String(callId) : JSON.stringify([String(turn), String(callId)])
+
 const epochSuffix = (epoch: unknown): string => epoch === undefined || Number(epoch) === 0 ? "" : `/${String(epoch)}`
 
 export const agentKeys: KeyFragment = {
@@ -403,7 +411,7 @@ export const agentKeys: KeyFragment = {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "ToolReturned":
-        return `tr:${String(v.callId)}`
+        return `tr:${toolCallIdentity(v.turn, v.callId)}`
       case "BudgetGranted":
         return v.callId === undefined ? undefined : `bdec:${String(v.callId)}`
       case "BudgetDenied":
