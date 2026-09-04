@@ -156,6 +156,12 @@ describe("treeOf", () => {
     expect(treeOf(logs).map((node) => node.id)).toEqual(["root"])
   })
 
+  test("an empty registered child is absent", () => {
+    const logs = forest()
+    const withEmptyChild = new Map([...logs, ["t1.2", [] as ReadonlyArray<Event>]])
+    expect(treeOf(withEmptyChild)).toEqual(treeOf(logs))
+  })
+
   test("roots sort by first event time", () => {
     const early = [created("early"), inbound("a")]
     const late = [created("late"), inbound("b")]
