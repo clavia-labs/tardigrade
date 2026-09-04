@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type ReactElement } from "react"
+import { useLayoutEffect, useRef, useState, type ReactElement } from "react"
 
 type Point = { readonly x: number; readonly y: number }
 
@@ -8,22 +8,23 @@ type FlowGeometry = {
   readonly globe: Point
   readonly source: Point
   readonly target: Point | undefined
-  readonly vertical: boolean
 }
 
 type FlowOverlayProps = {
   readonly selectedSequence: string
   readonly targetSequence: string | undefined
+  readonly vertical: boolean
 }
 
 const centerY = (rect: DOMRect, parent: DOMRect): number => rect.top - parent.top + rect.height / 2
 const centerX = (rect: DOMRect, parent: DOMRect): number => rect.left - parent.left + rect.width / 2
 
-export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayProps): ReactElement => {
+export const FlowOverlay = ({ selectedSequence, targetSequence, vertical }: FlowOverlayProps): ReactElement => {
   const [geometry, setGeometry] = useState<FlowGeometry | null>(null)
+  const overlayRef = useRef<SVGSVGElement | null>(null)
 
   useLayoutEffect(() => {
-    const overlay = document.querySelector<SVGSVGElement>(".flow-overlay")
+    const overlay = overlayRef.current
     const grid = overlay?.parentElement
     if (overlay == null || grid == null) return
 
@@ -40,10 +41,7 @@ export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayPro
       const componentRect = component.getBoundingClientRect()
       const globeRect = globe.getBoundingClientRect()
       const targetRect = target?.getBoundingClientRect()
-      const vertical = window.matchMedia("(max-width: 1140px)").matches
-
       setGeometry({
-        vertical,
         source: vertical
           ? { x: sourceRect.right - gridRect.left - 8, y: centerY(sourceRect, gridRect) }
           : { x: sourceRect.right - gridRect.left + 6, y: centerY(sourceRect, gridRect) },
@@ -68,11 +66,11 @@ export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayPro
     const observer = new ResizeObserver(measure)
     observer.observe(grid)
     return () => observer.disconnect()
-  }, [selectedSequence, targetSequence])
+  }, [selectedSequence, targetSequence, vertical])
 
-  if (geometry === null) return <svg className="flow-overlay" aria-hidden="true" />
+  if (geometry === null) return <svg className="flow-overlay" aria-hidden="true" ref={overlayRef} />
 
-  const { componentLeft, componentRight, globe, source, target, vertical } = geometry
+  const { componentLeft, componentRight, globe, source, target } = geometry
   const outward = vertical
     ? `M${source.x} ${source.y}C${source.x + 6} ${source.y} ${source.x + 6} ${componentLeft.y} ${componentLeft.x} ${componentLeft.y}`
     : `M${source.x} ${source.y}C${source.x + 56} ${source.y} ${componentLeft.x - 56} ${componentLeft.y} ${componentLeft.x} ${componentLeft.y}`
@@ -86,7 +84,7 @@ export const FlowOverlay = ({ selectedSequence, targetSequence }: FlowOverlayPro
       : `M${componentLeft.x} ${componentLeft.y + 28}C${componentLeft.x - 64} ${componentLeft.y + 28} ${target.x + 64} ${target.y} ${target.x} ${target.y}`
 
   return (
-    <svg className="flow-overlay" aria-hidden="true">
+    <svg className="flow-overlay" aria-hidden="true" ref={overlayRef}>
       <defs>
         <marker id="flow-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
           <path d="M0 0L8 4L0 8Z" />

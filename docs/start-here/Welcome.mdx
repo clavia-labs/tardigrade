@@ -64,19 +64,25 @@ Tardigrade is a TypeScript framework for building modular agents around an immut
 
 ### Simplicity scales
 
-The core of Tardigrade will always be simple enough for anyone to reason about. Every component is a pure function of the event log with a typed interface. This will not change. A good primitive enables emergent behavior through composition. We believe this is that primitive.
+A good primitive is one that is simple enough but allows for complex behavior through composition. Tardigrade's core primitive is a component, which could be defined as a function of the event log.
+
+<Math expression="\{\text{view},\ \text{transitions}\} = f(\text{event log})" />
 
 ### Mathematically rigorous
 
-We hold everything built in Tardigrade to a standard of mathematical rigor. We use TLA+ for temporal modeling and fast-check for property testing. We are also experimenting with a TypeScript-native approach to temporal modeling.
+Everything built in Tardigrade will be mathematically rigorous. We use [TLA+](https://lamport.azurewebsites.net/tla/tla.html) for temporal modelling and [fast-check](https://fast-check.dev/) for property testing of components. We're also experimenting with a more TS-native version of TLA+. Eventually we want to make it possible for you to easily build formally verifiable agent harnesses.
 
 ### Maximally bitter lesson pilled
 
-Interfaces are inherently restrictive. We asked ourselves what the least compressed interface is and arrived at the event log. This gives every generation of model a strong foundation and a ceiling that scales with its capabilities.
+Interfaces are inherently restrictive. We asked ourselves what the most uncompressed interface is, and we arrived at the event log. This sets a great floor for every generation of models, allowing for a ceiling that scales with a model's capability.
+
+### Don't reinvent the wheel
+
+We're big fans of [Effect TS](https://effect.website/), as you might tell just from the way the docs are structured. We also took a few leaves from their own ethos (including this and the next). We want to take lessons from the past, including [automata theory](https://cs.stanford.edu/people/eroberts/courses/soco/projects/automata-theory/), [pi calculus](https://www.sciencedirect.com/science/article/pii/0890540192900084), [state machines](https://www.sciencedirect.com/science/article/pii/0167642387900359), and [Erlang/OTP](https://www.erlang.org/doc/system/design_principles.html), and build something practical for the community.
 
 ### Enjoy building!
 
-New models may come and go. What separates us is that we keep asking why and pushing the frontier. We want Tardigrade to help you do the same alongside each new generation of models.
+New models may come and go, but we keep pushing new frontiers by questioning the status quo. We want Tardigrade to be a tool for you to continue pushing frontiers in your domain, alongside each new generation of models.
 
 ## Where next
 
