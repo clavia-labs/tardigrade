@@ -122,7 +122,7 @@
 
           // The host, the client, and an actor's own `act` are Promise surfaces on purpose: a
           // caller holding a thread does not have to hold an Effect runtime (packages/host/src/
-          // host.ts, drive and wake; docs/quickstart.md).
+          // host.ts, drive and wake; docs/getting-started/quickstart.mdx).
           "asyncFunction": "off",
           "newPromise": "off",
           // Exported functions take their arguments directly. There is no data-last overload to

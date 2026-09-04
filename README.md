@@ -43,7 +43,7 @@ cd researcher
 tdg dev
 ```
 
-`tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/how-to/cli.md) covers non-interactive setup, more providers, and deployment.
+`tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/references/cli.mdx) covers non-interactive setup, more providers, and deployment.
 
 From another shell, discover the actor's methods and call one:
 
@@ -75,7 +75,7 @@ Celld:
 celld deploy --config celld.jsonc
 ```
 
-See the [Cloudflare](platform/cloudflare/README.md) and [Celld](docs/how-to/celld.md) guides for platform configuration and secrets.
+See the [Cloudflare](platform/cloudflare/README.md) and [Celld](docs/platforms/celld.mdx) guides for platform configuration and secrets.
 
 ## Build your own harness
 
@@ -257,10 +257,10 @@ External effects have at-least-once execution. Each keyed result is recorded onc
 
 ## Learn more
 
-- [Quickstart](docs/quickstart.md): build the event loop and its agent components from first principles.
+- [Quickstart](docs/getting-started/quickstart.mdx): build and deploy a Tardigrade actor.
 - [HTTP server](docs/how-to/server.md)
-- [CLI](docs/how-to/cli.md)
-- [Why Tardigrade](docs/explanations/why.md): learn what the log-as-state model makes possible.
+- [CLI](docs/references/cli.mdx)
+- [Why Tardigrade](docs/start-here/Why.mdx): learn what the log-as-state model makes possible.
 
 ## Contributing
 

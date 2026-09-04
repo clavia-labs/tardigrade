@@ -1,6 +1,6 @@
 # AGENTS.md
 
-[docs/README.md](docs/README.md) describes what this repository is and how the framework works. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the gate, and pull requests.
+[docs/start-here/Welcome.mdx](docs/start-here/Welcome.mdx) introduces the framework and links its published documentation. [CONTRIBUTING.md](CONTRIBUTING.md) covers setup, the gate, and pull requests.
 
 ## Design
 

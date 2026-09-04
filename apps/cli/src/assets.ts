@@ -10,7 +10,7 @@ import { fileURLToPath } from "node:url"
 // repository has no directory for, so the two candidates can never match the same place. In this
 // repository, the build is where vite wrote it, which is apps/voyager/dist, and the source beside
 // it holds an index of its own that vite serves rather than a build. Nothing is fetched and nothing
-// is proxied: hot reload stays the voyager's own dev script (docs/how-to/cli.md).
+// is proxied: hot reload stays the voyager's own dev script (docs/references/cli.mdx).
 
 // The file whose presence proves a directory is a build rather than an empty folder.
 export const INDEX_FILE = "index.html"

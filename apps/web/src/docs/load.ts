@@ -1,9 +1,9 @@
 import type { ComponentType } from "react"
 
-import Cli, { frontmatter as cliFrontmatter } from "@docs/cli.mdx"
-import cliMarkdown from "@docs/cli.mdx?doc-source"
-import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/concepts.mdx"
-import conceptsMarkdown from "@docs/concepts.mdx?doc-source"
+import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
+import cliMarkdown from "@docs/references/cli.mdx?doc-source"
+import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/getting-started/concepts.mdx"
+import conceptsMarkdown from "@docs/getting-started/concepts.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
 import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
 import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
@@ -12,14 +12,14 @@ import Celld, { frontmatter as celldFrontmatter } from "@docs/platforms/celld.md
 import celldMarkdown from "@docs/platforms/celld.mdx?doc-source"
 import Cloudflare, { frontmatter as cloudflareFrontmatter } from "@docs/platforms/cloudflare.mdx"
 import cloudflareMarkdown from "@docs/platforms/cloudflare.mdx?doc-source"
-import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/quickstart.mdx"
-import quickstartMarkdown from "@docs/quickstart.mdx?doc-source"
-import Sdk, { frontmatter as sdkFrontmatter } from "@docs/sdk.mdx"
-import sdkMarkdown from "@docs/sdk.mdx?doc-source"
-import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/Welcome.mdx"
-import welcomeMarkdown from "@docs/Welcome.mdx?doc-source"
-import Why, { frontmatter as whyFrontmatter } from "@docs/Why.mdx"
-import whyMarkdown from "@docs/Why.mdx?doc-source"
+import Quickstart, { frontmatter as quickstartFrontmatter } from "@docs/getting-started/quickstart.mdx"
+import quickstartMarkdown from "@docs/getting-started/quickstart.mdx?doc-source"
+import Sdk, { frontmatter as sdkFrontmatter } from "@docs/references/sdk.mdx"
+import sdkMarkdown from "@docs/references/sdk.mdx?doc-source"
+import Welcome, { frontmatter as welcomeFrontmatter } from "@docs/start-here/Welcome.mdx"
+import welcomeMarkdown from "@docs/start-here/Welcome.mdx?doc-source"
+import Why, { frontmatter as whyFrontmatter } from "@docs/start-here/Why.mdx"
+import whyMarkdown from "@docs/start-here/Why.mdx?doc-source"
 
 type DocFrontmatter = {
   readonly title: string
@@ -48,15 +48,15 @@ type DocModule = {
 }
 
 const modules: ReadonlyArray<DocModule> = [
-  { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "Welcome.mdx" },
-  { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "Why.mdx" },
-  { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "quickstart.mdx" },
-  { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "concepts.mdx" },
+  { default: Welcome, frontmatter: welcomeFrontmatter, markdown: welcomeMarkdown, source: "start-here/Welcome.mdx" },
+  { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
+  { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
+  { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "getting-started/concepts.mdx" },
   { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
   { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },
-  { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "cli.mdx" },
-  { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "sdk.mdx" },
+  { default: Cli, frontmatter: cliFrontmatter, markdown: cliMarkdown, source: "references/cli.mdx" },
+  { default: Sdk, frontmatter: sdkFrontmatter, markdown: sdkMarkdown, source: "references/sdk.mdx" },
   { default: Rlm, frontmatter: rlmFrontmatter, markdown: rlmMarkdown, source: "examples/rlm.mdx" }
 ]
 

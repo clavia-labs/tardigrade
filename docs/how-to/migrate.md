@@ -2,7 +2,7 @@
 
 This guide moves an existing agent application to Tardigrade. It uses Vercel AI SDK names because they are common, and the same inventory applies to another agent harness. The migration covers actor logic, stored conversations, the HTTP boundary, client updates, and deployment configuration.
 
-Read the [Tardigrade skill](../../skills/tardigrade/SKILL.md), the [quickstart](../quickstart.md), and the [server guide](server.md) before editing the application.
+Read the [Tardigrade skill](../../skills/tardigrade/SKILL.md), the [quickstart](../getting-started/quickstart.mdx), and the [server guide](server.md) before editing the application.
 
 ## Inventory and baseline
 
@@ -27,7 +27,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | System instructions | `system(...)` |
 | Tool declarations and handlers | Package components mounted through `codeMode`, or fixed tools mounted through `tool` |
 | `stopWhen`, maximum steps, and retry options | `budget`, `infer` policy, and domain components with explicit policy values |
-| `prepareStep` and dynamic context | A component whose `derive(log)` changes its view from recorded events |
+| `prepareStep` and dynamic context | A component whose `step(state, event)` tracks sufficient state and whose `output(state)` changes its view |
 | Message arrays and conversation storage | One append-only event log per thread |
 | Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
 | Lifecycle callbacks and telemetry | Recorded events, Voyager, usage projections, and host telemetry |
@@ -44,13 +44,13 @@ Edit the generated `agents/agent/actor.ts`. Keep the actor name stable across bu
 
 ### Instructions and tools
 
-Move static system text into `system(...)`. When instructions depend on recorded events, declare their sufficient state with `initial`, `reduce`, and `render` so each event updates the projection once:
+Move static system text into `system(...)`. When instructions depend on recorded events, declare their sufficient state with `initial`, `step`, and `output` so each event updates the projection once:
 
 ```ts
 system({
   initial: () => ({ installed: 0 }),
-  reduce: (state, event) => event.type === "PackageInstalled" ? { installed: state.installed + 1 } : state,
-  render: (state) => `Installed packages: ${state.installed}`
+  step: (state, event) => event.type === "PackageInstalled" ? { installed: state.installed + 1 } : state,
+  output: (state) => `Installed packages: ${state.installed}`
 })
 ```
 
@@ -64,7 +64,7 @@ Move related tools to code packages only when the decision rule above applies. M
 
 ### Policies and output
 
-State every policy that affects behavior. `budget([codeMode(packages)], { limit })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component over the log. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
+State every policy that affects behavior. `budget([codeMode(packages)], { limit })` limits calls within its component subtree, so it is not a direct replacement for a model-step limit that counts completions. Express a custom stop condition as a component whose state retains the events that affect the decision. Pass `giveUpAfter` through the second argument to `infer`, and use `compaction(...)` when the application needs a model-window resolver or hysteresis ratios that differ from `DEFAULT_COMPACTION_POLICY`.
 
 Convert each structured result to `output({ name, schema })`. Send that contract with the turn and mount one explicit fallback. Use `outputValidateOnce` when one invalid response should end the turn, or `outputRepairFor({ attempts, projectHistory })` when bounded correction is part of the product behavior.
 
