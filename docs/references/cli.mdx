@@ -12,18 +12,22 @@ articleClass: cli-article
 
 <Command value="bun add -g tardie" label="Install the Tardigrade CLI" />
 
-Use `bunx tardie <command>` to run a command without installing it.
+Use `bunx tardie <command>` to run a command without installing it. Tardigrade requires Bun 1.4 or later.
 
 ## Commands
 
 <div className="cli-command-list">
   <div className="cli-command-row"><code>tdg init &lt;name&gt;</code><p>Create an actor and configure its first model provider</p></div>
   <div className="cli-command-row"><code>tdg setup</code><p>Add provider connections and choose the default model</p></div>
+  <div className="cli-command-row"><code>tdg setup provider</code><p>Add or update one provider connection</p></div>
+  <div className="cli-command-row"><code>tdg setup default</code><p>Choose the default model from configured providers</p></div>
   <div className="cli-command-row"><code>tdg lint &lt;entry&gt;</code><p>Validate an actor before building or deploying</p></div>
   <div className="cli-command-row"><code>tdg build &lt;entry&gt;</code><p>Build and validate an actor artifact</p></div>
   <div className="cli-command-row"><code>tdg dev</code><p>Build actor.ts and serve the local API and Voyager</p></div>
   <div className="cli-command-row"><code>tdg methods</code><p>List the actor's methods and schemas</p></div>
   <div className="cli-command-row"><code>tdg call &lt;method&gt; &lt;input&gt;</code><p>Call a method with JSON input and wait for its result</p></div>
+  <div className="cli-command-row"><code>tdg call state &lt;method&gt; &lt;invocation&gt;</code><p>Read an invocation's durable state</p></div>
+  <div className="cli-command-row"><code>tdg call cancel &lt;method&gt; &lt;invocation&gt;</code><p>Request cancellation of an invocation</p></div>
   <div className="cli-command-row"><code>tdg ls</code><p>List threads</p></div>
   <div className="cli-command-row"><code>tdg events &lt;thread&gt;</code><p>Print a thread's event log</p></div>
   <div className="cli-command-row"><code>tdg providers</code><p>List provider protocols and setup requirements</p></div>
@@ -31,4 +35,125 @@ Use `bunx tardie <command>` to run a command without installing it.
   <div className="cli-command-row"><code>tdg models lock</code><p>Resolve configured models into the deployment lock</p></div>
 </div>
 
-Use `--json` for machine-readable output. Remote commands accept `--url` and `--token`. Run `tdg <command> --help` for every option.
+Commands that print data accept `--json` where their help lists it. Remote commands accept `--url`, `--token`, and `--actor`. The actor instance defaults to `main`. Run `tdg <command> --help` for every option.
+
+## Initialize and configure
+
+Run interactive initialization to create a directory, choose the first provider and model, and write the generated actor:
+
+```bash
+tdg init tardie-agent --template quickstart
+cd tardie-agent
+```
+
+An agent or CI job can supply the connection as JSON. The JSON names secret environment variables and contains no secret values:
+
+```bash
+tdg init tardie-agent \
+  --template quickstart \
+  --provider openrouter \
+  --provider-config '{"env":["OPENROUTER_API_KEY"]}' \
+  --default-model anthropic/claude-sonnet-4.6
+cd tardie-agent
+```
+
+Non-interactive initialization requires all three provider options. It does not read or write the named credential. Set each credential in the environment that runs the server.
+
+Run `tdg setup` inside an actor directory to configure the first connection and default together. After that baseline exists, add or update a connection without changing the default, or select a different default without writing credentials:
+
+```bash
+tdg setup provider openai '{"env":["OPENAI_API_KEY"]}'
+tdg setup default --provider openai --model gpt-5.2
+```
+
+Known providers supply their standard endpoint and protocol. Put additional public connection fields in the same JSON object. Amazon Bedrock requires its gateway endpoint and AWS region:
+
+```bash
+tdg setup provider amazon-bedrock '{"baseUrl":"https://gateway.example.com/bedrock","region":"ap-southeast-1","env":["CLOUDFLARE_API_TOKEN"]}'
+```
+
+A custom provider declares its endpoint and protocol:
+
+```bash
+tdg setup provider private-gateway '{"baseUrl":"https://models.example.com/v1","protocol":"openai-responses","env":["PRIVATE_MODEL_KEY"]}'
+```
+
+Interactive setup stores local credentials in `.dev.vars` with mode 0600 and adds `.dev.vars*` to `.gitignore`. It never prints a stored credential. Project configuration stays in `wrangler.jsonc` and `celld.jsonc`. Every successful setup command refreshes `models.lock.json`. Use `tdg models lock` when CI or an operator needs to refresh the lock without changing provider configuration.
+
+Setup preserves unrelated platform settings, JSONC comments, local secret entries, and other provider connections. When a provider uses a new protocol, import its adapter in `worker.ts` and add it to `modelAdapters(...)`. Host startup reports an unregistered protocol.
+
+## Configuration precedence
+
+A command flag takes precedence over an environment variable. An environment variable takes precedence over `~/.tardigrade/config.json`. The configuration file takes precedence over the default. This order applies to remote URL and token settings.
+
+| Setting | Flag | Environment | Default |
+| --- | --- | --- | --- |
+| Server to call | `--url` | | `http://localhost:4242` |
+| Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
+| Actor instance | `--actor` | | `main` |
+| Port for `dev` | `--port` | `PORT` | `4242`, then a lower available port |
+| Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
+| Concurrent threads for `dev` | `--max-concurrent-threads` | `TARDIGRADE_MAX_CONCURRENT_THREADS` | `4` |
+| Project configuration | | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc` |
+| Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
+| Provider credentials | | Variables named by each provider's `env` list | Values saved by interactive setup in `.dev.vars` |
+
+`tdg dev` loads `.dev.vars`, then applies values from the process environment. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store.
+
+## Validate and run locally
+
+Validate the actor's component and method seams before building or deploying:
+
+```bash
+tdg lint actor.ts
+tdg build actor.ts
+tdg dev
+```
+
+`tdg lint` fails when a declared method has no handler, a component handles an absent method, several components handle the same method, or a fixed actor reference calls an undeclared method. Pass `--json` to inspect each method and outgoing call seam.
+
+## Discover providers and models
+
+Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. `tdg dev` refreshes the same cache when its server starts and keeps the resolved snapshot in memory.
+
+Inspect provider requirements and search models through a running server:
+
+```bash
+tdg providers --search gateway --limit 20 --json
+tdg models --provider openrouter --search claude --limit 20 --json
+```
+
+Each response includes `revision`, `status`, `refreshed_at`, `total`, `limit`, `items`, and an optional `next_cursor`. Pass that cursor with the same filters to read the next page. Restart at the first page when the catalog revision or query changes.
+
+## Call and control methods
+
+`tdg call` creates a thread unless `--thread` names an existing thread. It waits for completion by default. Use `--no-wait` to print the durable handle immediately. Use the returned thread and invocation ID to read state or request cancellation:
+
+```bash
+tdg methods --json
+tdg call message '{"text":"What is the weather in Singapore?"}'
+tdg call inspect '{"path":"README.md"}' --no-wait --thread root --id m1
+tdg call state inspect m1 --thread root
+tdg call cancel inspect m1 --thread root --reason "operator stopped it"
+```
+
+Reuse `--id` for an idempotent retry. `tdg call state` and `tdg call cancel` require the same actor instance, thread, method, and invocation ID as the original call. The server resolves the active execution epoch.
+
+Use `tdg ls` to list threads and `tdg events <thread>` to inspect a thread's event log. Remote calls add the server connection and actor instance:
+
+```bash
+tdg ls --url https://tardigrade.example.com --token "$TOKEN" --actor researcher
+tdg events root --types TurnFailed --actor researcher
+```
+
+## Deploy
+
+Deploy the generated Worker through either supported platform CLI:
+
+```bash
+bunx wrangler deploy
+celld deploy --config celld.jsonc --dry-run
+celld deploy --config celld.jsonc
+```
+
+Set the provider variables named by each connection in the platform secret store before the actor handles model calls. See the [Cloudflare guide](../platforms/cloudflare.mdx) for Worker configuration and the [Celld guide](../platforms/celld.mdx) for fleet storage, variables, and rollout behavior.
