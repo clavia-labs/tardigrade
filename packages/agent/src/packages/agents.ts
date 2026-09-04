@@ -647,10 +647,12 @@ const contractOf = (
 // awaitedBoundaryOf projects one child response from the caller's private log. A cancelled
 // response settles as a failed answer carrying the cancellation text, so a foreground parent
 // parked on a cancelled child reads a terminal instead of waiting out its own deadline
-// (agents.test.ts, "a cancelled reply settles the run as a failed answer").
+// (agents.test.ts, "a cancelled reply settles the run as a failed answer", "a cancelled reply
+// with no reason settles as a bare cancelled error"). The row a delivered method response
+// appended is a ResponseReceived carrying the round-zero boundary id, so the type field is
+// proof enough for the read (response.test.ts, "returns a terminal through the accepted call
+// link").
 const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
-  // The response row a boundary report appended conforms to ResponseReceived by construction
-  // (core/method/response.ts, responseTransition), so the type field is proof enough here.
   const response = events.find(
     (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
   ) as ResponseReceived | undefined
