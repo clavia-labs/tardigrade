@@ -490,6 +490,33 @@ describe("a child is named by its parent run and call", () => {
     expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(1)
   })
 
+  test("a derived address that names another child dies rather than delivering", async () => {
+    // A legacy call id names its child ag.<callId>, so a run can derive that address for a
+    // different call: run "m1" with call "c1" names ag.2:m1c1, the child legacy call 2:m1c1
+    // owns. The dispatch dies instead of crossing the brief.
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"),
+      {
+        type: "ChildCreated",
+        callId: "2:m1c1",
+        address: { actor: "mem", instance: "main", thread: "ag.2:m1c1" },
+        depth: 1,
+        at: 1
+      } as Event,
+      called("c1", "m1")
+    ]
+    const sent: Array<Sent> = []
+    const exit = await Effect.runPromiseExit(
+      background("scout", "c1").pipe(Effect.provide(liveEnv(events, sent)))
+    )
+    if (exit._tag !== "Failure") throw new Error("expected the colliding dispatch to die")
+    expect(Cause.pretty(exit.cause)).toContain(
+      "agents.run c1 derives child address mem:main:ag.2:m1c1, which child 2:m1c1 already owns"
+    )
+    expect(sent).toHaveLength(0)
+  })
+
   test("a background child inherits the owning turn deadline without a parent link", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),

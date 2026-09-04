@@ -317,11 +317,27 @@ const childClaimOf = (
         depth: recorded.depth,
         ...(recorded.placement === undefined ? {} : { placement: recorded.placement })
       }
-  return {
-    recorded,
-    target: recorded?.address ?? sibling(parentRunId, callId, source),
-    lineage
+  const target = recorded?.address ?? sibling(parentRunId, callId, source)
+  // A legacy call id names its child ag.<callId>, so the length-prefixed scheme can derive the
+  // same address for a different dispatch (agents.test.ts, "a derived address that names another
+  // child dies rather than delivering"). No in-band marker separates the schemes, so the
+  // collision dies instead of delivering the brief to the child another dispatch owns.
+  if (recorded === undefined) {
+    const clash = events.find(
+      (event): event is ChildCreated =>
+        Schema.is(ChildCreated)(event) &&
+        event.address.actor === target.actor &&
+        event.address.instance === target.instance &&
+        event.address.thread === target.thread &&
+        (event.callId !== callId || event.turn === undefined)
+    )
+    if (clash !== undefined) {
+      throw new Error(
+        `agents.run ${callId} derives child address ${formatThreadAddress(target)}, which child ${clash.callId} already owns`
+      )
+    }
   }
+  return { recorded, target, lineage }
 }
 
 const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
