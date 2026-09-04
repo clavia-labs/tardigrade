@@ -1,9 +1,10 @@
 import type { Effect } from "effect"
 import type { ModelRef } from "./reference"
 
-// InferenceIdentity identifies the actor turn that opened a logical model attempt (index.test.ts, "root and child inference requests carry their actor identity").
+// InferenceIdentity identifies the actor turn that opened a logical model attempt (index.test.ts, "root and child inference requests carry their actor identity"). instance names the actor instance, so two sessions of one actor name stay distinguishable at the model seam (index.test.ts, "two host instances of one actor name carry distinct instance identities").
 export interface InferenceIdentity {
   readonly actor: string
+  readonly instance: string
   readonly thread: string
   readonly turn: string
 }

@@ -1,4 +1,5 @@
 import type { ModelMessage, StreamChunk, Tool } from "@tanstack/ai"
+import type { InferenceIdentity } from "tardie/inference/observer"
 import type { ModelRequest } from "tardie/inference/request"
 import type { OutputMode } from "tardie/output/contract"
 import type { ModelPricing } from "tardie/inference/usage"
@@ -50,6 +51,8 @@ export type ModelStopClass = "refused" | "truncated" | "violation" | "ok"
 export interface ModelAdapterContext {
   readonly config: ModelConfig
   readonly request: ModelRequest
+  // identity names the actor turn this attempt serves, so an adapter can attribute usage and authorize per instance (model.test.ts, "an adapter start receives the request's inference identity").
+  readonly identity: InferenceIdentity
   readonly mode: OutputMode
   readonly maxTokens: number
   readonly bounds: StreamBounds
