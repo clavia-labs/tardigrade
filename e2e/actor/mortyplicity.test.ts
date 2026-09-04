@@ -558,3 +558,95 @@ test("Rick cancels every foreground Morty across generated schedules", async () 
     expect(scenario.host.resting()).toBe(true)
   }), { numRuns: 20 })
 }, 30_000)
+
+test("Rick settles when a foreground Morty is cancelled", async () => {
+  let startedChild!: () => void
+  const childStarted = new Promise<void>((resolve) => {
+    startedChild = resolve
+  })
+  let releaseChild!: () => void
+  const childReleased = new Promise<void>((resolve) => {
+    releaseChild = resolve
+  })
+  const mind: Mind = async ({ trajectory }) => {
+    const head = [...trajectory].reverse().find((event) => event.type === "MessageReceived")
+    const brief = String(field(head as Event, "text") ?? "")
+    if (brief === "wait for Morty") {
+      const returned = trajectory.find((event) => event.type === "ToolReturned") as {
+        readonly result?: { readonly result?: unknown }
+      } | undefined
+      if (returned !== undefined) {
+        return { kind: "complete", output: JSON.stringify(returned.result?.result) }
+      }
+      return {
+        kind: "call",
+        callId: "wait-for-morty",
+        name: "execute",
+        arguments: {
+          code: `return await agents.run({ text: "held Morty" });`
+        }
+      }
+    }
+    startedChild()
+    await childReleased
+    return { kind: "complete", output: "late Morty" }
+  }
+  const assembled = validateActor(actor({
+    name: "cancelled-morty",
+    methods: agentMethods,
+    components: [infer([
+      budget([permissions([codeMode([
+        agentsPackage({ budget: {} }),
+        workspacePackage({ policy: {} })
+      ])], {
+        authority: {
+          address: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+          methods: { requestPermission: requestPermissionMethod }
+        },
+        request: () => undefined
+      })]),
+      compaction(),
+      nativeOutput
+    ], TEST_MODEL), budgetAuthority({ decide: (request) => request.grant() })]
+  }))
+  const scenario = actorScenario(assembled, mind, {
+    driver: { maxConcurrentThreads: 2 }
+  })
+  const turn = scenario.enqueue("wait for Morty")
+  const driving = scenario.drive()
+  await childStarted
+
+  const rootBeforeCancellation = scenario.host.read(ROOT_THREAD)
+  const childThread = [...childThreadsOf(rootBeforeCancellation).values()][0]!
+  const childHead = scenario.host.read(childThread)
+    .find((event) => event.type === "MessageReceived")
+  if (childHead === undefined) throw new Error("the child has no message turn")
+  const childTurn = String(field(childHead, "id"))
+  scenario.host.commitRoot(scenario.host.self(childThread), {
+    type: "CancellationRequested",
+    request: "rick-cancelled-morty",
+    invocation: { method: "message", id: childTurn, epoch: 0 },
+    cause: "requested",
+    reason: "Rick closed Morty's portal",
+    at: 2
+  } as Event)
+  try {
+    await driving
+  } finally {
+    releaseChild()
+  }
+
+  expect(JSON.parse(scenario.result(turn).output ?? "null")).toEqual({
+    error: "cancelled: Rick closed Morty's portal"
+  })
+  const root = scenario.host.read(ROOT_THREAD)
+  expect(root.filter((event) => event.type === "TurnCompleted")).toHaveLength(1)
+  expect(root.filter((event) => event.type === "ResponseReceived" && field(event, "status") === "cancelled")).toEqual([
+    expect.objectContaining({ cause: "requested", reason: "Rick closed Morty's portal" })
+  ])
+  const child = scenario.host.read(childThread)
+  expect(child.filter((event) => event.type === "TurnCancelled")).toEqual([
+    expect.objectContaining({ request: "rick-cancelled-morty", reason: "Rick closed Morty's portal" })
+  ])
+  expect(scenario.host.resting()).toBe(true)
+}, 30_000)
