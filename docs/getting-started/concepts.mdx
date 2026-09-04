@@ -120,7 +120,7 @@ Tardigrade builds an agent harness from a small set of primitives. Events record
   <div className="concept-copy">
     <h2>Transitions</h2>
     <p>A transition describes one unit of work enabled by projected state. An intent proposes events without contacting the outside world. An effect performs external work and returns events that record its outcome.</p>
-    <p>Every transition has a durable key. The runtime compares that key with recorded event keys, executes work that is still owed, commits its events, and advances the projections. The actor is settled when no transition remains enabled.</p>
+    <p>Every transition has a durable key. Any event whose derived key equals the transition key commits it, regardless of the event's type or meaning. The runtime executes work that is still owed, commits its events, and advances the projections. Read <a href="/docs/durability">Durability and resume</a> before writing a long-running effect.</p>
   </div>
 
   <ConceptInterface>

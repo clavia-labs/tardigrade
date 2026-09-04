@@ -1,0 +1,87 @@
+---
+title: Durability and resume
+description: Design effects that recover safely after failures and process restarts.
+route: /docs/durability
+section: Explanations
+sectionOrder: 3
+order: 1
+---
+
+Tardigrade decides whether work is complete from event keys. An event commits a transition when the actor derives the transition's key from that event. The event's type and meaning do not affect this rule. A failure event keyed by the operation commits the operation and prevents it from running again.
+
+## Key attempts and outcomes separately
+
+Give each physical attempt an occurrence key and give each terminal outcome the operation key. An allowlist keeps new event types unkeyed until the application chooses their commitment role:
+
+```ts
+import { composeKeys, keysFor } from "tardie/core/log"
+
+const keyOf = composeKeys(
+  keysFor("try:", {
+    OperationAttempted: (event) =>
+      `${String(event.operation)}/${String(event.attempt)}`,
+    OperationAttemptFailed: (event) =>
+      `${String(event.operation)}/${String(event.attempt)}/failed`
+  }),
+  keysFor("op:", {
+    OperationCompleted: (event) => String(event.operation),
+    OperationExhausted: (event) => String(event.operation)
+  })
+)
+```
+
+The transition for attempt two uses `try:<operation>/2`. Its action appends `OperationAttempted` before external work begins. A retryable failure records `OperationAttemptFailed`, whose separate occurrence key leaves the operation outstanding. Success and give-up events use `op:<operation>`, so either one ends the logical operation.
+
+The application owns the retry policy and records the value that ends the operation. A bounded derivation can return an exhausted intent after its projected attempt count reaches the visible ceiling:
+
+```ts
+const GIVE_UP_AFTER = 3
+const operation = `op:${job.id}`
+
+return attempts >= GIVE_UP_AFTER
+  ? [intent({
+      key: operation,
+      input: { job, attempts },
+      events: ({ job, attempts }, at) => [{
+        type: "OperationExhausted",
+        operation: job.id,
+        attempts,
+        at
+      }]
+    })]
+  : [effect({
+      key: `try:${job.id}/${attempts}`,
+      concurrent: true,
+      input: { job, attempt: attempts },
+      act: ({ job, attempt }, signal) => Effect.gen(function* () {
+        const log = yield* EventLog
+        yield* log.append([{
+          type: "OperationAttempted",
+          operation: job.id,
+          attempt,
+          at: yield* Clock.currentTimeMillis
+        }])
+        return yield* runJob(job, signal)
+      })
+    })]
+```
+
+The component projection increments `attempts` from `OperationAttempted`. A process defect after that append therefore consumes one attempt. A retryable failure can return `OperationAttemptFailed`; the recorded start still commits the physical attempt key. An application can add a visible delay or deadline policy around the next effect without changing the commitment rule.
+
+## What resumes
+
+Resume behavior follows the keys already in the log:
+
+- A committed operation key disables the operation.
+- A recorded attempt key disables that physical attempt while the operation remains outstanding.
+- No matching key leaves the same transition owed.
+
+Concurrent effects commit independently. If a process stops after some effects commit, the next activation runs only the missing keys.
+
+Event batches append atomically, and the runtime records an effect's returned outcome after the action finishes. External calls remain at least once across the gap between the call and its recorded outcome. Pass an idempotency key to an external service when it supports one, or make the operation safe to repeat.
+
+## Inspect outstanding work
+
+`enabled(actor, events)` returns transitions whose keys are absent from the log. `restingActor(actor, events)` reports whether that list is empty. These functions let a supervisor inspect durable outstanding work without running it.
+
+An effect wedges when it returns events and none carries its transition key. The reconciler reports the key in the defect. Check the actor's `keyOf` composition and confirm that a returned terminal maps to the operation key.

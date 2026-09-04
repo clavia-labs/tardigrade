@@ -1,5 +1,6 @@
 import cli from "@docs/references/cli.mdx?doc-source"
 import concepts from "@docs/getting-started/concepts.mdx?doc-source"
+import durability from "@docs/explanations/durability.mdx?doc-source"
 import rlm from "@docs/examples/rlm.mdx?doc-source"
 import bun from "@docs/platforms/bun.mdx?doc-source"
 import celld from "@docs/platforms/celld.mdx?doc-source"
@@ -12,6 +13,7 @@ import why from "@docs/start-here/Why.mdx?doc-source"
 const sources: Readonly<Record<string, string>> = {
   "references/cli.mdx": cli,
   "getting-started/concepts.mdx": concepts,
+  "explanations/durability.mdx": durability,
   "examples/rlm.mdx": rlm,
   "platforms/bun.mdx": bun,
   "platforms/celld.mdx": celld,

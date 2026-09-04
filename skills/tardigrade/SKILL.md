@@ -5,7 +5,7 @@ description: Create, migrate, author, build, deploy, inspect, and improve Tardig
 
 # Tardigrade
 
-Read [Why Tardigrade?](../../docs/start-here/Why.mdx) for the framework's design, [Concepts](../../docs/getting-started/concepts.mdx) for an overview of its model, and the [Quickstart](../../docs/getting-started/quickstart.mdx) for setup and component authoring. Read the [CLI guide](../../docs/references/cli.mdx) for initialization, provider setup, local development, deployment, discovery, and method calls. Read the [server guide](../../docs/how-to/server.md) for HTTP routes, configuration, secrets, and model catalog behavior. Read the [Cloudflare guide](../../docs/platforms/cloudflare.mdx) before deploying to Cloudflare and the [Celld guide](../../docs/platforms/celld.mdx) before deploying to a Celld fleet.
+Read [Why Tardigrade?](../../docs/start-here/Why.mdx) for the framework's design, [Concepts](../../docs/getting-started/concepts.mdx) for an overview of its model, and the [Quickstart](../../docs/getting-started/quickstart.mdx) for setup and component authoring. Read [Durability and resume](../../docs/explanations/durability.mdx) before adding long-running effects. Read the [CLI guide](../../docs/references/cli.mdx) for initialization, provider setup, local development, deployment, discovery, and method calls. Read the [server guide](../../docs/how-to/server.md) for HTTP routes, configuration, secrets, and model catalog behavior. Read the [Cloudflare guide](../../docs/platforms/cloudflare.mdx) before deploying to Cloudflare and the [Celld guide](../../docs/platforms/celld.mdx) before deploying to a Celld fleet.
 
 ## Start with the quickstart
 
