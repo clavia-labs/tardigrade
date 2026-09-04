@@ -8,16 +8,33 @@ permissions:
   contents: read
   pull-requests: read
 
+concurrency:
+  group: conventional-commits-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   validate-title:
     name: validate pull request title
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: ytanikin/pr-conventional-commits@639145d78959c53c43112365837e3abd21ed67c1 # 1.5.2
-        with:
-          task_types: '["build","chore","ci","docs","feat","fix","perf","refactor","revert","style","test"]'
-          add_label: "false"
+      - name: Validate pull request title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pattern='^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\([^()[:space:]]+\))?: [^[:space:]].*$'
+          if [[ ! ${PR_TITLE} =~ ${pattern} ]]; then
+            echo "::error title=Invalid pull request title::Use type(scope?): message with an allowed Conventional Commit type."
+            exit 1
+          fi
+          subject=${PR_TITLE#*: }
+          read -r -a words <<< "${subject}"
+          if (( ${#words[@]} < 3 || ${#words[@]} > 5 )); then
+            echo "::error title=Invalid pull request title::Keep the message to 3-5 words."
+            exit 1
+          fi
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
