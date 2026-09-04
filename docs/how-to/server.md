@@ -108,7 +108,7 @@ Catalog responses use cursor pagination. They include `revision`, `status`, `ref
 
 ## Live inference output
 
-An embedded Bun host can pass `inferenceObserver` to `layerThreads`. The observer receives normalized text after the provider adapter and before the final action is accumulated. Each delta names the actor, thread, turn, logical attempt, physical provider request, model, text block, and sequence. The host chooses its WebSocket, SSE, Redis, or pub/sub transport.
+An embedded Bun host can pass `inferenceObserver` to `layerThreads`. The observer receives normalized text after the provider adapter and before the final action is accumulated. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. The host chooses its WebSocket, SSE, Redis, or pub/sub transport.
 
 ```ts
 import { Effect } from "effect"

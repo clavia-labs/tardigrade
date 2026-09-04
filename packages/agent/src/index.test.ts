@@ -43,7 +43,12 @@ const work = () => codeMode([agentsPackage({ budget: {} }), workspacePackage({ p
 // hosted binds one assembled actor to an in-process host and drives the root thread. It is the
 // test's own driver: commit a root brief, drive to quiescence, read the boundary the settle left.
 // A caller with its own host does the same three things (host.ts, Host).
-const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> = []) => {
+const hosted = (
+  assembled: Actor<TestR>,
+  mind: Mind,
+  log: ReadonlyArray<Event> = [],
+  actorInstance: string = "main"
+) => {
   const layersFor = (_thread: string): ThreadEnv<TestR> =>
     Layer.mergeAll(
       KeyValueStore.layerMemory,
@@ -53,6 +58,7 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
     )
   const host: Host = createHost<TestR>({
     actorName: "mem",
+    actorInstance,
     actorFor: (thread: string) => (thread.startsWith("ag.") ? assembled : undefined),
     layersFor
   })
@@ -84,12 +90,17 @@ const hosted = (assembled: Actor<TestR>, mind: Mind, log: ReadonlyArray<Event> =
 // rlm is the default assembly: the work surface, budget, and compaction, over an
 // in-process host. The three policy components are always mounted, so a test that swaps the
 // work surface still runs the same turn loop, budget wall, and answer contract.
-const rlm = (mind: Mind, components: ReadonlyArray<AgentComponent<AgentR>> = [work()], log: ReadonlyArray<Event> = []) =>
+const rlm = (
+  mind: Mind,
+  components: ReadonlyArray<AgentComponent<AgentR>> = [work()],
+  log: ReadonlyArray<Event> = [],
+  actorInstance: string = "main"
+) =>
   hosted(actor({
     name: "test-agent",
     methods: agentMethods,
     components: [infer([budget(components), compaction(), nativeOutput], TEST_MODEL)]
-  }), mind, log)
+  }), mind, log, actorInstance)
 
 const headText = (trajectory: ReadonlyArray<Event>): string => {
   for (let i = trajectory.length - 1; i >= 0; i--) {
@@ -247,17 +258,34 @@ describe("an assembled agent", () => {
     await mind.run("fan out and add")
     expect(seen.some(({ request }) =>
       request.identity.actor === "mem" &&
+      request.identity.instance === "main" &&
       request.identity.thread === ROOT_THREAD &&
       request.identity.turn === "run-0"
     )).toBe(true)
-    expect(new Set(seen.map(({ request }) => request.identity.thread))).toEqual(new Set([
-      ROOT_THREAD,
-      "ag.5:run-0t1.0",
-      "ag.5:run-0t1.1"
+    // Same actor name, same instance, one thread per request: the root and its children are
+    // distinguishable by identity alone.
+    expect(new Set(seen.map(({ request }) =>
+      `${request.identity.actor}:${request.identity.instance}:${request.identity.thread}`
+    ))).toEqual(new Set([
+      "mem:main:ag.root",
+      "mem:main:ag.5:run-0t1.0",
+      "mem:main:ag.5:run-0t1.1"
     ]))
     for (const { request, key } of seen) {
       expect(key?.startsWith(`${request.identity.turn}/infer/`)).toBe(true)
     }
+  })
+
+  test("two host instances of one actor name carry distinct instance identities", async () => {
+    const seen: InferRequest[] = []
+    const mind = rlm(async (request) => {
+      seen.push(request)
+      return { kind: "complete", output: "done" }
+    }, [work()], [], "other")
+    await mind.run("go")
+    expect(seen.map(({ identity }) => identity)).toEqual([
+      { actor: "mem", instance: "other", thread: ROOT_THREAD, turn: "run-0" }
+    ])
   })
 
   test("an agent initialises from a log: history carries, new runs continue past it", async () => {

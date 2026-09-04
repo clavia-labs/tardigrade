@@ -619,6 +619,7 @@ export const infer = <const C extends ModelConfig>(
     const attempt = selectedAdapter.start({
       config,
       request: req,
+      identity,
       mode,
       maxTokens,
       bounds,
