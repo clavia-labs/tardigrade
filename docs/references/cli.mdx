@@ -98,7 +98,7 @@ A command flag takes precedence over an environment variable. An environment var
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | Values saved by interactive setup in `.dev.vars` |
 
-`tdg dev` loads `.dev.vars`, then applies values from the process environment. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store.
+`tdg dev` loads `.dev.vars`, then applies values from the process environment. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store. An optional named `layersFor` export from `actor.ts` supplies application Effect services for each local thread.
 
 ## Validate and run locally
 

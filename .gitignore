@@ -32,6 +32,7 @@ examples/.data/
 
 # Reference checkouts and attachments handed to agents, never part of history
 .context/
+/artifacts/
 
 # Agent handoff letters: local working notes, never part of history
 .letters/

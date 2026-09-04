@@ -19,6 +19,30 @@ tdg dev
 
 The server listens on port `4242` by default. Its health endpoint is available at `/healthz`.
 
+## Provide application services
+
+An actor that requires an application Effect service can export `layersFor` beside its default actor export. `tdg dev` calls the factory for each thread and supplies the resulting Layer to the Bun host:
+
+```ts title="actor.ts"
+import { Layer } from "effect"
+import { actor } from "tardie"
+import type { DevLayersFor } from "tardie/cli/dev"
+import { AppConfig, applicationComponent } from "./application"
+
+const definition = actor({
+  name: "researcher",
+  methods: {},
+  components: [applicationComponent]
+})
+
+export const layersFor = (({ thread }) =>
+  Layer.succeed(AppConfig, { thread })) satisfies DevLayersFor<typeof definition>
+
+export default definition
+```
+
+The factory receives `actorInstance` and the internal thread address, such as `ag.root`. A Layer factory is optional when the actor has no application service requirements.
+
 ## Storage
 
 The default actor database is `.tardigrade/actor.sqlite`. Thread databases live beside it under `.tardigrade/actor.sqlite.threads/`. The host persists events before running the work they enable, so it can resume unfinished work after the process restarts.
