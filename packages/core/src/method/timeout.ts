@@ -209,7 +209,7 @@ const deadlineCancellationTransition = (invocation: ActorInvocation, deadlineAt:
   })]
 })
 
-// deadlineCancellationsAt projects the invocation deadlines an observed time has crossed into the same cancellation targets the caller path uses.
+// deadlineCancellationsAt projects the invocation deadlines an observed time has crossed into the same cancellation targets the caller path uses (timeout.test.ts, "a crossed deadline projects its cancellation at the observed time"; cancellation.test.ts, "the core event and key identify the target invocation independently of its requester").
 export const deadlineCancellationsAt = (
   log: ReadonlyArray<Event>,
   methods: ActorMethods,
@@ -229,7 +229,7 @@ export const deadlineCancellationsAt = (
   })
 }
 
-// deadlineCancellationEventsAt constructs the durable cancellation requests one observed crossing commits alongside its alarm fact.
+// deadlineCancellationEventsAt constructs the durable cancellation requests one observed crossing commits alongside its alarm fact (timeout.test.ts, "one crossing projects every crossed invocation"; test/actor.workers.ts, "an alarm commits its deadline cancellation atomically").
 export const deadlineCancellationEventsAt = (
   log: ReadonlyArray<Event>,
   methods: ActorMethods,
@@ -256,13 +256,17 @@ export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
   })
 }
 
-// methodDeadlineCancellationDerivation projects the deadline cancellations a recorded alarm crossed, for logs written before the alarm handler committed them (timeout.test.ts, "a crossed deadline projects its cancellation before and after commit").
-export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) =>
-  alarmsOf(log).flatMap((alarm) =>
-    deadlineCancellationsAt(log, methods, alarm.at).map(({ invocation, deadlineAt }) =>
-      deadlineCancellationTransition(invocation, deadlineAt)
-    )
-  )
+// methodDeadlineCancellationDerivation projects one deadline cancellation per invocation a recorded alarm crossed, for logs written before the alarm handler committed them (timeout.test.ts, "a crossed deadline projects its cancellation before and after commit"; timeout.test.ts, "two alarms crossing one deadline project one cancellation").
+export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
+  const alarms = alarmsOf(log)
+  return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
+    const alarm = alarmFor(alarms, deadlineAt)
+    if (alarm === undefined) return []
+    return deadlineCancellationsAt(log, methods, alarm.at)
+      .filter((target) => invocationKey(target.invocation) === invocationKey(invocation) && target.deadlineAt === deadlineAt)
+      .map((target) => deadlineCancellationTransition(target.invocation, target.deadlineAt))
+  })
+}
 
 /** @deprecated Use methodTimeoutDerivation. This compatibility name describes a complete-history transition derivation. */
 export const methodTimeoutReactor: CompleteTransitionDerivation = (log) => methodTimeoutDerivation(log)

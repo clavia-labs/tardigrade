@@ -5,10 +5,14 @@ import {
   deadlineCancellationsAt,
   deadlineCancellationEventsAt,
   earliestDeadlineOf,
+  initialMethodTimeoutState,
   methodDeadlineCancellationDerivation,
+  methodTimeoutDerivation,
   methodTimeoutKeys,
-  methodTimeoutDerivation
+  methodTimeoutTransitions,
+  reduceMethodTimeoutState
 } from "./timeout"
+import { initialMethodStates, reduceMethodStates } from "./method"
 import { legacyActorMethod } from "./legacy"
 import { Schema } from "effect"
 
@@ -264,6 +268,48 @@ describe("method alarms", () => {
     const committed = [...alarmed, ...deadlineCancellationEventsAt(alarmed, { work }, 43)]
     expect(methodDeadlineCancellationDerivation({ work })(committed)).toEqual([])
     expect(deadlineCancellationEventsAt(committed, { work }, 44)).toEqual([])
+  })
+
+  test("two alarms crossing one deadline project one cancellation", () => {
+    const work = legacyActorMethod({
+      input: Schema.String,
+      output: Schema.String,
+      event: ({ invocation, at }) => ({
+        type: "WorkStarted",
+        id: invocation.id,
+        call: { invocation, deadlineAt: 40 },
+        at
+      }),
+      state: () => ({ status: "pending" }),
+      cancellation: {
+        state: () => "running",
+        event: (request, at) => ({ type: "WorkCancelled", id: request.invocation.id, at })
+      }
+    })
+    const invocation = { method: "work", id: "work-1", epoch: 0 } as const
+    const started = {
+      type: "WorkStarted",
+      id: "work-1",
+      call: { invocation, deadlineAt: 40 },
+      at: 1
+    } as Event
+    const log = [
+      started,
+      alarmFired({ scheduledFor: 40, at: 43 }),
+      alarmFired({ scheduledFor: 40, at: 50 })
+    ]
+    const complete = methodDeadlineCancellationDerivation({ work })(log)
+    expect(complete).toHaveLength(1)
+    expect(complete.map((transition) => transition.key))
+      .toEqual([`cx:${JSON.stringify([invocation.method, invocation.id, invocation.epoch])}`])
+    let methodStates = initialMethodStates({ work })
+    let timeoutState = initialMethodTimeoutState()
+    for (const event of log) {
+      methodStates = reduceMethodStates({ work }, methodStates, event)
+      timeoutState = reduceMethodTimeoutState(timeoutState, event)
+    }
+    expect(methodTimeoutTransitions({ work }, methodStates, timeoutState).map((transition) => transition.key))
+      .toEqual(complete.map((transition) => transition.key))
   })
 
   test("an alarm crossing produces one caller timeout without reading a clock", () => {
