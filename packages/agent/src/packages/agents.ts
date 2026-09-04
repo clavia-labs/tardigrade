@@ -6,6 +6,7 @@ import {
   type ActorInvocationContext
 } from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/log"
+import type { ResponseReceived } from "@clavia/tardigrade-core/method"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -643,27 +644,29 @@ const contractOf = (
     : { contract: built.contract }
 }
 
+// awaitedBoundaryOf projects one child response from the caller's private log. A cancelled
+// response settles as a failed answer carrying the cancellation text, so a foreground parent
+// parked on a cancelled child reads a terminal instead of waiting out its own deadline
+// (agents.test.ts, "a cancelled reply settles the run as a failed answer").
+const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
+  // The response row a boundary report appended conforms to ResponseReceived by construction
+  // (core/method/response.ts, responseTransition), so the type field is proof enough here.
+  const response = events.find(
+    (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
+  ) as ResponseReceived | undefined
+  if (response === undefined) return undefined
+  const contract = contractOf(response.data, turn)
+  if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
+  if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
+  const reason = typeof response.reason === "string" && response.reason !== "" ? `: ${response.reason}` : ""
+  return { outcome: "failed", text: `error: cancelled${reason}`, ...contract }
+}
+
 // awaitedBoundary reads a child method response from the caller's own private log.
 const awaitedBoundary = (turn: string): Effect.Effect<SpawnBoundary | undefined, never, EventLog> =>
   Effect.gen(function* () {
     const log = yield* EventLog
-    const events = yield* log.read
-    const response = events.find(
-      (event) => event.type === "ResponseReceived" &&
-        (event as { readonly id?: unknown }).id === boundaryId(turn, 0)
-    ) as {
-      readonly status?: unknown
-      readonly output?: unknown
-      readonly error?: unknown
-      readonly data?: unknown
-    } | undefined
-    if (response !== undefined) {
-      const contract = contractOf(response.data, turn)
-      if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
-      if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
-      return undefined
-    }
-    return undefined
+    return awaitedBoundaryOf(yield* log.read, turn)
   })
 
 // answerOf strips a failed boundary's "error: " prefix back off, so a foreground
