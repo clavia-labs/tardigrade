@@ -36,7 +36,7 @@ import {
   type TurnView
 } from "./contract"
 import { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
-import { actorThreadsStream, stream, type ActorThreadsStreamOptions, type OpenEventSource, type StreamOptions } from "./stream"
+import { actorThreadsStream, inferenceStream, stream, type ActorThreadsStreamOptions, type InferenceStreamOptions, type OpenEventSource, type StreamOptions } from "./stream"
 
 // The client, derived from the declaration. Every method here is one endpoint of contract.ts read
 // through HttpApiClient, so a route this client can call is a route the server declared, and the
@@ -127,6 +127,8 @@ export interface ModelPageOptions extends CatalogPageOptions {
 export type FollowOptions = Omit<StreamOptions, "baseUrl" | "actor" | "thread" | "eventSource">
 
 export type FollowThreadsOptions = Omit<ActorThreadsStreamOptions, "baseUrl" | "actor" | "eventSource">
+
+export type FollowInferenceOptions = Omit<InferenceStreamOptions, "baseUrl" | "actor" | "thread" | "eventSource">
 
 // The query one projection accepts, and what it answers: both read from the actor's own
 // declaration, so a caller states what that projection states and gets back what it promises
@@ -227,6 +229,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // Follows one thread's log and answers with the unsubscribe.
   readonly follow: (actor: string, thread: string, options: FollowOptions) => (() => void)
   readonly followThreads: (actor: string, options: FollowThreadsOptions) => (() => void)
+  readonly followInference: (actor: string, thread: string, options: FollowInferenceOptions) => (() => void)
 }
 
 export interface ControlClient {
@@ -459,6 +462,14 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         ...follow,
         baseUrl,
         actor,
+        ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
+      }),
+    followInference: (actor, thread, follow) =>
+      inferenceStream({
+        ...follow,
+        baseUrl,
+        actor,
+        thread,
         ...(options.eventSource === undefined ? {} : { eventSource: options.eventSource })
       })
   }

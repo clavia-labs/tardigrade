@@ -1,4 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { InferDelta } from "tardie"
 
 import { V1_PREFIX, type ActorThreadsEvent, type ActorThreadsEventRow, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"
@@ -58,6 +59,15 @@ export interface StreamOptions extends FollowStreamOptions<EventRow> {
 
 export type ActorThreadsStreamOptions = FollowStreamOptions<ActorThreadsEventRow>
 
+export interface InferenceStreamOptions {
+  readonly baseUrl: string
+  readonly actor: string
+  readonly thread: string
+  readonly onDelta: (delta: InferDelta) => void
+  readonly onError?: ((error: ProblemError) => void) | undefined
+  readonly eventSource?: OpenEventSource | undefined
+}
+
 const trimSlash = (url: string): string => (url.endsWith("/") ? url.slice(0, -1) : url)
 
 // streamUrl is the address one tail is opened at. It follows the declaration by hand because the
@@ -79,6 +89,10 @@ export const actorThreadsStreamUrl = (baseUrl: string, actor: string, after?: nu
   const suffix = after === undefined ? "" : `?after=${after}`
   return `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/stream${suffix}`
 }
+
+// inferenceStreamUrl addresses the transient text stream for one public thread.
+export const inferenceStreamUrl = (baseUrl: string, actor: string, thread: string): string =>
+  `${trimSlash(baseUrl)}${V1_PREFIX}/actors/${encodeURIComponent(actor)}/threads/${encodeURIComponent(thread)}/inference/stream`
 
 const follow = <Row>(options: {
   readonly url: string
@@ -137,3 +151,27 @@ export const actorThreadsStream = (options: ActorThreadsStreamOptions): (() => v
     subject: options.actor,
     rowOf: (seq, data) => ({ seq, event: JSON.parse(data) as ActorThreadsEvent })
   })
+
+// inferenceStream follows text produced after the connection opens. It has no cursor or replay;
+// callers replace its preview with the terminal event from the durable stream.
+export const inferenceStream = (options: InferenceStreamOptions): (() => void) => {
+  const open = options.eventSource ?? globalEventSource
+  const source = open(inferenceStreamUrl(options.baseUrl, options.actor, options.thread))
+  source.onmessage = (frame) => {
+    try {
+      options.onDelta(JSON.parse(frame.data) as InferDelta)
+    } catch {
+      options.onError?.(new ProblemError({ title: "Unreadable Inference Delta", status: NO_ANSWER }))
+    }
+  }
+  source.onerror = () => {
+    if (source.readyState === CLOSED) {
+      options.onError?.(new ProblemError({
+        title: "Inference Stream Closed",
+        status: NO_ANSWER,
+        detail: `The inference stream for ${options.thread} ended and will not reconnect.`
+      }))
+    }
+  }
+  return () => source.close()
+}

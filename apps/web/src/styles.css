@@ -1,81 +1,5 @@
-:root {
-  color: #101521;
-  background: #f8f7f2;
-  font-family: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  --container: 1200px;
-  --gutter: 24px;
-  --accent-rgb: 36 80 255;
-  --bg: #f8f7f2;
-  --surface: #fffefa;
-  --sunken: #f3f3ee;
-  --hair: #dddcd4;
-  --ink: #101521;
-  --ink-2: #526073;
-  --faint: #7c8798;
-  --moss: #2450ff;
-  --moss-deep: #2450ff;
-  --moss-ink: #1744f5;
-  --moss-wash: #edf2ff;
-  --run: #ae7a00;
-  --run-wash: #fff5d9;
-  --wait: #637ee8;
-  --wait-wash: #eef1ff;
-  --fail: #c45535;
-  --fail-wash: #fff0eb;
-  --neutral: #667085;
-  --neutral-wash: #f0f2f5;
-  --plum: #94528d;
-  --plum-wash: #fbecf8;
-  --subagents: #398560;
-  --subagents-wash: #eaf7ef;
-  --tip: #b3901f;
-  --tip-border: #dfcf8e;
-  --line: var(--hair);
-  --muted: var(--ink-2);
-  --blue: var(--moss);
-  --shadow: 0 1px 2px rgb(16 21 33 / 6%), 0 10px 30px rgb(16 21 33 / 7%);
-  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
-  --mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
-  --brand: "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --display: "IBM Plex Sans", "Instrument Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  color-scheme: light;
-}
-
-:root[data-theme="dark"] {
-  color: #edf0f5;
-  background: #11151c;
-  --accent-rgb: 112 128 158;
-  --bg: #11151c;
-  --surface: #181d26;
-  --sunken: #0d1117;
-  --hair: #303846;
-  --ink: #edf0f5;
-  --ink-2: #abb4c2;
-  --faint: #818da0;
-  --moss: #8fa3ff;
-  --moss-deep: #b1bfff;
-  --moss-ink: #9eafff;
-  --moss-wash: #222b43;
-  --run: #dfb85f;
-  --run-wash: #332a18;
-  --wait: #a6b3ef;
-  --wait-wash: #242a40;
-  --fail: #e08b72;
-  --fail-wash: #38231f;
-  --neutral: #a7b0bf;
-  --neutral-wash: #242a33;
-  --plum: #c994c2;
-  --plum-wash: #342536;
-  --subagents: #79b994;
-  --subagents-wash: #1d3026;
-  --tip: #e0c768;
-  --tip-border: #625b3d;
-  --shadow: 0 1px 2px rgb(0 0 0 / 24%), 0 10px 30px rgb(0 0 0 / 20%);
-  color-scheme: dark;
-}
+@import "@clavia/tardigrade-ui/tardigrade.css";
+@import "@clavia/tardigrade-ui/contract.css";
 
 * { box-sizing: border-box; }
 html, body, #root { min-width: 320px; min-height: 100%; }
@@ -193,7 +117,7 @@ h1 span { display: block; white-space: nowrap; }
 .install-command button:active { background: var(--moss-wash); }
 .install-command button svg { width: 18px; height: 18px; }
 
-.button { min-height: 44px; padding: 11px 18px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid; border-radius: 2px; box-shadow: var(--shadow); cursor: pointer; font-size: 14px; font-weight: 500; line-height: 20px; transition: transform 140ms var(--ease-out), background-color 160ms ease, border-color 160ms ease; }
+.button { min-height: 44px; padding: 11px 18px; display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid; border-radius: var(--ui-radius-control); box-shadow: var(--shadow); cursor: pointer; font-size: 14px; font-weight: 500; line-height: 20px; transition: transform 140ms var(--ease-out), background-color 160ms ease, border-color 160ms ease; }
 .button:active { transform: scale(.97); }
 .button-primary { min-width: 144px; border-color: var(--moss); background: var(--moss); color: var(--sunken); }
 .button-primary:active { transform: none; }

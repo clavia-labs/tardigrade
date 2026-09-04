@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 
-import { actorThreadsStream, actorThreadsStreamUrl, CLOSED, stream, streamUrl, type EventSourceLike, type Frame } from "./stream"
+import { actorThreadsStream, actorThreadsStreamUrl, CLOSED, inferenceStream, inferenceStreamUrl, stream, streamUrl, type EventSourceLike, type Frame } from "./stream"
 import type { ActorThreadsEventRow, EventRow } from "./contract"
 import type { ProblemError } from "./problem"
 
@@ -66,6 +66,11 @@ describe("streamUrl", () => {
   test("the actor threads stream carries its actor and cursor", () => {
     expect(actorThreadsStreamUrl("http://localhost:4111/", "one two", 4))
       .toBe("http://localhost:4111/v1/actors/one%20two/threads/stream?after=4")
+  })
+
+  test("the inference stream carries its actor and encoded thread", () => {
+    expect(inferenceStreamUrl("http://localhost:4111/", "one two", "ag/one"))
+      .toBe("http://localhost:4111/v1/actors/one%20two/threads/ag%2Fone/inference/stream")
   })
 })
 
@@ -135,6 +140,38 @@ describe("actorThreadsStream", () => {
 
     expect(source!.url).toContain("after=2")
     expect(rows).toEqual([{ seq: 3, event: { type: "ThreadsSnapshot", threads: [] } }])
+    unsubscribe()
+    expect(source!.closed).toBe(true)
+  })
+})
+
+describe("inferenceStream", () => {
+  test("a frame becomes a transient delta", () => {
+    const deltas: Array<{ readonly text: string }> = []
+    let source: FakeSource | undefined
+    const unsubscribe = inferenceStream({
+      baseUrl: "http://localhost:4111",
+      actor: "main",
+      thread: "root",
+      onDelta: (delta) => deltas.push(delta),
+      eventSource: (url) => {
+        source = new FakeSource(url)
+        return source
+      }
+    })
+    source!.send("", {
+      actor: "agent",
+      instance: "main",
+      thread: "ag.root",
+      turn: "turn-1",
+      logicalAttempt: "turn-1/infer/0",
+      physicalAttempt: "physical-1",
+      model: { provider: "openai", model_id: "gpt-mini" },
+      blockIndex: 0,
+      sequence: 0,
+      text: "hello"
+    })
+    expect(deltas.map((delta) => delta.text)).toEqual(["hello"])
     unsubscribe()
     expect(source!.closed).toBe(true)
   })

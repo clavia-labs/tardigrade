@@ -1,0 +1,26 @@
+:root {
+  --ui-background: var(--bg);
+  --ui-surface: var(--surface);
+  --ui-surface-muted: var(--sunken);
+  --ui-border: var(--hair);
+  --ui-text: var(--ink);
+  --ui-text-muted: var(--ink-2);
+  --ui-text-faint: var(--faint);
+  --ui-accent: var(--moss);
+  --ui-accent-text: var(--moss-ink);
+  --ui-accent-muted: var(--moss-wash);
+  --ui-accent-contrast: var(--accent-contrast);
+  --ui-danger: var(--fail);
+  --ui-danger-muted: var(--fail-wash);
+  --ui-subagent: var(--subagents);
+  --ui-subagent-muted: var(--subagents-wash);
+  --ui-shadow: var(--shadow);
+  --ui-ease-out: var(--ease-out);
+  --ui-radius-panel: var(--radius-panel);
+  --ui-radius-control: var(--radius-control);
+  --ui-radius-message: var(--radius-message);
+  --ui-radius-round: var(--radius-round);
+  --ui-font: var(--brand);
+  --ui-font-display: var(--display);
+  --ui-font-mono: var(--mono);
+}

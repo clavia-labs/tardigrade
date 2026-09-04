@@ -40,6 +40,7 @@ import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { ServerConfig } from "./config"
 import { idOf, Threads, type ActorThreads } from "./host"
+import type { InferenceStream } from "./inference-stream"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
 
@@ -58,9 +59,14 @@ export const DEFAULT_EVENT_LIMIT = 200
 // process closes a connection that says nothing, and a comment is the cheapest thing to say.
 export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(5)
 
+// DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY bounds unread transient frames per browser connection.
+export const DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY = 64
+
 export interface ApiOptions {
   readonly limit?: number
   readonly heartbeat?: Duration.Input
+  readonly inference?: InferenceStream
+  readonly inferenceBufferCapacity?: number
 }
 
 const paramOf = (params: Readonly<Record<string, string | undefined>>, name: string): string =>
@@ -333,9 +339,45 @@ const actorThreadsStreamResponse = (
   return yield* streamResponseOf(actorThreadsTail(threads, cursor.from, limit, heartbeat))
 })
 
+const inferenceStreamResponse = (
+  inference: InferenceStream,
+  actor: string,
+  thread: string,
+  heartbeat: Duration.Input,
+  bufferCapacity: number
+) => Effect.sync(() => {
+  const encoder = new TextEncoder()
+  let unsubscribe: (() => void) | undefined
+  let heartbeatTimer: ReturnType<typeof setInterval> | undefined
+  const body = new ReadableStream<Uint8Array>({
+    start(controller) {
+      unsubscribe = inference.subscribe((delta) => {
+        if (delta.instance !== actor || idOf(delta.thread) !== thread) return
+        if ((controller.desiredSize ?? 1) <= 0) return
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`))
+      })
+      heartbeatTimer = setInterval(() => {
+        if ((controller.desiredSize ?? 1) > 0) controller.enqueue(encoder.encode(HEARTBEAT))
+      }, Duration.toMillis(heartbeat))
+    },
+    cancel() {
+      unsubscribe?.()
+      if (heartbeatTimer !== undefined) clearInterval(heartbeatTimer)
+    }
+  }, { highWaterMark: bufferCapacity })
+  return HttpServerResponse.raw(body, {
+    contentType: "text/event-stream",
+    headers: { "cache-control": "no-cache" }
+  })
+})
+
 export const layerStream = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   const heartbeat = options.heartbeat ?? DEFAULT_SSE_HEARTBEAT
+  const bufferCapacity = options.inferenceBufferCapacity ?? DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY
+  if (!Number.isSafeInteger(bufferCapacity) || bufferCapacity <= 0) {
+    throw new Error(`inference stream buffer capacity must be a positive integer, got ${bufferCapacity}`)
+  }
   return Layer.mergeAll(
     HttpRouter.add(
       "GET",
@@ -355,7 +397,21 @@ export const layerStream = (options: ApiOptions = {}) => {
         const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
         return yield* actorThreadsStreamResponse(threads, limit, heartbeat)
       })
-    )
+    ),
+    ...(options.inference === undefined ? [] : [HttpRouter.add(
+      "GET",
+      "/v1/actors/:id/threads/:thread/inference/stream",
+      Effect.gen(function*() {
+        const params = yield* HttpRouter.params
+        return yield* inferenceStreamResponse(
+          options.inference!,
+          paramOf(params, "id"),
+          paramOf(params, "thread"),
+          heartbeat,
+          bufferCapacity
+        )
+      })
+    )])
   )
 }
 

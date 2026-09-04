@@ -9,6 +9,7 @@ import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catal
 import { layerActorThreads, layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { layerApp } from "@clavia/tardigrade-server/http"
+import { makeInferenceStream } from "@clavia/tardigrade-server/inference-stream"
 
 import { resolveAssets } from "./assets"
 
@@ -153,20 +154,22 @@ export const dev = (options: DevOptions) => {
     Layer.provide(BunFileSystem.layer)
   )
   const catalog = options.catalog ?? Layer.provide(layerModelCatalog(), [config, catalogRepository])
+  const inference = makeInferenceStream(options.threads?.inferenceObserver)
+  const threadOptions = { ...options.threads, inferenceObserver: inference.observer }
   const threads = Layer.provide(
     options.actor === undefined
       ? layerThreads({
-          ...options.threads,
+          ...threadOptions,
           actorRefresh: { debounceMillis: actorRefreshMillis }
         })
-      : layerActorThreads(options.actor, options.threads),
+      : layerActorThreads(options.actor, threadOptions),
     [config, catalog]
   )
   // provideMerge rather than provide: the listening server stays visible in the layer's own
   // services, which is what lets a caller read the address it was given when it asked for port 0
   // (dev.test.ts).
   const running = Layer.provideMerge(
-    HttpRouter.serve(Layer.mergeAll(layerApp(), layerVoyager(root)), {
+    HttpRouter.serve(Layer.mergeAll(layerApp({ inference }), layerVoyager(root)), {
       disableLogger: options.disableLogger ?? false,
       disableListenLog: options.disableListenLog ?? false
     }),
