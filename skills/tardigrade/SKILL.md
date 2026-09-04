@@ -33,10 +33,10 @@ Build and serve from the actor directory:
 
 ```bash
 tdg build actor.ts
-tdg dev
+bun run dev
 ```
 
-`tdg dev` mounts the actor in the current directory and stores its threads in `.tardigrade/actor.sqlite`. Keep that directory present until the server stops.
+The generated `server.ts` mounts the actor and stores its threads in `.tardigrade/actor.sqlite`. Keep that directory present until the server stops.
 
 Keep the server running. From another shell, discover the actor's methods and call one:
 
@@ -98,7 +98,7 @@ tdg providers --json
 tdg models --provider openrouter --search claude --json
 ```
 
-Use `--json` for programmatic output. Use `--url` and `--token` for another server. The URL addresses the actor mounted at that origin. Open the trace URL printed by `tdg call` to inspect the trajectory in Voyager.
+Use `--json` for programmatic output. Use `--url` and `--token` for another server. The URL addresses the actor mounted at that origin. Use `tdg events <thread>` to inspect its durable trajectory.
 
 ## Deploy
 
@@ -114,7 +114,7 @@ celld deploy --config celld.jsonc
 
 Read the [migration guide](../../docs/how-to/migrate.md) before editing. Inventory the loop, tools, policies, output, persistence, API, client, history, and deployment configuration. Capture a matched baseline, preserve behavior through the first pass, import complete history through the host seed path, and verify with existing tests and a local Tardigrade run.
 
-Finish with the Voyager trace URL, a concise change summary, and comparable before-and-after harness lines, dependencies, model tokens, cost, and latency. Label unavailable metrics.
+Finish with the inspected thread, a concise change summary, and comparable before-and-after harness lines, dependencies, model tokens, cost, and latency. Label unavailable metrics.
 
 ## Improve a harness
 

@@ -44,6 +44,7 @@ Run interactive initialization to create a directory, choose the first provider 
 ```bash
 tdg init tardie-agent --template quickstart
 cd tardie-agent
+bun run dev
 ```
 
 An agent or CI job can supply the connection as JSON. The JSON names secret environment variables and contains no secret values:
@@ -98,7 +99,7 @@ A command flag takes precedence over an environment variable. An environment var
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | Values saved by interactive setup in `.dev.vars` |
 
-`tdg dev` loads `.dev.vars`, then applies values from the process environment. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store. An optional named `layersFor` export from `actor.ts` supplies application Effect services for each local thread.
+The generated `bun run dev` script loads `.dev.vars` and starts `server.ts`. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store. Edit `server.ts` to supply application Effect services or change the server composition. `tdg dev` remains available for projects that use the bundled API and Voyager server.
 
 ## Validate and run locally
 
@@ -107,14 +108,14 @@ Validate the actor's component and method seams before building or deploying:
 ```bash
 tdg lint actor.ts
 tdg build actor.ts
-tdg dev
+bun run dev
 ```
 
 `tdg lint` fails when a declared method has no handler, a component handles an absent method, several components handle the same method, or a fixed actor reference calls an undeclared method. Pass `--json` to inspect each method and outgoing call seam.
 
 ## Discover providers and models
 
-Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. `tdg dev` refreshes the same cache when its server starts and keeps the resolved snapshot in memory.
+Initialization and setup use [models.dev](https://models.dev) for the searchable provider and model catalog. The first interactive run saves the validated public catalog in `.tardigrade/models.json`. Later runs can use that snapshot. The Bun server refreshes the same cache when it starts and keeps the resolved snapshot in memory.
 
 Inspect provider requirements and search models through a running server:
 

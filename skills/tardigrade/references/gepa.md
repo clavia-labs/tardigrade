@@ -20,11 +20,11 @@ Use deterministic checks when the output has a machine-readable contract. For su
 
 ## Run the baseline
 
-Build the unchanged actor, start `tdg dev`, and record its name and digest:
+Build the unchanged actor, start `bun run dev`, and record its name and digest:
 
 ```bash
 tdg build actor.ts
-tdg dev
+bun run dev
 ```
 
 In another terminal, confirm the served actor's interface:
@@ -54,7 +54,7 @@ Repeat this GEPA loop within the stated limits:
 2. Read its weakest or most informative trajectories.
 3. Explain which instruction or harness choice caused the observed behavior.
 4. Propose a focused change to the allowed actor text.
-5. Build the proposal under a distinct candidate name, then restart `tdg dev` from its directory.
+5. Build the proposal under a distinct candidate name, then restart `bun run dev` from its directory.
 6. Run the same development cases and score them with the same rubric.
 7. Retain the proposal when it improves at least one case without regressing another case or violating a constraint.
 

@@ -11,34 +11,37 @@ The Bun platform runs a Tardigrade actor as a process backed by SQLite. Each act
 
 ## Run locally
 
-`tdg dev` builds `actor.ts`, starts the Bun host, and serves the actor API and Voyager:
+`tdg init` creates a `server.ts` entry that mounts `actor.ts` and serves its API. Start it through the generated package script:
 
 ```bash variant="single"
-tdg dev
+bun run dev
 ```
 
-The server listens on port `4242` by default. Its health endpoint is available at `/healthz`.
+The script loads `.dev.vars`, watches the TypeScript sources, and restarts the server after an edit. The server listens on port `4242` by default. Its health endpoint is available at `/healthz`.
+
+Run the Cloudflare Worker locally when you need the Durable Object runtime:
+
+```bash variant="single"
+bun run dev:cloudflare
+```
 
 ## Provide application services
 
-An actor that requires an application Effect service can export `layersFor` beside its default actor export. `tdg dev` calls the factory for each thread and supplies the resulting Layer to the Bun host:
+An actor that requires an application Effect service can define a Layer factory and pass it to `layerActorThreads` in `server.ts`:
 
-```ts title="actor.ts"
+```ts title="server.ts"
 import { Layer } from "effect"
-import { actor } from "tardie"
-import type { DevLayersFor } from "tardie/cli/dev"
-import { AppConfig, applicationComponent } from "./application"
+import { layerActorThreads, type ActorThreadLayersFor } from "tardie/server/host"
+import { AppConfig } from "./application"
+import definition from "./actor"
 
-const definition = actor({
-  name: "researcher",
-  methods: {},
-  components: [applicationComponent]
-})
+const layersFor = (({ thread }) =>
+  Layer.succeed(AppConfig, { thread })) satisfies ActorThreadLayersFor<typeof definition>
 
-export const layersFor = (({ thread }) =>
-  Layer.succeed(AppConfig, { thread })) satisfies DevLayersFor<typeof definition>
-
-export default definition
+const threads = Layer.provide(
+  layerActorThreads(definition, { inferenceObserver: inference.observer, layersFor }),
+  [configLayer, catalog]
+)
 ```
 
 The factory receives `actorInstance` and the internal thread address, such as `ag.root`. A Layer factory is optional when the actor has no application service requirements.
@@ -49,6 +52,6 @@ The default actor database is `.tardigrade/actor.sqlite`. Thread databases live 
 
 ## Configure
 
-`tdg setup` writes model configuration to `wrangler.jsonc` and local credentials to `.dev.vars`. The Bun host reads those files during local development. A hosted process can provide the same credential names through its environment.
+`tdg setup` writes model configuration to `wrangler.jsonc` and local credentials to `.dev.vars`. The generated development script loads `.dev.vars`. A hosted process can provide the same credential names through its environment.
 
 Set `PORT` to change the HTTP port and `TARDIGRADE_DB` to change the SQLite database path.
