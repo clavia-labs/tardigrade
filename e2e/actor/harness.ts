@@ -1,5 +1,6 @@
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Schema } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
+import { ChildCreated } from "@clavia/tardigrade-core/thread"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
@@ -14,6 +15,18 @@ import {
 import type { Action } from "tardie/log/events"
 
 export const ROOT_THREAD = "ag.root"
+
+// childThreadsOf maps each spawn's call id to the address its ChildCreated recorded. The child's
+// address is a fact of the parent log, never a naming convention a test re-derives.
+export const childThreadsOf = (root: ReadonlyArray<Event>): ReadonlyMap<string, string> => {
+  const threads = new Map<string, string>()
+  for (const event of root) {
+    if (!Schema.is(ChildCreated)(event)) continue
+    threads.set(event.callId, event.address.thread)
+  }
+  return threads
+}
+
 export const TEST_MODEL = {
   models: {
     default: { provider: "test", model_id: "test-model" },

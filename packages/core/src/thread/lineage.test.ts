@@ -29,6 +29,16 @@ describe("thread creation", () => {
     expect(threadKeys.keyOf(created)).toBe("thread:child:call-1")
   })
 
+  test("a child key pairs the parent run with the call", () => {
+    const root = threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 1)
+    const lineage = childLineageOf(root)
+    const first = childCreated("call-1", { actor: "agent", instance: "main", thread: "left" }, lineage, 2, "run-a")
+    const second = childCreated("call-1", { actor: "agent", instance: "main", thread: "right" }, lineage, 3, "run-b")
+    // Two runs reusing one call id record two children, so neither key absorbs the other.
+    expect(threadKeys.keyOf(first)).not.toBe(threadKeys.keyOf(second))
+    expect(threadKeys.keyOf(first)).toBe(`thread:child:${JSON.stringify(["run-a", "call-1"])}`)
+  })
+
   test("a child records requested placement", () => {
     const root = threadCreated({ actor: "agent", instance: "main", thread: "root" }, undefined, 1)
     const lineage = childLineageOf(root, "independent")

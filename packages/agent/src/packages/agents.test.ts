@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Cause, Effect, Layer } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { Router } from "@clavia/tardigrade-core/communication/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
@@ -64,12 +64,19 @@ const response = (
   at: options.at ?? 1
 })
 
+// A spawn reads its parent run off the log: the turn head serving it and the package call that
+// recorded it (agents.ts, parentRunOf).
+const turn = (id: string, at = 1): Event =>
+  ({ type: "MessageReceived", id, text: "delegate", at } as Event)
+const called = (callId: string, turnId: string, at = 2): Event =>
+  ({ type: "PackageCalled", callId, name: "agents.run", arguments: {}, turn: turnId, at } as Event)
+
 describe("agentsPackage", () => {
   test("a foreground child records its invocation owner", async () => {
     const sent: Array<Sent> = []
     const appended: Array<Event> = []
     const pkg = agentsPackage()
-    const events = [{
+    const events = [turn("m1"), {
       type: "PackageCalled",
       callId: "child-1",
       name: "agents.run",
@@ -91,7 +98,7 @@ describe("agentsPackage", () => {
       type: "InvocationLinked",
       parent: { method: "message", id: "m1", epoch: 2 },
       child: expect.objectContaining({ invocation: { method: "message", id: "child-1", epoch: 0 } }),
-      target: "mem:main:ag.child-1"
+      target: "mem:main:ag.2:m1child-1"
     }))
     expect(sent[0]?.call).toMatchObject({
       parent: { method: "message", id: "m1", epoch: 2 },
@@ -187,11 +194,13 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true, escalatable: true }, { callId: "c1" }).pipe(Effect.provide(env(host.self("ag.root"), sent)))
+      pkg.methods.run!({ text: "scout", background: true, escalatable: true }, { callId: "c1" }).pipe(
+        Effect.provide(env(host.self("ag.root"), sent, { "ag.root": [turn("m1"), called("c1", "m1")] }))
+      )
     )
-    // Parity with the closure the in-process host used to pass: same actorName, `ag.<callId>`
-    // for the thread.
-    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: "ag.c1" })
+    // Parity with the closure the in-process host used to pass: same actorName, the thread
+    // named by the parent run and call (agents.ts, childThreadId).
+    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: "ag.2:m1c1" })
     expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
@@ -200,7 +209,7 @@ describe("agentsPackage", () => {
     const pkg = agentsPackage()
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true, placement: "independent" }, { callId: "independent-child" })
-        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
+        .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("independent-child", "m1")] })))
     )
     expect(sent[0]?.lineage?.placement).toBe("independent")
   })
@@ -208,7 +217,7 @@ describe("agentsPackage", () => {
   test("a run refuses an unknown thread placement", async () => {
     const result = await Effect.runPromise(
       agentsPackage().methods.run!({ text: "scout", background: true, placement: "nearby" }, { callId: "bad-placement" })
-        .pipe(Effect.provide(env("mem:main:ag.root", [])))
+        .pipe(Effect.provide(env("mem:main:ag.root", [], { "ag.root": [turn("m1"), called("bad-placement", "m1")] })))
     )
     expect(result).toEqual({ error: "agents.run placement must be colocated or independent" })
   })
@@ -217,14 +226,16 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
+      pkg.methods.run!({ text: "scout", background: true }, { callId: "c3" }).pipe(
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("c3", "m1")] }))
+      )
     )
     expect(answer).toEqual({ dispatched: true, callId: "c3" })
     const brief = sent[0]!.event as { id?: unknown }
     expect(brief.id).toBe("c3")
     expect(sent[0]!.link).toEqual({
       source: { actor: "mem", instance: "main", thread: "ag.root" },
-      target: { actor: "mem", instance: "main", thread: "ag.c3" }
+      target: { actor: "mem", instance: "main", thread: "ag.2:m1c3" }
     })
   })
 
@@ -234,16 +245,19 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const inherited = agentsPackage()
     const fixed = agentsPackage({ models: { default: selected, allow: "*" } })
+    const calls = {
+      "ag.root": [turn("m1"), called("model-1", "m1"), called("model-2", "m1"), called("model-3", "m1")]
+    }
     await Effect.runPromise(
-      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
+      inherited.methods.run!({ text: "default pass", background: true }, { callId: "model-1" }).pipe(Effect.provide(env("mem:main:ag.root", sent, calls)))
     )
     await Effect.runPromise(
-      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
+      fixed.methods.run!({ text: "fixed pass", background: true }, { callId: "model-2" }).pipe(Effect.provide(env("mem:main:ag.root", sent, calls)))
     )
     expect(sent[0]!.event).not.toHaveProperty("model")
     expect(sent[1]!.event).toMatchObject({ model: selected })
     await Effect.runPromise(
-      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
+      fixed.methods.run!({ text: "other", background: true, model: overridden }, { callId: "model-3" }).pipe(Effect.provide(env("mem:main:ag.root", sent, calls)))
     )
     expect(sent[2]!.event).toMatchObject({ model: overridden })
     expect(sent).toHaveLength(3)
@@ -273,7 +287,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       pkg.methods.run!({ text: "scout", background: true }, { callId: "narrow" }).pipe(
-        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent, called("narrow", "parent")] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -297,7 +311,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     await Effect.runPromise(
       agentsPackage().methods.run!({ text: "scout", background: true }, { callId: "inherit" }).pipe(
-        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent] }))
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [parent, called("inherit", "parent")] }))
       )
     )
     expect(sent[0]!.event).toMatchObject({
@@ -313,7 +327,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const threads = {
-      "ag.root": [response("c4", "completed", "4")]
+      "ag.root": [turn("m1"), called("c4", "m1"), response("c4", "completed", "4")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
@@ -330,14 +344,14 @@ describe("agentsPackage", () => {
       // flip then orDie: the call must park, and a success is a defect rather than a failure
       // typed as the method's own result.
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c5" }).pipe(
-        Effect.provide(env("mem:main:ag.root", sent)),
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("c5", "m1")] })),
         Effect.flip,
         Effect.orDie
       )
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
-    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.c5")
+    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.2:m1c5")
   })
 
   test("result reads the response from its own log", async () => {
@@ -366,13 +380,168 @@ describe("agentsPackage", () => {
       }
     })
     const answer = await Effect.runPromise(
-      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(Effect.provide(env("mem:main:ag.root", sent)))
+      pkg.methods.run!({ text: "draft", budget: 0.7 }, { callId: "c8" }).pipe(
+        Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("c8", "m1")] }))
+      )
     )
     expect(answer).toEqual({ error: "agents.run takes budget as a whole number of tool calls, at least 1; got 0.7" })
     expect(draws.length).toBe(0)
     expect(sent.length).toBe(0)
   })
 
+})
+
+// A live parent log: an append lands where the next read looks, so a re-driven dispatch replays
+// against what its predecessor recorded, the way a durable store does after a crash.
+const liveEnv = (events: Event[], sent: Array<Sent>) => {
+  const self = parseThreadAddress("mem:main:ag.root")
+  return Layer.mergeAll(
+    Layer.succeed(Router, {
+      send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
+    }),
+    Layer.succeed(Self, self),
+    Layer.succeed(EventLog, withWatermark({
+      append: (committed) => Effect.sync(() => void events.push(...committed)),
+      read: Effect.sync(() => events)
+    }))
+  )
+}
+
+// A turn head served through the actor method machinery carries its call context, deadline
+// included (packages/core/src/communication/envelope.test.ts, "methodEnvelopeOf").
+const turnWithDeadline = (id: string, deadlineAt: number): Event =>
+  ({
+    type: "MessageReceived",
+    id,
+    text: "delegate",
+    call: { invocation: { method: "message", id, epoch: 0 }, deadlineAt },
+    at: 1
+  } as Event)
+
+describe("a child is named by its parent run and call", () => {
+  const run = agentsPackage().methods.run!
+  const background = (text: string, callId: string) =>
+    run({ text, background: true }, { callId })
+  const threads = (sent: ReadonlyArray<Sent>): ReadonlyArray<string> =>
+    sent.map(({ link }) => (link.target as ThreadAddress).thread)
+
+  test("reused call ids across turns address distinct children", async () => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("parent-a"),
+      called("reused-call", "parent-a")
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("first", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
+    events.push(
+      { type: "TurnCompleted", turn: "parent-a", output: "first done", at: 4 } as Event,
+      turn("parent-b"),
+      called("reused-call", "parent-b")
+    )
+    await Effect.runPromise(background("second", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
+    // The third dispatch replays the second: it reads the child the second recorded instead of
+    // deriving or claiming the first turn's child.
+    await Effect.runPromise(background("second", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
+
+    expect(threads(sent)).toEqual([
+      "ag.8:parent-areused-call",
+      "ag.8:parent-breused-call",
+      "ag.8:parent-breused-call"
+    ])
+    expect(events.filter((event) => event.type === "ChildCreated")).toMatchObject([
+      { callId: "reused-call", turn: "parent-a", address: { thread: "ag.8:parent-areused-call" } },
+      { callId: "reused-call", turn: "parent-b", address: { thread: "ag.8:parent-breused-call" } }
+    ])
+  })
+
+  test("a dispatch whose creation record never committed re-derives the same address", async () => {
+    // The crash window Child.tla opens between the record and the delivery: the re-driven
+    // dispatch has no ChildCreated to read and must land where its predecessor was headed.
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"),
+      called("crash-1", "m1")
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("scout", "crash-1").pipe(Effect.provide(liveEnv(events, sent))))
+    events.splice(events.findIndex((event) => event.type === "ChildCreated"), 1)
+    await Effect.runPromise(background("scout", "crash-1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(threads(sent)).toEqual(["ag.2:m1crash-1", "ag.2:m1crash-1"])
+  })
+
+  test("a creation record without a turn still names its child", async () => {
+    // A record written before the turn field existed carries the address the old scheme minted;
+    // the replay reads it and never records a second child.
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"),
+      called("legacy-1", "m1"),
+      {
+        type: "ChildCreated",
+        callId: "legacy-1",
+        address: { actor: "mem", instance: "main", thread: "ag.legacy-1" },
+        depth: 1,
+        at: 3
+      } as Event
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("scout", "legacy-1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(threads(sent)).toEqual(["ag.legacy-1"])
+    expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(1)
+  })
+
+  test("a derived address that names another child dies rather than delivering", async () => {
+    // A legacy call id names its child ag.<callId>, so a run can derive that address for a
+    // different call: run "m1" with call "c1" names ag.2:m1c1, the child legacy call 2:m1c1
+    // owns. The dispatch dies instead of crossing the brief.
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"),
+      {
+        type: "ChildCreated",
+        callId: "2:m1c1",
+        address: { actor: "mem", instance: "main", thread: "ag.2:m1c1" },
+        depth: 1,
+        at: 1
+      } as Event,
+      called("c1", "m1")
+    ]
+    const sent: Array<Sent> = []
+    const exit = await Effect.runPromiseExit(
+      background("scout", "c1").pipe(Effect.provide(liveEnv(events, sent)))
+    )
+    if (exit._tag !== "Failure") throw new Error("expected the colliding dispatch to die")
+    expect(Cause.pretty(exit.cause)).toContain(
+      "agents.run c1 derives child address mem:main:ag.2:m1c1, which child 2:m1c1 already owns"
+    )
+    expect(sent).toHaveLength(0)
+  })
+
+  test("a background child inherits the owning turn deadline without a parent link", async () => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turnWithDeadline("m1", 86_400_002),
+      called("bg-1", "m1")
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("scout", "bg-1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(sent[0]?.call).toEqual({
+      invocation: { method: "message", id: "bg-1", epoch: 0 },
+      deadlineAt: 86_400_002
+    })
+    expect(events.some((event) => event.type === "InvocationLinked")).toBe(false)
+  })
+
+  test("a run with no parent turn dies rather than naming a child", async () => {
+    // The package call is what ties a dispatch to its run; a method reached outside one has no
+    // child to name and no duplicate to absorb.
+    const events: Event[] = [threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0)]
+    const exit = await Effect.runPromiseExit(
+      background("scout", "orphan-1").pipe(Effect.provide(liveEnv(events, [])))
+    )
+    if (exit._tag !== "Failure") throw new Error("expected the orphaned call to die")
+    expect(Cause.pretty(exit.cause)).toContain("agents.run orphan-1 has no parent turn")
+  })
 })
 
 // The contracts a host declares for its children. A name resolves to one of these; anything else
@@ -396,7 +565,7 @@ describe("the output a spawn asks for", () => {
     const answer = await Effect.runPromise(
       pkg.methods
         .run!({ text: "scout", background: true, output: asked }, { callId: "o1" })
-        .pipe(Effect.provide(env("mem:main:ag.root", sent)))
+        .pipe(Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("o1", "m1")] })))
     )
     return { answer, brief: sent[0]?.event as { output?: unknown } | undefined }
   }
