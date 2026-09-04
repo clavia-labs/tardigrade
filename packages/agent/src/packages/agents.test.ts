@@ -369,7 +369,11 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const threads = {
-      "ag.root": [response("c7", "cancelled", "deadline reached", { cause: "deadline", deadlineAt: 9 })]
+      "ag.root": [
+        turn("m1"),
+        called("c7", "m1"),
+        response("c7", "cancelled", "deadline reached", { cause: "deadline", deadlineAt: 9 })
+      ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))

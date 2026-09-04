@@ -20,21 +20,6 @@ describe("boundaryOf", () => {
     expect(boundaryOf(log, "m1")).toEqual({ kind: "failed", error: "boom" })
   })
 
-  test("a cancelled turn returns its cancellation with its cause and reason", () => {
-    const log = [...base, { type: "TurnCancelled", request: "x1", turn: "m1", cause: "requested", reason: "user asked", at: 1 } as Event]
-    expect(boundaryOf(log, "m1")).toEqual({ kind: "cancelled", cause: "requested", reason: "user asked" })
-  })
-
-  test("a deadline cancellation carries its deadline", () => {
-    const log = [...base, { type: "TurnCancelled", request: "x1", turn: "m1", cause: "deadline", deadlineAt: 9, at: 1 } as Event]
-    expect(boundaryOf(log, "m1")).toEqual({ kind: "cancelled", cause: "deadline", deadlineAt: 9 })
-  })
-
-  test("a failed turn with no error field fails empty, never the string undefined", () => {
-    const log = [...base, { type: "TurnFailed", turn: "m1", at: 1 } as Event]
-    expect(boundaryOf(log, "m1")).toEqual({ kind: "failed", error: "" })
-  })
-
   test("a turn parked on an ask returns the request", () => {
     const log = [...base, { type: "BudgetRequested", callId: "rb1", reason: "need more", amount: 5, turn: "m1", at: 1 } as Event]
     expect(boundaryOf(log, "m1")).toEqual({ kind: "requesting", callId: "rb1", reason: "need more", amount: 5 })

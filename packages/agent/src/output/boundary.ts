@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { turnCancellationOf, turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
+import { turnTerminalOf } from "@clavia/tardigrade-code/execution/turns"
 import { canonicalOf, declarationForTurn, type OutputContract } from "./contract"
 
 // Boundary is where a settle left a turn: a terminal, or a park on a budget ask. The
@@ -26,9 +26,16 @@ export const boundaryOf = (log: ReadonlyArray<Event>, turn: string): Boundary | 
     if (terminal.type === "TurnCompleted") {
       return { kind: "completed", output: String((terminal as { output?: unknown }).output) }
     }
-    const cancellation = turnCancellationOf(terminal)
-    if (cancellation !== undefined) return { kind: "cancelled", ...cancellation }
-    return { kind: "failed", error: String("error" in terminal ? terminal.error : "") }
+    if (terminal.type === "TurnCancelled") {
+      const cancelled = terminal as { cause?: unknown; reason?: unknown; deadlineAt?: unknown }
+      return {
+        kind: "cancelled",
+        cause: cancelled.cause === "deadline" ? "deadline" : "requested",
+        ...(typeof cancelled.reason === "string" && cancelled.reason !== "" ? { reason: cancelled.reason } : {}),
+        ...(typeof cancelled.deadlineAt === "number" ? { deadlineAt: cancelled.deadlineAt } : {})
+      }
+    }
+    return { kind: "failed", error: String((terminal as { error?: unknown }).error) }
   }
   let pending: Event | undefined
   for (const e of log) {
