@@ -220,11 +220,11 @@ describe("an assembled agent", () => {
       at: 1
     })
     expect(mind.host.read(ROOT_THREAD).filter((event) => event.type === "ChildCreated")).toEqual([
-      expect.objectContaining({ callId: "t1.0", address: { actor: "mem", instance: "main", thread: "ag.t1.0" }, depth: 1 }),
-      expect.objectContaining({ callId: "t1.1", address: { actor: "mem", instance: "main", thread: "ag.t1.1" }, depth: 1 })
+      expect.objectContaining({ callId: "t1.0", turn: "run-0", address: { actor: "mem", instance: "main", thread: "ag.5:run-0t1.0" }, depth: 1 }),
+      expect.objectContaining({ callId: "t1.1", turn: "run-0", address: { actor: "mem", instance: "main", thread: "ag.5:run-0t1.1" }, depth: 1 })
     ])
     // The graph existed: two child threads, each with a served turn.
-    const children = ["ag.t1.0", "ag.t1.1"].map((thread) => mind.host.read(thread))
+    const children = ["ag.5:run-0t1.0", "ag.5:run-0t1.1"].map((thread) => mind.host.read(thread))
     for (const log of children) {
       expect(threadCreatedOf(log)).toMatchObject({
         address: { actor: "mem" },
@@ -252,8 +252,8 @@ describe("an assembled agent", () => {
     )).toBe(true)
     expect(new Set(seen.map(({ request }) => request.identity.thread))).toEqual(new Set([
       ROOT_THREAD,
-      "ag.t1.0",
-      "ag.t1.1"
+      "ag.5:run-0t1.0",
+      "ag.5:run-0t1.1"
     ]))
     for (const { request, key } of seen) {
       expect(key?.startsWith(`${request.identity.turn}/infer/`)).toBe(true)
@@ -297,7 +297,7 @@ describe("an assembled agent", () => {
     expect(again.output).toBe('"4,6"')
     // The second turn ran its own execution and spawned its own children.
     expect(mind.host.read(ROOT_THREAD).filter((e) => e.type === "CodeSettled")).toHaveLength(2)
-    for (const thread of ["ag.t2.0", "ag.t2.1"]) {
+    for (const thread of ["ag.5:run-1t2.0", "ag.5:run-1t2.1"]) {
       expect(mind.host.read(thread).some((e) => e.type === "TurnCompleted")).toBe(true)
     }
   })

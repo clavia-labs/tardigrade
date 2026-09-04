@@ -31,10 +31,11 @@ export const ThreadCreated = Schema.Struct({
 
 export type ThreadCreated = typeof ThreadCreated.Type
 
-// ChildCreated records a child edge in its parent log before the first delivery crosses the host boundary (packages/agent/src/index.test.ts, "one complete RLM run records root and child lineage and settles with their answers").
+// ChildCreated records a child edge in its parent log before the first delivery crosses the host boundary. `turn` names the parent run that minted the call, so the edge and its dedup key are scoped to that run (packages/agent/src/index.test.ts, "one complete RLM run records root and child lineage and settles with their answers"). A record from before the field existed has no turn and keeps its call-scoped key.
 export const ChildCreated = Schema.Struct({
   type: Schema.Literal("ChildCreated"),
   callId: Schema.String,
+  turn: Schema.optional(Schema.String),
   address: ThreadAddress,
   depth: ThreadDepth,
   placement: Schema.optional(ChildPlacement),
@@ -43,9 +44,16 @@ export const ChildCreated = Schema.Struct({
 
 export type ChildCreated = typeof ChildCreated.Type
 
-export const childCreated = (callId: string, address: ThreadAddressType, lineage: ThreadLineage, at: number): ChildCreated => ({
+export const childCreated = (
+  callId: string,
+  address: ThreadAddressType,
+  lineage: ThreadLineage,
+  at: number,
+  turn?: string
+): ChildCreated => ({
   type: "ChildCreated",
   callId,
+  ...(turn === undefined ? {} : { turn }),
   address,
   depth: lineage.depth,
   ...(lineage.placement === undefined ? {} : { placement: lineage.placement }),
@@ -126,13 +134,17 @@ export const sameThreadLineage = (created: ThreadCreated, lineage: ThreadLineage
   created.parent !== undefined && sameThreadAddress(created.parent, lineage.parent) && created.depth === lineage.depth &&
   (created.placement === undefined || lineage.placement === undefined || created.placement === lineage.placement)
 
-// threadKeys gives each log one durable creation occurrence.
+// threadKeys gives each log one durable creation occurrence, scoped to the run that minted the
+// call. JSON.stringify keeps the pair injective where plain concatenation could collide.
 export const threadKeys: KeyFragment = {
   prefixes: ["thread:"],
   keyOf: (event) => {
     if (event.type === "ThreadCreated") return "thread:created"
     if (event.type !== "ChildCreated") return undefined
-    const callId = (event as { readonly callId?: unknown }).callId
-    return typeof callId === "string" ? `thread:child:${callId}` : undefined
+    const callId = typeof event.callId === "string" ? event.callId : undefined
+    if (callId === undefined) return undefined
+    return typeof event.turn === "string"
+      ? `thread:child:${JSON.stringify([event.turn, callId])}`
+      : `thread:child:${callId}`
   }
 }
