@@ -535,19 +535,19 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          // The owning run links a foreground child: the parent invocation the child's replies
-          // ride, resolved from the recorded call's own turn and epoch.
+          // The owning run links a foreground child and bounds every child with its deadline:
+          // a background child is not linked, but it still answers the turn that fired it
+          // (agents.test.ts, "a background child inherits the owning turn deadline without a
+          // parent link").
           const owner = { method: "message", id: parentRun.turn, epoch: parentRun.epoch }
           const parent = a?.background === true ? undefined : owner
-          const parentDeadline = parent === undefined
-            ? undefined
-            : events.find((event) => {
-                const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
-                return context?.invocation !== undefined &&
-                  context.invocation.method === owner.method &&
-                  context.invocation.id === owner.id &&
-                  context.invocation.epoch === owner.epoch
-              }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
+          const parentDeadline = events.find((event) => {
+            const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
+            return context?.invocation !== undefined &&
+              context.invocation.method === owner.method &&
+              context.invocation.id === owner.id &&
+              context.invocation.epoch === owner.epoch
+          }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
           const childContext: ActorInvocationContext = {
             invocation: { method: "message", id: ctx.callId, epoch: 0 },
             ...(parent === undefined ? {} : { parent }),

@@ -407,6 +407,17 @@ const liveEnv = (events: Event[], sent: Array<Sent>) => {
   )
 }
 
+// A turn head served through the actor method machinery carries its call context, deadline
+// included (packages/core/src/communication/envelope.test.ts, "methodEnvelopeOf").
+const turnWithDeadline = (id: string, deadlineAt: number): Event =>
+  ({
+    type: "MessageReceived",
+    id,
+    text: "delegate",
+    call: { invocation: { method: "message", id, epoch: 0 }, deadlineAt },
+    at: 1
+  } as Event)
+
 describe("a child is named by its parent run and call", () => {
   const run = agentsPackage().methods.run!
   const background = (text: string, callId: string) =>
@@ -456,6 +467,21 @@ describe("a child is named by its parent run and call", () => {
     events.splice(events.findIndex((event) => event.type === "ChildCreated"), 1)
     await Effect.runPromise(background("scout", "crash-1").pipe(Effect.provide(liveEnv(events, sent))))
     expect(threads(sent)).toEqual(["ag.2:m1crash-1", "ag.2:m1crash-1"])
+  })
+
+  test("a background child inherits the owning turn deadline without a parent link", async () => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turnWithDeadline("m1", 86_400_002),
+      called("bg-1", "m1")
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("scout", "bg-1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(sent[0]?.call).toEqual({
+      invocation: { method: "message", id: "bg-1", epoch: 0 },
+      deadlineAt: 86_400_002
+    })
+    expect(events.some((event) => event.type === "InvocationLinked")).toBe(false)
   })
 
   test("a run with no parent turn dies rather than naming a child", async () => {
