@@ -60,6 +60,24 @@ Tardigrade is a TypeScript framework for building modular agents around an immut
   <InfiniteMemoryDiagram />
 </div>
 
+## Philosophy
+
+### Simplicity scales
+
+The core of Tardigrade will always be simple enough for anyone to reason about. Every component is a pure function of the event log with a typed interface. This will not change. A good primitive enables emergent behavior through composition. We believe this is that primitive.
+
+### Mathematically rigorous
+
+We hold everything built in Tardigrade to a standard of mathematical rigor. We use TLA+ for temporal modeling and fast-check for property testing. We are also experimenting with a TypeScript-native approach to temporal modeling.
+
+### Maximally bitter lesson pilled
+
+Interfaces are inherently restrictive. We asked ourselves what the least compressed interface is and arrived at the event log. This gives every generation of model a strong foundation and a ceiling that scales with its capabilities.
+
+### Enjoy building!
+
+New models may come and go. What separates us is that we keep asking why and pushing the frontier. We want Tardigrade to help you do the same alongside each new generation of models.
+
 ## Where next
 
 1. Read [Why Tardigrade?](/docs/why) for a deeper understanding of the framework's design.
