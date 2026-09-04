@@ -682,9 +682,10 @@ export class ActorDO extends DurableObject<Env> {
     }
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
     await stub.init(identity.actor, identity.instance, target.thread)
-    // A registered child is already live: the delivery crosses as a plain message, and a fresh
-    // creation request would append a ThreadRequested the registry folds back to `requested`
-    // (actor.workers.ts, "a re-delivery to a registered child delivers instead of recreating").
+    // A registered child is already live, so the delivery crosses as a plain message: the
+    // duplicate creation request the keyed append would absorb derives no registration effect
+    // to commit and wake a re-staged message (actor.workers.ts, "a re-delivery to a registered
+    // child delivers instead of recreating").
     if (existing?.state === "registered") {
       await stub.deliver(envelope)
       return
