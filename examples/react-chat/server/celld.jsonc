@@ -1,0 +1,31 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tardigrade-react-chat",
+  "main": "worker.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "durable_objects": {
+    "bindings": [
+      { "name": "ACTORS", "class_name": "ActorDO" },
+      { "name": "THREADS", "class_name": "ThreadDO" }
+    ]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ActorDO", "ThreadDO"] }],
+  "d1_databases": [{
+    "binding": "CATALOG_DB",
+    "database_name": "tardigrade-react-chat-catalog",
+    "migrations_dir": "migrations"
+  }],
+  "vars": {
+    "TARDIGRADE_ALARM_DELAY_MILLIS": "120000",
+    "TARDIGRADE_COMPACTION_FIRE_RATIO": "0.8",
+    "TARDIGRADE_COMPACTION_KEEP_RATIO": "0.5",
+    "TARDIGRADE_MAX_CONCURRENT_THREADS": "4",
+    "TARDIGRADE_MODEL_CATALOG_URL": "https://models.dev/api.json",
+    "TARDIGRADE_MODEL_CATALOG_LOAD_POLICY": "refresh",
+    "TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS": "10000",
+    "TARDIGRADE_CONFIG": "{\"models\":{\"allow\":\"*\",\"providers\":{\"openrouter\":{\"baseUrl\":\"https://openrouter.ai/api/v1\",\"protocol\":\"openai-chat-completions\",\"env\":[\"OPENROUTER_API_KEY\"]}},\"default\":{\"provider\":\"openrouter\",\"model_id\":\"openai/gpt-5-mini\"}}}",
+    "TARDIGRADE_SANDBOX_TRANSPORT": "replay",
+    "TARDIGRADE_BACKGROUND_TASK_OWNER": "request"
+  }
+}

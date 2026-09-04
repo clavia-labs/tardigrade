@@ -38,7 +38,11 @@ button, input { font: inherit; }
 .root-head {
   width: min(720px, calc(100% - 48px));
   margin-inline: auto;
+  display: flex;
+  align-items: center;
 }
+
+.root-head strong { font-size: 14px; }
 
 .thread-sidebar {
   width: 240px;
@@ -197,9 +201,17 @@ button, input { font: inherit; }
 
 .side-head div { display: grid; gap: 2px; }
 
+.side-back-button { display: none; }
+
 .side-head span {
   color: var(--ui-text-faint);
   font-size: 12px;
+}
+
+.side-status-spinner {
+  width: 14px;
+  height: 14px;
+  color: var(--ui-text-faint);
 }
 
 .side-thread .messages {
@@ -229,8 +241,6 @@ button, input { font: inherit; }
   overscroll-behavior: contain;
   scroll-padding-top: 16px;
 }
-
-.turn-space { flex: 0 0 calc(100% - 48px); }
 
 .shell > .composer, .shell > .error {
   width: min(720px, calc(100% - 48px));
@@ -388,16 +398,29 @@ button svg { width: 18px; height: 18px; }
 }
 
 @media (max-width: 800px) {
+  .workspace[data-child-open] .thread-sidebar,
+  .workspace[data-child-open] .shell { display: none; }
+
   .side-thread {
-    width: min(420px, 100vw);
-    position: fixed;
-    right: 0;
-    z-index: 20;
-    box-shadow: var(--ui-shadow);
+    width: 100%;
+    height: 100dvh;
+    position: static;
+    border-left: 0;
   }
+
+  .side-head {
+    justify-content: flex-start;
+    padding-left: 14px;
+  }
+
+  .side-head div { flex: 1; }
+
+  .side-back-button { display: grid; }
+
+  .side-close-button { display: none; }
 }
 
-@media (max-width: 640px) {
+@media (max-width: 960px) {
   .thread-sidebar { width: 60px; height: calc(100dvh - 16px); margin: 8px; }
   .thread-sidebar-head { padding-inline: 8px; justify-content: center; }
   .thread-sidebar-head strong, .thread-link span, .thread-empty { display: none; }

@@ -107,8 +107,21 @@
         "tardie": "workspace:*",
       },
     },
-    "examples/react-chat": {
-      "name": "@clavia/tardigrade-react-chat-example",
+    "examples/react-chat/server": {
+      "name": "@clavia/tardigrade-react-chat-server",
+      "dependencies": {
+        "@effect/platform-bun": "4.0.0-rc.110",
+        "effect": "4.0.0-rc.110",
+        "tardie": "workspace:*",
+      },
+      "devDependencies": {
+        "@cloudflare/workers-types": "^5.20260804.1",
+        "typescript": "^7.0.2",
+        "wrangler": "^4.119.0",
+      },
+    },
+    "examples/react-chat/web": {
+      "name": "@clavia/tardigrade-react-chat-web",
       "dependencies": {
         "@base-ui/react": "^1.7.0",
         "@clavia/tardigrade-client": "workspace:*",
@@ -386,7 +399,9 @@
 
     "@clavia/tardigrade-model": ["@clavia/tardigrade-model@workspace:platform/model"],
 
-    "@clavia/tardigrade-react-chat-example": ["@clavia/tardigrade-react-chat-example@workspace:examples/react-chat"],
+    "@clavia/tardigrade-react-chat-server": ["@clavia/tardigrade-react-chat-server@workspace:examples/react-chat/server"],
+
+    "@clavia/tardigrade-react-chat-web": ["@clavia/tardigrade-react-chat-web@workspace:examples/react-chat/web"],
 
     "@clavia/tardigrade-server": ["@clavia/tardigrade-server@workspace:apps/server"],
 

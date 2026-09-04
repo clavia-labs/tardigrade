@@ -1,0 +1,22 @@
+{
+  "name": "@clavia/tardigrade-react-chat-server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run ../../../apps/cli/src/main.ts build actor.ts",
+    "deploy:cloudflare": "wrangler deploy",
+    "dev": "bun run server.ts",
+    "lint": "bun run ../../../apps/cli/src/main.ts lint actor.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@effect/platform-bun": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110",
+    "tardie": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20260804.1",
+    "typescript": "^7.0.2",
+    "wrangler": "^4.119.0"
+  }
+}
