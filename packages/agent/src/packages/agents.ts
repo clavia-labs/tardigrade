@@ -8,7 +8,7 @@ import {
 import { EventLog } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
-import { turnView } from "@clavia/tardigrade-code/execution/turns"
+import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
 import { budgetPolicyOf, type BudgetPolicy } from "../component/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { boundaryId } from "@clavia/tardigrade-core/communication/message"
@@ -45,13 +45,15 @@ import {
 // quiescence and returns its terminal; `agents.run({text, background: true})` delivers the brief
 // and returns a pending handle, and `agents.result({id})` awaits that handle's reply later.
 //
-// Every call is its own agent: the child's identity is the call's id, so a Promise.all of five
-// runs is five agents by construction, and no name exists to collide on. A persistent named
-// colleague is a later explicit feature, never an accident of naming.
+// Every call is its own agent. A call id is unique only within its parent turn, so the child's
+// native thread names the pair of both identifiers, and a Promise.all of five runs is five
+// agents by construction. A persistent named colleague is a later explicit feature, never an
+// accident of naming.
 //
 // Durability costs nothing here: both modes are package calls, so the recorded pair replays a
-// committed run and re-delivers a crashed dispatch. The call id is the child's identity AND the
-// message id, so a replayed dispatch reaches the same child and is absorbed as a duplicate.
+// committed run and re-delivers a crashed dispatch. The child's address is a pure function of
+// the parent run and the call, and a replay reads the recorded ChildCreated, so a re-driven
+// dispatch reaches the same child and is absorbed as a duplicate.
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
 // arguments. `Router` sends, `Self` names the calling thread, and `EventLog` supplies its durable
@@ -257,23 +259,54 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// sibling is the default address: the child inherits the parent's actor instance and uses the name `ag.<callId>`. Thread placement remains a separate host decision (spawn.test.ts, "the default address is the host's own sibling"; tla/runtime/Thread.tla, CreationFirst).
-const sibling = (callId: string, self: ThreadAddress): ThreadAddress =>
-  threadAddressOf(self.actor, self.instance, `ag.${callId}`)
+// childThreadId names a child after its parent run and call id. Length-prefixing keeps the pair
+// injective even when either identifier has punctuation, so two turns reusing one call id name
+// two children (agents.test.ts, "reused call ids across turns address distinct children").
+const childThreadId = (parentRunId: string, callId: string): string =>
+  `${parentRunId.length}:${parentRunId}${callId}`
 
+// sibling is the default address: the child inherits the parent's actor instance and a thread
+// name derived from the parent run and call. Thread placement remains a separate host decision
+// (agents.test.ts, "the default address is the host's own sibling").
+const sibling = (parentRunId: string, callId: string, self: ThreadAddress): ThreadAddress =>
+  threadAddressOf(self.actor, self.instance, `ag.${childThreadId(parentRunId, callId)}`)
+
+// parentRunOf resolves the run a package call serves: its turn id and execution epoch. A call
+// outside any run has no child to name, so the dispatch dies rather than guessing.
+const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: number } | undefined => {
+  const turn = turnOf(call)
+  return turn === undefined ? undefined : { turn, epoch: eventEpochOf(call) }
+}
+
+// childClaimOf resolves the child this dispatch owns. The recorded child is the ChildCreated
+// between this call's PackageCalled in the parent run and the next call reusing the id, so a
+// later turn reusing the id can never claim an earlier turn's child, and a replay reads its
+// own dispatch's record (agents.test.ts, "reused call ids across turns address distinct
+// children").
 const childClaimOf = (
   placement: unknown,
-  events: ReadonlyArray<{ readonly type: string }>,
+  events: ReadonlyArray<Event>,
   parent: ThreadCreated,
+  parentRunId: string,
   callId: string,
   source: ThreadAddress
 ) => {
   if (placement !== undefined && !Schema.is(ChildPlacement)(placement)) {
     return { error: "agents.run placement must be colocated or independent" }
   }
-  const recorded = events.find(
-    (event) => event.type === "ChildCreated" && (event as { readonly callId?: unknown }).callId === callId
-  )
+  const sent = events.findLastIndex((event) =>
+    event.type === "PackageCalled" &&
+    event.callId === callId &&
+    turnOf(event) === parentRunId)
+  const next = events.findIndex((event, index) =>
+    index > sent &&
+    event.type === "PackageCalled" &&
+    event.callId === callId)
+  const recorded = sent < 0
+    ? undefined
+    : events.slice(sent + 1, next < 0 ? undefined : next).find(
+        (event) => event.type === "ChildCreated" && event.callId === callId
+      )
   if (recorded !== undefined && !Schema.is(ChildCreated)(recorded)) {
     throw new Error(`child ${callId} has an invalid creation record`)
   }
@@ -286,7 +319,7 @@ const childClaimOf = (
       }
   return {
     recorded,
-    target: recorded?.address ?? sibling(callId, source),
+    target: recorded?.address ?? sibling(parentRunId, callId, source),
     lineage
   }
 }
@@ -449,7 +482,14 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             | undefined
           const text = String(a?.text ?? "")
           if (text === "") return { error: "agents.run needs { text }" }
-          const child = childClaimOf(a?.placement, events, created, ctx.callId, source)
+          const call = turnView(events).find((event) =>
+            event.type === "PackageCalled" && event.callId === ctx.callId
+          )
+          const parentRun = call === undefined ? undefined : parentRunOf(call)
+          if (parentRun === undefined) {
+            return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
+          }
+          const child = childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
           if ("error" in child) return child
           const { lineage, recorded: recordedChild, target } = child
           // The contract parameter is `output`, and a near-miss spelling fails silently: no
@@ -495,21 +535,18 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          const packageCall = events.find((event) =>
-            event.type === "PackageCalled" &&
-            String((event as { readonly callId?: unknown }).callId) === ctx.callId
-          ) as { readonly turn?: unknown; readonly epoch?: unknown } | undefined
-          const parent = a?.background === true || packageCall === undefined
-            ? undefined
-            : { method: "message", id: String(packageCall.turn ?? ""), epoch: Number(packageCall.epoch ?? 0) }
+          // The owning run links a foreground child: the parent invocation the child's replies
+          // ride, resolved from the recorded call's own turn and epoch.
+          const owner = { method: "message", id: parentRun.turn, epoch: parentRun.epoch }
+          const parent = a?.background === true ? undefined : owner
           const parentDeadline = parent === undefined
             ? undefined
             : events.find((event) => {
                 const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
                 return context?.invocation !== undefined &&
-                  context.invocation.method === parent.method &&
-                  context.invocation.id === parent.id &&
-                  context.invocation.epoch === parent.epoch
+                  context.invocation.method === owner.method &&
+                  context.invocation.id === owner.id &&
+                  context.invocation.epoch === owner.epoch
               }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
           const childContext: ActorInvocationContext = {
             invocation: { method: "message", id: ctx.callId, epoch: 0 },
@@ -522,7 +559,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               : [invocationLinked({ parent, child: childContext, target: formatThreadAddress(target), lineage, at })]
             if (recordedChild === undefined || linked.length > 0) {
               yield* log.append([
-                ...(recordedChild === undefined ? [childCreated(ctx.callId, target, lineage, at)] : []),
+                ...(recordedChild === undefined ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn)] : []),
                 ...linked
               ])
             }

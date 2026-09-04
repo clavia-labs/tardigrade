@@ -32,7 +32,19 @@ const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLen
 const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const parent = threadAddressOf("property", "main", "ag.root")
   const host = createHost({ actorName: parent.actor, actorFor: () => undefined })
-  const parentLog: Event[] = [threadCreated(parent, undefined, 0)]
+  // The parent run every spawn reads its identity from: one open turn, one recorded call per plan.
+  const parentLog: Event[] = [
+    threadCreated(parent, undefined, 0),
+    { type: "MessageReceived", id: "turn-1", text: "delegate", at: 1 },
+    ...calls.map((plan): Event => ({
+      type: "PackageCalled",
+      callId: plan.callId,
+      name: "agents.run",
+      arguments: {},
+      turn: "turn-1",
+      at: 2
+    }))
+  ]
   const actions: Array<{ readonly kind: "append" | "send"; readonly callId: string; readonly target?: ThreadAddress }> = []
   const remaining = new Map(calls.map((plan) => [plan.callId, plan.failures]))
   const plansByCall = new Map(calls.map((plan) => [plan.callId, plan]))
