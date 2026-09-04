@@ -11,7 +11,8 @@ import {
   repairFallback,
   VALIDATE_ONCE_FALLBACK,
   NATIVE_MODE,
-  type InferDelta
+  type InferDelta,
+  type InferenceIdentity
 } from "tardie"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
@@ -323,6 +324,56 @@ describe("infer end to end", () => {
       ) as Effect.Effect<unknown>
     )
     expect(action).toMatchObject({ kind: "complete", output: "the answer is 4" })
+  })
+
+  test("an adapter start receives the request's inference identity", async () => {
+    const seen: InferenceIdentity[] = []
+    const adapter: ModelAdapter = {
+      id: "test/identity",
+      protocols: ["bedrock-converse"],
+      start: (context) => {
+        seen.push(context.identity)
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "TEXT_MESSAGE_START", messageId: "s", role: "assistant", timestamp: 1 } as never
+              yield { type: "TEXT_MESSAGE_CONTENT", messageId: "s", delta: "ok", timestamp: 2 } as never
+              yield { type: "TEXT_MESSAGE_END", messageId: "s", timestamp: 3 } as never
+            }
+          }
+        }
+      }
+    }
+    const layer = infer({
+      baseUrl: "https://bedrock.test/us-east-1",
+      apiKey: "k",
+      model: "anthropic.claude-test",
+      protocol: "bedrock-converse",
+      provider: "bedrock",
+      contextWindowTokens: 128_000
+    }, modelAdapters(adapter))
+    // A root and a child of one actor name carry distinct identities, so an adapter can
+    // attribute and authorize per instance even when the actor name repeats.
+    const requestOf = (identity: InferenceIdentity) => ({
+      trajectory: [{ type: "MessageReceived", id: "m1", text: "go", at: 1 }] as ReadonlyArray<Event>,
+      identity,
+      ...surfaceRender
+    })
+    for (const identity of [
+      { actor: "mem", instance: "main", thread: "ag.root", turn: "run-0" },
+      { actor: "mem", instance: "main", thread: "ag.t1.0", turn: "run-1" }
+    ] as const) {
+      const action = await Effect.runPromise(
+        Effect.flatMap(Infer, (model) => model.react(requestOf(identity))).pipe(
+          Effect.provide(layer)
+        ) as Effect.Effect<unknown>
+      )
+      expect(action).toMatchObject({ kind: "complete", output: "ok" })
+    }
+    expect(seen).toEqual([
+      { actor: "mem", instance: "main", thread: "ag.root", turn: "run-0" },
+      { actor: "mem", instance: "main", thread: "ag.t1.0", turn: "run-1" }
+    ])
   })
 
   const ANSWER = JSON.stringify({ aspects: [{ name: "a", description: "b" }] })
