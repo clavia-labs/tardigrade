@@ -22,11 +22,11 @@ Use deterministic checks when the output has a machine-readable contract. For su
 
 ## Run the baseline
 
-Build the unchanged actor, start `tdg dev`, and confirm its interface:
+Build the unchanged actor, start `bun run dev`, and confirm its interface:
 
 ```bash
 tdg build actor.ts
-tdg dev
+bun run dev
 ```
 
 In another terminal:

@@ -30,7 +30,7 @@ The current Vercel AI SDK agent surface includes [`ToolLoopAgent` and loop contr
 | `prepareStep` and dynamic context | A component whose `step(state, event)` tracks sufficient state and whose `output(state)` changes its view |
 | Message arrays and conversation storage | One append-only event log per thread |
 | Structured output | `output(...)` plus `outputValidateOnce` or `outputRepairFor(...)` |
-| Lifecycle callbacks and telemetry | Recorded events, Voyager, usage projections, and host telemetry |
+| Lifecycle callbacks and telemetry | Recorded events, usage projections, and host telemetry |
 | AI SDK UI stream protocol | `makeActorClient().append()` plus the durable event stream from `follow()` |
 
 Install Tardigrade with the repository's package manager. Bun 1.4 or later runs the CLI and the durable SQLite host.
@@ -76,12 +76,12 @@ List every existing model option and confirm that the selected binding represent
 
 ## Move the application boundary
 
-Enter the actor directory, build it, then start its API and Voyager:
+Enter the actor directory, build it, then start its API:
 
 ```bash
 cd agents/agent
-bunx tardie build actor.ts
-bunx tardie dev
+tdg build actor.ts
+bun run dev
 ```
 
 Replace direct model invocation in the application backend with the generated client:
@@ -159,7 +159,7 @@ Validate the import before cutover:
 
 1. Compare source conversation, message, tool call, tool result, and terminal counts with the target events.
 2. Check that timestamps and ids retain their order and that every call and turn is complete.
-3. Start `tdg dev --db .tardigrade/imported.sqlite`, inspect representative threads with `tdg events`, and confirm that no turn is pending and `tdg ls` reports no imported thread as running or blocked.
+3. Start `TARDIGRADE_DB=.tardigrade/imported.sqlite bun run dev`, inspect representative threads with `tdg events`, and confirm that no turn is pending and `tdg ls` reports no imported thread as running or blocked.
 4. Send a new message to an imported thread and verify that the model receives the imported context and produces one new terminal.
 5. Stop and restart the server, then confirm the imported history and new turn remain available.
 
@@ -186,7 +186,7 @@ Treat one matched model run as a sample. State any output difference or provider
 
 ## Cut over and report
 
-Prepare the production Tardigrade deployment, database path, credentials, health check, and client URL. Keep production deployment as a separate authorized action. The migration itself proves the local actor with `tdg build`, `tdg dev`, and a representative `tdg call`.
+Prepare the production Tardigrade deployment, database path, credentials, health check, and client URL. Keep production deployment as a separate authorized action. The migration itself proves the local actor with `tdg build`, `bun run dev`, and a representative `tdg call`.
 
 Keep the existing endpoint and store available for rollback. Switch traffic only after tests pass, imported threads settle, a new turn succeeds, and the application renders event progress and terminals. Remove the existing harness dependencies after a repository search finds no remaining imports and the rollback window closes.
 
@@ -196,4 +196,4 @@ Finish with a short report containing:
 - Existing test results, migration checks, and the matched task result.
 - The comparison table with unavailable values labeled.
 - Known behavior gaps and rollback instructions.
-- The direct Voyager trace URL for the migrated task.
+- The thread and event evidence for the migrated task.

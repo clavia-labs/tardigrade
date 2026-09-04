@@ -15,6 +15,7 @@ export const INSTALLED_MANIFEST = "../../package.json"
 export const REPO_MANIFEST = "../../../package.json"
 
 export const MANIFEST_CANDIDATES: ReadonlyArray<string> = [INSTALLED_MANIFEST, REPO_MANIFEST]
+const REPO_CLI_MANIFEST = "../package.json"
 
 // What is reported when no manifest can be read, which is a command running from somewhere neither
 // layout describes.
@@ -27,10 +28,28 @@ const versionOf = async (path: string): Promise<string | undefined> => {
   return typeof version === "string" ? version : undefined
 }
 
+const dependencyVersionOf = async (path: string, dependency: string): Promise<string | undefined> => {
+  const raw: unknown = await readFile(path, "utf8").then(JSON.parse).catch(() => undefined)
+  if (typeof raw !== "object" || raw === null) return undefined
+  const dependencies = (raw as { dependencies?: unknown }).dependencies
+  if (typeof dependencies !== "object" || dependencies === null) return undefined
+  const version = (dependencies as Record<string, unknown>)[dependency]
+  return typeof version === "string" ? version : undefined
+}
+
 // versionIn reads the first manifest that answers, relative to the module that asks.
 export const versionIn = async (from: string): Promise<string> => {
   for (const candidate of MANIFEST_CANDIDATES) {
     const found = await versionOf(fileURLToPath(new URL(candidate, from)))
+    if (found !== undefined) return found
+  }
+  return UNKNOWN_VERSION
+}
+
+// dependencyVersionIn reads a generated project's direct runtime dependency version from the installed or repository CLI manifest.
+export const dependencyVersionIn = async (dependency: string, from: string): Promise<string> => {
+  for (const candidate of [...MANIFEST_CANDIDATES, REPO_CLI_MANIFEST]) {
+    const found = await dependencyVersionOf(fileURLToPath(new URL(candidate, from)), dependency)
     if (found !== undefined) return found
   }
   return UNKNOWN_VERSION

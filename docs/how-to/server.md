@@ -5,7 +5,7 @@ An HTTP server over a durable SQLite log. It holds threads, runs the actor, and 
 ## Run it
 
 ```bash
-tdg dev                    # or: bun run --cwd apps/server start
+bun run dev
 ```
 
 Bun 1.4 or later. `GET /healthz` answers once it is up.
@@ -59,7 +59,7 @@ Declared request failures are `application/problem+json`.
   "detail": "No thread named \"ghost\" has ever existed." }
 ```
 
-`unknown-projection` lists what the actor declares. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client asks the operator to inspect the actor host logs. For `tdg dev`, it also asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting the server.
+`unknown-projection` lists what the actor declares. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client asks the operator to inspect the actor host logs. For the compatibility `tdg dev` command, it also asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting the server.
 
 ## Configuration
 
@@ -101,7 +101,7 @@ The server boots without a provider connection and serves every read; turns fail
 OPENROUTER_API_KEY='your-deployment-secret'
 ```
 
-`tdg dev` reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
+The generated `bun run dev` script reads local credentials from `.dev.vars`. A hosted process reads the same credential names from its platform secret store. The manifest contains names such as `OPENROUTER_API_KEY`, never their values.
 
 The server refreshes the public model catalog when it starts, validates the complete provider and model listing, and replaces the cache atomically. A failed refresh serves the last valid snapshot for the configured source with `status: "cached"`. The server keeps the resolved snapshot in memory, so model resolution and catalog requests do not read the cache file on each request. With no valid source or cache, both catalog endpoints answer 503. Provider credentials never appear in either response.
 

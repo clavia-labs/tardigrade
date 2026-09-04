@@ -40,7 +40,7 @@ If you have an existing agent application, follow the [migration guide](docs/how
 bun add -g tardie@latest
 tdg init researcher
 cd researcher
-tdg dev
+bun run dev
 ```
 
 `tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/references/cli.mdx) covers non-interactive setup, more providers, and deployment.
@@ -52,12 +52,9 @@ tdg methods --actor researcher
 tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
 ```
 
-Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg call` prints the direct Voyager URL for the new trace.
+The API listens at [localhost:4242](http://localhost:4242) by default.
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/voyager-dark.png">
-  <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
-</picture>
+<img alt="The researcher actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
 
 ## Examples
 

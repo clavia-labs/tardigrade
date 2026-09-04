@@ -7,12 +7,13 @@ import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
 import { actorTemplate, type InitTemplate } from "./template"
 import type { SetupAnswers, SetupFiles } from "./setup"
-import { versionIn } from "./version"
+import { dependencyVersionIn, versionIn } from "./version"
 import { callCommand, shellWord } from "./workflow"
 import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
 export const DEFAULT_INIT_ACTOR_NAME = "my-agent"
+export const DEFAULT_SERVER_ENTRY = "server.ts"
 export const DEFAULT_WORKER_ENTRY = "worker.ts"
 export const DEFAULT_PACKAGE_MANIFEST = "package.json"
 export const DEFAULT_MODEL_LOCK = MODEL_LOCK_FILE
@@ -33,6 +34,7 @@ export interface InitializedActor {
   readonly name: string
   readonly directory: string
   readonly entry: string
+  readonly server: string
   readonly worker: string
   readonly manifest: string
   readonly celldManifest: string
@@ -104,16 +106,71 @@ export default cloudflareWorker(definition, {
 `
 }
 
-const packageTemplate = (version: string): string => `${JSON.stringify({
+const serverTemplate = (): string => `import { Layer } from "effect"
+import { BunFileSystem, BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { assertSupportedBun } from "tardie/bun/runtime"
+import { layerModelCatalog } from "tardie/server/catalog"
+import { layerFileModelCatalogRepository } from "tardie/server/catalog-repository"
+import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "tardie/server/config"
+import { layerActorThreads } from "tardie/server/host"
+import { serve } from "tardie/server/http"
+import { makeInferenceStream } from "tardie/server/inference-stream"
+
+import definition from "./actor"
+
+assertSupportedBun()
+
+const projectPath = projectConfigPathOf(process.env)
+const projectFile = Bun.file(projectPath)
+const projectExists = await projectFile.exists()
+if (!projectExists && process.env.TARDIGRADE_CONFIG_PATH?.trim().length) {
+  throw new Error(\`TARDIGRADE_CONFIG_PATH names \${JSON.stringify(projectPath)}, but that file does not exist\`)
+}
+const project = projectExists ? projectConfigOf(Bun.JSONC.parse(await projectFile.text())) : projectConfigOf({})
+const config = readConfig(process.env, project)
+const configLayer = layerConfig(config)
+const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(
+  Layer.provide(BunFileSystem.layer)
+)
+const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
+const inference = makeInferenceStream()
+const threads = Layer.provide(
+  layerActorThreads(definition, { inferenceObserver: inference.observer }),
+  [configLayer, catalog]
+)
+const application = Layer.provide(
+  serve({ api: { inference } }),
+  [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog]
+)
+
+BunRuntime.runMain(Layer.launch(application))
+`
+
+const packageTemplate = (
+  version: string,
+  effectVersion: string,
+  platformBunVersion: string
+): string => `${JSON.stringify({
   private: true,
   type: "module",
-  dependencies: { tardie: version }
+  scripts: {
+    dev: `bun --env-file=.dev.vars --watch ${DEFAULT_SERVER_ENTRY}`,
+    "dev:cloudflare": "wrangler dev",
+    "deploy:cloudflare": "wrangler deploy",
+    "deploy:celld": `celld deploy --config ${CELLD_PROJECT_CONFIG_PATH}`
+  },
+  dependencies: {
+    "@effect/platform-bun": platformBunVersion,
+    effect: effectVersion,
+    tardie: version
+  }
 }, undefined, 2)}\n`
 
 export const initActor = async (name: string, options: InitActorOptions): Promise<InitializedActor> => {
   const cwd = options.cwd ?? process.cwd()
   const directory = resolve(cwd, options.directory ?? defaultInitDirectory(name))
   const entry = resolve(directory, DEFAULT_ACTOR_ENTRY)
+  const server = resolve(directory, DEFAULT_SERVER_ENTRY)
   const worker = resolve(directory, DEFAULT_WORKER_ENTRY)
   const manifest = resolve(directory, DEFAULT_PROJECT_CONFIG_PATH)
   const celldManifest = resolve(directory, CELLD_PROJECT_CONFIG_PATH)
@@ -127,16 +184,22 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
   const manifestSource = manifestTemplate(name, options.now ?? new Date())
   const packageVersion = options.packageVersion ?? await versionIn(import.meta.url)
   if (packageVersion.endsWith("-unknown")) throw new Error("cannot determine the installed Tardigrade version")
+  const effectVersion = await dependencyVersionIn("effect", import.meta.url)
+  const platformBunVersion = await dependencyVersionIn("@effect/platform-bun", import.meta.url)
+  if (effectVersion.endsWith("-unknown") || platformBunVersion.endsWith("-unknown")) {
+    throw new Error("cannot determine the installed Effect versions")
+  }
 
   const created = await mkdir(directory, { recursive: true })
   if (created === undefined) throw new Error(`init target already exists at ${directory}. Choose a new directory.`)
 
   try {
     await writeFile(entry, source, "utf8")
+    await writeFile(server, serverTemplate(), "utf8")
     await writeFile(worker, workerTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")
-    await writeFile(packageManifest, packageTemplate(packageVersion), "utf8")
+    await writeFile(packageManifest, packageTemplate(packageVersion, effectVersion, platformBunVersion), "utf8")
     await writeFile(modelLock, `${JSON.stringify(options.modelLock ?? emptyModelLock(), null, 2)}\n`, "utf8")
     await mkdir(resolve(directory, "migrations"))
     await writeFile(catalogMigration, CLOUDFLARE_MODEL_CATALOG_MIGRATION, "utf8")
@@ -145,7 +208,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     throw error
   }
 
-  return { name, directory, entry, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration }
+  return { name, directory, entry, server, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -185,6 +248,7 @@ export const initSummary = (
   const lines = [
     styled(`✓ actor ${JSON.stringify(actor.name)} created in ${shownDirectory}`, "1;32", colors),
     summaryField("files", shownPath(actor.directory, actor.entry), colors),
+    summaryField("", shownPath(actor.directory, actor.server), colors),
     summaryField("", shownPath(actor.directory, actor.worker), colors),
     summaryField("", shownPath(actor.directory, actor.manifest), colors),
     summaryField("", shownPath(actor.directory, actor.celldManifest), colors),
@@ -196,7 +260,7 @@ export const initSummary = (
     "",
     styled("→ next", "1;36", colors),
     `  cd ${shellWord(directory)}`,
-    "  tdg dev",
+    "  bun run dev",
     "",
     styled("→ call from another terminal", "1;36", colors),
     `  ${callCommand()}`,

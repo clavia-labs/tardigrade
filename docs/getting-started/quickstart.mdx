@@ -35,7 +35,8 @@ After the setup, you should see the following files:
 
 <Filesystem root="my-agent/">
   - `actor.ts` Actor, model, and components
-  - `worker.ts` Worker runtime entry
+  - `server.ts` Bun server entry
+  - `worker.ts` Cloudflare and Celld Worker entry
   - `wrangler.jsonc` Cloudflare Worker configuration
   - `celld.jsonc` Self-hosted Celld configuration
   - `models.lock.json` Resolved deployment model scope
@@ -132,13 +133,13 @@ When the model selects `get_weather`, Tardigrade records `ToolCalled`. The infer
 
 ### Running it locally
 
-We'll test the agent by running it locally. Use the following command to bundle and serve `actor.ts`.
+Run the generated Bun API server directly:
 
 ```bash variant="single"
-tdg dev
+bun run dev
 ```
 
-The server runs on `localhost:4242` when the port is available and prints the selected address. It also opens a local explorer for the agent's log.
+The server runs on `localhost:4242` by default. Edit `server.ts` to change how the actor and API are assembled.
 
 ### Send your first message
 

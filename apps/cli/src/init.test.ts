@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { buildActor } from "./build"
 import { CELLD_PROJECT_CONFIG_PATH } from "./celld"
 import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflare/catalog-migration"
-import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_INIT_ACTOR_NAME, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
+import { DEFAULT_ACTOR_ENTRY, DEFAULT_CATALOG_MIGRATION, DEFAULT_INIT_ACTOR_NAME, DEFAULT_MODEL_LOCK, DEFAULT_PACKAGE_MANIFEST, DEFAULT_SERVER_ENTRY, DEFAULT_WORKER_ENTRY, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 
 let root = ""
 afterEach(async () => {
@@ -26,6 +26,7 @@ describe("initActor", () => {
     const cwd = await temporaryRoot()
     const initialized = await initActor("reviewer", { cwd, now: new Date("2026-08-24T00:00:00Z"), packageVersion: "0.7.1-test" })
     const source = await readFile(initialized.entry, "utf8")
+    const server = await readFile(initialized.server, "utf8")
     const worker = await readFile(initialized.worker, "utf8")
     const manifestSource = await readFile(initialized.manifest, "utf8")
     const manifest = JSON.parse(manifestSource) as Record<string, unknown>
@@ -37,6 +38,7 @@ describe("initActor", () => {
 
     expect(defaultInitDirectory("reviewer")).toBe("reviewer")
     expect(initialized.entry).toBe(join(cwd, "reviewer", DEFAULT_ACTOR_ENTRY))
+    expect(initialized.server).toBe(join(cwd, "reviewer", DEFAULT_SERVER_ENTRY))
     expect(initialized.worker).toBe(join(cwd, "reviewer", DEFAULT_WORKER_ENTRY))
     expect(initialized.celldManifest).toBe(join(cwd, "reviewer", CELLD_PROJECT_CONFIG_PATH))
     expect(initialized.packageManifest).toBe(join(cwd, "reviewer", DEFAULT_PACKAGE_MANIFEST))
@@ -44,6 +46,9 @@ describe("initActor", () => {
     expect(initialized.catalogMigration).toBe(join(cwd, "reviewer", DEFAULT_CATALOG_MIGRATION))
     expect(source).toContain('const actorName = "reviewer"')
     expect(source).toContain("infer([")
+    expect(server).toContain('import definition from "./actor"')
+    expect(server).toContain("layerActorThreads(definition")
+    expect(server).toContain("BunRuntime.runMain(Layer.launch(application))")
     expect(worker).toContain('import definition from "./actor"')
     expect(worker).toContain('from "tardie/cloudflare"')
     expect(worker).toContain('import { modelAdapters } from "tardie/model/adapter"')
@@ -81,7 +86,21 @@ describe("initActor", () => {
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_CONFIG"]).toBe("{}")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_SANDBOX_TRANSPORT"]).toBe("replay")
     expect((celldManifest["vars"] as Record<string, string>)["TARDIGRADE_BACKGROUND_TASK_OWNER"]).toBe("request")
-    expect(packageManifest).toEqual({ private: true, type: "module", dependencies: { tardie: "0.7.1-test" } })
+    expect(packageManifest).toMatchObject({
+      private: true,
+      type: "module",
+      scripts: {
+        dev: "bun --env-file=.dev.vars --watch server.ts",
+        "dev:cloudflare": "wrangler dev",
+        "deploy:cloudflare": "wrangler deploy",
+        "deploy:celld": "celld deploy --config celld.jsonc"
+      },
+      dependencies: {
+        "@effect/platform-bun": expect.any(String),
+        effect: expect.any(String),
+        tardie: "0.7.1-test"
+      }
+    })
     expect(modelLock).toMatchObject({ schema: 1, catalog: { revision: "empty", providers: [] } })
     expect(catalogMigration).toBe(CLOUDFLARE_MODEL_CATALOG_MIGRATION)
     expect(built.manifest.name).toBe("reviewer")
@@ -134,6 +153,7 @@ describe("initSummary", () => {
     expect(summary).toBe(`
   ✓ actor "reviewer" created in ./reviewer
     files       actor.ts
+                server.ts
                 worker.ts
                 wrangler.jsonc
                 celld.jsonc
@@ -144,7 +164,7 @@ describe("initSummary", () => {
 
   → next
     cd reviewer
-    tdg dev
+    bun run dev
 
   → call from another terminal
     tdg call message '{"text":"Read this repository and tell me what it does"}'
