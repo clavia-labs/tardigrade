@@ -682,6 +682,14 @@ export class ActorDO extends DurableObject<Env> {
     }
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, target.thread))
     await stub.init(identity.actor, identity.instance, target.thread)
+    // deliverChild crosses a delivery to a child thread that is already registered as a plain
+    // deliver. A staged creation would leave the message unwoken, because the duplicate
+    // creation request commits nothing to wake it (actor.workers.ts, "a re-delivery to a
+    // registered child delivers instead of recreating").
+    if (existing?.state === "registered") {
+      await stub.deliver(envelope)
+      return
+    }
     await stub.stageCreation(envelope)
     await this.request({
       type: "ThreadRequested",

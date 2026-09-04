@@ -48,9 +48,15 @@ const env = (
 
 const response = (
   turn: string,
-  status: "completed" | "failed",
+  status: "completed" | "failed" | "cancelled",
   value: string,
-  options: { readonly round?: number; readonly data?: unknown; readonly at?: number } = {}
+  options: {
+    readonly round?: number
+    readonly data?: unknown
+    readonly at?: number
+    readonly cause?: "requested" | "deadline"
+    readonly deadlineAt?: number
+  } = {}
 ): Event => ({
   type: "ResponseReceived",
   id: boundaryId(turn, options.round ?? 0),
@@ -59,6 +65,11 @@ const response = (
   status,
   ...(status === "completed" ? { output: value } : {}),
   ...(status === "failed" ? { error: value } : {}),
+  ...(status === "cancelled" ? {
+    cause: options.cause ?? "requested",
+    ...(value === "" ? {} : { reason: value }),
+    ...(options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt })
+  } : {}),
   ...(options.data === undefined ? {} : { data: options.data }),
   from: `mem:main:ag.${turn}`,
   at: options.at ?? 1
@@ -352,6 +363,36 @@ describe("agentsPackage", () => {
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
     expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.2:m1c5")
+  })
+
+  test("a cancelled reply settles the run as a failed answer", async () => {
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage()
+    const threads = {
+      "ag.root": [
+        turn("m1"),
+        called("c7", "m1"),
+        response("c7", "cancelled", "deadline reached", { cause: "deadline", deadlineAt: 9 })
+      ]
+    } as Readonly<Record<string, ReadonlyArray<Event>>>
+    const answer = await Effect.runPromise(
+      pkg.methods.run!({ text: "sum 2+2" }, { callId: "c7" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
+    )
+    expect(answer).toEqual({ error: "cancelled: deadline reached" })
+    expect(sent.length).toBe(0)
+  })
+
+  test("a cancelled reply with no reason settles as a bare cancelled error", async () => {
+    const sent: Array<Sent> = []
+    const pkg = agentsPackage()
+    const threads = {
+      "ag.root": [response("c8", "cancelled", "")]
+    } as Readonly<Record<string, ReadonlyArray<Event>>>
+    const answer = await Effect.runPromise(
+      pkg.methods.result!({ id: "c8" }, { callId: "r8" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
+    )
+    expect(answer).toEqual({ error: "cancelled" })
+    expect(sent.length).toBe(0)
   })
 
   test("result reads the response from its own log", async () => {

@@ -6,6 +6,7 @@ import {
   type ActorInvocationContext
 } from "@clavia/tardigrade-core/actor"
 import { EventLog } from "@clavia/tardigrade-core/log"
+import type { ResponseReceived } from "@clavia/tardigrade-core/method"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -672,18 +673,27 @@ const outputAsked = (
 // read this one and an operator can tell the two apart.
 export const INLINE_OUTPUT_NAME = "inline"
 
-// SpawnBoundary is one child terminal reported to its caller through the reversed accepted link.
-interface SpawnBoundary {
-  readonly outcome: "completed" | "failed"
-  readonly text: string
+interface SpawnBoundaryContext {
   readonly contract?: OutputContract
   readonly contractError?: string
 }
 
+// SpawnBoundary is one child terminal reported to its caller through the reversed accepted link.
+type SpawnBoundary = SpawnBoundaryContext & (
+  | { readonly outcome: "completed"; readonly text: string }
+  | { readonly outcome: "failed"; readonly text: string }
+  | {
+      readonly outcome: "cancelled"
+      readonly cause: "requested" | "deadline"
+      readonly reason?: string
+      readonly deadlineAt?: number
+    }
+)
+
 const contractOf = (
   data: unknown,
   turn: string
-): { readonly contract?: OutputContract; readonly contractError?: string } => {
+): SpawnBoundaryContext => {
   if (typeof data !== "object" || data === null || !("output" in data)) return {}
   const declaration = (data as { readonly output?: unknown }).output
   if (typeof declaration !== "object" || declaration === null) {
@@ -696,37 +706,41 @@ const contractOf = (
     : { contract: built.contract }
 }
 
+// awaitedBoundaryOf projects one child response from the caller's private log. A cancelled response remains structured and settles the wait (agents.test.ts, "a cancelled reply settles the run as a failed answer", "a cancelled reply with no reason settles as a bare cancelled error"). A delivered method response is a ResponseReceived carrying the round-zero boundary id (response.test.ts, "returns a terminal through the accepted call link").
+const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
+  const response = events.find(
+    (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
+  ) as ResponseReceived | undefined
+  if (response === undefined) return undefined
+  const contract = contractOf(response.data, turn)
+  if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
+  if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
+  return {
+    outcome: "cancelled",
+    cause: response.cause === "deadline" ? "deadline" : "requested",
+    ...(typeof response.reason === "string" && response.reason !== "" ? { reason: response.reason } : {}),
+    ...(typeof response.deadlineAt === "number" ? { deadlineAt: response.deadlineAt } : {}),
+    ...contract
+  }
+}
+
 // awaitedBoundary reads a child method response from the caller's own private log.
 const awaitedBoundary = (turn: string): Effect.Effect<SpawnBoundary | undefined, never, EventLog> =>
   Effect.gen(function* () {
     const log = yield* EventLog
-    const events = yield* log.read
-    const response = events.find(
-      (event) => event.type === "ResponseReceived" &&
-        (event as { readonly id?: unknown }).id === boundaryId(turn, 0)
-    ) as {
-      readonly status?: unknown
-      readonly output?: unknown
-      readonly error?: unknown
-      readonly data?: unknown
-    } | undefined
-    if (response !== undefined) {
-      const contract = contractOf(response.data, turn)
-      if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
-      if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
-      return undefined
-    }
-    return undefined
+    return awaitedBoundaryOf(yield* log.read, turn)
   })
 
-// answerOf strips a failed boundary's "error: " prefix back off, so a foreground
-// body's `.error` reads the bare text while the fresh-inbound reading a background reply keeps
-// the convention.
+// answerOf maps a child terminal to the package's public result. Cancellation metadata remains on SpawnBoundary while callers keep the existing error result (agents.test.ts, "a cancelled reply settles the run as a failed answer").
 const ERROR_PREFIX = "error: "
 const answerOf = (reply: SpawnBoundary): {
   readonly output?: string
   readonly error?: string
 } => {
+  if (reply.outcome === "cancelled") {
+    const reason = reply.reason === undefined ? "" : `: ${reply.reason}`
+    return { error: `cancelled${reason}` }
+  }
   return reply.outcome === "completed"
     ? { output: reply.text }
     : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }

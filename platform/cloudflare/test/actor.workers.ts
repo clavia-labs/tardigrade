@@ -686,6 +686,44 @@ describe("cloudflare actor", () => {
     ])
   })
 
+  test("a re-delivery to a registered child delivers instead of recreating", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.re-delivery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.re-delivery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.re-delivery-child" }
+    const lineage = { parent, depth: 1, placement: "independent" as const }
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "re-delivery-first", text: "hello", at: 2 },
+      lineage
+    })
+    let tree = await directory.threadTree()
+    const delay = (): Promise<void> => {
+      const { promise, resolve } = Promise.withResolvers<void>()
+      setTimeout(resolve, 10)
+      return promise
+    }
+    for (let attempt = 0; attempt < 100 && !tree.some((node) => node.id === "re-delivery-child"); attempt++) {
+      await delay()
+      tree = await directory.threadTree()
+    }
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "re-delivery-second", text: "again", at: 3 },
+      lineage
+    })
+    const childEvents = await threadStub("re-delivery-child").events("re-delivery-child")
+    expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
+    let childStatus = await threadStub("re-delivery-child").status()
+    for (let attempt = 0; attempt < 100; attempt++) {
+      if (childStatus.dirty === 0 && childStatus.status === "resting") break
+      await delay()
+      childStatus = await threadStub("re-delivery-child").status()
+    }
+    expect(childStatus).toMatchObject({ dirty: 0, status: "resting" })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("actor supervisor alarm completes a staged child", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
