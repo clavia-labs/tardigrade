@@ -11,6 +11,7 @@ import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import {
   alarmFired,
+  deadlineCancellationEventsAt,
   earliestDeadlineOf,
   methodIngressKeyOf,
   type ActorInvocationContext,
@@ -209,12 +210,16 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const nextMethodDeadline = async (): Promise<number | undefined> => {
     return earliestDeadlineOf(await Effect.runPromise(events.read), methods)
   }
+  // recordAlarm commits the alarm fact and the deadline cancellations it crossed in one append (test/actor.workers.ts, "an alarm commits its deadline cancellation atomically").
   const recordAlarm = async (at: number): Promise<void> => {
-    const deadline = earliestDeadlineOf(await Effect.runPromise(events.read), methods)
+    const log = await Effect.runPromise(events.read)
+    const deadline = earliestDeadlineOf(log, methods)
     if (deadline !== undefined && deadline <= at) {
-      const result = await Effect.runPromise(events.append([alarmFired({ scheduledFor: deadline, at })]))
+      const result = await Effect.runPromise(store.append([
+        alarmFired({ scheduledFor: deadline, at }),
+        ...(methods === undefined ? [] : deadlineCancellationEventsAt(log, methods, at))
+      ]))
       if (result.appended > 0) driver.mark(options.thread)
-      await Effect.runPromise(syncCommit(result))
     } else {
       await options.storage.sync()
     }
