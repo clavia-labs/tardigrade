@@ -29,7 +29,7 @@ import {
   type Actor
 } from "tardie"
 import type { Action } from "tardie/log/events"
-import { createBunHost, type BunHost } from "@clavia/tardigrade-bun/host"
+import { createBunHost, type BunHost, type BunHostOptions } from "@clavia/tardigrade-bun/host"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
 import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
@@ -396,22 +396,39 @@ const definitionOf = async (modulePath: string, expected: ActorArtifactManifest)
   return candidate as Actor<ServerR>
 }
 
-const runtimeOf = async (
+export type ActorApplicationRequirements<R> = Exclude<R, ServerR>
+
+// ActorThreadLayerContext identifies the actor instance and thread receiving application services.
+export interface ActorThreadLayerContext {
+  readonly actorInstance: string
+  readonly thread: string
+}
+
+export type ActorThreadLayersFor<R> = (
+  context: ActorThreadLayerContext
+) => Layer.Layer<ActorApplicationRequirements<R>>
+
+const runtimeOf = async <R>(
   summary: ActorSummary,
   actorInstance: string,
-  definition: Actor<ServerR>,
+  definition: Actor<R>,
   database: string,
   thread: ReturnType<typeof layerThread>,
   providers: ReadonlyArray<Provider>,
-  maxConcurrentThreads: number
+  maxConcurrentThreads: number,
+  layersFor?: ActorThreadLayersFor<R>
 ): Promise<ActorRuntime> => {
   const actor = definition
-  const host: BunHost = await createBunHost<ServerR>({
+  const environmentFor = ((candidate: string) => {
+    const application = layersFor?.({ actorInstance, thread: candidate })
+    return application === undefined ? thread : Layer.mergeAll(thread, application)
+  }) as NonNullable<BunHostOptions<R>["layersFor"]>
+  const host: BunHost = await createBunHost<R>({
     database,
     actorName: summary.name,
     actorInstance,
     actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
-    layersFor: () => thread,
+    layersFor: environmentFor,
     providers,
     driver: { maxConcurrentThreads },
     keyOf: (event) => actor.keyOf?.(event)
@@ -519,7 +536,15 @@ const runtimeOf = async (
   }
 }
 
-export type ActorThreadsOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers">
+type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers">
+
+export type ActorThreadsOptions<R> = ActorThreadsBaseOptions & ([ActorApplicationRequirements<R>] extends [never]
+  ? { readonly layersFor?: ActorThreadLayersFor<R> }
+  : { readonly layersFor: ActorThreadLayersFor<R> })
+
+type ActorThreadsArguments<R> = [ActorApplicationRequirements<R>] extends [never]
+  ? [options?: ActorThreadsOptions<R>]
+  : [options: ActorThreadsOptions<R>]
 
 const actorDatabasePath = (database: string, actor: string): string =>
   database === ":memory:"
@@ -536,9 +561,9 @@ const actorIdFromDatabase = (file: string): string | undefined => {
 }
 
 // layerActorThreads mounts one deployed definition as the runtime.
-export const layerActorThreads = (
-  definition: Actor<ServerR>,
-  options: ActorThreadsOptions = {}
+export const layerActorThreads = <R>(
+  definition: Actor<R>,
+  ...[options = {} as ActorThreadsOptions<R>]: ActorThreadsArguments<R>
 ): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(Effect.gen(function*() {
     const config = yield* ServerConfig
@@ -561,7 +586,8 @@ export const layerActorThreads = (
         actorDatabasePath(config.db, id),
         thread,
         options.providers ?? [],
-        config.maxConcurrentThreads
+        config.maxConcurrentThreads,
+        options.layersFor
       ).then((runtime) => {
         runtimes.set(id, runtime)
         opening.delete(id)

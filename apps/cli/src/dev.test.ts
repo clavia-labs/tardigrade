@@ -11,10 +11,21 @@ import { ACTOR_ARTIFACT_VERSION, Infer, type Actor } from "tardie"
 import type { Action } from "tardie/log/events"
 import { PROBLEM_CONTENT_TYPE } from "@clavia/tardigrade-client/contract"
 import { layerModelCatalogUnavailable } from "@clavia/tardigrade-server/catalog"
+import type { ServerR } from "@clavia/tardigrade-server/actor"
+import type { ActorThreadLayersFor } from "@clavia/tardigrade-server/host"
 
 import { tdg } from "./commands"
 import { resolveServer } from "./config"
-import { availableDevPort, browserCommand, dev, DEV_HOST, DEV_URL_HOST, type DevOptions } from "./dev"
+import {
+  availableDevPort,
+  browserCommand,
+  dev,
+  devLayersForFrom,
+  DEV_HOST,
+  DEV_URL_HOST,
+  type DevOptions
+} from "./dev"
+import { layeredActor, layeredLayersFor } from "../test/fixtures/dev-actor"
 import { layerCli } from "./services"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
@@ -59,10 +70,17 @@ const directActor: Actor<never> = {
 
 // booted starts the whole command on an ephemeral port and hands the body its base URL. ":memory:"
 // keeps the store to this process, so the case owns every event it reads.
-const booted = <A>(
+interface BootOptions<R> {
+  readonly actor?: Actor<R>
+  readonly layersFor?: ActorThreadLayersFor<R>
+  readonly onListen?: (url: string) => Promise<void>
+  readonly shutdownMillis?: number
+}
+
+const booted = <A, R = ServerR>(
   body: (baseUrl: string, hostname: string, actors: string) => Promise<A>,
   env: Record<string, string | undefined> = {},
-  options: Pick<DevOptions, "actor" | "onListen" | "shutdownMillis"> = {}
+  options: BootOptions<R> = {}
 ): Promise<A> => {
   const actors = mkdtempSync(join(tmpdir(), "tardigrade-dev-actors-"))
   const actorData = mkdtempSync(join(tmpdir(), "tardigrade-dev-data-"))
@@ -87,7 +105,7 @@ const booted = <A>(
         disableLogger: true,
         disableListenLog: true,
         ...options
-      })
+      } as DevOptions<R>)
     ),
     Effect.scoped,
     Effect.runPromise
@@ -143,6 +161,10 @@ const drive = async (baseUrl: string, args: ReadonlyArray<string>) => {
 }
 
 describe("tdg dev", () => {
+  test("a malformed development layer export is refused", () => {
+    expect(() => devLayersForFrom("layer")).toThrow("layersFor export must be a function")
+  })
+
   test("the browser launcher is selected by the operating system", () => {
     expect(browserCommand("http://localhost:4242", "darwin")).toEqual(["open", "http://localhost:4242"])
     expect(browserCommand("http://localhost:4242", "linux")).toEqual(["xdg-open", "http://localhost:4242"])
@@ -242,6 +264,31 @@ describe("tdg dev", () => {
       current: { status: 200, body: [] },
       metadata: { status: 200, body: { name: "reviewer", storage: { kind: "sqlite", location: ":memory:" } } }
     })
+  })
+
+  test("a project actor receives application services", async () => {
+    const state = await booted(async (baseUrl) => {
+      const actorInstance = await fetch(`${baseUrl}/v1/actors/main`, { method: "PUT" })
+      expect(actorInstance.status).toBe(200)
+      const accepted = await fetch(`${baseUrl}/v1/actors/main/threads/root/methods/greet/calls/layer-test`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ text: "hello" })
+      })
+      expect(accepted.status).toBe(202)
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const response = await fetch(`${baseUrl}/v1/actors/main/threads/root/methods/greet/calls/layer-test`)
+        const current = await response.json() as { readonly status?: string; readonly output?: unknown }
+        if (current.status === "completed") return current
+        await Bun.sleep(10)
+      }
+      return undefined
+    }, {}, {
+      actor: layeredActor,
+      layersFor: layeredLayersFor
+    })
+
+    expect(state).toEqual({ status: "completed", output: "main:ag.root:hello" })
   })
 
   test("a local push refreshes the actor registry", async () => {

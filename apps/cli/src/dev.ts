@@ -6,7 +6,13 @@ import type { Actor } from "tardie"
 import { layerConfig, type ServerConfigValue } from "@clavia/tardigrade-server/config"
 import { layerModelCatalog, ModelCatalogStore } from "@clavia/tardigrade-server/catalog"
 import { layerFileModelCatalogRepository } from "@clavia/tardigrade-server/catalog-repository"
-import { layerActorThreads, layerThreads, type ThreadsOptions } from "@clavia/tardigrade-server/host"
+import {
+  layerActorThreads,
+  layerThreads,
+  type ActorApplicationRequirements,
+  type ActorThreadLayersFor,
+  type ThreadsOptions
+} from "@clavia/tardigrade-server/host"
 import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { layerApp } from "@clavia/tardigrade-server/http"
 import { makeInferenceStream } from "@clavia/tardigrade-server/inference-stream"
@@ -115,10 +121,8 @@ export const layerVoyager = (root: string) =>
     { global: true }
   )
 
-export interface DevOptions {
+interface DevBaseOptions {
   readonly config: ServerConfigValue
-  // actor mounts one project definition directly. An omitted actor enables the self-hosted registry.
-  readonly actor?: Actor<ServerR> | undefined
   // Where the built UI lives. Absent, the two layouts a build can arrive in are tried in order
   // (assets.ts, ASSET_CANDIDATES).
   readonly assets?: string | undefined
@@ -136,10 +140,30 @@ export interface DevOptions {
   readonly onListen?: ((url: string) => Promise<void>) | undefined
 }
 
+export type DevLayersFor<Definition extends Actor<unknown>> = Definition extends Actor<infer R>
+  ? ActorThreadLayersFor<R>
+  : never
+
+type DevActorOptions<R> = [ActorApplicationRequirements<R>] extends [never]
+  ? { readonly actor: Actor<R>; readonly layersFor?: ActorThreadLayersFor<R> }
+  : { readonly actor: Actor<R>; readonly layersFor: ActorThreadLayersFor<R> }
+
+export type DevOptions<R = ServerR> = DevBaseOptions & (
+  | { readonly actor?: undefined; readonly layersFor?: never }
+  | DevActorOptions<R>
+)
+
+// devLayersForFrom validates the named layersFor export loaded from actor.ts.
+export const devLayersForFrom = <R>(value: unknown): ActorThreadLayersFor<R> | undefined => {
+  if (value === undefined) return undefined
+  if (typeof value !== "function") throw new Error("actor entry layersFor export must be a function")
+  return value as ActorThreadLayersFor<R>
+}
+
 // dev is the whole command: resolve the build, open the store, listen on loopback. It answers a
 // Layer rather than a running process, so the caller owns the scope and the process that stops
 // listening stops writing (apps/server/src/host.ts, layerThreads).
-export const dev = (options: DevOptions) => {
+export const dev = <R = ServerR>(options: DevOptions<R>) => {
   const actorRefreshMillis = options.actorRefreshMillis ?? DEFAULT_ACTOR_REFRESH_MILLIS
   if (!Number.isInteger(actorRefreshMillis) || actorRefreshMillis < 0) {
     throw new Error(`actor refresh must be a non-negative integer, got ${actorRefreshMillis}`)
@@ -162,7 +186,12 @@ export const dev = (options: DevOptions) => {
           ...threadOptions,
           actorRefresh: { debounceMillis: actorRefreshMillis }
         })
-      : layerActorThreads(options.actor, threadOptions),
+      : layerActorThreads(options.actor as Actor<ServerR>, {
+          ...threadOptions,
+          ...(options.layersFor === undefined
+            ? {}
+            : { layersFor: options.layersFor as ActorThreadLayersFor<ServerR> })
+        }),
     [config, catalog]
   )
   // provideMerge rather than provide: the listening server stays visible in the layer's own

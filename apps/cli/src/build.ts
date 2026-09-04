@@ -46,9 +46,14 @@ export interface LintedActor {
   readonly calls: ReadonlyArray<LintedActorCall>
 }
 
-const definitionOf = async (modulePath: string): Promise<Actor<unknown>> => {
+const actorModuleOf = async (modulePath: string): Promise<Record<string, unknown>> => {
   const loaded: unknown = await import(`${pathToFileURL(modulePath).href}?build=${crypto.randomUUID()}`)
-  const definition = (loaded as { readonly default?: unknown }).default
+  if (typeof loaded !== "object" || loaded === null) throw new Error("actor entry must export a module")
+  return loaded as Record<string, unknown>
+}
+
+const definitionFrom = (loaded: Record<string, unknown>): Actor<unknown> => {
+  const definition = loaded.default
   if (typeof definition !== "object" || definition === null) {
     throw new Error("actor entry must default export actor({ name, methods, components })")
   }
@@ -68,6 +73,23 @@ const definitionOf = async (modulePath: string): Promise<Actor<unknown>> => {
   }
   actorMethodsOf(candidate.methods as ActorMethods)
   return candidate as Actor<unknown>
+}
+
+const definitionOf = async (modulePath: string): Promise<Actor<unknown>> =>
+  definitionFrom(await actorModuleOf(modulePath))
+
+export interface LoadedBuiltActor {
+  readonly actor: Actor<unknown>
+  readonly layersFor?: unknown
+}
+
+// loadBuiltActorModule returns the validated actor and its optional development layer factory.
+export const loadBuiltActorModule = async (built: BuiltActor): Promise<LoadedBuiltActor> => {
+  const loaded = await actorModuleOf(join(built.directory, ACTOR_MODULE_FILE))
+  return {
+    actor: definitionFrom(loaded),
+    ...(loaded.layersFor === undefined ? {} : { layersFor: loaded.layersFor })
+  }
 }
 
 // loadBuiltActor returns the validated definition from one built artifact.

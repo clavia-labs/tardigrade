@@ -19,9 +19,9 @@ import type { ServerR } from "@clavia/tardigrade-server/actor"
 import { modelIsConfigured } from "@clavia/tardigrade-server/host"
 import { modelCatalogConfigOf, type ModelConfig } from "@clavia/tardigrade-server/config"
 
-import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActor } from "./build"
+import { buildActor, buildSummary, DEFAULT_BUILD_DIRECTORY, lintActor, lintSummary, loadBuiltActorModule } from "./build"
 import { readFileConfig, readProjectConfig, resolveRemote, resolveServer } from "./config"
-import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, openBrowser } from "./dev"
+import { availableDevPort, DEFAULT_MIN_PORT, DEV_URL_HOST, dev, devLayersForFrom, openBrowser } from "./dev"
 import { DEFAULT_ACTOR_ENTRY, DEFAULT_INIT_ACTOR_NAME, defaultInitDirectory, initActor, initSummary, terminalColorsEnabled } from "./init"
 import { withLoader } from "./loader"
 import { resolveModelLock, writeModelLock } from "./model-lock"
@@ -664,14 +664,19 @@ export const devCommand = Command.make("dev", {
       try: () => buildActor(DEFAULT_ACTOR_ENTRY, { cwd: cli.cwd }),
       catch: userErrorOf
     })
-    const definition = yield* Effect.tryPromise({
-      try: () => loadBuiltActor(built),
+    const loaded = yield* Effect.tryPromise({
+      try: () => loadBuiltActorModule(built),
+      catch: userErrorOf
+    })
+    const layersFor = yield* Effect.try({
+      try: () => devLayersForFrom<ServerR>(loaded.layersFor),
       catch: userErrorOf
     })
     const layer = yield* Effect.try({
       try: () => dev({
         config: config2,
-        actor: definition as Actor<ServerR>,
+        actor: loaded.actor as Actor<ServerR>,
+        ...(layersFor === undefined ? {} : { layersFor }),
         assets: stated(flags.ui),
         ...(flags.open ? { onListen: openBrowser } : {})
       }),
