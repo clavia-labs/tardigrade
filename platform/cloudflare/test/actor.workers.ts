@@ -686,6 +686,80 @@ describe("cloudflare actor", () => {
     ])
   })
 
+  test("a re-delivery to a registered child delivers instead of recreating", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.re-delivery-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.re-delivery-parent" }
+    const target = { actor: "echo", instance: "main", thread: "ag.re-delivery-child" }
+    const lineage = { parent, depth: 1, placement: "independent" as const }
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "re-delivery-first", text: "hello", at: 2 },
+      lineage
+    })
+    let tree = await directory.threadTree()
+    const delay = (): Promise<void> => {
+      const { promise, resolve } = Promise.withResolvers<void>()
+      setTimeout(resolve, 10)
+      return promise
+    }
+    for (let attempt = 0; attempt < 100 && !tree.some((node) => node.id === "re-delivery-child"); attempt++) {
+      await delay()
+      tree = await directory.threadTree()
+    }
+    expect(tree.find((node) => node.id === "re-delivery-parent")).toEqual({
+      id: "re-delivery-parent",
+      depth: 0,
+      children: [{
+        id: "re-delivery-child",
+        parent: "re-delivery-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "re-delivery-second", text: "again", at: 3 },
+      lineage
+    })
+    const childEvents = await threadStub("re-delivery-child").events("re-delivery-child")
+    expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
+    const actorEvents = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
+    )
+    expect(actorEvents
+      .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
+      .filter((event) => event.thread === "ag.re-delivery-child")
+      .map((event) => event.type)).toEqual(["ThreadRequested", "ThreadRegistered"])
+    // A delivered message wakes the child: the dirty mark the commit left drains and the
+    // thread rests again. A re-staged creation would leave the mark owed with no wake, so the
+    // child would sit dirty until an unrelated alarm.
+    let served = false
+    for (let attempt = 0; attempt < 100; attempt++) {
+      const current = await threadStub("re-delivery-child").status()
+      if (current.dirty === 0 && current.status === "resting") {
+        served = true
+        break
+      }
+      await delay()
+    }
+    expect(served).toBe(true)
+    const afterTree = await directory.threadTree()
+    expect(afterTree.find((node) => node.id === "re-delivery-parent")).toEqual({
+      id: "re-delivery-parent",
+      depth: 0,
+      children: [{
+        id: "re-delivery-child",
+        parent: "re-delivery-parent",
+        depth: 1,
+        placement: "independent",
+        children: []
+      }]
+    })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("actor supervisor alarm completes a staged child", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
