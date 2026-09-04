@@ -268,7 +268,9 @@ const CodeExample = (): ReactElement => {
 
 const HowItWorks = (): ReactElement => {
   const [selectedEvent, setSelectedEvent] = useState<string | null>(null)
+  const [traceInteractive, setTraceInteractive] = useState(false)
   const sectionRef = useRef<HTMLElement | null>(null)
+  const gridRef = useRef<HTMLDivElement | null>(null)
   const autoplayTimerRef = useRef<number | null>(null)
   const hasAutoplayedRef = useRef(false)
   const cancelAutoplay = (): void => {
@@ -283,10 +285,28 @@ const HowItWorks = (): ReactElement => {
   const projection = selectedEvent === null ? undefined : eventProjections[selectedEvent]
 
   useEffect(() => {
+    const grid = gridRef.current
+    if (grid === null) return
+    const log = grid.querySelector<HTMLElement>(".actor-log-panel")
+    const component = grid.querySelector<HTMLElement>(".component-panel")
+    if (log === null || component === null) return
+    const syncInteraction = (): void => {
+      const stacked = component.getBoundingClientRect().top >= log.getBoundingClientRect().bottom
+      setTraceInteractive(!stacked)
+      if (!stacked) return
+      cancelAutoplay()
+      setSelectedEvent(null)
+    }
+    syncInteraction()
+    const observer = new ResizeObserver(syncInteraction)
+    observer.observe(grid)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
     const section = sectionRef.current
     const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)")
-    const narrowScreen = window.matchMedia("(max-width: 1140px)")
-    if (section === null || reducedMotion.matches || narrowScreen.matches) return
+    if (section === null || reducedMotion.matches || !traceInteractive) return
 
     const observer = new IntersectionObserver(([entry]) => {
       if (!entry.isIntersecting || hasAutoplayedRef.current) return
@@ -308,7 +328,7 @@ const HowItWorks = (): ReactElement => {
     }, { threshold: 0.35 })
 
     const stopAutoplay = (): void => {
-      if (!reducedMotion.matches && !narrowScreen.matches) return
+      if (!reducedMotion.matches) return
       observer.disconnect()
       cancelAutoplay()
       setSelectedEvent(null)
@@ -316,14 +336,12 @@ const HowItWorks = (): ReactElement => {
 
     observer.observe(section)
     reducedMotion.addEventListener("change", stopAutoplay)
-    narrowScreen.addEventListener("change", stopAutoplay)
     return () => {
       observer.disconnect()
       cancelAutoplay()
       reducedMotion.removeEventListener("change", stopAutoplay)
-      narrowScreen.removeEventListener("change", stopAutoplay)
     }
-  }, [])
+  }, [traceInteractive])
 
   useEffect(() => {
     if (selectedEvent === null) return
@@ -345,10 +363,10 @@ const HowItWorks = (): ReactElement => {
           <p>Every event is written to a durable log. Each component folds those events into state, then derives a view and enabled transitions. The runtime executes those transitions and appends the results to the log until the turn is complete.</p>
         </div>
         <div className="event-table-card">
-          <div className={`actor-world-grid${projection === undefined ? "" : " is-tracing"}`}>
-            {selectedEvent === null || projection === undefined ? null : <FlowOverlay selectedSequence={selectedEvent} targetSequence={projection.target} key={selectedEvent} />}
+          <div className={`actor-world-grid${projection === undefined ? "" : " is-tracing"}`} ref={gridRef}>
+            {selectedEvent === null || projection === undefined ? null : <FlowOverlay selectedSequence={selectedEvent} targetSequence={projection.target} vertical={!traceInteractive} key={selectedEvent} />}
             <div className="actor-log-panel">
-              <IsometricEventLog selectedSequence={selectedEvent} derivedSequence={projection?.target} onSelect={selectEvent} />
+              <IsometricEventLog selectedSequence={selectedEvent} derivedSequence={projection?.target} interactive={traceInteractive} onSelect={selectEvent} />
               <span className="diagram-column-label">Log</span>
             </div>
             <div className="component-panel">
@@ -367,7 +385,7 @@ const HowItWorks = (): ReactElement => {
   )
 }
 
-const durabilityLogIds = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12"] as const
+const durabilityLogIds = ["01", "02", "03", "04", "05", "06", "07", "08", "09", "10", "11", "12", "13"] as const
 
 const LogCards = (): ReactElement => (
   <div className="durability-log-cards" aria-hidden="true">
@@ -772,11 +790,6 @@ export const SiteShell = ({ children, pathname }: { readonly children: ReactNode
             <div className="mobile-nav-sections">
               <Link to="/docs" aria-current={docs ? "page" : undefined} onClick={closeMobileMenu}>Docs</Link>
             </div>
-          </div>
-          <div className="mobile-nav-resources">
-            <a href={REPOSITORY} aria-label="Tardigrade on GitHub" rel="noreferrer" target="_blank" onClick={closeMobileMenu}><Github /></a>
-            <a href="https://discord.gg/Z74jwRxz4k" aria-label="Tardigrade on Discord" rel="noreferrer" target="_blank" onClick={closeMobileMenu}><Discord /></a>
-            <ThemeToggle />
           </div>
         </nav>
       </div>

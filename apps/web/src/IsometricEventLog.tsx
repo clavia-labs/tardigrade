@@ -149,20 +149,22 @@ const Face = ({ d, tint }: { readonly d: string; readonly tint: number }): React
 
 type IsometricEventLogProps = {
   readonly derivedSequence: string | undefined
+  readonly interactive: boolean
   readonly onSelect: (sequence: string) => void
   readonly selectedSequence: string | null
 }
 
-export const IsometricEventLog = ({ derivedSequence, onSelect, selectedSequence }: IsometricEventLogProps): ReactElement => (
+export const IsometricEventLog = ({ derivedSequence, interactive, onSelect, selectedSequence }: IsometricEventLogProps): ReactElement => (
   <svg
     className="isometric-log"
+    data-interactive={interactive}
     viewBox={`${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}`}
-    role="group"
+    role={interactive ? "group" : "img"}
     aria-label="Agent event log"
     aria-describedby="isometric-log-description"
     shapeRendering="geometricPrecision"
   >
-    <desc id="isometric-log-description">Five immutable events. Select an event to inspect the component projection it activates.</desc>
+    <desc id="isometric-log-description">{interactive ? "Five immutable events. Select an event to inspect the component projection it activates." : "Five immutable events in the agent log."}</desc>
     {SHOW_LOG_STRUCTURE && (
       <g className="actor-envelope-surfaces" aria-hidden="true">
         <path d={envelope.top} />
@@ -182,17 +184,17 @@ export const IsometricEventLog = ({ derivedSequence, onSelect, selectedSequence 
         <g
           className={`event-log-row${selected ? " is-selected" : ""}${derived ? " is-derived" : ""}${dimmed ? " is-dimmed" : ""}`}
           data-event-sequence={block.sequence}
-          role="button"
+          role={interactive ? "button" : undefined}
           aria-label={`${block.name}: ${block.value}`}
-          tabIndex={0}
-          aria-pressed={selected}
+          tabIndex={interactive ? 0 : undefined}
+          aria-pressed={interactive ? selected : undefined}
           key={block.sequence}
-          onClick={() => onSelect(block.sequence)}
-          onKeyDown={(event) => {
+          onClick={interactive ? () => onSelect(block.sequence) : undefined}
+          onKeyDown={interactive ? (event) => {
             if (event.key !== "Enter" && event.key !== " ") return
             event.preventDefault()
             onSelect(block.sequence)
-          }}
+          } : undefined}
         >
           {SHOW_LOG_STRUCTURE && (
             <>
