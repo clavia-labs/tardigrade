@@ -18,7 +18,7 @@ import {
 const surfaceRender = renderOf([codeMode(), nativeOutput], [])
 const reqOf = (trajectory: ReadonlyArray<Event>) => ({
   trajectory,
-  identity: { actor: "test", thread: "root", turn: "m1" },
+  identity: { actor: "test", instance: "main", thread: "root", turn: "m1" },
   ...surfaceRender
 })
 import { Infer } from "tardie"
@@ -362,7 +362,7 @@ describe("infer end to end", () => {
     const action = (await Effect.runPromise(
       Effect.flatMap(Infer, (model) => model.react({
         trajectory: declared(),
-        identity: { actor: "test", thread: "root", turn: "m1" },
+        identity: { actor: "test", instance: "main", thread: "root", turn: "m1" },
         ...render
       })).pipe(
         Effect.provide(layer)
@@ -580,6 +580,7 @@ describe("ephemeral inference deltas", () => {
     expect(deltas).toEqual([
       {
         actor: "test",
+        instance: "main",
         thread: "root",
         turn: "m1",
         logicalAttempt: "m1/infer/0",
@@ -591,6 +592,7 @@ describe("ephemeral inference deltas", () => {
       },
       {
         actor: "test",
+        instance: "main",
         thread: "root",
         turn: "m1",
         logicalAttempt: "m1/infer/0",
