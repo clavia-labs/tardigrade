@@ -132,6 +132,59 @@ describe("method alarms", () => {
     }])
   })
 
+  test("one crossing projects every crossed invocation", () => {
+    const work = legacyActorMethod({
+      input: Schema.String,
+      output: Schema.String,
+      event: ({ invocation, at }) => ({
+        type: "WorkStarted",
+        id: invocation.id,
+        call: { invocation, deadlineAt: 40 },
+        at
+      }),
+      state: () => ({ status: "pending" }),
+      cancellation: {
+        state: () => "running",
+        event: (request, at) => ({ type: "WorkCancelled", id: request.invocation.id, at })
+      }
+    })
+    const first = { method: "work", id: "work-1", epoch: 0 } as const
+    const second = { method: "work", id: "work-2", epoch: 0 } as const
+    const started = (invocation: { readonly method: "work"; readonly id: string; readonly epoch: 0 }, deadlineAt: number) => ({
+      type: "WorkStarted",
+      id: invocation.id,
+      call: { invocation, deadlineAt },
+      at: 1
+    } as Event)
+    const log = [started(first, 40), started(second, 45)]
+    expect(deadlineCancellationEventsAt(log, { work }, 44)).toEqual([{
+      type: "CancellationRequested",
+      request: "deadline/work/work-1/0/40",
+      invocation: first,
+      cause: "deadline",
+      deadlineAt: 40,
+      at: 44
+    }])
+    expect(deadlineCancellationEventsAt(log, { work }, 50)).toEqual([
+      {
+        type: "CancellationRequested",
+        request: "deadline/work/work-1/0/40",
+        invocation: first,
+        cause: "deadline",
+        deadlineAt: 40,
+        at: 50
+      },
+      {
+        type: "CancellationRequested",
+        request: "deadline/work/work-2/0/45",
+        invocation: second,
+        cause: "deadline",
+        deadlineAt: 45,
+        at: 50
+      }
+    ])
+  })
+
   test("a settled or terminal deadline projects no cancellation", () => {
     const work = legacyActorMethod({
       input: Schema.String,
