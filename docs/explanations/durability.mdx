@@ -1,0 +1,77 @@
+---
+title: Durability and resume
+description: Design effects that recover safely after failures and process restarts.
+route: /docs/durability
+section: Getting Started
+sectionOrder: 2
+order: 3
+---
+
+Tardigrade decides whether work is complete from event keys. An event commits a transition when the actor derives the transition's key from that event. The event's type and meaning do not affect this rule. A failure event keyed by the operation therefore commits the operation and prevents it from running again.
+
+## Key attempts and outcomes separately
+
+Give each physical attempt an occurrence key and give each terminal outcome the operation key. `attempted` applies this pattern. It records `AttemptStarted` as `att:<operation>/<attempt>` before external work begins. A typed failure becomes `AttemptFailed` as `attf:<operation>/<attempt>`. A successful event or an application-defined terminal uses the operation key.
+
+Use `attemptKeys` with an allowlist for application outcomes:
+
+```ts
+import { composeKeys, keysFor } from "tardie/core/log"
+import { attemptKeys } from "tardie/core/runtime"
+
+const operationKeys = keysFor("op:", {
+  OperationCompleted: (event) =>
+    String(event.operation)
+})
+
+const keyOf = composeKeys(attemptKeys, operationKeys)
+```
+
+An event type omitted from `keysFor` remains unkeyed. This prevents a newly added failure event from committing an operation by default.
+
+## Retry an effect
+
+Project the attempt events with `attemptsProjection`, check whether the application still owes the operation, and pass its record to `attempted`:
+
+```ts
+const operation = `op:${job.id}`
+const record = attemptsProjection.output(attemptState)(operation)
+
+const transitions = attempted(record, {
+  operation,
+  input: job,
+  policy: {
+    giveUpAfter: 3,
+    backoffMs: [2_000, 8_000, 30_000],
+    deadlineMs: 120_000
+  },
+  act: (job, signal) => runJob(job, signal)
+})
+```
+
+`giveUpAfter` is the total number of physical attempts. `backoffMs[n]` is the full-jitter base after attempt `n`, and the last value repeats when the ladder is shorter than the attempt ceiling. The actual `retryAt` is recorded in `AttemptFailed`. `deadlineMs` is optional and starts with the first `AttemptStarted`. Crossing the deadline aborts the signal passed to the active action and records `AttemptsExhausted` with cause `deadline`.
+
+`DEFAULT_ATTEMPT_POLICY` exports the defaults. `AttemptsExhausted` records the effective policy, attempt count, cause, and last typed error. Consumers can inspect the decision that ended the operation.
+
+A typed Effect failure becomes retry evidence. A defect still fails settlement after `AttemptStarted` lands, so the next activation counts the died attempt. Return an application terminal keyed by the operation when a failure should end the operation immediately.
+
+## What resumes
+
+Resume behavior follows the keys already in the log:
+
+- A committed operation key disables the operation.
+- An `AttemptStarted` without an outcome counts as a died physical attempt. The next activation derives the next attempt or exhausts the policy.
+- An `AttemptFailed` waits until its recorded `retryAt`. A restart during that wait sleeps only for the remaining time.
+- No attempt mark means the same transition remains owed.
+
+Concurrent effects commit independently. If a process stops after some effects commit, the next activation runs only the missing keys.
+
+Event batches append atomically, and the runtime records an effect's returned outcome after the action finishes. External calls remain at least once across the gap between the call and its recorded outcome. Pass an idempotency key to an external service when it supports one, or make the operation safe to repeat.
+
+## Inspect outstanding work
+
+`enabled(actor, events)` returns transitions whose keys are absent from the log. `restingActor(actor, events)` reports whether that list is empty. These functions let a supervisor inspect durable outstanding work without running it.
+
+An effect wedges when it returns events and none carries its transition key. The reconciler reports the key in the defect. Check the actor's `keyOf` composition and confirm that a returned terminal maps to the operation key.
+
+Backoff currently sleeps inside the effect fiber. A concurrent settlement batch waits for every member, so one member's backoff can delay follow-on work from that batch. Keep long ladders visible in policy and account for this behavior when enabling `concurrent`.

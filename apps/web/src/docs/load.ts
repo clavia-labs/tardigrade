@@ -4,6 +4,8 @@ import Cli, { frontmatter as cliFrontmatter } from "@docs/references/cli.mdx"
 import cliMarkdown from "@docs/references/cli.mdx?doc-source"
 import Concepts, { frontmatter as conceptsFrontmatter } from "@docs/getting-started/concepts.mdx"
 import conceptsMarkdown from "@docs/getting-started/concepts.mdx?doc-source"
+import Durability, { frontmatter as durabilityFrontmatter } from "@docs/explanations/durability.mdx"
+import durabilityMarkdown from "@docs/explanations/durability.mdx?doc-source"
 import Rlm, { frontmatter as rlmFrontmatter } from "@docs/examples/rlm.mdx"
 import rlmMarkdown from "@docs/examples/rlm.mdx?doc-source"
 import Bun, { frontmatter as bunFrontmatter } from "@docs/platforms/bun.mdx"
@@ -52,6 +54,7 @@ const modules: ReadonlyArray<DocModule> = [
   { default: Why, frontmatter: whyFrontmatter, markdown: whyMarkdown, source: "start-here/Why.mdx" },
   { default: Quickstart, frontmatter: quickstartFrontmatter, markdown: quickstartMarkdown, source: "getting-started/quickstart.mdx" },
   { default: Concepts, frontmatter: conceptsFrontmatter, markdown: conceptsMarkdown, source: "getting-started/concepts.mdx" },
+  { default: Durability, frontmatter: durabilityFrontmatter, markdown: durabilityMarkdown, source: "explanations/durability.mdx" },
   { default: Bun, frontmatter: bunFrontmatter, markdown: bunMarkdown, source: "platforms/bun.mdx" },
   { default: Cloudflare, frontmatter: cloudflareFrontmatter, markdown: cloudflareMarkdown, source: "platforms/cloudflare.mdx" },
   { default: Celld, frontmatter: celldFrontmatter, markdown: celldMarkdown, source: "platforms/celld.mdx" },

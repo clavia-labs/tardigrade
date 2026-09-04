@@ -14,6 +14,18 @@ export interface KeyFragment {
   readonly keyOf: (e: Event) => string | undefined
 }
 
+// keysFor derives keys for an allowlist of event types under one prefix.
+export const keysFor = (
+  prefix: string,
+  by: Readonly<Record<string, (event: Event) => string | undefined>>
+): KeyFragment => ({
+  prefixes: [prefix],
+  keyOf: (event) => {
+    const suffix = by[event.type]?.(event)
+    return suffix === undefined ? undefined : `${prefix}${suffix}`
+  }
+})
+
 // composeKeys combines disjoint key fragments into one event-key derivation. Duplicate prefixes throw during construction.
 export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Event) => string | undefined) => {
   const claimed = new Map<string, number>()

@@ -11,6 +11,8 @@ import { EventLog } from "@clavia/tardigrade-core/log"
  *                  │          └─ services needed to perform the work
  *                  └──────────── data captured for the action
  *
+ * An event commits the effect when the actor derives the same key for the event and the effect. The event's type and meaning do not change that rule. Use attempted for work that may retry before it records an operation outcome.
+ *
  * The abort signal lets the runtime interrupt cancellable work. The interrupts predicate identifies which incoming events invalidate a running action.
  */
 export interface ExternalEffect<Input = unknown, Requirements = never> {
@@ -46,6 +48,7 @@ export interface ExternalEffect<Input = unknown, Requirements = never> {
  */
 export const effect = <Input, Requirements = never>(work: {
   readonly key: string
+  readonly concurrent?: boolean
   readonly invocation?: ActorInvocation
   readonly input: Input
   readonly interrupts?: (input: Input, event: Event) => boolean
