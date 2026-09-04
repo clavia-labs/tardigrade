@@ -107,21 +107,21 @@
         "tardie": "workspace:*",
       },
     },
-    "examples/react-chat/server": {
-      "name": "@clavia/tardigrade-react-chat-server",
+    "examples/react-rlm-chat/server": {
+      "name": "@clavia/tardigrade-react-rlm-chat-server",
       "dependencies": {
-        "@effect/platform-bun": "4.0.0-rc.110",
-        "effect": "4.0.0-rc.110",
         "tardie": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/workers-types": "^5.20260804.1",
+        "@effect/platform-bun": "4.0.0-rc.110",
+        "effect": "4.0.0-rc.110",
         "typescript": "^7.0.2",
         "wrangler": "^4.119.0",
       },
     },
-    "examples/react-chat/web": {
-      "name": "@clavia/tardigrade-react-chat-web",
+    "examples/react-rlm-chat/web": {
+      "name": "@clavia/tardigrade-react-rlm-chat-web",
       "dependencies": {
         "@base-ui/react": "^1.7.0",
         "@clavia/tardigrade-client": "workspace:*",
@@ -131,6 +131,7 @@
         "lucide-react": "^1.40.0",
         "react": "^19.2.8",
         "react-dom": "^19.2.8",
+        "react-markdown": "^10.1.0",
         "tardie": "workspace:*",
       },
       "devDependencies": {
@@ -399,9 +400,9 @@
 
     "@clavia/tardigrade-model": ["@clavia/tardigrade-model@workspace:platform/model"],
 
-    "@clavia/tardigrade-react-chat-server": ["@clavia/tardigrade-react-chat-server@workspace:examples/react-chat/server"],
+    "@clavia/tardigrade-react-rlm-chat-server": ["@clavia/tardigrade-react-rlm-chat-server@workspace:examples/react-rlm-chat/server"],
 
-    "@clavia/tardigrade-react-chat-web": ["@clavia/tardigrade-react-chat-web@workspace:examples/react-chat/web"],
+    "@clavia/tardigrade-react-rlm-chat-web": ["@clavia/tardigrade-react-rlm-chat-web@workspace:examples/react-rlm-chat/web"],
 
     "@clavia/tardigrade-server": ["@clavia/tardigrade-server@workspace:apps/server"],
 
@@ -1163,6 +1164,8 @@
 
     "hookable": ["hookable@6.1.1", "", {}, "sha512-U9LYDy1CwhMCnprUfeAZWZGByVbhd54hwepegYTK7Pi5NvqEj63ifz5z+xukznehT7i6NIZRu89Ay1AZmRsLEQ=="],
 
+    "html-url-attributes": ["html-url-attributes@3.0.1", "", {}, "sha512-ol6UPyBWqsrO6EJySPz2O7ZSr856WDrEzM5zMqp+FJJLGMW35cLYmmZnl0vztAZxRUoNZJFTCohfjuIJ8I4QBQ=="],
+
     "httpxy": ["httpxy@0.5.5", "", {}, "sha512-uDjmnPyp1q4Sgzf3w+J/Fc6UqcCEj0x4Wjp7OqK5dGhNeDgpyrAmnS6ey8QWrX3SWDon2DMKf9sBa5X9+CVyMA=="],
 
     "inline-style-parser": ["inline-style-parser@0.2.7", "", {}, "sha512-Nb2ctOyNR8DqQoR0OwRG95uNWIC0C1lCgf5Naz5H6Ji72KZ8OcFZLz2P5sNgwlyoJ8Yif11oMuYs5pBQa86csA=="],
@@ -1370,6 +1373,8 @@
     "react": ["react@19.2.8", "", {}, "sha512-PWaYA1L/q9u2u7xYQi+Y3L3Yfnie7XyLeaJICV1MGD6LprsBxcAqGjYyr0eY3p+QdsA+x/Irkt4Qif8D63+Sbw=="],
 
     "react-dom": ["react-dom@19.2.8", "", { "dependencies": { "scheduler": "^0.27.0" }, "peerDependencies": { "react": "^19.2.8" } }, "sha512-rVprimfGBG3DR+Tq0IQG2DT5PxKth1WIGDmj5yPmlzr4YBe7uyE+Du4oVqTDXZSHGGGXRtTJEGSSePyQCMBglQ=="],
+
+    "react-markdown": ["react-markdown@10.1.0", "", { "dependencies": { "@types/hast": "^3.0.0", "@types/mdast": "^4.0.0", "devlop": "^1.0.0", "hast-util-to-jsx-runtime": "^2.0.0", "html-url-attributes": "^3.0.0", "mdast-util-to-hast": "^13.0.0", "remark-parse": "^11.0.0", "remark-rehype": "^11.0.0", "unified": "^11.0.0", "unist-util-visit": "^5.0.0", "vfile": "^6.0.0" }, "peerDependencies": { "@types/react": ">=18", "react": ">=18" } }, "sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ=="],
 
     "readdirp": ["readdirp@5.1.1", "", {}, "sha512-Kko+Y5XQ6fM+Ce3dq3m9YGxnacYZYl9cA1wZjaF3Vbry2L3i1qVg8+CAgNPsXRArPMUMCaOR7oa9Nqntc43JKA=="],
 

@@ -15,6 +15,7 @@ import {
 } from "tardie"
 
 const actorName = "react-chat"
+const terra = { provider: "openrouter", model_id: "openai/gpt-5.6-terra" } as const
 
 const actorInstructions = `
 You are a research assistant.
@@ -33,7 +34,7 @@ export default actor({
       ], { authority: caller() }),
       compaction(),
       outputValidateOnce
-    ]),
+    ], { models: { default: terra, allow: [{ provider: terra.provider, model_ids: [terra.model_id] }] } }),
     budgetAuthority()
   ]
 })

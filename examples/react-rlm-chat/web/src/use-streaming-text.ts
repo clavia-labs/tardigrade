@@ -2,6 +2,7 @@ import { useEffect, useState } from "react"
 import type { EventRow, InferDelta } from "@clavia/tardigrade-client"
 
 import { actor, client } from "./chat-client"
+import { endsResponse } from "./events"
 
 interface StreamingText {
   readonly physicalAttempt: string
@@ -12,8 +13,7 @@ interface StreamingText {
 
 export const useStreamingText = (id: string | undefined, rows: ReadonlyArray<EventRow>): string => {
   const [streaming, setStreaming] = useState<StreamingText | undefined>()
-  const terminal = rows.findLast(({ event }) =>
-    ["TextReturned", "ToolCalled", "TurnCompleted", "TurnFailed"].includes(event.type))?.seq
+  const terminal = rows.findLast(({ event }) => endsResponse(event))?.seq
 
   useEffect(() => {
     if (id === undefined || rows.length === 0) return

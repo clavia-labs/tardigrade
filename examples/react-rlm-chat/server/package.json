@@ -1,5 +1,5 @@
 {
-  "name": "@clavia/tardigrade-react-chat-server",
+  "name": "@clavia/tardigrade-react-rlm-chat-server",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,12 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@effect/platform-bun": "4.0.0-rc.110",
-    "effect": "4.0.0-rc.110",
     "tardie": "workspace:*"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260804.1",
+    "@effect/platform-bun": "4.0.0-rc.110",
+    "effect": "4.0.0-rc.110",
     "typescript": "^7.0.2",
     "wrangler": "^4.119.0"
   }

@@ -1,0 +1,47 @@
+{
+  "schema": 1,
+  "configDigest": "sha256:1d295be66f8cdabe4d30c63d4e68622f42fe610e088126a3d4bf2d15594051c9",
+  "catalog": {
+    "source": "models.dev",
+    "revision": "W/\"6e5923ca92c07854b0ba05c29dd448ac\"",
+    "refreshedAt": 1788540678621,
+    "status": "cached",
+    "providers": [
+      {
+        "id": "openrouter",
+        "name": "OpenRouter",
+        "api": "https://openrouter.ai/api/v1",
+        "npm": "@openrouter/ai-sdk-provider",
+        "env": [
+          "OPENROUTER_API_KEY"
+        ],
+        "models": [
+          {
+            "id": "openai/gpt-5.6-terra",
+            "name": "GPT-5.6 Terra",
+            "metadata": {
+              "contextWindowTokens": 1050000,
+              "maxOutputTokens": 128000,
+              "pricing": {
+                "promptUsdPerToken": 0.000002,
+                "completionUsdPerToken": 0.000012,
+                "cachedPromptUsdPerToken": 2.0000000000000002e-7,
+                "cacheWritePromptUsdPerToken": 0.0000025
+              },
+              "toolCall": true,
+              "structuredOutput": true,
+              "inputModalities": [
+                "text",
+                "image",
+                "pdf"
+              ],
+              "outputModalities": [
+                "text"
+              ]
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

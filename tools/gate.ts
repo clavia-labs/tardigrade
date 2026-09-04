@@ -17,6 +17,8 @@ const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
 const typecheckedApps = [...apps, "web"]
 const e2e = `${root}e2e`
+const examplePkg = (name: string) => `${root}examples/react-rlm-chat/${name}`
+const examplePackages = ["server", "web"]
 // Apps that ship a bundle. A typecheck proves the sources agree; only a build proves the bundler
 // can resolve and emit them.
 const bundled = ["voyager", "web"]
@@ -31,6 +33,7 @@ const effectProjects = [
   ...packages.flatMap((name) => tsconfigsIn(pkg(name))),
   ...platforms.flatMap((name) => tsconfigsIn(platformPkg(name))),
   ...typecheckedApps.flatMap((name) => tsconfigsIn(appPkg(name))),
+  ...examplePackages.flatMap((name) => tsconfigsIn(examplePkg(name))),
   ...tsconfigsIn(e2e)
 ]
 
@@ -67,6 +70,7 @@ const tasks: ReadonlyArray<Task> = [
   ...packages.map((name) => ({ id: `typecheck:${name}`, cwd: pkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...platforms.map((name) => ({ id: `typecheck:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "run", "typecheck"] })),
   ...typecheckedApps.map((name) => ({ id: `typecheck:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "typecheck"] })),
+  ...examplePackages.map((name) => ({ id: `typecheck:example-react-rlm-chat-${name}`, cwd: examplePkg(name), cmd: ["bun", "run", "typecheck"] })),
   { id: "typecheck:e2e", cwd: e2e, cmd: ["bun", "run", "typecheck"] },
   ...packages.map((name) => ({ id: `test:${name}`, cwd: pkg(name), cmd: ["bun", "test"] })),
   ...platforms.map((name) => ({ id: `test:platform-${name}`, cwd: platformPkg(name), cmd: ["bun", "test"] })),
@@ -74,10 +78,12 @@ const tasks: ReadonlyArray<Task> = [
   { id: "test:platform-worker-loader:workers", cwd: platformPkg("worker-loader"), cmd: ["bun", "run", "test:workers"] },
   ...apps.map((name) => ({ id: `test:app-${name}`, cwd: appPkg(name), cmd: ["bun", "test"] })),
   { id: "test:app-web", cwd: appPkg("web"), cmd: ["bun", "test"] },
+  { id: "test:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "test"] },
   { id: "test:e2e", cwd: e2e, cmd: ["bun", "test"] },
   { id: "bundle:platform-cloudflare", cwd: platformPkg("cloudflare"), cmd: ["bun", "run", "bundle"] },
   { id: "bundle:model-adapters", cmd: ["bun", "run", "tools/model-adapter-bundles.ts"] },
   ...bundled.map((name) => ({ id: `build:app-${name}`, cwd: appPkg(name), cmd: ["bun", "run", "build"] })),
+  { id: "build:example-react-rlm-chat-web", cwd: examplePkg("web"), cmd: ["bun", "run", "build"] },
   // Knip checks the complete graph, the shipped graph, cycles, and tsconfig discovery as separate views.
   { id: "knip", cmd: ["bun", "run", "knip"] },
   { id: "knip:production", cmd: ["bun", "--bun", "node_modules/.bin/knip", "--production", "--no-progress", "--treat-config-hints-as-errors", "--treat-tag-hints-as-errors"] },

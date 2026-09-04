@@ -1,7 +1,7 @@
 import { Layer } from "effect"
 import { BunFileSystem, BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { assertSupportedBun } from "tardie/bun/runtime"
-import { layerModelCatalog, ModelCatalogStore } from "tardie/server/catalog"
+import { layerModelCatalog } from "tardie/server/catalog"
 import { layerFileModelCatalogRepository } from "tardie/server/catalog-repository"
 import { layerConfig, projectConfigOf, readConfig } from "tardie/server/config"
 import { layerActorThreads } from "tardie/server/host"

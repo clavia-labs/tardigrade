@@ -4,7 +4,8 @@ import { Worm } from "lucide-react"
 import type { ReactElement } from "react"
 import type { Event, EventRow } from "@clavia/tardigrade-client"
 
-import { childThread, toolContent, toolTitle, value, waitingForResponse } from "../events"
+import { childThread, pendingChildCount, toolContent, toolTitle, value, waitingForResponse } from "../events"
+import { MarkdownMessage } from "./MarkdownMessage"
 
 export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   readonly empty: string
@@ -23,9 +24,6 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
   const packagesReturned = new Set(rows
     .filter(({ event }) => event.type === "PackageReturned")
     .map(({ event }) => value(event, "callId")))
-  const responses = new Set(rows
-    .filter(({ event }) => event.type === "ResponseReceived")
-    .map(({ event }) => value(event, "call")))
   const isAgentResultCollector = (event: Event): boolean => {
     const id = value(event, "callId")
     if (event.type !== "ToolCalled" || id === undefined) return false
@@ -44,10 +42,17 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
             if (row.event.type !== "ChildCreated") break
             group.push(row)
           }
-          const pending = group.filter(({ event: child }) => {
-            const id = childThread(child)
-            return id !== undefined && !responses.has(id)
-          }).length
+          const pending = pendingChildCount(group, rows)
+          if (group.length === 1) {
+            const id = childThread(group[0]!.event)
+            return id === undefined ? null : (
+              <Button className="subagent-single" key={seq} onClick={() => onOpenThread(id)}>
+                <Worm />
+                <span>Subagent</span>
+                {pending === 0 ? null : <CircleNotch className="spin tree-spinner" aria-label="Subagent is running" />}
+              </Button>
+            )
+          }
           return (
             <details className="subagent-tree" key={seq}>
               <summary>
@@ -98,12 +103,14 @@ export const Transcript = ({ empty, onOpenThread, rows, streamingText }: {
             className={event.type === "MessageReceived" ? "user" : event.type === "TurnFailed" ? "assistant failed" : "assistant"}
             key={seq}
           >
-            {value(event, event.type === "MessageReceived" ? "text" : event.type === "TurnFailed" ? "error" : "output")}
+            {event.type === "TurnCompleted"
+              ? <MarkdownMessage>{value(event, "output") ?? ""}</MarkdownMessage>
+              : value(event, event.type === "MessageReceived" ? "text" : "error")}
           </article>
         )
       })}
       {streamingText.length > 0 ? (
-        <article className="assistant streaming">{streamingText}</article>
+        <article className="assistant streaming"><MarkdownMessage>{streamingText}</MarkdownMessage></article>
       ) : waitingForResponse(rows) ? (
         <article className="assistant loading" aria-label="Assistant is responding"><span /><span /><span /></article>
       ) : null}

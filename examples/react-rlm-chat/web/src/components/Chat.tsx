@@ -3,7 +3,7 @@ import { useEffect, useState, type ReactElement } from "react"
 import type { EventRow } from "@clavia/tardigrade-client"
 
 import { actor, client } from "../chat-client"
-import { mergeEvents, readEvents } from "../events"
+import { activeMessageCall, mergeEvents, readEvents } from "../events"
 import { useStreamingText } from "../use-streaming-text"
 import { Composer } from "./Composer"
 import { SideThread } from "./SideThread"
@@ -54,6 +54,14 @@ export const Chat = (): ReactElement => {
       await cache.invalidateQueries({ queryKey: ["threads", actor] })
     }
   })
+  const cancel = useMutation({
+    mutationFn: ({ id, target }: { readonly id: string; readonly target: string }) =>
+      client.cancel({ actor, thread: target, method: "message", id }, { reason: "Stopped from chat" }),
+    onSuccess: async (_, { target }) => {
+      await cache.invalidateQueries({ queryKey: ["events", actor, target] })
+      await cache.invalidateQueries({ queryKey: ["threads", actor] })
+    }
+  })
 
   useEffect(() => {
     if (!events.isFetched) return
@@ -81,6 +89,8 @@ export const Chat = (): ReactElement => {
   }, [cache, childEvents.isFetched, selectedChild])
 
   const rows = events.data ?? []
+  const activeRootCall = activeMessageCall(rows)
+  const activeChildCall = activeMessageCall(childEvents.data ?? [])
   const streamedRoot = useStreamingText(thread, rows)
   const streamedChild = useStreamingText(selectedChild, childEvents.data ?? [])
 
@@ -104,25 +114,33 @@ export const Chat = (): ReactElement => {
         />
         <Composer
           id="message"
+          cancelling={cancel.isPending && cancel.variables?.target === thread}
+          onCancel={() => {
+            if (activeRootCall !== undefined) cancel.mutate({ id: activeRootCall, target: thread })
+          }}
           onSend={(text) => send.mutate(text)}
           pending={send.isPending}
           placeholder="Ask about the codebase"
+          running={activeRootCall !== undefined}
         />
-        {events.error || send.error ? <p className="error">{String(events.error ?? send.error)}</p> : null}
+        {events.error || send.error || cancel.error ? <p className="error">{String(events.error ?? send.error ?? cancel.error)}</p> : null}
       </main>
       {selectedChild === undefined ? null : (
         <SideThread
-          error={childEvents.error ?? sendChild.error}
+          error={childEvents.error ?? sendChild.error ?? cancel.error}
           key={selectedChild}
           loading={childEvents.isLoading}
+          cancelling={cancel.isPending && cancel.variables?.target === selectedChild}
           onClose={() => setSelectedChild(undefined)}
+          onCancel={() => {
+            if (activeChildCall !== undefined) cancel.mutate({ id: activeChildCall, target: selectedChild })
+          }}
           onOpenThread={setSelectedChild}
           onSend={(text) => sendChild.mutate({ id: selectedChild, text })}
           pending={sendChild.isPending}
+          running={activeChildCall !== undefined}
           rows={childEvents.data ?? []}
-          selected={selectedChild}
           streamingText={streamedChild}
-          threads={threads.data ?? []}
         />
       )}
     </div>

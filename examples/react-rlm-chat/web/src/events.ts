@@ -42,10 +42,44 @@ export const toolTitle = (event: Event, complete: boolean): string => {
 export const value = (event: Event, field: string): string | undefined =>
   typeof event[field] === "string" ? event[field] : undefined
 
+export const endsResponse = (event: Event): boolean =>
+  ["TextReturned", "ToolCalled", "TurnCompleted", "TurnFailed", "TurnCancelled"].includes(event.type)
+
+export const activeMessageCall = (events: ReadonlyArray<EventRow>): string | undefined => {
+  const terminalTurns = new Set(events
+    .filter(({ event }) => ["TurnCompleted", "TurnFailed", "TurnCancelled"].includes(event.type))
+    .map(({ event }) => value(event, "turn"))
+    .filter((turn): turn is string => turn !== undefined))
+  for (const { event } of events) {
+    if (event.type !== "MessageReceived") continue
+    const call = event.call
+    if (typeof call !== "object" || call === null || !("invocation" in call)) continue
+    const invocation = call.invocation
+    if (typeof invocation !== "object" || invocation === null || !("method" in invocation)) continue
+    if (invocation.method !== "message") continue
+    const id = value(event, "id")
+    if (id !== undefined && !terminalTurns.has(id)) return id
+  }
+  return undefined
+}
+
+export const pendingChildCount = (
+  children: ReadonlyArray<EventRow>,
+  events: ReadonlyArray<EventRow>
+): number => {
+  const settled = new Set(events.flatMap(({ event }) => {
+    if (event.type === "ResponseReceived") return value(event, "call") ?? []
+    if (event.type === "PackageReturned") return value(event, "callId") ?? []
+    return []
+  }))
+  return children.filter(({ event }) => {
+    const callId = value(event, "callId")
+    return event.type === "ChildCreated" && callId !== undefined && !settled.has(callId)
+  }).length
+}
+
 export const waitingForResponse = (events: ReadonlyArray<EventRow>): boolean => {
   const started = events.findLastIndex(({ event }) => event.type === "ModelCalled")
   if (started === -1) return false
-  return !events.slice(started + 1).some(({ event }) =>
-    ["TextReturned", "ToolCalled", "TurnCompleted", "TurnFailed"].includes(event.type)
-  )
+  return !events.slice(started + 1).some(({ event }) => endsResponse(event))
 }

@@ -1,7 +1,8 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "ignoreDependencies": [
-    "cloudflare"
+    "cloudflare",
+    "@clavia/tardigrade-ui"
   ],
   "workspaces": {
     ".": {
@@ -23,10 +24,20 @@
         "**/*.ts"
       ]
     },
-    "packages/*": {
+    "examples/react-rlm-chat/server": {
       "project": [
-        "src/**/*.ts"
+        "*.ts"
       ]
+    },
+    "examples/react-rlm-chat/web": {
+      "project": [
+        "src/**/*.{ts,tsx}!"
+      ],
+      "ignoreIssues": {
+        "src/config.ts": [
+          "exports"
+        ]
+      }
     },
     "platform/*": {
       "project": [

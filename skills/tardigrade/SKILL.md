@@ -87,7 +87,7 @@ export default actor({
 })
 ```
 
-Read the [RLM guide](../../docs/examples/rlm.mdx) for the role of each component and the resulting execution loop.
+Read the [RLM guide](../../docs/examples/rlm.mdx) for the role of each component and the resulting execution loop. Use the [React RLM chat](../../examples/react-rlm-chat/README.md) when the task needs a runnable server, browser client, subagent threads, or a deployment example.
 
 Add another provider or change the default with focused commands:
 

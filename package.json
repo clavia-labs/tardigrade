@@ -10,7 +10,7 @@
     "platform/*",
     "apps/*",
     "e2e",
-    "examples/react-chat/*"
+    "examples/react-rlm-chat/*"
   ],
   "scripts": {
     "tdg": "bun run apps/cli/src/main.ts",

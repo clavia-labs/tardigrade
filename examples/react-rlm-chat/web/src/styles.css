@@ -9,6 +9,11 @@
 
 * { box-sizing: border-box; }
 
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+}
+
 body { margin: 0; }
 
 button, input { font: inherit; }
@@ -132,6 +137,25 @@ button, input { font: inherit; }
   content: "";
 }
 
+.subagent-single {
+  width: auto;
+  height: auto;
+  max-width: 82%;
+  padding: 6px 9px;
+  align-self: flex-start;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ui-subagent);
+  background: var(--ui-subagent-muted);
+  border: 0;
+  border-radius: var(--ui-radius-control);
+  font-family: var(--ui-font-mono);
+  font-size: 12px;
+}
+
+.subagent-single svg { width: 14px; height: 14px; }
+
 .subagent-tree {
   max-width: calc(82% - 24px);
   margin-left: 24px;
@@ -199,7 +223,11 @@ button, input { font: inherit; }
   border-bottom: 1px solid var(--ui-border);
 }
 
-.side-head div { display: grid; gap: 2px; }
+.side-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .side-back-button { display: none; }
 
@@ -257,9 +285,40 @@ article {
   max-width: 82%;
   padding: 11px 14px;
   border-radius: var(--ui-radius-message);
-  white-space: pre-wrap;
   line-height: 1.5;
 }
+
+article > :first-child { margin-top: 0; }
+
+article > :last-child { margin-bottom: 0; }
+
+article p, article ul, article ol, article pre, article blockquote { margin-block: 0 10px; }
+
+article ul, article ol { padding-left: 24px; }
+
+article pre {
+  padding: 10px 12px;
+  overflow-x: auto;
+  background: var(--ui-surface-muted);
+  border-radius: var(--ui-radius-control);
+}
+
+article code { font-family: var(--ui-font-mono); }
+
+article :not(pre) > code {
+  padding: 2px 5px;
+  background: var(--ui-surface-muted);
+  border-radius: 5px;
+  font-size: 0.9em;
+}
+
+article blockquote {
+  padding-left: 12px;
+  color: var(--ui-text-muted);
+  border-left: 2px solid var(--ui-border);
+}
+
+article a { color: inherit; }
 
 .tool-call {
   max-width: 82%;
@@ -307,6 +366,7 @@ article {
   color: var(--ui-accent-contrast);
   background: var(--ui-accent);
   border-bottom-right-radius: var(--ui-radius-control);
+  white-space: pre-wrap;
 }
 
 .assistant {
@@ -315,7 +375,10 @@ article {
   border-bottom-left-radius: var(--ui-radius-control);
 }
 
-.failed { color: var(--ui-danger); }
+.failed {
+  color: var(--ui-danger);
+  white-space: pre-wrap;
+}
 
 .loading {
   display: flex;
@@ -413,7 +476,7 @@ button svg { width: 18px; height: 18px; }
     padding-left: 14px;
   }
 
-  .side-head div { flex: 1; }
+  .side-title { flex: 1; }
 
   .side-back-button { display: grid; }
 
