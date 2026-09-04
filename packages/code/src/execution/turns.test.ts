@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
+import { turnCancellationOf, trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
 
 // `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every
 // `MessageReceived`, except a reply a package call was still parked on when it landed. That
@@ -91,5 +91,46 @@ describe("a resumed turn", () => {
     expect(turnEpochOf(cancelled, "m1")).toBe(0)
     expect(turnTerminalOf(cancelled, "m1")).toMatchObject({ type: "TurnCancelled" })
     expect(turnHead(cancelled)).toBeUndefined()
+  })
+})
+
+describe("turnCancellationOf", () => {
+  test("a native cancellation keeps its metadata", () => {
+    expect(turnCancellationOf({
+      type: "TurnCancelled",
+      request: "x1",
+      turn: "m1",
+      cause: "deadline",
+      reason: "deadline reached",
+      deadlineAt: 7,
+      at: 2
+    })).toEqual({ cause: "deadline", reason: "deadline reached", deadlineAt: 7 })
+    expect(turnCancellationOf({
+      type: "TurnCancelled",
+      request: "x1",
+      turn: "m1",
+      cause: "requested",
+      at: 2
+    })).toEqual({ cause: "requested" })
+  })
+
+  test("a failure is never one", () => {
+    expect(turnCancellationOf({ type: "TurnFailed", error: "boom", turn: "m1", at: 1 })).toBeUndefined()
+    expect(turnCancellationOf({ type: "TurnCompleted", output: "done", turn: "m1", at: 1 })).toBeUndefined()
+    expect(turnCancellationOf({ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 1 })).toBeUndefined()
+  })
+})
+
+describe("a cancelled epoch", () => {
+  test("cancels in place without opening a resume path", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m1", text: "read", at: 1 },
+      { type: "TurnFailed", error: "boom", turn: "m1", at: 2 },
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1, at: 3 },
+      { type: "TurnCancelled", request: "x1", turn: "m1", cause: "deadline", epoch: 1, at: 4 },
+      { type: "TurnResumed", turn: "m1", failedEpoch: 1, epoch: 2, at: 5 }
+    ]
+    expect(turnEpochOf(log, "m1")).toBe(1)
+    expect(turnTerminalOf(log, "m1")).toMatchObject({ type: "TurnCancelled", epoch: 1 })
   })
 })

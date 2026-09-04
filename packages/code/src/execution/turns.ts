@@ -15,6 +15,27 @@ export const turnOf = (e: Event): string | undefined => {
 const stamped = (log: ReadonlyArray<Event>, id: string): ReadonlyArray<Event> =>
   log.filter((e) => turnOf(e) === id)
 
+// TurnCancellation is the cancellation one turn terminal carries, in the shape a boundary
+// report needs.
+export interface TurnCancellation {
+  readonly cause: "requested" | "deadline"
+  readonly reason?: string
+  readonly deadlineAt?: number
+}
+
+// turnCancellationOf returns the cancellation a terminal carries, or undefined when the terminal
+// records a failure or a completion instead (turns.test.ts, "a native cancellation keeps its
+// metadata; a failure is never one").
+export const turnCancellationOf = (event: Event): TurnCancellation | undefined => {
+  if (event.type !== "TurnCancelled") return undefined
+  const { cause, reason, deadlineAt } = event
+  return {
+    cause: cause === "deadline" ? "deadline" : "requested",
+    ...(typeof reason === "string" && reason !== "" ? { reason } : {}),
+    ...(typeof deadlineAt === "number" ? { deadlineAt } : {})
+  }
+}
+
 // eventEpochOf returns the execution epoch stamped on an event. Historical events belong to epoch zero.
 export const eventEpochOf = (event: Event): number => {
   const epoch = (event as { epoch?: unknown }).epoch
