@@ -7,33 +7,26 @@ sectionOrder: 3
 order: 3
 ---
 
-Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted fleet. Tardigrade uses the same actor definition, Durable Object lifecycle, alarms, and HTTP routes on Cloudflare and Celld.
+Celld runs Wrangler Worker bundles and SQLite Durable Objects on a self-hosted fleet. Tardigrade uses the same actor definition, lifecycle, alarms, and HTTP routes on Celld and Cloudflare.
 
-## Configure
+## Deploy
 
-`tdg init` creates `celld.jsonc` beside `wrangler.jsonc`. Run `tdg setup` to write model connections to both platform manifests while preserving the other Celld settings. Celld requires string Worker variables, so `TARDIGRADE_CONFIG` contains encoded JSON in this file.
+`tdg init` creates `celld.jsonc`, and `tdg setup` updates its model connections without changing other Celld settings. Celld accepts string Worker variables, so the manifest stores `TARDIGRADE_CONFIG` as encoded JSON.
 
-Celld reads its fleet bucket from `--bucket` or `CELLD_BUCKET`. Use `--endpoint` for an S3-compatible service and `--region` when the region cannot be inferred. Celld also supports `gs://` buckets through Google Application Default Credentials and `az://` containers through Azure credentials.
-
-## Validate and deploy
-
-Validate the project without publishing it:
+Set the fleet bucket with `--bucket` or `CELLD_BUCKET`. Use `--endpoint` and `--region` when needed for S3-compatible storage. Celld also supports `gs://` buckets with Google Application Default Credentials and `az://` containers with Azure credentials.
 
 ```bash variant="single"
 celld deploy --config celld.jsonc --bucket s3://actors --dry-run
-```
-
-Publish the deployment:
-
-```bash variant="single"
 celld deploy --config celld.jsonc --bucket s3://actors
 ```
 
-Each Celld node needs the Worker variables that hold the Tardigrade token and model provider credentials. It also needs the Worker Loader binding when the actor uses Code Mode.
+The first command validates the deployment. The second publishes it.
 
-Prefix an individual Worker variable with `CELLD_VAR_`, or point `CELLD_VARS_FILE` at a file containing the original variable names:
+## Configure nodes
 
-```bash variant="single"
+Each node needs the Worker variables for the Tardigrade token and model provider credentials. Actors that use Code Mode also need the Worker Loader binding. Prefix a variable with `CELLD_VAR_`, or set `CELLD_VARS_FILE` to a file containing the original variable names.
+
+```bash
 CELLD_WORKER_LOADER=LOADER \
 CELLD_VAR_TARDIGRADE_TOKEN="$TARDIGRADE_TOKEN" \
 CELLD_VAR_OPENAI_API_KEY="$OPENAI_API_KEY" \
@@ -46,4 +39,6 @@ celld \
 
 Keep the internal listener on a trusted private network. A deployment is loaded when a node starts, so restart nodes through the fleet rollout procedure after publishing a new version.
 
-The generated Celld manifest selects the `replay` sandbox transport and assigns background tasks to the `request`. A loaded Worker returns package-call boundaries as JSON, and the actor host reruns the deterministic body with each recorded result. Request ownership registers reconciliation with `waitUntil`, so Celld keeps it alive after the Durable Object RPC returns. Cloudflare uses direct capability transport and assigns background tasks to the `host` by default. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for its current platform surface.
+## Execution model
+
+The generated manifest uses the `replay` sandbox transport and assigns background work to the `request`. Celld records package-call results, replays the deterministic actor body, and keeps reconciliation alive with `waitUntil`. Cloudflare uses `direct` transport and `host` ownership by default. See Celld's [Cloudflare compatibility](https://github.com/denoland/celld/blob/main/docs/cloudflare-compat.md) and [operations documentation](https://github.com/denoland/celld/blob/main/docs/README.md) for platform details.
