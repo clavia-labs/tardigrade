@@ -64,13 +64,13 @@ Tardigrade is a TypeScript framework for building modular agents around an immut
 
 ### Simplicity scales
 
-A good primitive is one that is simple enough but allows for complex behavior through composition. Tardigrade's core primitive is a component, which could be defined as a function of the event log.
+A good primitive is one that is simple enough, but allows for complex behavior through composition. Tardigrade's core primitive is a component, which is a pure function of the event log. Simple components naturally compose with each other to create complex components.
 
 <Math expression="\{\text{view},\ \text{transitions}\} = f(\text{event log})" />
 
 ### Mathematically rigorous
 
-Everything built in Tardigrade will be mathematically rigorous. We use [TLA+](https://lamport.azurewebsites.net/tla/tla.html) for temporal modelling and [fast-check](https://fast-check.dev/) for property testing of components. We're also experimenting with a more TS-native version of TLA+. Eventually we want to make it possible for you to easily build formally verifiable agent harnesses.
+We use [TLA+](https://lamport.azurewebsites.net/tla/tla.html) for temporal modelling and [fast-check](https://fast-check.dev/) for property testing of components. We're also experimenting with a more TS-native version of TLA+. Eventually we want to make it possible for you to easily build formally verifiable agent harnesses.
 
 ### Maximally bitter lesson pilled
 
@@ -78,11 +78,11 @@ Interfaces are inherently restrictive. We asked ourselves what the most uncompre
 
 ### Don't reinvent the wheel
 
-We're big fans of [Effect TS](https://effect.website/), as you might tell just from the way the docs are structured. We also took a few leaves from their own ethos (including this and the next). We want to take lessons from the past, including [automata theory](https://cs.stanford.edu/people/eroberts/courses/soco/projects/automata-theory/), [pi calculus](https://www.sciencedirect.com/science/article/pii/0890540192900084), [state machines](https://www.sciencedirect.com/science/article/pii/0167642387900359), and [Erlang/OTP](https://www.erlang.org/doc/system/design_principles.html), and build something practical for the community.
+If you couldn't tell already, Tardigrade is very much inspired by [Effect TS](https://effect.website/) and its ethos. We want to build something practical for the community while taking inspiration from existing work like [automata theory](https://cs.stanford.edu/people/eroberts/courses/soco/projects/automata-theory/), [pi calculus](https://www.sciencedirect.com/science/article/pii/0890540192900084), [state machines](https://www.sciencedirect.com/science/article/pii/0167642387900359), and [Erlang/OTP](https://www.erlang.org/doc/system/design_principles.html).
 
 ### Enjoy building!
 
-New models may come and go, but we keep pushing new frontiers by questioning the status quo. We want Tardigrade to be a tool for you to continue pushing frontiers in your domain, alongside each new generation of models.
+New models may come and go, but as developers, we keep pushing new frontiers by questioning the status quo. We want Tardigrade to be a tool for you to continue pushing frontiers in your domain, while having fun in the process!
 
 ## Where next
 
