@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.21.0](https://github.com/clavia-labs/tardigrade/compare/v0.20.0...v0.21.0) (2026-09-04)
+
+
+### Features
+
+* **example:** add React RLM chat ([#370](https://github.com/clavia-labs/tardigrade/issues/370)) ([0762f8d](https://github.com/clavia-labs/tardigrade/commit/0762f8de9cc2e0e0a2cff55823ecad1a3adda312))
+* **model:** pass identity to adapter start ([#363](https://github.com/clavia-labs/tardigrade/issues/363)) ([1af898f](https://github.com/clavia-labs/tardigrade/commit/1af898fab405aa6af67d35fd94216661a265b6c5))
+* **web:** add illustrations ([#352](https://github.com/clavia-labs/tardigrade/issues/352)) ([e6f988b](https://github.com/clavia-labs/tardigrade/commit/e6f988b49dc04ea0ed39cc29a8f755bf36a4ad78))
+* **web:** improve docs interactions ([#349](https://github.com/clavia-labs/tardigrade/issues/349)) ([86f7f6b](https://github.com/clavia-labs/tardigrade/commit/86f7f6b08a0672d17a8bc607fce7ddf6b27a0d46))
+
+
+### Bug Fixes
+
+* **agent:** name children by parent run ([#364](https://github.com/clavia-labs/tardigrade/issues/364)) ([71f14f2](https://github.com/clavia-labs/tardigrade/commit/71f14f27ea3d1e522ca25c3e882029a4e519374c))
+* **agent:** settle child delivery and cancellation ([af27e43](https://github.com/clavia-labs/tardigrade/commit/af27e4375ceafe03b6815c75938b341ef58e08d3))
+* **model:** disable Bun fetch timeout ([#348](https://github.com/clavia-labs/tardigrade/issues/348)) ([8a88f73](https://github.com/clavia-labs/tardigrade/commit/8a88f73c59a5eced13e2480bc319a4fe18bd6c5f))
+* **web:** clean preview metadata ([#347](https://github.com/clavia-labs/tardigrade/issues/347)) ([7819422](https://github.com/clavia-labs/tardigrade/commit/78194228749f90c3adea0baa99abe18a33740d9d))
+* **web:** prefer html for crawlers ([#345](https://github.com/clavia-labs/tardigrade/issues/345)) ([3de0ed4](https://github.com/clavia-labs/tardigrade/commit/3de0ed42a1dbf6164333ea805131c43740e3afcb))
+* **web:** refine mobile docs ([#340](https://github.com/clavia-labs/tardigrade/issues/340)) ([2f9b968](https://github.com/clavia-labs/tardigrade/commit/2f9b9688df6eba69579c5b8dba39a908962b9d23))
+
 ## [0.20.0](https://github.com/clavia-labs/tardigrade/compare/v0.19.0...v0.20.0) (2026-09-03)
 
 
