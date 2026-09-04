@@ -23,7 +23,7 @@ import {
 } from "tardie"
 import { agentsPackage } from "tardie/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
-import { actorScenario, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
+import { actorScenario, childThreadsOf, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 type Outcome = "grant" | "deny" | "fail" | "timeout"
 
@@ -313,10 +313,11 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         const mission = byKey.get(match?.[1] ?? "")
         return (match?.[2] === "1" ? mission?.firstPermission : mission?.secondPermission) !== "timeout"
       })
+      const children = childThreadsOf(scenario.host.read(ROOT_THREAD))
       const timeoutCalls = scenario.host.read(ROOT_THREAD)
         .filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
         .flatMap((run) => {
-          const thread = `ag.${String(field(run, "callId"))}`
+          const thread = children.get(String(field(run, "callId")))!
           const child = scenario.host.read(thread)
           const terminal = new Set(child
             .filter((event) => event.type === "ResponseReceived" || event.type === "CallTimedOut")
@@ -404,7 +405,8 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     const expectedPermissionResponses = missions.reduce((count, mission) =>
       count + (mission.firstPermission === "timeout" ? 0 : 1) +
       (mission.firstPermission === "grant" && mission.budget === "grant" && mission.secondPermission !== "timeout" ? 1 : 0), 0)
-    const childEvents = runs.flatMap((run) => scenario.host.read(`ag.${String(field(run, "callId"))}`))
+    const children = childThreadsOf(root)
+    const childEvents = runs.flatMap((run) => scenario.host.read(children.get(String(field(run, "callId")))!))
     const dispatchedPermissions = childEvents.filter((event) =>
       event.type === "CallDispatched" && field(event, "method") === "requestPermission"
     )
@@ -423,7 +425,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     expect(timedOut).toHaveLength(expectedTimeouts)
 
     for (const run of runs) {
-      const child = scenario.host.read(`ag.${String(field(run, "callId"))}`)
+      const child = scenario.host.read(children.get(String(field(run, "callId")))!)
       expect(child.filter((event) => event.type === "TurnCompleted")).toHaveLength(1)
       expect(child.filter((event) => event.type === "TurnFailed")).toHaveLength(0)
       expect(child.filter((event) =>
@@ -547,7 +549,7 @@ test("Rick cancels every foreground Morty across generated schedules", async () 
     const runs = root.filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
     expect(runs).toHaveLength(children)
     for (const run of runs) {
-      const child = scenario.host.read(`ag.${String(field(run, "callId"))}`)
+      const child = scenario.host.read(childThreadsOf(root).get(String(field(run, "callId")))!)
       expect(child.filter((event) => event.type === "CancellationRequested")).toHaveLength(1)
       expect(child.filter((event) => event.type === "TurnCancelled")).toHaveLength(1)
       expect(child.some((event) => event.type === "TurnCompleted")).toBe(false)

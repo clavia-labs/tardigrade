@@ -16,7 +16,7 @@ import {
 } from "tardie"
 import { agentsPackage } from "tardie/packages/agents"
 import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
-import { actorScenario, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
+import { actorScenario, childThreadsOf, ROOT_THREAD, TEST_MODEL, type Mind } from "./harness"
 
 const WORKER_RESULT = output({
   name: "worker-result",
@@ -160,8 +160,9 @@ test("an actor graph covers concurrent calls, budget negotiation, structured out
     String((event as { readonly method?: unknown }).method) === "message"
   )).toHaveLength(6)
 
+  const childThreads = childThreadsOf(root)
   for (const run of runs.slice(0, 5)) {
-    const child = graph.host.read(`ag.${String(run.callId)}`)
+    const child = graph.host.read(childThreads.get(String(run.callId))!)
     expect(child.filter((event) => event.type === "BudgetExhausted")).toHaveLength(1)
     expect(child.filter((event) => event.type === "BudgetRequested")).toHaveLength(1)
     expect(child.filter((event) => event.type === "CallDispatched")).toHaveLength(1)
