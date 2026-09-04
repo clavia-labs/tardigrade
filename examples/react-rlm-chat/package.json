@@ -1,0 +1,12 @@
+{
+  "name": "@clavia/tardigrade-react-rlm-chat-example",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "bun run --cwd web build",
+    "dev": "bun run --filter '@clavia/tardigrade-react-rlm-chat-*' --parallel dev",
+    "dev:server": "bun run --cwd server dev",
+    "dev:web": "bun run --cwd web dev",
+    "typecheck": "bun run --cwd server typecheck && bun run --cwd web typecheck"
+  }
+}

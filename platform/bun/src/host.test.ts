@@ -152,6 +152,22 @@ describe("the bun host", () => {
     await reopened.close()
   })
 
+  test("startup ignores a thread database without creation", async () => {
+    const path = freshPath()
+    const first = await createBunHost(options(path))
+    expect(await first.read("orphan")).toEqual([])
+    await first.close()
+
+    const actor = new Database(path)
+    actor.run("INSERT INTO thread_directory (thread) VALUES (?)", ["orphan"])
+    actor.close()
+
+    const reopened = await createBunHost(options(path))
+    expect(await reopened.threads()).toEqual([])
+    expect(await reopened.actorThread("orphan")).toBeUndefined()
+    await reopened.close()
+  })
+
   test("a committed head wakes a thread follower", async () => {
     const commits: Array<{ readonly thread: string; readonly head: number }> = []
     const h = await createBunHost({

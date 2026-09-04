@@ -7,6 +7,7 @@ import { layerModelCatalog } from "./catalog"
 import { layerFileModelCatalogRepository } from "./catalog-repository"
 import { layerThreads } from "./host"
 import { serve } from "./http"
+import { makeInferenceStream } from "./inference-stream"
 
 // The entry point resolves project JSONC and the environment before starting a Bun process.
 
@@ -29,8 +30,9 @@ const configLayer = layerConfig(config)
 // server runs in, so the process that stops listening stops writing (host.ts, layerThreads).
 const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePath).pipe(Layer.provide(BunFileSystem.layer))
 const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
-const threads = Layer.provide(layerThreads(), [configLayer, catalog])
+const inference = makeInferenceStream()
+const threads = Layer.provide(layerThreads({ inferenceObserver: inference.observer }), [configLayer, catalog])
 
-const main = Layer.provide(serve(), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
+const main = Layer.provide(serve({ api: { inference } }), [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog])
 
 BunRuntime.runMain(Layer.launch(main))

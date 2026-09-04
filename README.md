@@ -59,6 +59,12 @@ Voyager opens at [localhost:4242](http://localhost:4242) by default. `tdg call` 
   <img alt="The voyager: a thread's log, one row per event" src="docs/assets/voyager-light.png">
 </picture>
 
+## Examples
+
+- [Quickstart](examples/quickstart/actor.ts): a small actor with one typed tool.
+- [RLM](examples/rlm/actor.ts): code execution, fetching, and subagents.
+- [React RLM chat](examples/react-rlm-chat/README.md): a deployable RLM server and React chat.
+
 ## Deploy
 
 Deploy the generated Worker with either platform CLI:

@@ -1,0 +1,15 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["esnext", "dom"],
+    "resolveJsonModule": true,
+    "types": ["@cloudflare/workers-types"],
+    "paths": {
+      "tardie/cloudflare": ["../../../platform/cloudflare/src/index.ts"],
+      "tardie/model/*": ["../../../platform/model/src/*.ts"],
+      "tardie/bun/*": ["../../../platform/bun/src/*.ts"],
+      "tardie/server/*": ["../../../apps/server/src/*.ts"]
+    }
+  },
+  "include": ["actor.ts", "server.ts", "worker.ts"]
+}

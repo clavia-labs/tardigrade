@@ -1,4 +1,5 @@
 import { Effect, Layer, ManagedRuntime, PubSub, Stream } from "effect"
+import { Database } from "bun:sqlite"
 import { mkdir, readdir } from "node:fs/promises"
 import { basename, dirname, join } from "node:path"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -133,6 +134,27 @@ const threadFromDatabase = (file: string): string | undefined => {
   }
 }
 
+// holdsCreatedThread reports whether a thread database has committed its identity event (host.test.ts, "startup ignores a thread database without creation").
+const holdsCreatedThread = (filename: string, actor: string, instance: string, thread: string): boolean => {
+  const database = new Database(filename, { readonly: true })
+  try {
+    const table = database.query<{ readonly present: number }, []>(
+      "SELECT 1 AS present FROM sqlite_master WHERE type = 'table' AND name = 'events'"
+    ).get()
+    if (table === null) return false
+    const row = database.query<{ readonly event: string }, []>("SELECT event FROM events ORDER BY seq LIMIT 1").get()
+    if (row === null) return false
+    const created = threadCreatedOf([JSON.parse(row.event) as Event])
+    if (created === undefined) throw new Error(`thread ${JSON.stringify(thread)} has no ThreadCreated first event`)
+    if (created.address.actor !== actor || created.address.instance !== instance || created.address.thread !== thread) {
+      throw new Error(`thread ${JSON.stringify(thread)} identity does not match its database`)
+    }
+    return true
+  } finally {
+    database.close()
+  }
+}
+
 const actorMigrations = SqliteMigrator.fromRecord({
   "0001_actor_identity": Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient
@@ -211,7 +233,12 @@ const openActorDirectory = async (
       await mkdir(directory, { recursive: true })
       for (const file of await readdir(directory)) {
         const thread = threadFromDatabase(basename(file))
-        if (thread !== undefined) await runtime.runPromise(sql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.orDie))
+        if (thread === undefined) continue
+        if (holdsCreatedThread(join(directory, file), actorName, actorInstance, thread)) {
+          await runtime.runPromise(sql`INSERT OR IGNORE INTO thread_directory (thread) VALUES (${thread})`.pipe(Effect.orDie))
+        } else {
+          await runtime.runPromise(sql`DELETE FROM thread_directory WHERE thread = ${thread}`.pipe(Effect.orDie))
+        }
       }
     }
     return { runtime, sql }

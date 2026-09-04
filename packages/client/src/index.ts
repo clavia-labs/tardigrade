@@ -22,6 +22,7 @@ export {
   type CatalogPageOptions,
   type EventsOptions,
   type FollowOptions,
+  type FollowInferenceOptions,
   type FollowThreadsOptions,
   type MethodCall,
   type ModelPageOptions
@@ -37,7 +38,7 @@ export {
   MODEL_CATALOG_UNPRICED_ORDERS,
   V1_PREFIX
 } from "./contract"
-export { actorThreadsStream, actorThreadsStreamUrl, CLOSED, stream, streamUrl, type ActorThreadsStreamOptions, type EventSourceLike, type Frame, type OpenEventSource, type StreamOptions } from "./stream"
+export { actorThreadsStream, actorThreadsStreamUrl, CLOSED, inferenceStream, inferenceStreamUrl, stream, streamUrl, type ActorThreadsStreamOptions, type EventSourceLike, type Frame, type InferenceStreamOptions, type OpenEventSource, type StreamOptions } from "./stream"
 
 export type {
   Accepted,
@@ -75,3 +76,4 @@ export type {
   TurnView
 } from "./contract"
 export type { Event } from "@clavia/tardigrade-core/log/event"
+export type { InferDelta } from "tardie"

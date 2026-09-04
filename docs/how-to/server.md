@@ -26,6 +26,7 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 | `POST /v1/threads/{id}/events` | Append an event, creating the thread if new |
 | `GET /v1/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
 | `GET /v1/threads/{id}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
+| `GET /v1/actors/{actor}/threads/{id}/inference/stream` | Follow transient model text produced after the connection opens |
 | `GET /v1/threads/{id}/projections/{projection}` | Read a projection the mounted actor declares |
 | `GET /v1/threads/{id}/tree` | Read the spawn family |
 | `GET /v1/actors` | List actors available to the host |
@@ -108,7 +109,9 @@ Catalog responses use cursor pagination. They include `revision`, `status`, `ref
 
 ## Live inference output
 
-An embedded Bun host can pass `inferenceObserver` to `layerThreads`. The observer receives normalized text after the provider adapter and before the final action is accumulated. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. The host chooses its WebSocket, SSE, Redis, or pub/sub transport.
+The server publishes normalized model text at `GET /v1/actors/{actor}/threads/{thread}/inference/stream`. The SSE connection carries output produced after it opens and does not replay. Each delta names the actor, instance, thread, turn, logical attempt, physical provider request, model, text block, and sequence. `makeActorClient().followInference(...)` opens the stream for a public thread ID.
+
+An embedded Bun host can pass `inferenceObserver` to `layerThreads` for another WebSocket, Redis, pub/sub, or telemetry transport.
 
 ```ts
 import { Effect } from "effect"
@@ -122,7 +125,7 @@ const threads = layerThreads({
 })
 ```
 
-The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the queue and timeout defaults.
+The observer queue drops new deltas when it is full. Each accepted delivery has the configured timeout. Each SSE connection also drops unread frames past `inferenceBufferCapacity`, which defaults to the exported `DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY`. Observer failure, timeout, and dropped deltas leave inference and the durable event log unchanged. A completed or failed turn remains authoritative. Replaying settled history emits no deltas. A recovery call that opens a new provider stream uses a fresh `physicalAttempt` under the same durable `logicalAttempt`. `DEFAULT_INFERENCE_OBSERVER_POLICY` exports the observer queue and timeout defaults.
 
 ## Clients
 

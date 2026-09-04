@@ -114,8 +114,9 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
 
 // treeOf builds the forest from ChildCreated edges in parent logs. Child ThreadCreated records confirm identity, while the parent log owns discovery.
 export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): ReadonlyArray<ThreadNode> => {
+  const createdLogs = new Map([...logs].filter(([, events]) => events.length > 0))
   const idsByAddress = new Map<string, string>()
-  for (const [id, events] of logs) {
+  for (const [id, events] of createdLogs) {
     const created = threadCreatedOf(events)
     if (created === undefined) throw new Error(`thread ${JSON.stringify(id)} has no ThreadCreated first event`)
     const address = formatThreadAddress(created.address)
@@ -123,7 +124,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
     idsByAddress.set(address, id)
   }
   const parents = new Map<string, string>()
-  for (const [parent, events] of logs) {
+  for (const [parent, events] of createdLogs) {
     for (const event of events) {
       if (event.type !== "ChildCreated") continue
       const address = (event as { readonly address?: unknown }).address
@@ -135,7 +136,7 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
     }
   }
   const order = (a: string, b: string): number =>
-    (firstAt(logs.get(a) ?? []) - firstAt(logs.get(b) ?? [])) || (a < b ? -1 : a > b ? 1 : 0)
+    (firstAt(createdLogs.get(a) ?? []) - firstAt(createdLogs.get(b) ?? [])) || (a < b ? -1 : a > b ? 1 : 0)
   const childrenOf = new Map<string, string[]>()
   for (const [child, parent] of parents) {
     const siblings = childrenOf.get(parent)
@@ -147,9 +148,9 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>): Readonl
   const walked = new Set<string>()
   const node = (id: string, parent?: string): ThreadNode => {
     walked.add(id)
-    const events = logs.get(id) ?? []
+    const events = createdLogs.get(id) ?? []
     const children = (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)
     return { ...summaryOf(id, events, parent), children: children.map((child) => node(child, id)) }
   }
-  return [...logs.keys()].filter((id) => !parents.has(id)).sort(order).map((id) => node(id))
+  return [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order).map((id) => node(id))
 }

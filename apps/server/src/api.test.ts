@@ -9,7 +9,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
-import { ACTOR_ARTIFACT_VERSION, Infer, type InferRequest } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, Infer, type InferDelta, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
 import { openStreams } from "./api"
@@ -21,6 +21,7 @@ import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import { layerGaugeResting } from "./driver-gauge"
 import type { TurnViewShape as TurnView } from "./actor"
 import type { ThreadSummary, ThreadNode } from "./projections"
+import { makeInferenceStream } from "./inference-stream"
 
 // Every case here boots a real server on an ephemeral port, so it competes with every other task in
 // a parallel gate run. Bun's default per-test budget is tuned for a pure function and times out
@@ -112,8 +113,9 @@ const catalog: ModelCatalog = {
   ]
 }
 const catalogLayer = layerModelCatalogValue(catalog)
+const inference = makeInferenceStream()
 
-const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true }), [
+const app = Layer.provideMerge(serve({ disableLogger: true, disableListenLog: true, api: { inference } }), [
   BunHttpServer.layer({ port: 0 }),
   config,
   catalogLayer,
@@ -784,6 +786,39 @@ describe("the event stream", () => {
     expect(read.live.some((frame) => JSON.parse(frame.data).id === "m2")).toBe(true)
     // And the disconnect took the poll with it.
     expect(read.closed).toBe(true)
+  })
+
+  test("inference text streams live for its actor instance and thread", async () => {
+    await serving(async (base) => {
+      const abort = new AbortController()
+      const responsePromise = fetch(`${base}/v1/actors/main/threads/alpha/inference/stream`, {
+        signal: abort.signal
+      })
+      await until("the inference subscriber", async () => inference.subscribers() === 1 ? true : undefined)
+      const delta: InferDelta = {
+        actor: "agent",
+        instance: "main",
+        thread: "ag.alpha",
+        turn: "turn-1",
+        logicalAttempt: "turn-1/infer/0",
+        physicalAttempt: "physical-1",
+        model: { provider: "openai", model_id: "gpt-mini" },
+        blockIndex: 0,
+        sequence: 0,
+        text: "hello"
+      }
+      await Effect.runPromise(inference.observer.onDelta({ ...delta, instance: "other" }))
+      await Effect.runPromise(inference.observer.onDelta(delta))
+      const response = await responsePromise
+      expect(response.status).toBe(200)
+      expect(response.headers.get("content-type")).toContain("text/event-stream")
+      const reader = response.body!.getReader()
+      const chunk = await reader.read()
+      expect(new TextDecoder().decode(chunk.value)).toContain(JSON.stringify(delta))
+      abort.abort()
+      await reader.cancel().catch(() => undefined)
+      await until("the inference subscriber to close", async () => inference.subscribers() === 0 ? true : undefined)
+    })
   })
 
   test("the actor threads stream starts with a snapshot and resumes with additions", async () => {
