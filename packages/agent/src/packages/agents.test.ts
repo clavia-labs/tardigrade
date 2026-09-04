@@ -469,6 +469,27 @@ describe("a child is named by its parent run and call", () => {
     expect(threads(sent)).toEqual(["ag.2:m1crash-1", "ag.2:m1crash-1"])
   })
 
+  test("a creation record without a turn still names its child", async () => {
+    // A record written before the turn field existed carries the address the old scheme minted;
+    // the replay reads it and never records a second child.
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"),
+      called("legacy-1", "m1"),
+      {
+        type: "ChildCreated",
+        callId: "legacy-1",
+        address: { actor: "mem", instance: "main", thread: "ag.legacy-1" },
+        depth: 1,
+        at: 3
+      } as Event
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("scout", "legacy-1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(threads(sent)).toEqual(["ag.legacy-1"])
+    expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(1)
+  })
+
   test("a background child inherits the owning turn deadline without a parent link", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
