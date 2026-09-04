@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.22.0](https://github.com/clavia-labs/tardigrade/compare/v0.21.0...v0.22.0) (2026-09-04)
+
+
+### Features
+
+* **cli:** generate Bun server ([#373](https://github.com/clavia-labs/tardigrade/issues/373)) ([0b41ee4](https://github.com/clavia-labs/tardigrade/commit/0b41ee44f0034785c83e6519e4619f2122559d1d))
+
+
+### Bug Fixes
+
+* **dev:** supply application layers ([#371](https://github.com/clavia-labs/tardigrade/issues/371)) ([d53a3f6](https://github.com/clavia-labs/tardigrade/commit/d53a3f6ce2099ee800ec458cb89af14c67ab37f0))
+
 ## [0.21.0](https://github.com/clavia-labs/tardigrade/compare/v0.20.0...v0.21.0) (2026-09-04)
 
 
