@@ -10,7 +10,7 @@ import { CheckIcon, CopyIcon, useCopy } from "./ui/copy"
 const REPOSITORY = "https://github.com/clavia-labs/tardigrade"
 const SHOW_HARNESS_CONTROLS = import.meta.env.VITE_SHOW_HARNESS_CONTROLS === "true"
 const INIT_COMMAND = "bunx tardie init"
-const STARTER_PROMPT = `Build a durable TypeScript agent with Tardigrade. Start from the quickstart at ${REPOSITORY}#quickstart and use the fewest components needed for the task.`
+const STARTER_PROMPT = "Build a durable TypeScript agent with Tardigrade. Start with the quickstart template at https://tardigrade.dev/docs/quickstart and add only the components required for the task."
 
 const eventProjections: Readonly<Record<string, { readonly effect?: string; readonly result: string; readonly target: string | undefined }>> = {
   "01": { effect: "model.generate(log)", result: "ToolCalled", target: "02" },
