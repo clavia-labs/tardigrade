@@ -84,11 +84,11 @@
     "apps/web": {
       "entry": [
         "src/**/*.test.ts",
-        "../../docs/site/**/*.mdx"
+        "../../docs/**/*.mdx"
       ],
       "project": [
         "src/**/*.{ts,tsx}!",
-        "../../docs/site/**/*.mdx"
+        "../../docs/**/*.mdx"
       ]
     }
   }

@@ -2,7 +2,7 @@
 
 This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, event log, and thread tree. D1 stores the public model catalog. The Worker bundle carries the model scope resolved for its deployment. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
-Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/how-to/celld.md) covers the generated manifest and node configuration.
+Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/platforms/celld.mdx) covers the generated manifest and node configuration.
 
 Cloudflare assigns background tasks to the `host` by default because a Durable Object remains active while ongoing work exists. Hosts that end background work with the request set `backgroundTaskOwner: "request"` or `TARDIGRADE_BACKGROUND_TASK_OWNER=request`. Request ownership registers each reconciliation drive with `waitUntil`. The generated Celld manifest sets this variable.
 

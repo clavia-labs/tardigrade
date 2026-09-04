@@ -28,7 +28,7 @@ const docSource = (): Plugin => ({
 })
 
 export default defineConfig({
-  resolve: { alias: { "@docs": fileURLToPath(new URL("../../docs/site", import.meta.url)) } },
+  resolve: { alias: { "@docs": fileURLToPath(new URL("../../docs", import.meta.url)) } },
   plugins: [
     docSource(),
     {

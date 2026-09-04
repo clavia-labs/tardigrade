@@ -1,4 +1,4 @@
-// The agent from docs/quickstart.md, complete and runnable: bun run examples/quickstart.ts
+// The agent model introduced in docs/getting-started/quickstart.mdx, complete and runnable: bun run examples/quickstart.ts
 // The types and reactors are the ones the page builds. The pieces the page assumes, a
 // runtime, a toolbox, a model, a summarizer, are filled in with the smallest thing that
 // runs: the model is scripted and the tools are canned, so the run needs no API key. Swap

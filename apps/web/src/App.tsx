@@ -657,7 +657,7 @@ const Deployments = (): ReactElement => (
         <p>Run the same actor on your own cloud with Celld or deploy it to Cloudflare.</p>
       </div>
       <div className="provider-grid">
-        <a className="provider" href={`${REPOSITORY}/blob/main/docs/how-to/celld.md`} rel="noreferrer" target="_blank">
+        <a className="provider" href={`${REPOSITORY}/blob/main/docs/platforms/celld.mdx`} rel="noreferrer" target="_blank">
           <span className="provider-icon provider-icon-celld"><CelldMark /></span>
           <span className="provider-name">Celld</span>
         </a>
