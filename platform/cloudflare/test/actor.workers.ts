@@ -606,6 +606,37 @@ describe("cloudflare actor", () => {
       .toEqual(["first-secret", "second-secret"])
   })
 
+  test("opaque child addresses execute and round-trip through the public API", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    await directory.createThread("ag.opaque-parent")
+    const parent = { actor: "echo", instance: "main", thread: "ag.opaque-parent" }
+    const target = { ...parent, thread: "thread_opaque-child" }
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "opaque-brief", text: "hello", at: 1 },
+      lineage: { parent, depth: 1 }
+    })
+    const tree = await directory.threadTree()
+    expect(tree.find((node) => node.id === "opaque-parent")?.children).toEqual([
+      expect.objectContaining({ id: target.thread, parent: "opaque-parent", depth: 1 })
+    ])
+    const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${target.thread}/methods/echo/calls/opaque-call`, {
+      method: "PUT", headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: "hello opaque" })
+    })
+    expect(accepted.status).toBe(202)
+    expect(await methodState(target.thread, "opaque-call")).toEqual({
+      status: "completed", output: `workers:${target.thread}:1:hello opaque`
+    })
+    const read = await SELF.fetch(`http://test/v1/actors/main/threads/${target.thread}/events`, { headers: authorization })
+    expect(read.status).toBe(200)
+    const rows = await read.json() as Array<{ readonly event: { readonly type: string; readonly address?: unknown } }>
+    expect(rows[0]?.event.address).toEqual(target)
+    const native = (env as Env).THREADS.getByName(JSON.stringify(["echo", "main", target.thread]))
+    expect((await native.events(target.thread))[0]).toMatchObject({ address: target })
+  })
+
   test("actor supervisor creates a child after durable acceptance", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
@@ -668,7 +699,7 @@ describe("cloudflare actor", () => {
         children: []
       }]
     })
-    const childEvents = await threadStub("directory-child").events("directory-child")
+    const childEvents = await threadStub("directory-child").events("ag.directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     const actorEvents = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
@@ -713,7 +744,7 @@ describe("cloudflare actor", () => {
       event: { type: "MessageReceived", id: "re-delivery-second", text: "again", at: 3 },
       lineage
     })
-    const childEvents = await threadStub("re-delivery-child").events("re-delivery-child")
+    const childEvents = await threadStub("re-delivery-child").events("ag.re-delivery-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
     let childStatus = await threadStub("re-delivery-child").status()
     for (let attempt = 0; attempt < 100; attempt++) {
@@ -767,7 +798,7 @@ describe("cloudflare actor", () => {
     const deadlineAt = Date.now() - 1
     const stub = threadStub("timeout")
     await createThread("timeout")
-    await stub.append("timeout", {
+    await stub.append("ag.timeout", {
       type: "CallDispatched",
       id: "overdue-1",
       method: "inspect",
@@ -778,10 +809,10 @@ describe("cloudflare actor", () => {
       at: deadlineAt - 10
     })
 
-    let events = await stub.events("timeout")
+    let events = await stub.events("ag.timeout")
     for (let attempt = 0; attempt < 100 && !events.some((event) => event.type === "CallTimedOut"); attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 10))
-      events = await stub.events("timeout")
+      events = await stub.events("ag.timeout")
     }
 
     expect(events).toContainEqual(expect.objectContaining({

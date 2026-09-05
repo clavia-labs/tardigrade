@@ -46,6 +46,7 @@ import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
+import { resolveThreadId, withLegacyThreadIds } from "./thread-compat"
 
 const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelAdapterRegistry> => {
   const protocols = new Set(Object.values(config.model.providers).map((provider) => provider.protocol))
@@ -71,23 +72,6 @@ const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelA
   for (const protocol of protocols) adapters.resolve(protocol)
   return adapters
 }
-
-// The durable host, the assembly it runs, and the loop that drives it, behind one service. The
-// routes speak thread ids; the thread a host knows lives here and nowhere else, so a route can never
-// name a thread and the store can never see an id.
-
-// THREAD_PREFIX is the id-to-thread map (apps-server-spec.md, "Resources"). A thread outside it belongs
-// to something other than a thread and never appears in a listing. The prefix stays `ag.` while the
-// API's noun is the thread, because the thread is where the agent assembly runs, and that assembly
-// mints its own child threads under the same prefix (packages/agent/src/packages/agents.ts, `sibling`). Renaming
-// it would rename addresses a spawn already wrote into a durable log.
-export const THREAD_PREFIX = "ag."
-
-export const threadOf = (id: string): string => `${THREAD_PREFIX}${id}`
-
-// idOf is threadOf's inverse, undefined for a thread this server does not own.
-export const idOf = (thread: string): string | undefined =>
-  thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
 
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
@@ -427,7 +411,7 @@ const runtimeOf = async <R>(
     database,
     actorName: summary.name,
     actorInstance,
-    actorFor: (candidate) => (idOf(candidate) === undefined ? undefined : actor),
+    actorFor: () => actor,
     layersFor: environmentFor,
     providers,
     driver: { maxConcurrentThreads },
@@ -468,17 +452,17 @@ const runtimeOf = async <R>(
     )
   )
   await host.recover()
-  const read = (id: string) => Effect.promise(() => host.read(threadOf(id)))
+  const read = (id: string) => Effect.promise(() => host.read(id))
   const readPage = (id: string, mark: number, limit: number) =>
-    Effect.promise(() => host.readPage(threadOf(id), mark, limit))
+    Effect.promise(() => host.readPage(id, mark, limit))
   const awaitHead = (id: string, mark: number) =>
-    Effect.promise((signal) => host.awaitHead(threadOf(id), mark, signal))
+    Effect.promise((signal) => host.awaitHead(id, mark, signal))
   const awaitActorHead = (mark: number) => Effect.promise((signal) => host.awaitActorHead(mark, signal))
   const commitRoot = (id: string, event: Event) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
       const stamped = event.at === undefined ? { ...event, at } : event
-      yield* Effect.promise(() => host.commitRoot(host.self(threadOf(id)), stamped))
+      yield* Effect.promise(() => host.commitRoot(host.self(id), stamped))
     })
   const commit = (delivery: Envelope) =>
     Effect.gen(function*() {
@@ -489,7 +473,7 @@ const runtimeOf = async <R>(
         ...delivery,
         link: {
           source: delivery.link.source,
-          target: { actor: summary.name, instance: actorInstance, thread: threadOf(delivery.link.target.thread) }
+          target: { actor: summary.name, instance: actorInstance, thread: delivery.link.target.thread }
         },
         event: stamped
       }
@@ -512,18 +496,17 @@ const runtimeOf = async <R>(
     awaitActorHead,
     list: Effect.gen(function*() {
       const threads = yield* Effect.promise(() => host.threads())
-      const ids = threads.flatMap((candidate) => {
-        const id = idOf(candidate)
-        return id === undefined ? [] : [id]
-      })
-      return yield* Effect.forEach(ids, (id) => Effect.map(read(id), (events) => ({ id, events })))
+      return yield* Effect.forEach(threads, (id) => Effect.map(read(id), (events) => ({ id, events })))
     }),
     settled
   }
   return {
     summary,
-    threads,
-    commit,
+    threads: withLegacyThreadIds(threads),
+    commit: (delivery) => Effect.flatMap(
+      resolveThreadId(delivery.link.target.thread, (thread) => Effect.map(threads.actorThread(thread), (record) => record !== undefined)),
+      (thread) => commit({ ...delivery, link: { ...delivery.link, target: { ...delivery.link.target, thread } } })
+    ),
     schedule: Effect.sync(() => {
       request()
     }),

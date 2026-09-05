@@ -26,6 +26,7 @@ import {
 } from "@clavia/tardigrade-server/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-server/catalog-availability"
 import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-server/catalog-page"
+import { publicThreadId, resolveThreadId } from "@clavia/tardigrade-server/thread-compat"
 import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-server/config"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
@@ -98,11 +99,6 @@ export interface Env {
   readonly TARDIGRADE_SANDBOX_TRANSPORT?: string
 }
 
-const THREAD_PREFIX = "ag."
-const actorThreadOf = (thread: string): string => thread.startsWith(THREAD_PREFIX) ? thread : `${THREAD_PREFIX}${thread}`
-const threadIdOf = (thread: string): string | undefined =>
-  thread.startsWith(THREAD_PREFIX) ? thread.slice(THREAD_PREFIX.length) : undefined
-
 export interface ActorThreadNode {
   readonly id: string
   readonly parent?: string
@@ -150,9 +146,9 @@ const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<Act
   const children = new Map<string, string[]>()
   const roots: string[] = []
   for (const row of rows) {
-    const id = threadIdOf(row.thread)
-    if (id === undefined) continue
-    const parent = row.parentThread === undefined ? undefined : threadIdOf(row.parentThread)
+    const id = publicThreadId(row.thread)
+    if (entries.has(id)) throw new Error(`ambiguous public thread id ${JSON.stringify(id)}: multiple stored addresses exist`)
+    const parent = row.parentThread === undefined ? undefined : publicThreadId(row.parentThread)
     entries.set(id, {
       id,
       ...(parent === undefined ? {} : { parent }),
@@ -987,9 +983,8 @@ export class ThreadDO extends DurableObject<Env> {
 
   async append(thread: string, event: Event): Promise<boolean> {
     if (!this.initialized()) return false
-    const actorThread = actorThreadOf(thread)
     const ownedThread = this.thread()
-    if (ownedThread !== actorThread) {
+    if (ownedThread !== thread) {
       throw new Error("request thread does not match the Thread DO identity")
     }
     const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
@@ -1035,9 +1030,8 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   async events(thread: string): Promise<ReadonlyArray<Event>> {
-    const actorThread = actorThreadOf(thread)
     const ownedThread = this.thread()
-    if (ownedThread !== actorThread) {
+    if (ownedThread !== thread) {
       throw new Error("request thread does not match the Thread DO identity")
     }
     return (await this.host()).read()
@@ -1047,9 +1041,8 @@ export class ThreadDO extends DurableObject<Env> {
     thread: string,
     query: { readonly after: number; readonly limit: number; readonly types?: ReadonlyArray<string> }
   ): Promise<ReadonlyArray<{ readonly seq: number; readonly event: Event }>> {
-    const actorThread = actorThreadOf(thread)
     const ownedThread = this.thread()
-    if (ownedThread !== actorThread) {
+    if (ownedThread !== thread) {
       throw new Error("request thread does not match the Thread DO identity")
     }
     if (!Number.isSafeInteger(query.after) || query.after < 0) throw new Error("event query after must be a non-negative integer")
@@ -1101,21 +1094,23 @@ const actorStub = async (
   return stub
 }
 
+const resolvePublicThread = (env: Env, name: string, instance: string, id: string): Promise<string> =>
+  Effect.runPromise(resolveThreadId(id, (thread) => Effect.promise(() =>
+    env.THREADS.getByName(threadObjectNameOf(name, instance, thread)).exists(name, instance, thread)
+  )))
+
 const threadStub = async (
   env: Env,
   name: string,
   instance: string,
   thread: string
-): Promise<DurableObjectStub<ThreadDO> | undefined> => {
+): Promise<{ readonly stub: DurableObjectStub<ThreadDO>; readonly thread: string } | undefined> => {
   if (!deployed(name)) return undefined
-  const targetThread = actorThreadOf(thread)
+  const targetThread = await resolvePublicThread(env, name, instance, thread)
   const stub = env.THREADS.getByName(threadObjectNameOf(name, instance, targetThread))
   if (!(await stub.exists(name, instance, targetThread))) return undefined
-  return stub
+  return { stub, thread: targetThread }
 }
-
-const addressedThreadStub = (env: Env, name: string, instance: string, thread: string): DurableObjectStub<ThreadDO> =>
-  env.THREADS.getByName(threadObjectNameOf(name, instance, actorThreadOf(thread)))
 
 class WorkerEnv extends Context.Service<WorkerEnv, Env>()("tardigrade/cloudflare/WorkerEnv") {}
 
@@ -1284,7 +1279,8 @@ const routes = [
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const directory = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       if (directory === undefined) return json({ error: "unknown actor" }, 404)
-      yield* Effect.promise(() => directory.createThread(actorThreadOf(thread)))
+      const address = yield* Effect.promise(() => resolvePublicThread(env, deployedActor, instance, thread))
+      yield* Effect.promise(() => directory.createThread(address))
       return json({ actor: instance, thread })
     })
   )),
@@ -1301,7 +1297,7 @@ const routes = [
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
-      const events = yield* Effect.promise(() => stub.events(thread)).pipe(
+      const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
       const existing = events.map(actorInvocationContextFrom).find((context) =>
@@ -1327,7 +1323,7 @@ const routes = [
       }
       const decoded = methodEventOf(method, { ...context, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const appended = yield* Effect.promise(() => stub.append(thread, invokedEventOf(context, decoded.event)))
+      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, invokedEventOf(context, decoded.event)))
       if (!appended) return json({ error: "unknown thread" }, 404)
       return json({ actor: instance, thread, method: methodName, call, deadlineAt }, 202)
     })
@@ -1345,7 +1341,7 @@ const routes = [
       if (method === undefined) return json({ error: "unknown method" }, 404)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
-      const events = yield* Effect.promise(() => stub.events(thread)).pipe(
+      const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
       const epoch = method.currentEpoch(events, call)
@@ -1367,7 +1363,7 @@ const routes = [
       if (method.cancellation === undefined) return json({ error: "method does not declare cancellation" }, 400)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
-      const events = yield* Effect.promise(() => stub.events(thread)).pipe(
+      const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
       const epoch = method.currentEpoch(events, call)
@@ -1385,7 +1381,7 @@ const routes = [
       const payload = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as { readonly reason?: unknown }
       if (payload.reason !== undefined && typeof payload.reason !== "string") return json({ error: "reason must be a string" }, 400)
       const at = yield* Clock.currentTimeMillis
-      const appended = yield* Effect.promise(() => stub.append(thread, cancellationRequested({
+      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, cancellationRequested({
         request: cancellationRequestIdOf(invocation),
         invocation,
         cause: "requested",
@@ -1413,12 +1409,13 @@ const routes = [
       const instance = params.id ?? ""
       const thread = params.thread ?? ""
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
-      const stub = addressedThreadStub(env, actor, instance, thread)
+      const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const event = (yield* request.json.pipe(Effect.orElseSucceed(() => undefined))) as Event | undefined
       if (typeof event !== "object" || event === null || typeof event.type !== "string" || event.type === "") {
         return json({ error: "event type is required" }, 400)
       }
-      const appended = yield* Effect.promise(() => stub.append(thread, event))
+      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, event))
       if (!appended) return json({ error: "unknown thread" }, 404)
       return json({ actor: instance, thread }, 202)
     })
@@ -1439,7 +1436,7 @@ const routes = [
       if (!Number.isSafeInteger(limit) || limit < 0) return json({ error: "limit must be a non-negative integer" }, 400)
       const types = url.searchParams.get("types")?.split(",").map((type) => type.trim()).filter((type) => type.length > 0)
       return yield* Effect.tryPromise({
-        try: () => stub.queryEvents(thread, { after, limit, ...(types === undefined ? {} : { types }) }),
+        try: () => stub.stub.queryEvents(stub.thread, { after, limit, ...(types === undefined ? {} : { types }) }),
         catch: (cause) => cause instanceof Error ? cause.message : String(cause)
       }).pipe(Effect.match({
         onFailure: (error) => json({ error }, 500),

@@ -15,7 +15,7 @@ import { Infer, NativeOutputSupport, type InferRequest } from "./inference/contr
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
-import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { threadCreated, threadCreatedOf, type ChildCreated } from "@clavia/tardigrade-core/thread"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
 import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
@@ -59,7 +59,7 @@ const hosted = (
   const host: Host = createHost<TestR>({
     actorName: "mem",
     actorInstance,
-    actorFor: (thread: string) => (thread.startsWith("ag.") ? assembled : undefined),
+    actorFor: () => assembled,
     layersFor
   })
   if (log.length > 0) host.seed(ROOT_THREAD, log)
@@ -230,12 +230,14 @@ describe("an assembled agent", () => {
       depth: 0,
       at: 1
     })
-    expect(mind.host.read(ROOT_THREAD).filter((event) => event.type === "ChildCreated")).toEqual([
-      expect.objectContaining({ callId: "t1.0", turn: "run-0", address: { actor: "mem", instance: "main", thread: "ag.5:run-0t1.0" }, depth: 1 }),
-      expect.objectContaining({ callId: "t1.1", turn: "run-0", address: { actor: "mem", instance: "main", thread: "ag.5:run-0t1.1" }, depth: 1 })
+    const records = mind.host.read(ROOT_THREAD).filter((event): event is ChildCreated => event.type === "ChildCreated")
+    expect(records).toMatchObject([
+      { callId: "t1.0", turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 },
+      { callId: "t1.1", turn: "run-0", address: { actor: "mem", instance: "main" }, depth: 1 }
     ])
     // The graph existed: two child threads, each with a served turn.
-    const children = ["ag.5:run-0t1.0", "ag.5:run-0t1.1"].map((thread) => mind.host.read(thread))
+    expect(new Set(records.map((record) => record.address.thread)).size).toBe(2)
+    const children = records.map((record) => mind.host.read(record.address.thread))
     for (const log of children) {
       expect(threadCreatedOf(log)).toMatchObject({
         address: { actor: "mem" },
@@ -268,8 +270,9 @@ describe("an assembled agent", () => {
       `${request.identity.actor}:${request.identity.instance}:${request.identity.thread}`
     ))).toEqual(new Set([
       "mem:main:ag.root",
-      "mem:main:ag.5:run-0t1.0",
-      "mem:main:ag.5:run-0t1.1"
+      ...mind.host.read(ROOT_THREAD)
+        .filter((event): event is ChildCreated => event.type === "ChildCreated")
+        .map(({ address }) => `${address.actor}:${address.instance}:${address.thread}`)
     ]))
     for (const { request, key } of seen) {
       expect(key?.startsWith(`${request.identity.turn}/infer/`)).toBe(true)
@@ -325,8 +328,11 @@ describe("an assembled agent", () => {
     expect(again.output).toBe('"4,6"')
     // The second turn ran its own execution and spawned its own children.
     expect(mind.host.read(ROOT_THREAD).filter((e) => e.type === "CodeSettled")).toHaveLength(2)
-    for (const thread of ["ag.5:run-1t2.0", "ag.5:run-1t2.1"]) {
-      expect(mind.host.read(thread).some((e) => e.type === "TurnCompleted")).toBe(true)
+    const children = mind.host.read(ROOT_THREAD)
+      .filter((event): event is ChildCreated => event.type === "ChildCreated" && event.turn === "run-1")
+    expect(children).toHaveLength(2)
+    for (const child of children) {
+      expect(mind.host.read(child.address.thread).some((e) => e.type === "TurnCompleted")).toBe(true)
     }
   })
 

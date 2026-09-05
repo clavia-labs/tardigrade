@@ -68,7 +68,7 @@ export const actorScenario = (
     )
   const host: Host = createHost<TestR>({
     actorName: "mem",
-    actorFor: (thread: string) => thread.startsWith("ag.") ? assembled : undefined,
+    actorFor: () => assembled,
     layersFor,
     keyOf: assembled.keyOf,
     ...(options.pick === undefined ? {} : { pick: options.pick }),
