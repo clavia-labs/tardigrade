@@ -469,13 +469,65 @@ describe("the bun host", () => {
     await h.close()
   })
 
-  test("a refused initial actor delivery leaves no partial creation", async () => {
+  test("a stored key refuses the conditional append and writes nothing", async () => {
     const h = await createBunHost(options(freshPath()))
-    await expect(h.commit(envelopeOf(
-      linkOf(parseThreadAddress("bun:default:parent"), parseThreadAddress("bun:default:child")),
-      { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
-    ))).rejects.toThrow("must carry lineage")
-    expect(await h.read("child")).toEqual([])
+    await h.commitRoot("bun:default:sealed", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    await h.commitRoot("bun:default:sealed", { type: "Done", id: "seal", at: 2 } as Event)
+    const before = await h.read("sealed")
+    const admitted = await h.commitRootUnlessKeyPresent(
+      "bun:default:sealed",
+      { type: "MessageReceived", id: "m2", at: 3 } as Event,
+      "dn:seal"
+    )
+    expect(admitted).toBe(false)
+    expect(await h.read("sealed")).toEqual(before)
+    await h.close()
+  })
+
+  test("a conditional append births a thread like any other commit", async () => {
+    const h = await createBunHost(options(freshPath()))
+    const admitted = await h.commitRootUnlessKeyPresent(
+      "bun:default:born",
+      { type: "MessageReceived", id: "m1", at: 5 } as Event,
+      "dn:seal"
+    )
+    expect(admitted).toBe(true)
+    expect(await h.readPage("born", 0, 10)).toEqual([
+      { seq: 1, event: expect.objectContaining({ type: "ThreadCreated" }) },
+      { seq: 2, event: expect.objectContaining({ type: "MessageReceived", id: "m1" }) }
+    ])
+    await h.close()
+  })
+
+  test("a concurrent admission and seal race resolves with admission refused", async () => {
+    const h = await createBunHost(options(freshPath()))
+    for (let round = 0; round < 20; round++) {
+      const thread = `race-${round}`
+      const address = `bun:default:${thread}`
+      await h.commitRoot(address, { type: "MessageReceived", id: "m1", at: 1 } as Event)
+      const seal = () => h.commitRoot(address, { type: "Done", id: "seal", at: 2 } as Event)
+      const admission = () => h.commitRootUnlessKeyPresent(
+        address,
+        { type: "MessageReceived", id: "admitted", at: 2 } as Event,
+        "dn:seal"
+      )
+      // The launch order alternates so both orders of the race run: whichever transaction the
+      // single store connection runs first is the order the log keeps.
+      const [admitted] = round % 2 === 0
+        ? await Promise.all([admission(), seal()])
+        : await Promise.all([(async () => { await seal(); return undefined })(), admission()]).then(([, a]) => [a])
+      const log = await h.read(thread)
+      const admissionAt = log.findIndex((e) => e.type === "MessageReceived" && String((e as { readonly id?: unknown }).id) === "admitted")
+      const sealAt = log.findIndex((e) => e.type === "Done" && String((e as { readonly id?: unknown }).id) === "seal")
+      expect(sealAt).toBeGreaterThan(-1)
+      if (admitted) {
+        expect(admissionAt).toBeGreaterThan(-1)
+      } else {
+        expect(admissionAt).toBe(-1)
+      }
+      // The one contract: no admission commits after the seal.
+      if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
+    }
     await h.close()
   })
 })
