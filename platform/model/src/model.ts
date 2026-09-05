@@ -4,7 +4,6 @@ import {
   type ModelMessage,
   type ProcessorResult,
   type StreamChunk,
-  type TokenUsage,
   type Tool,
   type ToolCall
 } from "@tanstack/ai"
@@ -27,7 +26,7 @@ import {
   fallbackSystemFor
 } from "./output"
 import type { OutputMode } from "tardie/output/contract"
-import { sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
+import { sumUsage, usageFrom, usageWithAccountingError, validateUsageAdapterSelection, type Usage } from "tardie/inference/usage"
 import type {
   ModelAdapterRegistry,
   ModelConfig,
@@ -329,10 +328,8 @@ interface Wire {
   readonly refusal?: string
 }
 
-// captureWire reads the last `usage` object (and provenance) off an SSE (or JSON) body. The
-// OpenAI-compat adapter normalizes tokens and drops extra keys; a gateway's billed dollar
-// lives on those keys (packages/agent/src/inference/usage.ts, costNumber).
-const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
+// captureWire preserves usage reports in response order, including partial streams (model.test.ts, "partial usage survives a stream failure").
+const captureWire = async (reader: BodyReader, protocol: ModelConfig["protocol"]): Promise<Wire | undefined> => {
   const chunks: Uint8Array[] = []
   try {
     for (;;) {
@@ -352,9 +349,15 @@ const captureWire = async (reader: BodyReader): Promise<Wire | undefined> => {
     return undefined
   }
   const wireOf = (parsed: { usage?: unknown; provider?: unknown; model?: unknown }): Wire => {
+    const envelope = parsed as { type?: string; response?: { usage?: unknown }; message?: { usage?: unknown } }
+    const usage = protocol === "openai-responses"
+      ? envelope.response?.usage ?? parsed.usage
+      : protocol === "anthropic-messages" && envelope.type === "message_start"
+        ? envelope.message?.usage
+        : parsed.usage
     const refusal = refusalOf(parsed as never)
     return {
-      ...(parsed.usage === undefined || parsed.usage === null ? {} : { usage: parsed.usage }),
+      ...(usage === undefined || usage === null ? {} : { usage }),
       ...(typeof parsed.provider === "string" ? { provider: parsed.provider } : {}),
       ...(typeof parsed.model === "string" ? { model: parsed.model } : {}),
       ...(refusal === undefined ? {} : { refusal })
@@ -393,6 +396,7 @@ const withCapture = (
   base: FetchImpl | undefined,
   key: string | undefined,
   sink: { promise: Promise<Wire | undefined>; reader?: BodyReader },
+  protocol: ModelConfig["protocol"],
   signal?: AbortSignal
 ): FetchImpl => {
   const inner = withKey(base, key) ?? ((input, init) => globalThis.fetch(input, init))
@@ -409,23 +413,10 @@ const withCapture = (
     const [live, copy] = res.body.tee()
     const reader = copy.getReader()
     sink.reader = reader
-    sink.promise = captureWire(reader).catch(() => undefined)
+    sink.promise = captureWire(reader, protocol).catch(() => undefined)
     return new Response(live, { status: res.status, statusText: res.statusText, headers: res.headers })
   }
 }
-
-const tapTokens = (
-  stream: AsyncIterable<StreamChunk>,
-  into: { tokens?: TokenUsage }
-): AsyncIterable<StreamChunk> => ({
-  async *[Symbol.asyncIterator]() {
-    for await (const chunk of stream) {
-      const tokens = (chunk as { usage?: TokenUsage }).usage
-      if (tokens !== undefined) into.tokens = tokens
-      yield chunk
-    }
-  }
-})
 
 interface DeltaDelivery {
   readonly offer: (delta: InferDelta) => Effect.Effect<boolean>
@@ -538,24 +529,8 @@ const carriesEndpoint = (e: unknown): boolean => endpointOn(e) !== undefined
 const failed = <E extends Error>(error: E, usage: Usage | undefined, endpoint: AttemptEndpoint): E =>
   Object.assign(error, { usage, endpoint })
 
-const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined => {
-  if (parts.length === 0) return undefined
-  const summed = sumUsage(parts)
-  if (!missed) return summed
-  return {
-    promptTokens: summed.promptTokens,
-    completionTokens: summed.completionTokens,
-    ...(summed.totalTokens === undefined ? {} : { totalTokens: summed.totalTokens }),
-    ...(summed.cachedPromptTokens === undefined ? {} : { cachedPromptTokens: summed.cachedPromptTokens }),
-    ...(summed.cacheWritePromptTokens === undefined
-      ? {}
-      : { cacheWritePromptTokens: summed.cacheWritePromptTokens }),
-    ...(summed.reasoningTokens === undefined ? {} : { reasoningTokens: summed.reasoningTokens }),
-    ...(summed.provider === undefined ? {} : { provider: summed.provider }),
-    ...(summed.model === undefined ? {} : { model: summed.model }),
-    ...(summed.providerReports === undefined ? {} : { providerReports: summed.providerReports })
-  }
-}
+const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined =>
+  parts.length === 0 ? undefined : sumUsage(missed ? [...parts, {}] : parts)
 
 // infer provides NativeOutputSupport in its layer type only for a statically known native capability that accepts tools.
 export const infer = <const C extends ModelConfig>(
@@ -564,6 +539,10 @@ export const infer = <const C extends ModelConfig>(
   options: ModelInferOptions = {}
 ): Layer.Layer<Infer | NativeOutputProvided<C>> => {
   assertSupportedBun()
+  if ("pricing" in config) {
+    throw new TypeError("ModelConfig.pricing is unsupported; call priced inside usageAdapter")
+  }
+  validateUsageAdapterSelection(config.usageAdapter)
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }
@@ -609,12 +588,11 @@ export const infer = <const C extends ModelConfig>(
     const sink: { promise: Promise<Wire | undefined>; reader?: BodyReader } = {
       promise: Promise.resolve(undefined)
     }
-    const held: { tokens?: TokenUsage } = {}
     const attemptController = new AbortController()
     const attemptSignal = signal === undefined
       ? attemptController.signal
       : AbortSignal.any([signal, attemptController.signal])
-    const fetcher = withCapture(config.fetch, keyForRung, sink, attemptSignal)
+    const fetcher = withCapture(config.fetch, keyForRung, sink, config.protocol, attemptSignal)
     const fallbackSystem = fallbackSystemFor(req.output, mode)
     const attempt = selectedAdapter.start({
       config,
@@ -637,25 +615,34 @@ export const infer = <const C extends ModelConfig>(
       // the true split; the configured stamp covers a wire that stays silent.
       const reportedUsage = attempt.reportedUsage?.()
       const providerMetrics = wire?.usageReports ?? (reportedUsage === undefined ? [] : [reportedUsage])
-      const usage = usageFrom(
-        [...providerMetrics, held.tokens],
-        config.pricing,
-        {
-          ...stampOf(config),
-          ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
-          ...(wire?.model === undefined ? {} : { model: wire.model })
-        },
-        providerMetrics.length === 0
-          ? undefined
-          : providerMetrics.length === 1
-            ? providerMetrics[0]
-            : providerMetrics
-      )
-      return { usage, endpoint: endpointOf(config, wire), wire }
+      const endpoint = endpointOf(config, wire)
+      if (providerMetrics.length === 0) return { usage: undefined, endpoint, wire }
+      const report = {
+        ...stampOf(config),
+        ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
+        ...(wire?.model === undefined ? {} : { model: wire.model }),
+        providerSpecific: providerMetrics.length === 1 ? providerMetrics[0] : providerMetrics
+      }
+      try {
+        return { usage: usageFrom(report, config.usageAdapter), endpoint, wire }
+      } catch (error) {
+        // Interpretation is accounting, so a malformed report cannot erase an otherwise valid
+        // model answer. The raw report and typed error stay on the consequence for a later
+        // coverage projection to mark incomplete (model.test.ts, "an adapter error preserves the
+        // model output and raw evidence").
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          usage: {
+            ...usageWithAccountingError(report, config.usageAdapter, message)
+          },
+          endpoint,
+          wire
+        }
+      }
     }
     try {
       const normalized = observed(
-        tapTokens(bounded(attempt.stream, bounds), held),
+        bounded(attempt.stream, bounds),
         delivery,
         identity,
         key,
@@ -780,7 +767,7 @@ export const infer = <const C extends ModelConfig>(
               const billed = served(withSpend(action, spentOf(parts, missed)), endpoint)
               return req.output === undefined ? billed : { ...billed, mode }
             }
-            remember(usage, isTruncated(e) || usage !== undefined)
+            remember(usage, true)
             if (isTruncated(e)) {
               if (rung + 1 < ladder.length) {
                 rung += 1
@@ -856,8 +843,12 @@ export const infer = <const C extends ModelConfig>(
         if (action.usage.provider !== undefined) {
           yield* Effect.annotateCurrentSpan("gen_ai.provider.name", action.usage.provider)
         }
-        yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
-        yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+        if (action.usage.promptTokens !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.input_tokens", action.usage.promptTokens)
+        }
+        if (action.usage.completionTokens !== undefined) {
+          yield* Effect.annotateCurrentSpan("gen_ai.usage.output_tokens", action.usage.completionTokens)
+        }
         if (action.usage.cachedPromptTokens !== undefined) {
           yield* Effect.annotateCurrentSpan("gen_ai.usage.cache_read.input_tokens", action.usage.cachedPromptTokens)
         }

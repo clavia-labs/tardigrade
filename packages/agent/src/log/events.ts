@@ -42,15 +42,18 @@ export const OutputPolicy = Schema.Struct({
   fallback: Schema.optional(Schema.Unknown)
 })
 
-// ToolCalled is the ask: the turn calls a tool. `callId` correlates the return to this call.
+// ToolCalled is the consequence of one native inference invocation. `attemptKey` correlates the
+// consequence to its ModelCalled mark when the binding recorded it (usage.test.ts, "native
+// consequences match by attempt key").
 export const ToolCalled = Schema.Struct({
   type: Schema.Literal("ToolCalled"),
   callId: Schema.String,
   name: Schema.String,
   arguments: Schema.Unknown,
-  // The spend of the attempt this call answered (packages/agent/src/inference/usage.ts). An empty object
-  // is an attempt with unreported spend; an absent field is an event no attempt produced.
+  // The spend of the attempt this call answered (packages/agent/src/inference/usage.ts). An empty
+  // object is an attempt with unreported spend, and an absent field is an unresolved receipt.
   usage: Schema.optional(Schema.Unknown),
+  attemptKey: Schema.optional(Schema.String),
   endpoint: Schema.optional(Endpoint),
   // A tool call may be one response in a turn that declares final output. Its effective mode is
   // recorded here so replay does not decide how this attempt ran from a current capability
@@ -455,6 +458,7 @@ export const toolCalled = (
     readonly callId: string
     readonly name: string
     readonly arguments?: unknown
+    readonly attemptKey?: string
     readonly mode?: unknown
   } & EpochStamp
 ): Event => ({ type: "ToolCalled", ...fields }) as Event

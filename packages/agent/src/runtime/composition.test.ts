@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Ref } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -28,6 +28,7 @@ import { requestPermissionMethod } from "../actor/permission"
 import { receive } from "./turn"
 import { Infer, NativeOutputSupport, type InferRequest } from "../inference/contract"
 import { selectedModelOf } from "../inference/machine"
+import { coverageIn } from "../inference/usage"
 
 const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-model" }, allow: "*" } } as const
 
@@ -197,6 +198,28 @@ describe("infer component", () => {
     expect(events.filter((event) => event.type === "ModelCalled").map((event) =>
       (event as { readonly model?: unknown }).model
     )).toEqual([recorded, recorded])
+  })
+
+  test("a native ModelCalled left by a crashed machine is incomplete coverage", async () => {
+    const entered = await Effect.runPromise(Deferred.make<void>())
+    const mind = Layer.succeed(Infer, {
+      react: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+    })
+    const agent = assembled(infer([nativeOutput], TEST_MODEL))
+    const events = await run(
+      Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(settleActor(agent))
+        yield* Deferred.await(entered)
+        yield* Fiber.interrupt(fiber)
+        return yield* readLog
+      }),
+      Layer.mergeAll(memoryLog([{ type: "MessageReceived", id: "m1", text: "crash", at: 1 }]), mind, noRouter, KeyValueStore.layerMemory)
+    )
+    expect(events.some((event) => event.type === "ModelCalled")).toBe(true)
+    expect(coverageIn(events, "m1")).toMatchObject({
+      status: "incomplete",
+      missing: [{ reason: "missing-consequence" }]
+    })
   })
 
   test("a historical model string durably fails its turn", async () => {

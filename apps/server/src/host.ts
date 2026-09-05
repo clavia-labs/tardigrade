@@ -299,8 +299,7 @@ const layerInferFrom = (
         provider: selected.provider,
         ...(selected.region === undefined ? {} : { region: selected.region }),
         contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
+        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens })
       }, adapters, observer === undefined ? {} : { observer })
       return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(binding))
     })

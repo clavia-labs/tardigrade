@@ -405,8 +405,7 @@ const modelLayer = (
         provider: request.model.provider,
         ...(selectedModel.provider.region === undefined ? {} : { region: selectedModel.provider.region }),
         contextWindowTokens: selectedModel.contextWindowTokens,
-        ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
-        ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
+        ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens })
       }, adapters, observer === undefined ? {} : { observer })
       return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(selected))
     }

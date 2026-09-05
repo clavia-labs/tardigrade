@@ -193,6 +193,7 @@ const consequenceOf = (action: Action, ctx: Consequence): Event => {
         callId: action.callId,
         name: action.name,
         arguments: action.arguments,
+        attemptKey: ctx.attempt,
         usage,
         ...(action.mode === undefined ? {} : { mode: action.mode }),
         ...stampOf(action),
