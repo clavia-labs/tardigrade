@@ -398,8 +398,9 @@ export type Action =
 // toolCallIdentity keys one tool call by its turn and call id: a provider call id is unique only
 // within one model turn, so the durable identity is the pair, and an unstamped event keeps its
 // bare call id so historical logs remain readable (tools.test.ts, "reused call ids across turns
-// key distinct tool returns"). Budget decisions stay keyed by their bare call id: a budget
-// request id names one request on one thread, and approval decisions are outside this identity.
+// key distinct tool returns"). Budget decisions stay keyed by their bare call id: the escalation
+// surface is out of scope here, and its own read still requires the decision's turn
+// (packages/agent/src/component/budget.ts).
 export const toolCallIdentity = (turn: unknown, callId: unknown): string =>
   turn === undefined ? String(callId) : JSON.stringify([String(turn), String(callId)])
 
