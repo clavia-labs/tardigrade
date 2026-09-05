@@ -2,7 +2,7 @@ import { Clock, Effect } from "effect"
 import { effect } from "@clavia/tardigrade-core/runtime"
 import { component, legacyComponent } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { toolReturned } from "../log/events"
+import { toolCallIdentity, toolReturned } from "../log/events"
 import type { ToolSpec } from "../inference/request"
 import type { AgentComponent, AgentTool } from "../runtime/composition"
 
@@ -32,7 +32,7 @@ export const tool = <R = never>(
             const stamp = call.turn === undefined ? {} : { turn: call.turn }
             return [
               effect({
-                key: `tr:${call.callId}`,
+                key: `tr:${toolCallIdentity(call.turn, call.callId)}`,
                 ...(call.turn === undefined
                   ? {}
                   : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),

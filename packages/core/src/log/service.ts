@@ -13,11 +13,17 @@ export interface AppendResult {
   readonly head: number
 }
 
+// ConditionalAppendResult reports whether a keyed condition refused the batch (platform/bun/src/host.test.ts, "a concurrent admission and seal race resolves with admission refused").
+export interface ConditionalAppendResult extends AppendResult {
+  readonly blocked: boolean
+}
+
 /**
  * ThreadEventStore is the durable boundary for one thread's event log.
  *
  *   ThreadEventStore
  *     ├── append(events)       commit an atomic event batch
+ *     ├── appendUnlessKeyPresent(events, key)  commit the batch unless the key is already stored
  *     ├── read                 read the complete log
  *     ├── head                 read the latest durable sequence
  *     ├── readFrom(mark)       read the event tail after a mark
@@ -25,6 +31,10 @@ export interface AppendResult {
  */
 export interface ThreadEventStore {
   readonly append: (events: ReadonlyArray<Event>) => Effect.Effect<AppendResult>
+  readonly appendUnlessKeyPresent: (
+    events: ReadonlyArray<Event>,
+    key: string
+  ) => Effect.Effect<ConditionalAppendResult>
   readonly read: Effect.Effect<ReadonlyArray<Event>>
   readonly head: Effect.Effect<number>
   readonly readFrom: (mark: number) => Effect.Effect<ReadonlyArray<Event>>

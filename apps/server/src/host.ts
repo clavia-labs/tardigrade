@@ -101,6 +101,7 @@ export interface ActorThreads {
   readonly methods: ActorMethods
   readonly sqlite: string
   readonly append: (id: string, event: Event) => Effect.Effect<void>
+  readonly appendUnlessKeyPresent: (id: string, event: Event, key: string) => Effect.Effect<boolean>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
@@ -129,6 +130,12 @@ export class Threads extends Context.Service<
     readonly ensure: (id: string) => Effect.Effect<ActorThreads>
     readonly instance: (id: string) => Effect.Effect<ActorThreads | undefined>
     readonly append: (actor: string, thread: string, event: Event) => Effect.Effect<void>
+    readonly appendUnlessKeyPresent: (
+      actor: string,
+      thread: string,
+      event: Event,
+      key: string
+    ) => Effect.Effect<boolean>
     readonly events: (actor: string, thread: string) => Effect.Effect<ReadonlyArray<Event>>
     readonly list: (actor: string) => ActorThreads["list"]
     readonly settled: (actor: string) => Effect.Effect<void>
@@ -480,6 +487,14 @@ const runtimeOf = async <R>(
       const stamped = event.at === undefined ? { ...event, at } : event
       yield* Effect.promise(() => host.commitRoot(host.self(threadOf(id)), stamped))
     })
+  const commitRootUnlessKeyPresent = (id: string, event: Event, key: string) =>
+    Effect.gen(function*() {
+      const at = yield* Clock.currentTimeMillis
+      const stamped = event.at === undefined ? { ...event, at } : event
+      return yield* Effect.promise(() =>
+        host.commitRootUnlessKeyPresent(host.self(threadOf(id)), stamped, key)
+      )
+    })
   const commit = (delivery: Envelope) =>
     Effect.gen(function*() {
       const at = yield* Clock.currentTimeMillis
@@ -502,6 +517,12 @@ const runtimeOf = async <R>(
       Effect.gen(function*() {
         yield* commitRoot(id, event)
         request()
+      }),
+    appendUnlessKeyPresent: (id, event, key) =>
+      Effect.gen(function*() {
+        const appended = yield* commitRootUnlessKeyPresent(id, event, key)
+        if (appended) request()
+        return appended
       }),
     events: read,
     eventsPage: readPage,
@@ -626,6 +647,11 @@ export const layerActorThreads = <R>(
       ensure: (id) => Effect.promise(() => open(id)).pipe(Effect.map((runtime) => runtime.threads)),
       instance: (id) => Effect.succeed(runtimes.get(id)?.threads),
       append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => open(actor)), (runtime) => runtime.threads.append(thread, event)),
+      appendUnlessKeyPresent: (actor, thread, event, key) =>
+        Effect.flatMap(
+          Effect.promise(() => open(actor)),
+          (runtime) => runtime.threads.appendUnlessKeyPresent(thread, event, key)
+        ),
       events: (actor, thread) => runtimes.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
       list: (actor) => runtimes.get(actor)?.threads.list ?? Effect.succeed([]),
       settled: (actor) => runtimes.get(actor)?.threads.settled ?? Effect.void
@@ -888,6 +914,11 @@ const make = (options: ThreadsOptions) =>
       ensure: (id) => Effect.promise(() => openInstance(id)).pipe(Effect.map((runtime) => runtime.threads)),
       instance: (id) => Effect.succeed(instances.get(id)?.threads),
       append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => openInstance(actor)), (runtime) => runtime.threads.append(thread, event)),
+      appendUnlessKeyPresent: (actor, thread, event, key) =>
+        Effect.flatMap(
+          Effect.promise(() => openInstance(actor)),
+          (runtime) => runtime.threads.appendUnlessKeyPresent(thread, event, key)
+        ),
       events: (actor, thread) => instances.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
       list: (actor) => instances.get(actor)?.threads.list ?? Effect.succeed([]),
       settled: (actor) => instances.get(actor)?.threads.settled ?? Effect.void,

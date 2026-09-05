@@ -178,7 +178,7 @@ describe("the compaction pass", () => {
     const suffix = suffixOf(log)
     expect(suffix[0]!.type).toBe("ToolCalled")
     const callId = String((suffix[0] as { callId?: unknown }).callId)
-    expect(checkpointOf(log).keepFrom).toBe(`c:${callId}`)
+    expect(checkpointOf(log).keepFrom).toBe(`c:${JSON.stringify(["m0", callId])}`)
     expect(suffix.some((e) => e.type === "ToolReturned" && String((e as { callId?: unknown }).callId) === callId)).toBe(
       true
     )

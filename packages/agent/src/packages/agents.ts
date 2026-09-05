@@ -41,20 +41,12 @@ import {
   type ModelPolicyOverride
 } from "../inference/access"
 
-// agentsPackage provides model catalog discovery and ad-hoc agents. `agents.providers` and
-// `agents.models` search the available providers and models. `agents.run({text})` runs a fresh agent to
-// quiescence and returns its terminal; `agents.run({text, background: true})` delivers the brief
-// and returns a pending handle, and `agents.result({id})` awaits that handle's reply later.
+// agentsPackage provides model discovery and ad-hoc agents. A background run returns an opaque
+// handle which names the exact parent-turn/call spawn; agents.result awaits that handle.
 //
-// Every call is its own agent. A call id is unique only within its parent turn, so the child's
-// native thread names the pair of both identifiers, and a Promise.all of five runs is five
-// agents by construction. A persistent named colleague is a later explicit feature, never an
-// accident of naming.
-//
-// Durability costs nothing here: both modes are package calls, so the recorded pair replays a
-// committed run and re-delivers a crashed dispatch. The child's address is a pure function of
-// the parent run and the call, and a replay reads the recorded ChildCreated, so a re-driven
-// dispatch reaches the same child and is absorbed as a duplicate.
+// Every call is its own agent. A call id is unique only within its parent turn, so the child
+// method identity and thread name use the injective pair. Background changes response waiting,
+// not ownership: explicit and deadline cancellation still cascade through its durable link.
 //
 // The package is a value any consumer mounts: its host privileges are services, not constructor
 // arguments. `Router` sends, `Self` names the calling thread, and `EventLog` supplies its durable
@@ -260,17 +252,18 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// childThreadId names a child after its parent run and call id. Length-prefixing keeps the pair
-// injective even when either identifier has punctuation, so two turns reusing one call id name
-// two children (agents.test.ts, "reused call ids across turns address distinct children").
-const childThreadId = (parentRunId: string, callId: string): string =>
+// childInvocationId names one child method invocation and thread after its parent run and call.
+// Length-prefixing keeps the pair injective even when either identifier has punctuation, so two
+// turns reusing one call id name two children (agents.test.ts, "reused call ids across turns
+// address distinct children").
+export const childInvocationId = (parentRunId: string, callId: string): string =>
   `${parentRunId.length}:${parentRunId}${callId}`
 
 // sibling is the default address: the child inherits the parent's actor instance and a thread
 // name derived from the parent run and call. Thread placement remains a separate host decision
 // (agents.test.ts, "the default address is the host's own sibling").
 const sibling = (parentRunId: string, callId: string, self: ThreadAddress): ThreadAddress =>
-  threadAddressOf(self.actor, self.instance, `ag.${childThreadId(parentRunId, callId)}`)
+  threadAddressOf(self.actor, self.instance, `ag.${childInvocationId(parentRunId, callId)}`)
 
 // parentRunOf resolves the run a package call serves: its turn id and execution epoch. A call
 // outside any run has no child to name, so the dispatch dies rather than guessing.
@@ -401,12 +394,12 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
         output: modelPageSchema
       },
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId, handle }; retain the opaque handle and pass it unchanged to result({handle}).`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
-            background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
+            background: { type: "boolean", description: "true: return { callId, handle } at once; pass handle unchanged to result()" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             model: {
               type: "object",
@@ -429,16 +422,17 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           properties: {
             ...foregroundBoundarySchema.properties,
             dispatched: { type: "boolean" },
-            callId: { type: "string" }
+            callId: { type: "string" },
+            handle: { type: "string" }
           }
         }
       },
       result: {
-        description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. An answer comes back parsed when the child accepted a contract with that call.",
+        description: "Await the exact run represented by the opaque handle returned from a background run.",
         input: {
           type: "object",
-          properties: { id: { type: "string", description: "the callId a background run answered" } },
-          required: ["id"]
+          properties: { handle: { type: "string", description: "opaque handle returned by a background run" } },
+          required: ["handle"]
         },
         output: {
           type: "object",
@@ -506,6 +500,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if (parentRun === undefined) {
             return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
           }
+          const invocationId = childInvocationId(parentRun.turn, ctx.callId)
           const child = childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
           if ("error" in child) return child
           const { lineage, recorded: recordedChild, target } = child
@@ -552,12 +547,13 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          // The owning run links a foreground child and bounds every child with its deadline:
-          // a background child is not linked, but it still answers the turn that fired it
-          // (agents.test.ts, "a background child inherits the owning turn deadline without a
-          // parent link").
+          // A background child has no response parent, but remains linked to the owning
+          // invocation so explicit and deadline cancellation cascade through the whole family.
           const owner = { method: "message", id: parentRun.turn, epoch: parentRun.epoch }
-          const parent = a?.background === true ? undefined : owner
+          const responseParent = a?.background === true ? undefined : owner
+          const spawningMessage = events.find(
+            (event) => event.type === "MessageReceived" && event.id === parentRun.turn
+          )
           const parentDeadline = events.find((event) => {
             const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
             return context?.invocation !== undefined &&
@@ -566,14 +562,14 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               context.invocation.epoch === owner.epoch
           }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
           const childContext: ActorInvocationContext = {
-            invocation: { method: "message", id: ctx.callId, epoch: 0 },
-            ...(parent === undefined ? {} : { parent }),
+            invocation: { method: "message", id: invocationId, epoch: 0 },
+            ...(responseParent === undefined ? {} : { parent: responseParent }),
             ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
           }
           const dispatch = (at: number) => Effect.gen(function* () {
-            const linked = parent === undefined
-              ? []
-              : [invocationLinked({ parent, child: childContext, target: formatThreadAddress(target), lineage, at })]
+            const linked = [
+              invocationLinked({ parent: owner, child: childContext, target: formatThreadAddress(target), lineage, at })
+            ]
             if (recordedChild === undefined || linked.length > 0) {
               yield* log.append([
                 ...(recordedChild === undefined ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn)] : []),
@@ -582,8 +578,9 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             }
             yield* router.send(methodEnvelopeOf(linkOf(source, target), childContext, {
               type: "MessageReceived",
-              id: ctx.callId,
+              id: invocationId,
               text,
+              input: spawningMessage?.input,
               ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
               ...(selectedModel === undefined ? {} : { model: selectedModel }),
               models,
@@ -601,19 +598,17 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             // no code body awaits it, and its terminal is collected later by agents.result.
             const at = yield* Clock.currentTimeMillis
             yield* dispatch(at)
-            return { dispatched: true, callId: ctx.callId }
+            return { dispatched: true, callId: ctx.callId, handle: invocationId }
           }
           // Foreground runs park on their terminal response. A replay reads that response
           // before redelivering the same brief.
-          const already = yield* awaitedBoundary(ctx.callId)
+          const already = yield* awaitedBoundary(invocationId)
           if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
           yield* dispatch(at)
-          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
+          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(invocationId, 0) })
         }),
-      // Await a run already fired in the background: no delivery, the same reply-or-park read the
-      // plain foreground branch of `run` takes. `id` is the `callId` an earlier `background: true`
-      // run answered.
+      // Await a background run by its opaque, turn-scoped child invocation identity.
       //
       // The method response carries the contract accepted with the original call. A later argument
       // cannot reinterpret prose that happens to be JSON as a shape nobody asked the child for
@@ -621,13 +616,13 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
       //
       result: (args, ctx) =>
         Effect.gen(function* () {
-          const a = args as { id?: unknown } | undefined
-          const id = String(a?.id ?? "")
-          if (id === "") return { error: "agents.result needs { id }" }
-          const reply = yield* awaitedBoundary(id)
+          const a = args as { handle?: unknown } | undefined
+          const handle = String(a?.handle ?? "")
+          if (handle === "") return { error: "agents.result needs { handle } from a background run" }
+          const reply = yield* awaitedBoundary(handle)
           if (reply?.contractError !== undefined) return { error: reply.contractError }
-          if (reply !== undefined) return shape(answerOf(reply), id, reply.contract)
-          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(id, 0) })
+          if (reply !== undefined) return shape(answerOf(reply), handle, reply.contract)
+          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(handle, 0) })
         })
     }
   })
@@ -707,7 +702,7 @@ const contractOf = (
 }
 
 // awaitedBoundaryOf projects one child response from the caller's private log. A cancelled response remains structured and settles the wait (agents.test.ts, "a cancelled reply settles the run as a failed answer", "a cancelled reply with no reason settles as a bare cancelled error"). A delivered method response is a ResponseReceived carrying the round-zero boundary id (response.test.ts, "returns a terminal through the accepted call link").
-const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
+export const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
   const response = events.find(
     (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
   ) as ResponseReceived | undefined

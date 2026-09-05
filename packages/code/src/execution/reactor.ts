@@ -24,7 +24,7 @@ import {
   type SpillPolicy
 } from "../storage/store"
 import { callId as callIdOf } from "./ids"
-import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
+import { blockedOn, codeEventIdentity, codeSettled, packageCalled, packageReturned } from "./events"
 
 // The code reactor: durable execution of one body (tla/runtime/Reconcile.tla is the model;
 // ./projections.ts derives the owed work). An attempt re-runs the body from the top; committed
@@ -148,8 +148,11 @@ const executeRecorded = <R = never>(
               // instead (tla/runtime/Replay.tla: Trusting fails RightAnswer, Guarded holds it and
               // refusal is drift's only reachable outcome).
               const sent = events.find(
-                (e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === callId
-              ) as { name?: unknown; arguments?: unknown } | undefined
+                (event) =>
+                  event.type === "PackageCalled" &&
+                  turnOf(event) === turn &&
+                  event.callId === callId
+              )
               if (sent !== undefined) {
                 const askedName = `${pkg.name}.${method}`
                 const drift =
@@ -168,7 +171,10 @@ const executeRecorded = <R = never>(
                 }
               }
               const recorded = events.find(
-                (e) => e.type === "PackageReturned" && (e as { callId?: unknown }).callId === callId
+                (event) =>
+                  event.type === "PackageReturned" &&
+                  turnOf(event) === turn &&
+                  event.callId === callId
               )
               if (recorded) {
                 const r = recorded as { result?: unknown; tmp?: unknown }
@@ -186,7 +192,10 @@ const executeRecorded = <R = never>(
               // here: this attempt still asks the method again, because only the method knows
               // whether the answer has landed, but the log never grows a second send for it.
               const alreadySent = events.some(
-                (e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === callId
+                (event) =>
+                  event.type === "PackageCalled" &&
+                  turnOf(event) === turn &&
+                  event.callId === callId
               )
               if (!alreadySent) {
                 const askedAt = yield* Clock.currentTimeMillis
@@ -270,11 +279,12 @@ const executeRecorded = <R = never>(
               const answeredAt = yield* Clock.currentTimeMillis
               const json = JSON.stringify(attempt.result ?? null)
               if (json.length > spill.spillBytes) {
-                yield* Effect.orDie(spillTo(callId, json))
+                const ref = codeEventIdentity(turn, callId)
+                yield* Effect.orDie(spillTo(ref, json))
                 yield* log.append([
                   packageReturned({
                     callId,
-                    ...spillPointer(callId, json.length, json.slice(0, spill.previewChars), spill.note),
+                    ...spillPointer(ref, json.length, json.slice(0, spill.previewChars), spill.note),
                     ...stamp,
                     at: answeredAt
                   })
@@ -342,7 +352,7 @@ const executeRecorded = <R = never>(
       // carries the pointer, so no result can nuke the turn context.
       const json = JSON.stringify(outcome.result ?? null)
       if (json.length > spill.spillBytes) {
-        const ref = `${execId}.result`
+        const ref = `${codeEventIdentity(turn, execId)}.result`
         yield* Effect.orDie(spillTo(ref, json))
         return [
           codeSettled({
@@ -370,13 +380,13 @@ export interface CodeProjectionState {
   readonly turns: TurnProjectionState
   readonly dispatches: ReadonlyMap<string, Event>
   readonly settled: ReadonlySet<string>
-  readonly calls: ReadonlyMap<string, { readonly execId: string; readonly awaiting?: string }>
+  readonly calls: ReadonlyMap<string, { readonly execIdentity: string; readonly awaiting?: string }>
   readonly returned: ReadonlySet<string>
   readonly replies: ReadonlySet<string>
 }
 
 // codeReactorFor derives the executable head as one transition: the settle is the record
-// (`cs:<execId>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
+// (`cs:<identity>` through codeKeys), one attempt is the act. `workOwed` is the readiness gate:
 // a blocked head (open BlockedOn calls, no awaited reply home) derives nothing, so the thread
 // rests honestly and a landing reply re-derives it. An attempt that parks mid-act returns
 // BlockedOn evidence instead of the settle; the reconciler reads that as blocked, never wedged.
@@ -422,12 +432,17 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
     note: policy.spill?.note ?? (workspace === undefined ? BARE_SPILL_NOTE : WORKSPACE_SPILL_NOTE)
   })
   const callPolicy = packageCallPolicyOf(policy.call)
-  const ownerOf = (dispatches: ReadonlyMap<string, Event>, callId: string): string => {
-    let owner = ""
-    for (const execId of dispatches.keys()) {
-      if (callId.startsWith(`${execId}.`) && execId.length > owner.length) owner = execId
+  const ownerOf = (dispatches: ReadonlyMap<string, Event>, callId: string, turn: string | undefined): string => {
+    let owner: { readonly identity: string; readonly execId: string } | undefined
+    for (const [identity, dispatch] of dispatches) {
+      const execId = String(dispatch.execId ?? "")
+      if (
+        turnOf(dispatch) === turn &&
+        callId.startsWith(`${execId}.`) &&
+        (owner === undefined || execId.length > owner.execId.length)
+      ) owner = { identity, execId }
     }
-    return owner
+    return owner?.identity ?? ""
   }
   return transitionProjection({
     initial: (): CodeProjectionState => ({
@@ -445,22 +460,28 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
       const returned = new Set(state.returned)
       const replies = new Set(state.replies)
       const value = event as { readonly execId?: unknown; readonly callId?: unknown; readonly awaiting?: unknown; readonly id?: unknown; readonly at?: unknown }
+      const turn = turnOf(event)
       if (event.type === "CodeDispatched") {
-        const execId = String(value.execId ?? "")
-        const prior = dispatches.get(execId) as { readonly at?: unknown } | undefined
-        if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) dispatches.set(execId, event)
+        const identity = codeEventIdentity(turn, value.execId)
+        const prior = dispatches.get(identity)
+        if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) {
+          dispatches.set(identity, event)
+        }
       }
-      if (event.type === "CodeSettled") settled.add(String(value.execId ?? ""))
+      if (event.type === "CodeSettled") settled.add(codeEventIdentity(turn, value.execId))
       if (event.type === "PackageCalled") {
-        const callId = String(value.callId ?? "")
-        calls.set(callId, { execId: ownerOf(dispatches, callId) })
+        const identity = codeEventIdentity(turn, value.callId)
+        calls.set(identity, { execIdentity: ownerOf(dispatches, String(value.callId ?? ""), turn) })
       }
       if (event.type === "BlockedOn") {
-        const callId = String(value.callId ?? "")
-        const prior = calls.get(callId)
-        calls.set(callId, { execId: prior?.execId ?? ownerOf(dispatches, callId), awaiting: String(value.awaiting ?? "") })
+        const identity = codeEventIdentity(turn, value.callId)
+        const prior = calls.get(identity)
+        calls.set(identity, {
+          execIdentity: prior?.execIdentity ?? ownerOf(dispatches, String(value.callId ?? ""), turn),
+          awaiting: String(value.awaiting ?? "")
+        })
       }
-      if (event.type === "PackageReturned") returned.add(String(value.callId ?? ""))
+      if (event.type === "PackageReturned") returned.add(codeEventIdentity(turn, value.callId))
       if (event.type === "MessageReceived" || event.type === "ResponseReceived") replies.add(String(value.id ?? ""))
       return {
         turns: reduceTurnProjection(state.turns, event),
@@ -476,38 +497,44 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
         const time = Number((left as { readonly at?: unknown }).at ?? 0) - Number((right as { readonly at?: unknown }).at ?? 0)
         return time !== 0 ? time : leftId < rightId ? -1 : 1
       })
-      let selected: { readonly execId: string; readonly dispatch: Event } | undefined
-      for (const [execId, dispatch] of ordered) {
+      let selected: {
+        readonly identity: string
+        readonly execId: string
+        readonly dispatch: Event
+      } | undefined
+      for (const [identity, dispatch] of ordered) {
         const turn = turnOf(dispatch)
-        if (state.settled.has(execId) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
-        const owned = [...state.calls.entries()].filter(([, call]) => call.execId === execId)
-        const open = owned.filter(([callId, call]) => call.awaiting !== undefined && !state.returned.has(callId))
+        if (state.settled.has(identity) || (turn !== undefined && turnTerminalFrom(state.turns, turn) !== undefined)) continue
+        const owned = [...state.calls.entries()].filter(([, call]) => call.execIdentity === identity)
+        const open = owned.filter(([callIdentity, call]) =>
+          call.awaiting !== undefined && !state.returned.has(callIdentity)
+        )
         const home = open.some(([, call]) => state.replies.has(call.awaiting!))
-        if (owned.length === 0 || home || open.length === 0) selected = { execId, dispatch }
+        const execId = String(dispatch.execId ?? "")
+        if (owned.length === 0 || home || open.length === 0) selected = { identity, execId, dispatch }
         break
       }
       if (selected === undefined) return []
-      const owed = { execId: selected.execId }
-      const dispatch = selected.dispatch
-    const d = dispatch as { code?: unknown; at?: unknown }
-    const turn = turnOf(dispatch)
-    const epoch = eventEpochOf(dispatch)
+      const owed = selected
+      const d = owed.dispatch as { code?: unknown; at?: unknown }
+      const turn = turnOf(owed.dispatch)
+      const epoch = eventEpochOf(owed.dispatch)
       return [
-      effect<
-        { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
-        KeyValueStore.KeyValueStore | R
-      >({
-        key: `cs:${owed.execId}`,
-        ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
-        input: {
-          execId: owed.execId,
-          code: String(d.code ?? ""),
-          turn,
-          epoch,
-          at: typeof d.at === "number" ? d.at : undefined
-        },
-        act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
-      })
+        effect<
+          { execId: string; code: string; turn: string | undefined; epoch: number; at: number | undefined },
+          KeyValueStore.KeyValueStore | R
+        >({
+          key: `cs:${owed.identity}`,
+          ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
+          input: {
+            execId: owed.execId,
+            code: String(d.code ?? ""),
+            turn,
+            epoch,
+            at: typeof d.at === "number" ? d.at : undefined
+          },
+          act: (input) => executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
+        })
       ]
     }
   })

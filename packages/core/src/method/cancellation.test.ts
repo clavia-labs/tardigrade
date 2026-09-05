@@ -13,6 +13,7 @@ import {
   cancellationRequestedOf,
   cancellationDispositionOf,
   cancellationRequestIdOf,
+  actorCancellationProjection,
   cancellationTransitionsOf,
   cancellationMethodFor
 } from "./cancellation"
@@ -301,6 +302,156 @@ describe("actor cancellation", () => {
       keyOf,
       7
     )?.map((item) => item.key)).toEqual(["cancelled:parent"])
+  })
+
+  test("a response from one target does not settle a reused call id on another target", () => {
+    // The same method and call id can name two calls on two threads; settlement is scoped by the
+    // target the response names, so cancelling the parent still reaches the sibling call.
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const link = (target: string, at: number): Event => ({
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "shared", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target,
+      at
+    } as Event)
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+
+    const events: ReadonlyArray<Event> = [
+      started,
+      link("worker:main:one", 1),
+      link("worker:main:two", 2),
+      request,
+      {
+        type: "ResponseReceived",
+        id: "one.done",
+        method: "work",
+        call: "shared",
+        status: "completed",
+        output: "done",
+        from: "worker:main:one",
+        at: 3
+      } as Event
+    ]
+    const transitions = cancellationTransitionsOf(events, { work }, [], keyOf)
+    expect(transitions?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/shared/0`])
+    expect(cancellationTransitionsOf([
+      ...events,
+      {
+        type: "ResponseReceived",
+        id: "two.done",
+        method: "work",
+        call: "shared",
+        status: "completed",
+        output: "done",
+        from: "worker:main:two",
+        at: 4
+      } as Event
+    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:parent"])
+  })
+
+  test("cancellation continues after the owner's terminal while a linked child is unsettled", () => {
+    // The owner answered, but its family is still open: the request stays pending and keeps
+    // reaching the child instead of dying with the owner's own terminal.
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const link = {
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "child", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target: "worker:main:child",
+      at: 1
+    } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const terminal = { type: "WorkCancelled", id: "parent", at: 3 } as Event
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+    const events: ReadonlyArray<Event> = [started, link, request, terminal]
+
+    expect(cancellationTransitionsOf(events, { work }, [], keyOf)?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/child/0`])
+    const projection = actorCancellationProjection({ work }, [], keyOf)!
+    const projected = events.reduce(projection.step, projection.initial())
+    expect(projection.output(projected).residuals?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/child/0`])
+  })
+
+  test("the owner terminal derives only while the owner is still running", () => {
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const terminal = { type: "WorkCancelled", id: "parent", at: 3 } as Event
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+    const projection = actorCancellationProjection({ work }, [], keyOf)!
+    const projected = [started, request, terminal].reduce(projection.step, projection.initial())
+    expect(projection.output(projected).residuals).toBeUndefined()
+  })
+
+  test("a settled owner stays pending on the control method while a linked child is unsettled", () => {
+    // The `$cancel` call answers pending until the family drains, not until its own target
+    // settles: a caller reading the status must not see a completed family with work open.
+    const cancel = cancellationMethodFor({ work })
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const link = {
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "child", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target: "worker:main:child",
+      at: 2
+    } as Event
+    const request = cancel.event({
+      invocation: { method: "$cancel", id: "x1", epoch: 0 },
+      input: { invocation: { method: "work", id: "parent", epoch: 0 } },
+      at: 3
+    })
+    const settled = { type: "WorkCompleted", id: "parent", at: 4 } as Event
+    const childAnswered = {
+      type: "ResponseReceived",
+      id: "child.done",
+      method: "work",
+      call: "child",
+      status: "completed",
+      output: "done",
+      from: "worker:main:child",
+      at: 5
+    } as Event
+    const caller = { method: "$cancel", id: "x1", epoch: 0 }
+
+    expect(cancel.state([started, link, request, settled], caller)).toEqual({ status: "pending" })
+    expect(cancel.state([started, link, request, settled, childAnswered], caller))
+      .toEqual({ status: "completed", output: { cancelled: false } })
   })
 
   test("core ignores unsupported and nonexistent cancellation targets", () => {

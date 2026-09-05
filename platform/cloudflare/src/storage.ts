@@ -3,7 +3,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteMigrator } from "@effect/sql-sqlite-do"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { AppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
+import type { AppendResult, ConditionalAppendResult, ThreadEventStore } from "@clavia/tardigrade-core/log"
 
 export interface EventRow {
   readonly seq: number
@@ -184,16 +184,39 @@ export class CloudflareEventStore implements ThreadEventStore {
   }
 
   append(events: ReadonlyArray<Event>): Effect.Effect<AppendResult> {
-    if (events.length === 0) return Effect.map(this.head, (head) => ({ appended: 0, head }))
+    return this.appendBatch(events).pipe(
+      Effect.map(({ appended, head }) => ({ appended, head }))
+    )
+  }
+
+  // appendUnlessKeyPresent commits the batch only when no stored event carries the key. The presence
+  // check runs inside the append transaction, so a seal and an admission racing on the same key
+  // resolve as one order (platform/bun/src/host.test.ts, "a concurrent admission and seal race
+  // resolves with admission refused").
+  appendUnlessKeyPresent(
+    events: ReadonlyArray<Event>,
+    key: string
+  ): Effect.Effect<ConditionalAppendResult> {
+    return this.appendBatch(events, key)
+  }
+
+  private appendBatch(
+    events: ReadonlyArray<Event>,
+    blockedKey?: string
+  ): Effect.Effect<ConditionalAppendResult> {
     const sql = this.sql
     const keyOf = this.keyOf
     const codec = this.codec
     const indexKey = this.indexKey
+    if (events.length === 0) {
+      return Effect.map(this.head, (head) => ({ blocked: false, appended: 0, head }))
+    }
     return Effect.gen(function* () {
       const indexedKeys = yield* Effect.forEach(events, (event) => {
         const eventKey = keyOf(event)
         return eventKey === undefined ? Effect.void : indexKey(eventKey)
       })
+      const indexedBlockedKey = blockedKey === undefined ? undefined : yield* indexKey(blockedKey)
       const encoded = yield* codec.encode(events)
       if (encoded.length !== events.length) {
         return yield* Effect.die(new Error("event codec encode must preserve batch length"))
@@ -204,6 +227,13 @@ export class CloudflareEventStore implements ThreadEventStore {
             "SELECT COALESCE(MAX(seq), 0) AS head FROM events"
           )
           const currentHead = Number(heads[0]?.head ?? 0)
+          if (indexedBlockedKey !== undefined) {
+            const blockers = yield* sql.unsafe<{ readonly present: number }>(
+              "SELECT 1 AS present FROM events WHERE key = ? LIMIT 1",
+              [indexedBlockedKey]
+            )
+            if (blockers.length > 0) return { blocked: true, appended: 0, head: currentHead }
+          }
           let seq = currentHead + 1
           let appended = 0
           for (let index = 0; index < encoded.length; index++) {
@@ -223,7 +253,7 @@ export class CloudflareEventStore implements ThreadEventStore {
             seq += 1
             appended += 1
           }
-          return { appended, head: seq - 1 }
+          return { blocked: false, appended, head: seq - 1 }
         })
       )
     }).pipe(Effect.orDie)

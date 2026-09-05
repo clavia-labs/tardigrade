@@ -6,7 +6,7 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
+import { EventLog, eventLogFrom, type AppendResult, type ConditionalAppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
 import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
 import type { Transport } from "@clavia/tardigrade-core/communication/transport"
@@ -100,6 +100,7 @@ export interface BunHost {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly threads: () => Promise<ReadonlyArray<string>>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
+  readonly commitRootUnlessKeyPresent: (address: string, event: Event, key: string) => Promise<boolean>
   readonly wake: (thread: string) => Promise<void>
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
@@ -419,11 +420,23 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const currentHead = await runtime.runPromise(head)
       await runtime.runPromise(PubSub.publish(commits, currentHead))
     }
-    const append: ThreadEventStore["append"] = (events) => {
-      if (events.length === 0) return Effect.map(head, (current) => ({ appended: 0, head: current }))
-      return sql.withTransaction(Effect.gen(function* () {
+    // appendBatch commits the batch in one SQLite transaction, refusing the whole batch when
+    // blockedKey is already stored. The refusal reads and decides inside the transaction, so a
+    // seal and an admission racing on the same key resolve as one order (host.test.ts, "a
+    // concurrent admission and seal race resolves with admission refused").
+    const appendBatch = (
+      events: ReadonlyArray<Event>,
+      blockedKey?: string
+    ): Effect.Effect<ConditionalAppendResult> =>
+      sql.withTransaction(Effect.gen(function* () {
         const rows = yield* sql<{ seq: number }>`SELECT COALESCE(MAX(seq), 0) AS seq FROM events`
         const currentHead = Number(rows[0]?.seq ?? 0)
+        if (blockedKey !== undefined) {
+          const blockers = yield* sql<{ n: number }>`SELECT COUNT(*) AS n FROM events WHERE key = ${blockedKey}`
+          if (Number(blockers[0]?.n ?? 0) > 0) {
+            return { blocked: true, appended: 0, head: currentHead }
+          }
+        }
         let seq = currentHead + 1
         let appended = 0
         for (const event of events) {
@@ -436,7 +449,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           seq += 1
           appended += 1
         }
-        return { appended, head: seq - 1 }
+        return { blocked: false, appended, head: seq - 1 }
       })).pipe(
         Effect.tap((result) => result.appended > 0
           ? Effect.all([
@@ -446,10 +459,13 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
           : Effect.void),
         Effect.orDie
       )
-    }
+    const append: ThreadEventStore["append"] = (events) =>
+      appendBatch(events).pipe(Effect.map(({ appended, head }) => ({ appended, head })))
+    const appendUnlessKeyPresent: ThreadEventStore["appendUnlessKeyPresent"] = (events, key) =>
+      appendBatch(events, key)
     return {
       runtime,
-      store: { append, read, head, readFrom, readPage },
+      store: { append, appendUnlessKeyPresent, read, head, readFrom, readPage },
       commits,
       interruptions,
       ...(commitDispatcher === undefined ? {} : { commitDispatcher }),
@@ -523,6 +539,46 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       driver.mark(thread)
     }
   }).pipe(Effect.orDie)
+
+  // commitRootUnlessKeyPresent commits the root event only when no stored event carries the key,
+  // deciding inside the store transaction, and answers false when the condition refused the batch.
+  // That refusal is the durable guarantee behind a sealed method: an admission racing the seal
+  // resolves with the admission refused (host.test.ts, "a concurrent admission and seal race
+  // resolves with admission refused").
+  const commitRootUnlessKeyPresent = (
+    address: string,
+    event: Event,
+    key: string
+  ): Promise<boolean> => Effect.runPromise(Effect.promise(async () => {
+    const target = parseThreadAddress(address)
+    const thread = threadOf(address)
+    const threadRuntime = await runtimeOf(thread)
+    const result = await threadRuntime.runtime.runPromise(Effect.gen(function* () {
+      const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
+      const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
+        ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
+        : event
+      const current = yield* threadRuntime.store.read
+      const created = threadCreatedForDelivery(current, target, undefined, undefined)
+      const at = (event as { readonly at?: unknown }).at
+      if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
+        return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
+      }
+      return yield* threadRuntime.store.appendUnlessKeyPresent(
+        created === undefined ? [threadCreated(target, undefined, at as number), stamped] : [stamped],
+        key
+      )
+    }).pipe(Effect.withSpan("commit", {
+      kind: "producer",
+      attributes: { to: address, type: event.type }
+    })))
+    if (result.appended > 0) {
+      threadRuntime.interruptions.interrupt([event])
+      if (isFirstAppend(result)) await register(thread)
+      driver.mark(thread)
+    }
+    return !result.blocked
+  }).pipe(Effect.orDie))
 
   const colocatedTransport: Transport<ThreadAddress, ActorEnvelope> = {
     name: "colocated",
@@ -702,6 +758,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
+    commitRootUnlessKeyPresent,
     wake: (thread) => { driver.mark(thread); return drive() },
     drive,
     recover,

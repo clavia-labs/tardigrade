@@ -491,6 +491,108 @@ describe("cloudflare actor", () => {
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
+  test("a settled parent with an unsettled linked child still accepts cancellation", async () => {
+    const append = (thread: string, event: Record<string, unknown>) =>
+      SELF.fetch(`http://test/v1/actors/main/threads/${thread}/events`, {
+        method: "POST",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify(event)
+      })
+    const putCancellation = (thread: string, call: string) =>
+      SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}/cancellation`, {
+        method: "PUT",
+        headers: authorization
+      })
+
+    await createThread("cascade")
+    for (const event of [
+      { type: "EchoRequested", id: "cascade-parent", text: "go", at: 1 },
+      { type: "EchoCompleted", id: "cascade-parent", text: "done", at: 2 },
+      {
+        type: "InvocationLinked",
+        parent: { method: "echo", id: "cascade-parent", epoch: 0 },
+        child: { invocation: { method: "echo", id: "cascade-child", epoch: 0 } },
+        target: "echo:main:ag.cascade-child",
+        lineage: { parent: { actor: "echo", instance: "main", thread: "ag.cascade" }, depth: 1 },
+        at: 3
+      }
+    ]) {
+      const appended = await append("cascade", event)
+      expect(appended.status).toBe(202)
+    }
+    expect(await methodState("cascade", "cascade-parent")).toMatchObject({ status: "completed" })
+
+    const cascaded = await putCancellation("cascade", "cascade-parent")
+    expect(cascaded.status).toBe(202)
+    expect(await cascaded.json()).toMatchObject({ actor: "main", thread: "cascade", method: "echo", call: "cascade-parent", status: "requested" })
+
+    await createThread("settled-alone")
+    for (const event of [
+      { type: "EchoRequested", id: "alone-parent", text: "go", at: 1 },
+      { type: "EchoCompleted", id: "alone-parent", text: "done", at: 2 }
+    ]) {
+      const appended = await append("settled-alone", event)
+      expect(appended.status).toBe(202)
+    }
+    expect(await methodState("settled-alone", "alone-parent")).toMatchObject({ status: "completed" })
+
+    const refused = await putCancellation("settled-alone", "alone-parent")
+    expect(refused.status).toBe(409)
+    expect(JSON.stringify(await refused.json())).toContain("has settled and cannot be cancelled")
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+  test("a sealed method refuses admission and drains its in-flight calls", async () => {
+    const invoke = (thread: string, call: string, text: string) =>
+      SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
+        method: "PUT",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ text })
+      })
+    const seal = (thread: string) =>
+      SELF.fetch(`http://test/v1/actors/main/threads/${thread}/deletion-seal`, {
+        method: "PUT",
+        headers: { ...authorization, "content-type": "application/json" },
+        body: JSON.stringify({ method: "echo", reason: "operator deleted the thread" })
+      })
+    const settledState = async (thread: string, call: string): Promise<unknown> => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        const response = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}/methods/echo/calls/${call}`, {
+          headers: authorization
+        })
+        const state = await response.json() as { readonly status?: unknown }
+        if (state.status !== "pending") return state
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      return undefined
+    }
+
+    await createThread("seal-drain")
+    const accepted = await invoke("seal-drain", "in-flight", "work")
+    expect(accepted.status).toBe(202)
+    const sealed = await seal("seal-drain")
+    expect(sealed.status).toBe(202)
+    expect(await sealed.json()).toMatchObject({ actor: "main", thread: "seal-drain", method: "echo", status: "pending" })
+    // The drain asked the in-flight call to stop; the fixture's effect is not interruptible, so
+    // the call still finishes, and the durable facts are the request and its settled state.
+    expect(await settledState("seal-drain", "in-flight")).toBeDefined()
+    const drainedEvents = await SELF.fetch("http://test/v1/actors/main/threads/seal-drain/events", { headers: authorization })
+    const drainedLog = (await drainedEvents.json()) as ReadonlyArray<{ readonly event: Record<string, unknown> }>
+    expect(drainedLog.filter((row) => row.event["type"] === "CancellationRequested")
+      .map((row) => row.event)).toEqual([expect.objectContaining({
+        invocation: { method: "echo", id: "in-flight", epoch: 0 },
+        cause: "requested",
+        reason: "operator deleted the thread"
+      })])
+    const refused = await invoke("seal-drain", "after-seal", "too late")
+    expect(refused.status).toBe(409)
+    expect(JSON.stringify(await refused.json())).toContain("permanently sealed")
+    const drained = await seal("seal-drain")
+    expect(drained.status).toBe(200)
+    expect(await drained.json()).toMatchObject({ actor: "main", thread: "seal-drain", method: "echo", status: "drained" })
+    const missing = await seal("seal-ghost")
+    expect(missing.status).toBe(404)
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
       await createThread(thread)

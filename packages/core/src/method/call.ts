@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
+import { methodSealOf } from "./seal"
 
 const NonNegativeInt = Schema.Int.pipe(
   Schema.check(Schema.makeFilter((value: number) => value >= 0, { title: "at or above zero" }))
@@ -65,8 +66,13 @@ export const actorInvocationContextOf = (
   return context !== undefined && sameInvocation(context.invocation, invocation) ? [context] : []
 })[0]
 
-// methodIngressKeyOf identifies a linked method invocation independently of the domain event it accepts.
+// methodSealKey names the durable admission seal of one method on one thread.
+export const methodSealKey = (method: string): string => `mseal:${JSON.stringify(method)}`
+
+// methodIngressKeyOf identifies a linked method invocation or a durable admission seal independently of the domain event it accepts.
 export const methodIngressKeyOf = (event: Event): string | undefined => {
+  const seal = methodSealOf(event)
+  if (seal !== undefined) return methodSealKey(seal.method)
   const invocation = actorInvocationContextFrom(event)?.invocation
   if (invocation === undefined) return undefined
   return `ming:${JSON.stringify([invocation.method, invocation.id, invocation.epoch])}`

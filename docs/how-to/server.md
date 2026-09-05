@@ -23,6 +23,7 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 | `GET /v1/threads` | List threads |
 | `PUT /v1/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
 | `GET /v1/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
+| `PUT /v1/actors/{id}/threads/{thread}/deletion-seal` | Seal one method's admission and request cancellation of its unsettled calls |
 | `POST /v1/threads/{id}/events` | Append an event, creating the thread if new |
 | `GET /v1/threads/{id}/events` | Read the log. `after`, `limit`, `types` |
 | `GET /v1/threads/{id}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
@@ -42,6 +43,8 @@ curl -X PUT localhost:4242/v1/threads/inv-81/methods/message/calls/m1 \
 curl localhost:4242/v1/threads/inv-81/methods/message/calls/m1
 # {"status":"completed","output":"…"}
 ```
+
+A deletion seal closes one method's admission on one thread. `PUT /v1/actors/{id}/threads/{thread}/deletion-seal` records a `MethodSealed` event and requests cancellation of the method's unsettled calls and their linked descendants, answering `pending` while any cancellation is still owed and `drained` when nothing is. Admission after the seal answers 409 `method-sealed`; the refusal is decided inside the store's append transaction, so a call racing the seal never commits.
 
 Calling a method is the application ingress. The caller chooses the thread and call ids, and the method schema validates the body. Repeating the same call URL is absorbed by the log.
 

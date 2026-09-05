@@ -6,8 +6,8 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 // agent's execute tool dispatches and awaits, the task's policy dispatches and awaits, and
 // neither knows how the code runs.
 
-// CodeDispatched starts one execution of `code`. `execId` is the dedup key: a re-dispatch of
-// the same id is one execution.
+// CodeDispatched starts one execution of `code`. Provider execution ids are only unique within
+// one model turn, so the durable identity is the pair `(turn, execId)`.
 export const CodeDispatched = Schema.Struct({
   type: Schema.Literal("CodeDispatched"),
   execId: Schema.String,
@@ -71,23 +71,30 @@ export const CodeEvent = Schema.Union([
 ])
 export type CodeEvent = typeof CodeEvent.Type
 
+// codeEventIdentity keys one code-thread fact by its turn and id: provider execution and package
+// call ids are unique only inside one model turn, so the durable identity is the pair, and an
+// unstamped event keeps its bare id so historical logs remain readable (projections.test.ts,
+// "reused execution ids across turns settle separately").
+export const codeEventIdentity = (turn: unknown, id: unknown): string =>
+  turn === undefined ? String(id) : JSON.stringify([String(turn), String(id)])
+
 // codeKeys is the code thread's dedup key fragment, owned beside its alphabet. cd/cs name the
 // execution; pr names the call's recorded pair. A key names the scope its id is unique in, and
-// no wider (execId and callId are minted per thread by the recorded machinery).
+// no wider: provider ids are unique inside one model turn, so the key is the (turn, id) pair.
 export const codeKeys: KeyFragment = {
   prefixes: ["cd:", "cs:", "pr:", "bk:"],
   keyOf: (e) => {
     const v = e as Record<string, unknown>
     switch (e.type) {
       case "CodeDispatched":
-        return `cd:${String(v.execId)}`
+        return `cd:${codeEventIdentity(v.turn, v.execId)}`
       case "CodeSettled":
-        return `cs:${String(v.execId)}`
+        return `cs:${codeEventIdentity(v.turn, v.execId)}`
       case "PackageReturned":
-        return `pr:${String(v.callId)}`
+        return `pr:${codeEventIdentity(v.turn, v.callId)}`
       case "BlockedOn":
-        // One row per blocked call: a re-parking attempt redelivers the same key and absorbs.
-        return `bk:${String(v.callId)}`
+        // One row per blocked call in a turn: a re-parking attempt absorbs.
+        return `bk:${codeEventIdentity(v.turn, v.callId)}`
       default:
         return undefined
     }
