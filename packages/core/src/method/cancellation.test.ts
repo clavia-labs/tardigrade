@@ -13,6 +13,7 @@ import {
   cancellationRequestedOf,
   cancellationDispositionOf,
   cancellationRequestIdOf,
+  actorCancellationProjection,
   cancellationTransitionsOf,
   cancellationMethodFor
 } from "./cancellation"
@@ -360,6 +361,59 @@ describe("actor cancellation", () => {
         at: 4
       } as Event
     ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:parent"])
+  })
+
+  test("cancellation continues after the owner's terminal while a linked child is unsettled", () => {
+    // The owner answered, but its family is still open: the request stays pending and keeps
+    // reaching the child instead of dying with the owner's own terminal.
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const link = {
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "child", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target: "worker:main:child",
+      at: 1
+    } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const terminal = { type: "WorkCancelled", id: "parent", at: 3 } as Event
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+    const events: ReadonlyArray<Event> = [started, link, request, terminal]
+
+    expect(cancellationTransitionsOf(events, { work }, [], keyOf)?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/child/0`])
+    const projection = actorCancellationProjection({ work }, [], keyOf)!
+    const projected = events.reduce(projection.step, projection.initial())
+    expect(projection.output(projected).residuals?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/child/0`])
+  })
+
+  test("the owner terminal derives only while the owner is still running", () => {
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const terminal = { type: "WorkCancelled", id: "parent", at: 3 } as Event
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+    const projection = actorCancellationProjection({ work }, [], keyOf)!
+    const projected = [started, request, terminal].reduce(projection.step, projection.initial())
+    expect(projection.output(projected).residuals).toBeUndefined()
   })
 
   test("core ignores unsupported and nonexistent cancellation targets", () => {

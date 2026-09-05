@@ -167,7 +167,12 @@ const pendingCancellationsOf = (
     const current = method === undefined
       ? undefined
       : cancellationStateOf(method, replayProjection(method.projection, events), cancellation.invocation)
-    const pending = current === "running" && (before === undefined || before === "running")
+    // The owner's own terminal does not close a cancellation whose linked descendants are still
+    // unsettled: the family keeps its obligations until the last child call settles.
+    const descendants = hasUnsettledInvocationChildren(events, cancellation.invocation)
+    const pending =
+      (current === "running" && (before === undefined || before === "running")) ||
+      (descendants && before !== undefined)
     if (!pending) return []
     const key = invocationKeyOf(cancellation.invocation)
     if (seen.has(key)) return []
@@ -381,6 +386,19 @@ export const actorCancellationComponentTransitions = <R>(
 
 const callKeyOf = (method: string, call: string, target: string): string => JSON.stringify([method, call, target])
 
+// hasUnsettledProjectedChildren is the projected reading of hasUnsettledInvocationChildren: a
+// linked child whose call has not settled on its target keeps the family open.
+const hasUnsettledProjectedChildren = (
+  state: {
+    readonly links: ReadonlyArray<ProjectedChildLink>
+    readonly settledCalls: ReadonlySet<string>
+  },
+  parent: ActorInvocation
+): boolean => state.links.some((link) =>
+  sameLogicalInvocation(link.parent, parent) &&
+  !state.settledCalls.has(callKeyOf(link.child.method, link.child.id, link.target))
+)
+
 const projectedChildCancellationTransitionsOf = <R>(
   state: ActorCancellationProjectionState,
   cancellation: InvocationCancellation,
@@ -489,7 +507,14 @@ export const actorCancellationProjection = <R>(
     for (const record of state.requests) {
       const invocation = record.cancellation.invocation
       const current = cancellationOf(state, invocation)
-      if (current !== "running" || (record.accepted !== undefined && record.accepted !== "running")) continue
+      const descendants = hasUnsettledProjectedChildren(state, invocation)
+      // Mirrors pendingCancellationsOf exactly: `accepted` is the state at the request's own
+      // position, so undefined means the request pre-dates the start and still applies, and a
+      // running owner with unsettled descendants stays pending past its own terminal.
+      const pending =
+        (current === "running" && (record.accepted === undefined || record.accepted === "running")) ||
+        (descendants && record.accepted !== undefined)
+      if (!pending) continue
       const key = invocationKeyOf(invocation)
       if (seen.has(key)) continue
       seen.add(key)
@@ -508,7 +533,9 @@ export const actorCancellationProjection = <R>(
         entry.machine.cancel?.(state.components[index], cancellation) ?? []
       )
       const outstanding = [...child, ...component].filter((transition) => !state.recorded.has(transition.key))
-      if (outstanding.length === 0) terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
+      if (outstanding.length === 0 && cancellationOf(state, cancellation.invocation) === "running") {
+        terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
+      }
       else obligations.push(...outstanding)
     }
     return [...terminals, ...obligations]
@@ -523,7 +550,11 @@ export const actorCancellationProjection = <R>(
         cancellationOf: (invocation: ActorInvocation) => cancellationOf(state, invocation),
         suppresses: (invocation: ActorInvocation) => state.requests.some((record) =>
           sameLogicalInvocation(record.cancellation.invocation, invocation) &&
-          (record.accepted === "running" || cancellationOf(state, invocation) === "running")
+          (
+            record.accepted === "running" ||
+            cancellationOf(state, invocation) === "running" ||
+            hasUnsettledProjectedChildren(state, invocation)
+          )
         ),
         residuals: residuals(state)
       }
@@ -554,7 +585,15 @@ export const cancellationTransitionsOf = <R>(
       ...components.flatMap((component) => cancelComponent(component, events, cancellation))
     ]
       .filter((transition) => !recorded.has(transition.key))
-    if (pending.length === 0) {
+    if (
+      pending.length === 0 &&
+      methodCancellationOf(methods, cancellation)?.cancellation !== undefined &&
+      cancellationStateOf(
+        methodCancellationOf(methods, cancellation)!,
+        replayProjection(methodCancellationOf(methods, cancellation)!.projection, events),
+        cancellation.invocation
+      ) === "running"
+    ) {
       terminals.push(terminalTransitionOf(cancellation, methods, keyOf))
     } else {
       obligations.push(...pending)
@@ -570,16 +609,20 @@ interface CancellationMethodState {
     readonly cancellation: InvocationCancellation
     readonly accepted: ActorMethodCancellationState | undefined
   }>
+  readonly links: ReadonlyArray<ProjectedChildLink>
+  readonly settledCalls: ReadonlySet<string>
 }
 
 const cancellationMethodState = (
   target: ActorInvocation,
   cancellable: boolean,
   accepted: ActorMethodCancellationState | undefined,
-  current: ActorMethodCancellationState | undefined
+  current: ActorMethodCancellationState | undefined,
+  hasUnsettledChildren: boolean
 ) => {
   if (!cancellable) return { status: "failed" as const, error: `method ${JSON.stringify(target.method)} is not cancellable` }
   if (accepted === undefined) return { status: "failed" as const, error: `invocation ${JSON.stringify(target.id)} does not exist` }
+  if (hasUnsettledChildren) return { status: "pending" as const }
   if (accepted === "terminal") return { status: "completed" as const, output: { cancelled: false } }
   if (accepted === "cancelled") return { status: "completed" as const, output: { cancelled: true } }
   if (current === "running") return { status: "pending" as const }
@@ -604,7 +647,13 @@ export const cancellationMethodStateOf = (
         method.projection.output(projected.methods.get(target.method)),
         target
       )
-  return cancellationMethodState(target, method?.cancellation !== undefined, record.accepted, current)
+  return cancellationMethodState(
+    target,
+    method?.cancellation !== undefined,
+    record.accepted,
+    current,
+    hasUnsettledProjectedChildren(projected, target)
+  )
 }
 
 export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
@@ -620,7 +669,9 @@ export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
   projection: {
     initial: (): CancellationMethodState => ({
       methods: initialMethodStates(methods),
-      requests: new Map()
+      requests: new Map(),
+      links: [],
+      settledCalls: new Set()
     }),
     step: (state, event): CancellationMethodState => {
       const requests = new Map(state.requests)
@@ -638,9 +689,36 @@ export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
               )
         })
       }
+      const links = [...state.links]
+      if (event.type === "InvocationLinked") {
+        const link = event as {
+          readonly parent?: ActorInvocation
+          readonly child?: { readonly invocation?: ActorInvocation }
+          readonly target?: unknown
+          readonly lineage?: ThreadLineage
+        }
+        if (link.parent !== undefined && link.child?.invocation !== undefined && typeof link.target === "string") {
+          links.push({
+            parent: link.parent,
+            child: link.child.invocation,
+            target: link.target,
+            ...(link.lineage === undefined ? {} : { lineage: link.lineage })
+          })
+        }
+      }
+      const settledCalls = new Set(state.settledCalls)
+      if (event.type === "ResponseReceived" || event.type === "CallTimedOut") {
+        settledCalls.add(callKeyOf(
+          String(event.method),
+          String(event.call),
+          String(event.type === "ResponseReceived" ? event.from : event.target)
+        ))
+      }
       return {
         methods: reduceMethodStates(methods, state.methods, event),
-        requests
+        requests,
+        links,
+        settledCalls
       }
     },
     output: (state) => ({
@@ -661,7 +739,8 @@ export const cancellationMethodFor = (methods: ActorMethods) => actorMethod({
           target,
           method?.cancellation !== undefined,
           record.accepted,
-          current
+          current,
+          hasUnsettledProjectedChildren(state, target)
         )
       }
     })
