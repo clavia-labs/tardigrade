@@ -23,6 +23,7 @@ import {
   type CancellationResult,
   type ThreadNode,
   type ThreadSummary,
+  type TreeBounds,
   type EventRow,
   type Health,
   type MethodAccepted,
@@ -181,8 +182,10 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   readonly actors: () => Promise<ReadonlyArray<ActorInstanceSummary>>
   readonly ensureActor: (actor: string) => Promise<ActorInstanceSummary>
   readonly actor: (actor: string) => Promise<ActorInstanceSummary>
-  readonly list: (actor: string) => Promise<ReadonlyArray<ThreadSummary>>
-  readonly tree: (actor: string, thread: string) => Promise<ThreadNode>
+  // list reads the actor's roster, bounded by `options` when stated (contract.ts, TreeBounds).
+  readonly list: (actor: string, options?: TreeBounds) => Promise<ReadonlyArray<ThreadSummary>>
+  // tree reads one thread's spawn family beneath it, bounded by `options` when stated (contract.ts, TreeBounds).
+  readonly tree: (actor: string, thread: string, options?: TreeBounds) => Promise<ThreadNode>
   readonly events: (actor: string, thread: string, options?: EventsOptions) => Promise<ReadonlyArray<EventRow>>
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
@@ -294,6 +297,16 @@ const eventsQuery = (options: EventsOptions) => {
   return query
 }
 
+// The bounds query the tree and roster reads accept, built like eventsQuery so an absent bound is
+// an absent key (contract.ts, TreeBounds).
+const boundsQuery = (options: TreeBounds) => {
+  const query: { root?: string; maxDepth?: number; maxNodes?: number } = {}
+  if (options.root !== undefined) query.root = options.root
+  if (options.maxDepth !== undefined) query.maxDepth = options.maxDepth
+  if (options.maxNodes !== undefined) query.maxNodes = options.maxNodes
+  return query
+}
+
 const catalogQuery = (options: ModelPageOptions) => {
   const query: { availability?: CatalogAvailabilityFilter; cursor?: string; limit?: number; provider?: string; search?: string; sort?: ModelCatalogPriceSort; order?: ModelCatalogSortOrder; unpriced?: ModelCatalogUnpricedOrder } = {}
   if (options.availability !== undefined) query.availability = options.availability
@@ -371,8 +384,9 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     actors: () => run(api.actors.actors({})),
     ensureActor: (actor) => run(api.actors.ensureActor({ params: { id: actor } })),
     actor: (actor) => run(api.actors.actor({ params: { id: actor } })),
-    list: (actor) => run(api.threads.list({ params: { id: actor } })),
-    tree: (actor, thread) => run(api.threads.tree({ params: { id: actor, thread } })),
+    list: (actor, options) => run(api.threads.list({ params: { id: actor }, query: boundsQuery(options ?? {}) })),
+    tree: (actor, thread, options) =>
+      run(api.threads.tree({ params: { id: actor, thread }, query: boundsQuery(options ?? {}) })),
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,

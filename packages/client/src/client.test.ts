@@ -155,6 +155,22 @@ describe("the address a call goes to", () => {
     expect(url.searchParams.has("limit")).toBe(false)
   })
 
+  test("stated bounds are query params on the tree and roster reads, absent ones absent", async () => {
+    const client = makeActorClient({ baseUrl: "http://localhost:4111" , fetch: stub })
+    await client.list("main", { root: "inv-81", maxDepth: 2, maxNodes: 50 })
+    answer = () => Response.json({ id: "inv-81", depth: 0, events: 1, status: "settled", children: [] })
+    await client.tree("main", "inv-81", { maxDepth: 1 })
+    const roster = new URL(calls[0]!.url)
+    const tree = new URL(calls[1]!.url)
+    expect(roster.searchParams.get("root")).toBe("inv-81")
+    expect(roster.searchParams.get("maxDepth")).toBe("2")
+    expect(roster.searchParams.get("maxNodes")).toBe("50")
+    expect(tree.pathname).toBe("/v1/actors/main/threads/inv-81/tree")
+    expect(tree.searchParams.get("maxDepth")).toBe("1")
+    expect(tree.searchParams.has("root")).toBe(false)
+    expect(tree.searchParams.has("maxNodes")).toBe(false)
+  })
+
   test("a base with a trailing slash does not double it", async () => {
     await makeActorClient({ baseUrl: "http://127.0.0.1:4111/" , fetch: stub }).list("main")
     expect(calls[0]!.url).toBe("http://127.0.0.1:4111/v1/actors/main/threads")
