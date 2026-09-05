@@ -50,6 +50,21 @@ describe("incremental turn projection", () => {
     expect(trajectoryFrom(state)).toEqual(trajectoryOf(log))
   })
 
+  test("a reply named by a blocked call does not become a turn head", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "MessageReceived", id: "m0" } as Event,
+      { type: "PackageCalled", callId: "c1", turn: "m0" } as Event,
+      { type: "BlockedOn", callId: "c1", awaiting: "answer-1", turn: "m0" } as Event,
+      { type: "MessageReceived", id: "answer-1", from: "child" } as Event,
+      { type: "PackageReturned", callId: "c1", turn: "m0" } as Event,
+      { type: "TurnCompleted", turn: "m0" } as Event
+    ]
+    const state = log.reduce(reduceTurnProjection, initialTurnProjection())
+
+    expect(turnViewFrom(state)).toEqual([])
+    expect(trajectoryFrom(state)).toEqual(trajectoryOf(log))
+  })
+
   test("a failed turn reopens in its resumed epoch", () => {
     const log: ReadonlyArray<Event> = [
       { type: "MessageReceived", id: "m0" } as Event,
