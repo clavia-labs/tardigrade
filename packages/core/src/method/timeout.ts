@@ -258,14 +258,13 @@ export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
 
 // methodDeadlineCancellationDerivation projects one deadline cancellation per invocation a recorded alarm crossed, for logs written before the alarm handler committed them (timeout.test.ts, "a crossed deadline projects its cancellation before and after commit"; timeout.test.ts, "two alarms crossing one deadline project one cancellation").
 export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
-  const alarms = alarmsOf(log)
-  return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
-    const alarm = alarmFor(alarms, deadlineAt)
-    if (alarm === undefined) return []
-    return deadlineCancellationsAt(log, methods, alarm.at)
-      .filter((target) => invocationKey(target.invocation) === invocationKey(invocation) && target.deadlineAt === deadlineAt)
-      .map((target) => deadlineCancellationTransition(target.invocation, target.deadlineAt))
-  })
+  const latestAlarmAt = alarmsOf(log).reduce<number | undefined>(
+    (latest, alarm) => latest === undefined ? alarm.at : Math.max(latest, alarm.at),
+    undefined
+  )
+  if (latestAlarmAt === undefined) return []
+  return deadlineCancellationsAt(log, methods, latestAlarmAt)
+    .map(({ invocation, deadlineAt }) => deadlineCancellationTransition(invocation, deadlineAt))
 }
 
 /** @deprecated Use methodTimeoutDerivation. This compatibility name describes a complete-history transition derivation. */
