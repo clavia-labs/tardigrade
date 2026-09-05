@@ -768,13 +768,10 @@ describe("cloudflare actor", () => {
     expect(idsOf(rooted)).toEqual(["wide-root", "leaf-1", "leaf-2", "leaf-3", "leaf-4"])
     // The unbounded read is a throw, not an answer: its completeness check reaches the pair.
     // The three reads above read the same roster, so each walk that answered is proof the bounds
-    // held it. The unbounded call runs inside the object, because a promise that rejects across
-    // the RPC boundary leaves the object holding an unhandled rejection the suite reports.
-    const unbounded = await runInDurableObject(directory, (instance) =>
-      instance.threadTree().then(
-        () => "answered",
-        (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
-      )
+    // held it.
+    const unbounded = await directory.threadTree().then(
+      () => "answered",
+      (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
     )
     expect(unbounded).toBe("thread tree contains an orphan or cycle")
   })
