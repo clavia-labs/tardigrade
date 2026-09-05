@@ -162,7 +162,7 @@ const mindFor = (missions: ReadonlyMap<string, Mission>, jitter: ReadonlyArray<n
             }));
             return await Promise.all(launched.map(async ({ mission, answer }) => {
               const terminal = mission.background
-                ? await agents.result({ id: answer.callId })
+                ? await agents.result({ handle: answer.handle })
                 : answer;
               return JSON.parse(terminal.output);
             }));`
