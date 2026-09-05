@@ -361,8 +361,8 @@ describe("the threads service", () => {
     )
 
     expect(deltas.map(({ thread, model, blockIndex, sequence, text }) => ({ thread, model, blockIndex, sequence, text }))).toEqual([
-      { thread: "ag.stream", model: streamedModel, blockIndex: 0, sequence: 0, text: "hel" },
-      { thread: "ag.stream", model: streamedModel, blockIndex: 0, sequence: 1, text: "lo" }
+      { thread: "stream", model: streamedModel, blockIndex: 0, sequence: 0, text: "hel" },
+      { thread: "stream", model: streamedModel, blockIndex: 0, sequence: 1, text: "lo" }
     ])
   })
 

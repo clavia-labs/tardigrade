@@ -16,13 +16,6 @@ const coordinates = fc.record({
 
 // Safety properties await derivation; the test runner's timeout also checks completion on sampled inputs.
 describe("child identity safety", () => {
-  test("replay stability: identical coordinates retain their identity", async () => {
-    await fc.assert(fc.asyncProperty(coordinates, async ({ parent, child }) => {
-      const id = await childThreadId({ parent, child })
-      expect(await childThreadId({ parent: { ...parent }, child })).toBe(id)
-    }))
-  })
-
   test("replay stability: the persisted encoding matches a fixed digest", async () => {
     const id = await childThreadId({ parent, child: childKeyOf("step") })
     expect(String(id)).toBe("ddc9895cb08a2f469846924b97c3b997dfb82ed5f6d1ff9c04174d89af7dcb27")
@@ -46,30 +39,37 @@ describe("child identity safety", () => {
     expect(new Set(ids).size).toBe(pairs.length)
   })
 
-  test("root separation: distinct roots have disjoint descendants at every equal depth", async () => {
+  test("tree separation: distinct nodes have distinct addresses across roots and depths", async () => {
     await fc.assert(fc.asyncProperty(
       coordinates,
       fc.constantFrom("actor", "instance", "thread"),
-      fc.array(fc.uniqueArray(opaqueString, { minLength: 1, maxLength: 3 }), { minLength: 2, maxLength: 4 }),
-      async ({ parent }, coordinate, levels) => {
-        const otherRoot = { ...parent, [coordinate]: parent[coordinate] + "x" }
-        let left = [parent]
-        let right = [otherRoot]
-        for (const keys of levels) {
-          const descend = (parents: typeof left) => Promise.all(parents.flatMap((address) =>
-            keys.map(async (key) => ({
-              ...address,
-              thread: await childThreadId({ parent: address, child: childKeyOf(key) })
-            }))
-          ))
-          const next = await Promise.all([descend(left), descend(right)])
-          left = next[0]
-          right = next[1]
-          const leftIds = new Set(left.map((address) => address.thread))
-          const rightIds = new Set(right.map((address) => address.thread))
-          expect(leftIds.size).toBe(left.length)
-          expect(rightIds.size).toBe(right.length)
-          for (const id of rightIds) expect(leftIds.has(id)).toBe(false)
+      fc.uniqueArray(opaqueString, { minLength: 1, maxLength: 3 }),
+      fc.tuple(fc.integer({ min: 2, max: 4 }), fc.integer({ min: 2, max: 4 })),
+      async ({ parent }, coordinate, keys, depths) => {
+        // root uses a non-hex name to exclude aliases with generated descendants.
+        const root = { ...parent, thread: `root:${parent.thread}` }
+        const roots = [root, { ...root, [coordinate]: root[coordinate] + "x" }]
+        const addressKey = (address: typeof root) => JSON.stringify([address.actor, address.instance, address.thread])
+        const seen = new Set(roots.map(addressKey))
+        expect(seen.size).toBe(2)
+        for (const [index, origin] of roots.entries()) {
+          let frontier = [origin]
+          for (let depth = 0; depth < depths[index]!; depth++) {
+            const descendants = await Promise.all(frontier.flatMap((address) =>
+              keys.map(async (key) => {
+                const coordinates = { parent: address, child: childKeyOf(key) }
+                const thread = await childThreadId(coordinates)
+                expect(await childThreadId({ ...coordinates, parent: { ...address } })).toBe(thread)
+                return { ...address, thread }
+              })
+            ))
+            for (const descendant of descendants) {
+              const identity = addressKey(descendant)
+              expect(seen.has(identity)).toBe(false)
+              seen.add(identity)
+            }
+            frontier = descendants
+          }
         }
       }
     ))

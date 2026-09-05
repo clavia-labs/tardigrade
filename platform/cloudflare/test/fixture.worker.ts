@@ -202,7 +202,7 @@ const worker = cloudflareWorker(actor({
   }),
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
-  storeFor: ({ thread }) => thread === "ag.sealed"
+  storeFor: ({ thread }) => thread === "sealed"
     ? {
         codec: encryptedEventCodec(thread, keyFor()),
         indexKey: hmacSha256EventKeyIndex(indexKeyFor(), thread)

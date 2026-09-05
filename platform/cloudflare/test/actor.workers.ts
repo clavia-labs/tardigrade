@@ -19,7 +19,7 @@ import { plaintextEventCodec } from "../src/storage"
 
 const authorization = { authorization: "Bearer workers-test-token" }
 const WORKER_INTEGRATION_TIMEOUT_MILLIS = 15_000
-const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", "main", `ag.${thread}`])
+const threadObjectNameOf = (thread: string): string => JSON.stringify(["echo", "main", thread])
 const controlStub = () => (env as Env).ACTORS.getByName(JSON.stringify(["echo", "main"]))
 const threadStub = (thread: string) => (env as Env).THREADS.getByName(threadObjectNameOf(thread))
 const alarm = (thread: string) =>
@@ -102,7 +102,7 @@ describe("cloudflare actor", () => {
   })
 
   test("commit observers see only published durable heads", async () => {
-    const commits = await runInDurableObject(threadStub("commit-observer"), async (_instance, state) => {
+    const commits = await runInDurableObject(threadStub("ag.commit-observer"), async (_instance, state) => {
       const seen: Array<number> = []
       let observed = () => {}
       const firstObserved = new Promise<void>((resolve) => { observed = resolve })
@@ -135,7 +135,7 @@ describe("cloudflare actor", () => {
   })
 
   test("incremental commits decode only the creation record and new tail", async () => {
-    const decoded = await runInDurableObject(threadStub("incremental-ingress"), async (_instance, state) => {
+    const decoded = await runInDurableObject(threadStub("ag.incremental-ingress"), async (_instance, state) => {
       const batches: Array<number> = []
       const host = await createCloudflareThreadHost({
         storage: state.storage,
@@ -171,7 +171,7 @@ describe("cloudflare actor", () => {
   })
 
   test("a cold empty thread reports rest before settlement", async () => {
-    const resting = await runInDurableObject(threadStub("cold-resting"), async (_instance, state) => {
+    const resting = await runInDurableObject(threadStub("ag.cold-resting"), async (_instance, state) => {
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
@@ -189,7 +189,7 @@ describe("cloudflare actor", () => {
 
   test("method-less actors retain outgoing call deadlines", async () => {
     const deadlineAt = Date.now() - 1
-    const result = await runInDurableObject(threadStub("method-less-deadline"), async (_instance, state) => {
+    const result = await runInDurableObject(threadStub("ag.method-less-deadline"), async (_instance, state) => {
       const host = await createCloudflareThreadHost({
         storage: state.storage,
         actorName: "echo",
@@ -225,7 +225,7 @@ describe("cloudflare actor", () => {
     const target = { actor: "echo", instance: "main", thread: "ag.creation-cache" }
     const source = { actor: "echo", instance: "main", thread: "ag.requested-parent" }
     const storedParent = { actor: "echo", instance: "main", thread: "ag.stored-parent" }
-    const result = await runInDurableObject(threadStub("creation-cache"), async (_instance, state) => {
+    const result = await runInDurableObject(threadStub("ag.creation-cache"), async (_instance, state) => {
       let injected = false
       const host = await createCloudflareThreadHost({
         storage: state.storage,
@@ -459,7 +459,7 @@ describe("cloudflare actor", () => {
       call: "workers-smoke",
       deadlineAt: expect.any(Number)
     })
-    expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
+    expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
       baseUrl: "http://test",
@@ -475,7 +475,7 @@ describe("cloudflare actor", () => {
         deadlineAt: expect.any(Number)
       })
     expect(await client.methodState("main", "root", "echo", "workers-smoke"))
-      .toEqual({ status: "completed", output: "workers:ag.root:1:Run in workerd." })
+      .toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
     const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",
@@ -507,8 +507,8 @@ describe("cloudflare actor", () => {
     ])
     const first = await methodState("application-a", "application-a")
     const second = await methodState("application-b", "application-b")
-    expect(first).toEqual({ status: "completed", output: "workers:ag.application-a:1:first" })
-    expect(second).toEqual({ status: "completed", output: "workers:ag.application-b:1:second" })
+    expect(first).toEqual({ status: "completed", output: "workers:application-a:1:first" })
+    expect(second).toEqual({ status: "completed", output: "workers:application-b:1:second" })
     expect(threadStub("application-a").id.equals(threadStub("application-b").id)).toBe(false)
     const firstEvents = await runInDurableObject(threadStub("application-a"), (_instance, state) =>
       state.storage.sql.exec<{ count: number }>("SELECT COUNT(*) AS count FROM events").toArray()
@@ -546,7 +546,7 @@ describe("cloudflare actor", () => {
     expect(accepted.status).toBe(202)
     expect(await methodState("sealed", "sealed-call")).toEqual({
       status: "completed",
-      output: "workers:ag.sealed:1:classified prompt"
+      output: "workers:sealed:1:classified prompt"
     })
     const repeated = await SELF.fetch("http://test/v1/actors/main/threads/sealed/methods/echo/calls/sealed-call", {
       method: "PUT",
@@ -556,7 +556,7 @@ describe("cloudflare actor", () => {
     expect(repeated.status).toBe(202)
     expect(await methodState("sealed", "sealed-call")).toEqual({
       status: "completed",
-      output: "workers:ag.sealed:1:classified prompt"
+      output: "workers:sealed:1:classified prompt"
     })
 
     const response = await SELF.fetch("http://test/v1/actors/main/threads/sealed/events", { headers: authorization })
@@ -699,7 +699,7 @@ describe("cloudflare actor", () => {
         children: []
       }]
     })
-    const childEvents = await threadStub("directory-child").events("ag.directory-child")
+    const childEvents = await threadStub("ag.directory-child").events("ag.directory-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     const actorEvents = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ event: string }>("SELECT event FROM events ORDER BY seq").toArray()
@@ -744,13 +744,13 @@ describe("cloudflare actor", () => {
       event: { type: "MessageReceived", id: "re-delivery-second", text: "again", at: 3 },
       lineage
     })
-    const childEvents = await threadStub("re-delivery-child").events("ag.re-delivery-child")
+    const childEvents = await threadStub("ag.re-delivery-child").events("ag.re-delivery-child")
     expect(childEvents.map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived", "MessageReceived"])
-    let childStatus = await threadStub("re-delivery-child").status()
+    let childStatus = await threadStub("ag.re-delivery-child").status()
     for (let attempt = 0; attempt < 100; attempt++) {
       if (childStatus.dirty === 0 && childStatus.status === "resting") break
       await delay()
-      childStatus = await threadStub("re-delivery-child").status()
+      childStatus = await threadStub("ag.re-delivery-child").status()
     }
     expect(childStatus).toMatchObject({ dirty: 0, status: "resting" })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
@@ -762,7 +762,7 @@ describe("cloudflare actor", () => {
     const parent = { actor: "echo", instance: "main", thread: "ag.recovery-parent" }
     const target = { actor: "echo", instance: "main", thread: "ag.recovery-child" }
     const lineage = { parent, depth: 1, placement: "independent" as const }
-    const child = threadStub("recovery-child")
+    const child = threadStub("ag.recovery-child")
     await child.init("echo", "main", "ag.recovery-child")
     await child.stageCreation({
       link: { source: parent, target },
@@ -798,7 +798,7 @@ describe("cloudflare actor", () => {
     const deadlineAt = Date.now() - 1
     const stub = threadStub("timeout")
     await createThread("timeout")
-    await stub.append("ag.timeout", {
+    await stub.append("timeout", {
       type: "CallDispatched",
       id: "overdue-1",
       method: "inspect",
@@ -809,10 +809,10 @@ describe("cloudflare actor", () => {
       at: deadlineAt - 10
     })
 
-    let events = await stub.events("ag.timeout")
+    let events = await stub.events("timeout")
     for (let attempt = 0; attempt < 100 && !events.some((event) => event.type === "CallTimedOut"); attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 10))
-      events = await stub.events("ag.timeout")
+      events = await stub.events("timeout")
     }
 
     expect(events).toContainEqual(expect.objectContaining({
