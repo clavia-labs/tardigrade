@@ -15,7 +15,7 @@ describe("code cancellation", () => {
       reason: "operator stopped it"
     })[0]
 
-    expect(transition).toMatchObject({ kind: "intent", key: "cs:exec-1" })
+    expect(transition).toMatchObject({ kind: "intent", key: `cs:${JSON.stringify(["m1", "exec-1"])}` })
     if (transition?.kind !== "intent") return
     expect(transition.events(transition.input, 2)).toEqual([{
       type: "CodeSettled",
@@ -41,5 +41,25 @@ describe("code cancellation", () => {
 
     expect(projection.cancel?.(state, cancellation).map((transition) => transition.key))
       .toEqual(cancelComponent(component, events, cancellation).map((transition) => transition.key))
+  })
+})
+
+describe("code identity across turns", () => {
+  test("a reused execution id in another turn is not settled by the first turn's outcome", () => {
+    // Provider execution ids are unique only within one model turn, so the component must read
+    // the settle scoped by the turn and cancel the second turn's execution under its own key.
+    const component = codeMode([])
+    const events: ReadonlyArray<Event> = [
+      { type: "CodeDispatched", execId: "exec-1", code: "work()", turn: "m1", at: 1 } as Event,
+      { type: "CodeSettled", execId: "exec-1", error: "cancelled", turn: "m1", at: 2 } as Event,
+      { type: "CodeDispatched", execId: "exec-1", code: "work()", turn: "m2", at: 3 } as Event
+    ]
+    const transition = cancelComponent(component, events, {
+      request: "x2",
+      invocation: { method: "message", id: "m2", epoch: 0 },
+      cause: "requested"
+    })[0]
+
+    expect(transition).toMatchObject({ kind: "intent", key: `cs:${JSON.stringify(["m2", "exec-1"])}` })
   })
 })

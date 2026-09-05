@@ -10,8 +10,8 @@ import {
 } from "@clavia/tardigrade-core/actor"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
-import { codeDispatched, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"
-import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
+import { codeDispatched, codeEventIdentity, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"
+import { eventEpochOf, turnOf } from "@clavia/tardigrade-code/execution/turns"
 import { codeReactorFor, type CodePolicy, type CodeProjectionState } from "@clavia/tardigrade-code/execution/reactor"
 import { renderShape, renderSignature } from "@clavia/tardigrade-code/execution/contract"
 import {
@@ -63,9 +63,12 @@ export const codeSystemFor = (packages: ReadonlyArray<Package<unknown>>): string
 
 const settleFor = (
   log: ReadonlyArray<Event>,
-  callId: string
+  callId: string,
+  turn?: string
 ): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
-  const settle = log.find((e) => e.type === "CodeSettled" && String((e as { execId?: unknown }).execId) === callId) as
+  const settle = log.find((event) =>
+    event.type === "CodeSettled" && event.execId === callId && turnOf(event) === turn
+  ) as
     | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string>; tmp?: unknown; size?: unknown; preview?: unknown; note?: unknown }
     | undefined
   if (settle === undefined) return undefined
@@ -82,14 +85,16 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
     ...(call.turn === undefined ? {} : { turn: call.turn }),
     ...(call.epoch === undefined || call.epoch === 0 ? {} : { epoch: call.epoch })
   }
-  if (log.some((e) => e.type === "CodeDispatched" && String((e as { execId?: unknown }).execId) === call.callId)) {
-    const outcome = settleFor(log, call.callId)
+  if (log.some((event) =>
+    event.type === "CodeDispatched" && event.execId === call.callId && turnOf(event) === call.turn
+  )) {
+    const outcome = settleFor(log, call.callId, call.turn)
     return outcome === undefined ? [] : [answer(outcome)]
   }
   const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
   return [
     intent({
-      key: `cd:${call.callId}`,
+      key: `cd:${codeEventIdentity(call.turn, call.callId)}`,
       ...(call.turn === undefined
         ? {}
         : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),
@@ -120,12 +125,11 @@ const rootKeys = (children: KeyFragment | undefined): KeyFragment => {
     keyOf: composeKeys(...fragments)
   }
 }
-
 const codeCancellationTransition = <R>(
   execId: string,
   cancellation: InvocationCancellation
 ): ReadonlyArray<Transition<never, R>> => [intent({
-  key: `cs:${execId}`,
+  key: `cs:${codeEventIdentity(cancellation.invocation.id, execId)}`,
   input: { execId, cancellation },
   events: (input, at) => [codeSettled({
     execId: input.execId,
@@ -180,11 +184,11 @@ export const codeMode = <
           if (child.length > 0) return child as ReadonlyArray<Transition<never, R>>
           if (cancellation.invocation.method !== "message") return []
           const execution = state.execution as CodeProjectionState
-          for (const [execId, dispatch] of execution.dispatches) {
-            if (execution.settled.has(execId)) continue
-            if (String((dispatch as { readonly turn?: unknown }).turn) !== cancellation.invocation.id) continue
+          for (const [identity, dispatch] of execution.dispatches) {
+            if (execution.settled.has(identity)) continue
+            if (turnOf(dispatch) !== cancellation.invocation.id) continue
             if (eventEpochOf(dispatch) !== cancellation.invocation.epoch) continue
-            return codeCancellationTransition<R>(execId, cancellation)
+            return codeCancellationTransition<R>(String(dispatch.execId ?? ""), cancellation)
           }
           return []
         },

@@ -476,6 +476,7 @@ describe("an assembled agent", () => {
     })
     // The store holds the result's JSON, so the offset counts the opening quote too.
     const answer = await mind.run("spill then search")
-    expect(answer.output).toBe("w1.result:20001:NEEDLE:20008")
+    console.log("EVENTS", JSON.stringify(mind.host.read("ag.root")))
+    expect(answer.output).toBe('["run-0","w1"].result:20001:NEEDLE:20008')
   })
 })
