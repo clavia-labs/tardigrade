@@ -7,7 +7,7 @@ const LEGACY_PREFIX = "ag."
 export const publicThreadId = (thread: string): string =>
   thread.startsWith(LEGACY_PREFIX) ? thread.slice(LEGACY_PREFIX.length) : thread
 
-// resolveThreadId resolves registered public names and retains legacy placement for new HTTP threads (thread-compat.test.ts).
+// resolveThreadId resolves existing legacy names and preserves supplied IDs for new threads (thread-compat.test.ts).
 export const resolveThreadId = (id: string, exists: (thread: string) => Effect.Effect<boolean>): Effect.Effect<string> =>
   Effect.gen(function*() {
     const legacy = `${LEGACY_PREFIX}${id}`
@@ -16,7 +16,7 @@ export const resolveThreadId = (id: string, exists: (thread: string) => Effect.E
     if (registeredLegacy && registeredExact) {
       return yield* Effect.die(new Error(`ambiguous public thread id ${JSON.stringify(id)}: both stored addresses exist`))
     }
-    return registeredLegacy || !registeredExact ? legacy : id
+    return registeredLegacy ? legacy : id
   })
 
 // withLegacyThreadIds adapts public operations without changing stored addresses or actor selection (thread-compat.test.ts).

@@ -288,7 +288,7 @@ describe("tdg dev", () => {
       layersFor: layeredLayersFor
     })
 
-    expect(state).toEqual({ status: "completed", output: "main:ag.root:hello" })
+    expect(state).toEqual({ status: "completed", output: "main:root:hello" })
   })
 
   test("a local push refreshes the actor registry", async () => {

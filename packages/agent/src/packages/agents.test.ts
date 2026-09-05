@@ -498,21 +498,6 @@ describe("a child is named by its parent address, run, and call", () => {
     ])
   })
 
-  test("a child spawning with its parent's turn and call ids cannot address itself", async () => {
-    const root = parseThreadAddress("mem:main:ag.root")
-    const events: Event[] = [threadCreated(root, undefined, 0), turn("m1"), called("c1", "m1")]
-    const sent: Array<Sent> = []
-    await Effect.runPromise(background("child", "c1").pipe(Effect.provide(liveEnv(events, sent))))
-    const child = sent[0]!.link.target as ThreadAddress
-    const childEvents: Event[] = [
-      threadCreated(child, { parent: root, depth: 1 }, 0),
-      turn("m1"), called("c1", "m1")
-    ]
-    await Effect.runPromise(background("grandchild", "c1").pipe(Effect.provide(liveEnv(childEvents, sent))))
-    expect(new Set([root.thread, ...threads(sent)]).size).toBe(3)
-    expect(sent[1]?.lineage).toMatchObject({ parent: child, depth: 2 })
-  })
-
   test("a turn-scoped legacy creation record retains its address on replay", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),

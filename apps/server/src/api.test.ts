@@ -798,7 +798,7 @@ describe("the event stream", () => {
       const delta: InferDelta = {
         actor: "agent",
         instance: "main",
-        thread: "ag.alpha",
+        thread: "alpha",
         turn: "turn-1",
         logicalAttempt: "turn-1/infer/0",
         physicalAttempt: "physical-1",
@@ -993,7 +993,7 @@ describe("the tree", () => {
       expect(childId).toMatch(/^[0-9a-f]{64}$/)
       expect(childEvents.some(({ event }) => event.type === "TurnCompleted")).toBe(true)
       expect(childEvents[0]!.event).toMatchObject({
-        address: { thread: childId }, parent: { thread: "ag.root" }
+        address: { thread: childId }, parent: { thread: "root" }
       })
       await birth(base, childId, { id: "follow-up", text: "hello again" })
       return {

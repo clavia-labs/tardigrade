@@ -13,8 +13,13 @@ test("legacy public names retain their stored addresses", async () => {
   expect(publicThreadId("ag.root")).toBe("root")
   expect(publicThreadId("ag.ag.root")).toBe("ag.root")
   expect(await Effect.runPromise(resolveThreadId("root", exists("ag.root")))).toBe("ag.root")
-  expect(await Effect.runPromise(resolveThreadId("root", exists()))).toBe("ag.root")
   expect(await Effect.runPromise(resolveThreadId("ag.root", exists("ag.ag.root")))).toBe("ag.ag.root")
+})
+
+test("new thread ids are stored as supplied", async () => {
+  for (const id of ["root", "ag.root", "thread_abc", "one:two", "三"]) {
+    expect(await Effect.runPromise(resolveThreadId(id, exists()))).toBe(id)
+  }
 })
 
 test("registered opaque thread ids round-trip without a required prefix", async () => {
