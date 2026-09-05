@@ -394,7 +394,9 @@ describe("cancellation properties", () => {
     ])
   })
 
-  test("ChildrenCancelled follows only InvocationLinked edges from the exact parent", () => {
+  test("ChildrenCancelled follows InvocationLinked edges from the logical parent across epochs", () => {
+    // A link records its parent at the spawn epoch, while a cancellation request names the
+    // parent's current epoch, so edge matching is logical: method and id, never epoch.
     const links: ReadonlyArray<Event> = [
       {
         type: "InvocationLinked",
@@ -414,9 +416,11 @@ describe("cancellation properties", () => {
     const initial = [started(parent, 1), ...links, request("x1", parent, 4)]
     const childRequest = `cancel/x1/${child.method}/${child.id}/${child.epoch}`
 
+    const nextChildRequest = `cancel/x1/${parent.method}/${parent.id}/${parent.epoch}`
     expect(cancellationTransitionsOf(initial, methods, [], terminalKeyOf)
-      ?.map((transition) => transition.key)).toEqual([`cxsend:${childRequest}`])
-    expect(cancellationTransitionsOf([
+      ?.map((transition) => transition.key))
+      .toEqual([`cxsend:${childRequest}`, `cxsend:${nextChildRequest}`])
+    const childAnswered = [
       ...initial,
       {
         type: "ResponseReceived",
@@ -427,6 +431,21 @@ describe("cancellation properties", () => {
         output: { cancelled: true },
         from: "worker:main:child",
         at: 5
+      } as Event
+    ]
+    expect(cancellationTransitionsOf(childAnswered, methods, [], terminalKeyOf)
+      ?.map((transition) => transition.key)).toEqual([`cxsend:${nextChildRequest}`])
+    expect(cancellationTransitionsOf([
+      ...childAnswered,
+      {
+        type: "ResponseReceived",
+        id: "next-child.cancelled",
+        method: "$cancel",
+        call: nextChildRequest,
+        status: "completed",
+        output: { cancelled: true },
+        from: "worker:main:next-child",
+        at: 6
       } as Event
     ], methods, [], terminalKeyOf)?.map((transition) => transition.key)).toEqual([
       `cancelled:${JSON.stringify([parent.method, parent.id, parent.epoch])}`

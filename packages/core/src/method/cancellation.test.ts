@@ -303,6 +303,65 @@ describe("actor cancellation", () => {
     )?.map((item) => item.key)).toEqual(["cancelled:parent"])
   })
 
+  test("a response from one target does not settle a reused call id on another target", () => {
+    // The same method and call id can name two calls on two threads; settlement is scoped by the
+    // target the response names, so cancelling the parent still reaches the sibling call.
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const request = {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "work", id: "parent", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event
+    const link = (target: string, at: number): Event => ({
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "shared", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target,
+      at
+    } as Event)
+    const keyOf = (event: Event) => cancellationKeys.keyOf(event) ?? (event.type === "WorkCancelled"
+      ? `cancelled:${String((event as { readonly id?: unknown }).id)}`
+      : undefined)
+
+    const events: ReadonlyArray<Event> = [
+      started,
+      link("worker:main:one", 1),
+      link("worker:main:two", 2),
+      request,
+      {
+        type: "ResponseReceived",
+        id: "one.done",
+        method: "work",
+        call: "shared",
+        status: "completed",
+        output: "done",
+        from: "worker:main:one",
+        at: 3
+      } as Event
+    ]
+    const transitions = cancellationTransitionsOf(events, { work }, [], keyOf)
+    expect(transitions?.map((transition) => transition.key))
+      .toEqual([`cxsend:cancel/x1/work/shared/0`])
+    expect(cancellationTransitionsOf([
+      ...events,
+      {
+        type: "ResponseReceived",
+        id: "two.done",
+        method: "work",
+        call: "shared",
+        status: "completed",
+        output: "done",
+        from: "worker:main:two",
+        at: 4
+      } as Event
+    ], { work }, [], keyOf)?.map((transition) => transition.key)).toEqual(["cancelled:parent"])
+  })
+
   test("core ignores unsupported and nonexistent cancellation targets", () => {
     const unsupported = {
       type: "CancellationRequested",
