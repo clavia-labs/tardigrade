@@ -579,6 +579,16 @@ describe("the bun host", () => {
     }
     await h.close()
   })
+
+  test("a refused initial actor delivery leaves no partial creation", async () => {
+    const h = await createBunHost(options(freshPath()))
+    await expect(h.commit(envelopeOf(
+      linkOf(parseThreadAddress("bun:default:parent"), parseThreadAddress("bun:default:child")),
+      { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
+    ))).rejects.toThrow("must carry lineage")
+    expect(await h.read("child")).toEqual([])
+    await h.close()
+  })
 })
 
 // The workspace the host binds: a value spilled by one process is on disk, so the next process
