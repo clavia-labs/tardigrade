@@ -1,3 +1,4 @@
+import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
@@ -55,8 +56,17 @@ const firstAt = (events: ReadonlyArray<Event>): number => {
   return Number.POSITIVE_INFINITY
 }
 
-// treeOf builds the forest from ChildCreated edges in parent logs. Child ThreadCreated records confirm identity, while the parent log owns discovery.
-export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>, statusOf: ThreadStatusOf): ReadonlyArray<ThreadNode> => {
+// treeOf builds the forest from ChildCreated edges in parent logs. Child ThreadCreated records
+// confirm identity, while the parent log owns discovery. `bounds` bounds the construction, not the
+// result: the walk starts at `root`, builds at most `maxDepth` levels beneath its start, and
+// builds at most `maxNodes` nodes, so a node the bounds exclude is never built and never
+// summarized (projections.test.ts, "treeOf bounds what it builds"). An unknown `root` reads as
+// undefined, because the forest cannot see a thread no log claims.
+export const treeOf = (
+  logs: ReadonlyMap<string, ReadonlyArray<Event>>,
+  statusOf: ThreadStatusOf,
+  bounds: TreeBounds = {}
+): ReadonlyArray<ThreadNode> | undefined => {
   const createdLogs = new Map([...logs].filter(([, events]) => events.length > 0))
   const idsByAddress = new Map<string, string>()
   for (const [id, events] of createdLogs) {
@@ -86,14 +96,29 @@ export const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>, statusOf
     if (siblings === undefined) childrenOf.set(parent, [child])
     else siblings.push(child)
   }
+  const root = bounds.root
+  if (root !== undefined && !createdLogs.has(root)) return undefined
   // A claim cycle is not reachable through minted call ids, but the map is an argument, so the walk
-  // carries the guard rather than trusting its caller.
+  // carries the guard rather than trusting its caller. The node budget counts down to zero and the
+  // walk stops, so a node past maxNodes or maxDepth is never built (projections.test.ts,
+  // "treeOf bounds what it builds").
   const walked = new Set<string>()
-  const node = (id: string, parent?: string): ThreadNode => {
+  let remaining = bounds.maxNodes
+  const node = (id: string, parent: string | undefined, level: number): ThreadNode | undefined => {
+    if (remaining !== undefined && remaining <= 0) return undefined
     walked.add(id)
+    if (remaining !== undefined) remaining -= 1
     const events = createdLogs.get(id) ?? []
-    const children = (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)
-    return { ...summaryOf(id, events, statusOf, parent), children: children.map((child) => node(child, id)) }
+    const children = bounds.maxDepth !== undefined && level >= bounds.maxDepth ? [] :
+      (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)
+        .map((child) => node(child, id, level + 1))
+        .filter((child): child is ThreadNode => child !== undefined)
+    return { ...summaryOf(id, events, statusOf, parent), children }
   }
-  return [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order).map((id) => node(id))
+  const starts = root === undefined
+    ? [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order)
+    : [root]
+  return starts
+    .map((id) => node(id, parents.get(id), 0))
+    .filter((node): node is ThreadNode => node !== undefined)
 }
