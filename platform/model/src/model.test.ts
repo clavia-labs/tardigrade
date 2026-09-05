@@ -12,6 +12,8 @@ import {
   VALIDATE_ONCE_FALLBACK,
   NATIVE_MODE,
   type InferDelta,
+  priced,
+  type UsageAdapter,
   type InferenceIdentity
 } from "tardie"
 
@@ -521,7 +523,7 @@ describe("infer end to end", () => {
     // The whole refusal is reported, assembled from its deltas.
     expect((action as { error?: string }).error).toContain("I cannot help with that.")
     // A refusal still spent the prompt, so the turn records what it cost, and who served it.
-    expect(action.usage).toMatchObject({ promptTokens: 11 })
+    expect(action.usage?.providerReports?.[0]?.providerSpecific).toEqual({ prompt_tokens: 11, completion_tokens: 0 })
     expect(action.endpoint).toMatchObject({ provider: "openai", model: "m" })
     expect(action.mode).toEqual({ kind: "native", name: "native" })
   })
@@ -737,176 +739,161 @@ describe("ephemeral inference deltas", () => {
 
 const usageChunk = (usage: Record<string, unknown>) => ({ id: "u", choices: [], usage })
 
-describe("infer: cost provenance", () => {
+describe("infer: explicit usage", () => {
+  test("implicit pricing is rejected before dispatch", () => {
+    expect(() => testInfer({
+      baseUrl: "https://model.test", apiKey: "k", model: "m",
+      // @ts-expect-error automatic pricing requires an explicit usage adapter
+      pricing: { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
+    })).toThrow("call priced inside usageAdapter")
+  })
+
   const okText = [
     { id: "r", choices: [{ index: 0, delta: { role: "assistant", content: "ok" } }] },
     { id: "r", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
   ]
-  const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
+  const run = (config: Partial<import("./model").ModelConfig>) => Effect.runPromise(
+    Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+      Effect.provide(testInfer({ baseUrl: "https://model.test/v1", apiKey: "k", model: "m", ...config }))
+    ) as Effect.Effect<Action>
+  )
 
-  test("a billed cost is provider, an omitted cost is table or unknown", async () => {
-    const rawUsage = {
-      prompt_tokens: 10,
-      completion_tokens: 4,
-      total_tokens: 14,
-      prompt_tokens_details: { cached_tokens: 4 },
-      completion_tokens_details: { reasoning_tokens: 2 },
-      cost: 0
+  test("raw usage stays uninterpreted without an adapter", async () => {
+    const raw = {
+      prompt_tokens: 137973, completion_tokens: 188, total_tokens: 138161,
+      cache_creation_input_tokens: 137970, prompt_tokens_details: { cached_tokens: 0 }, cost: 0
     }
-    const billed = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-        Effect.provide(
-          testInfer({
-            baseUrl: "https://model.test/v1",
-            apiKey: "k",
-            model: "test-model",
-            provider: "openai",
-            pricing: { ...table, cachedPromptUsdPerToken: 0.0001 },
-            fetch: (async () =>
-              sse([{ ...okText[0], usage: null }, okText[1], usageChunk(rawUsage)])) as unknown as typeof globalThis.fetch
-          })
-        )
-      ) as Effect.Effect<Action>
-    )
-    expect(billed).toMatchObject({
-      kind: "complete",
-      output: "ok",
-      usage: {
-        promptTokens: 10,
-        completionTokens: 4,
-        totalTokens: 14,
-        cachedPromptTokens: 4,
-        reasoningTokens: 2,
-        costUsd: 0,
-        costSource: "provider",
-        reportedCostUsd: 0,
-        estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
-        provider: "openai",
-        model: "test-model",
-        providerReports: [{ provider: "openai", model: "test-model", providerSpecific: rawUsage }]
-      }
-    })
-
-    const filled = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-        Effect.provide(
-          testInfer({
-            baseUrl: "https://model.test/v1",
-            apiKey: "k",
-            model: "test-model",
-            provider: "openai",
-            pricing: table,
-            fetch: (async () => sse([...okText, usageChunk({ prompt_tokens: 10, completion_tokens: 4 })])) as unknown as typeof globalThis.fetch
-          })
-        )
-      ) as Effect.Effect<Action>
-    )
-    expect(filled.usage).toEqual({
-      promptTokens: 10,
-      completionTokens: 4,
-      costUsd: 10 * 0.001 + 4 * 0.002,
-      costSource: "table",
-      estimatedCostUsd: 10 * 0.001 + 4 * 0.002,
-      provider: "openai",
-      model: "test-model",
-      providerReports: [
-        {
-          provider: "openai",
-          model: "test-model",
-          providerSpecific: { prompt_tokens: 10, completion_tokens: 4 }
-        }
-      ]
-    })
-
-    const unknown = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
-        Effect.provide(
-          testInfer({
-            baseUrl: "https://model.test/v1",
-            apiKey: "k",
-            model: "test-model",
-            fetch: (async () => sse(okText)) as unknown as typeof globalThis.fetch
-          })
-        )
-      ) as Effect.Effect<Action>
-    )
-    expect(unknown).toMatchObject({ kind: "complete", output: "ok" })
+    const action = await run({ fetch: (async () => sse([...okText, usageChunk(raw)])) })
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
+    expect(action.usage).toEqual({ provider: "test", model: "m", providerReports: [{ provider: "test", model: "m", providerSpecific: raw }] })
   })
 
-  test("gateway cache creation is counted once through the streamed adapter", async () => {
-    const rawUsage = {
-      prompt_tokens: 137973,
-      completion_tokens: 188,
-      total_tokens: 138161,
-      cache_creation_input_tokens: 137970,
-      prompt_tokens_details: { cached_tokens: 0 },
-      cost: 0
-    }
-    const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) =>
-        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
-      ).pipe(
-        Effect.provide(
-          testInfer({
-            baseUrl: "https://model.test/v1",
-            apiKey: "k",
-            model: "test-model",
-            pricing: { ...table, cacheWritePromptUsdPerToken: 0.00125 },
-            fetch: (async () => sse([...okText, usageChunk(rawUsage)])) as unknown as typeof globalThis.fetch
-          })
-        )
-      ) as Effect.Effect<Action>
-    )
-    expect(action).toMatchObject({
-      kind: "complete",
-      usage: {
-        promptTokens: 137973,
-        completionTokens: 188,
-        totalTokens: 138161,
-        cachedPromptTokens: 0,
-        cacheWritePromptTokens: 137970,
-        costUsd: 0,
-        costSource: "provider",
-        reportedCostUsd: 0,
-        estimatedCostUsd: 3 * 0.001 + 137970 * 0.00125 + 188 * 0.002,
-        providerReports: [{ providerSpecific: rawUsage }]
+  test("an explicit adapter owns token and cost interpretation", async () => {
+    const raw = { input: 10, output: 4, cached: 6, paid: 0 }
+    const action = await run({
+      fetch: (async () => sse([...okText, usageChunk(raw)])),
+      usageAdapter: (report) => {
+        expect(report).toEqual({ provider: "test", model: "m", providerSpecific: raw })
+        return priced({
+          promptTokens: raw.input, completionTokens: raw.output, cachedPromptTokens: raw.cached,
+          cacheWritePromptTokens: 0, reportedCostUsd: raw.paid
+        }, { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002, cachedPromptUsdPerToken: 0.0001 })
       }
     })
-  })
-
-  test("multiple wire usage objects remain one lossless physical report", async () => {
-    const detailed = {
-      prompt_tokens: 10,
-      completion_tokens: 4,
-      total_tokens: 14,
-      prompt_tokens_details: { cached_tokens: 4 },
-      completion_tokens_details: { reasoning_tokens: 2 }
-    }
-    const billed = { prompt_tokens: 10, completion_tokens: 4, total_tokens: 14, cost: 0 }
-    const action = await Effect.runPromise(
-      Effect.flatMap(Infer, (model) =>
-        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
-      ).pipe(
-        Effect.provide(
-          testInfer({
-            baseUrl: "https://model.test/v1",
-            apiKey: "k",
-            model: "test-model",
-            provider: "openai",
-            pricing: { ...table, cachedPromptUsdPerToken: 0.0001 },
-            fetch: (async () =>
-              sse([...okText, usageChunk(detailed), usageChunk(billed)])) as unknown as typeof globalThis.fetch
-          })
-        )
-      ) as Effect.Effect<Action>
-    )
     expect(action.usage).toMatchObject({
-      cachedPromptTokens: 4,
-      reasoningTokens: 2,
-      reportedCostUsd: 0,
-      estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
-      providerReports: [{ provider: "openai", model: "test-model", providerSpecific: [detailed, billed] }]
+      promptTokens: 10, completionTokens: 4, cachedPromptTokens: 6, costUsd: 0,
+      costSource: "provider", reportedCostUsd: 0, estimatedCostUsd: 4 * 0.001 + 6 * 0.0001 + 4 * 0.002
     })
+    expect(action.usage?.providerReports?.[0]?.providerSpecific).toEqual(raw)
+  })
+
+  test("multiple wire observations stay intact for a caller reducer", async () => {
+    const first = { prompt_tokens: 10, completion_tokens: 2 }
+    const last = { prompt_tokens: 10, completion_tokens: 4, cost: 0 }
+    const action = await run({
+      fetch: (async () => sse([...okText, usageChunk(first), usageChunk(last)])),
+      usageAdapter: (report) => {
+        expect(report.providerSpecific).toEqual([first, last])
+        return { promptTokens: 10, completionTokens: 4 }
+      }
+    })
+    expect(action.usage?.promptTokens).toBe(10)
+    expect(action.usage?.completionTokens).toBe(4)
+    expect(action.usage?.providerReports?.[0]?.providerSpecific).toEqual([first, last])
+  })
+
+  test("an adapter error preserves raw data and never retries the request", async () => {
+    for (const usageAdapter of [
+      () => { throw new Error("timeout in custom usage parser") },
+      () => ({ promptTokens: NaN })
+    ] satisfies UsageAdapter[]) {
+      let calls = 0
+      let translations = 0
+      const raw = { future_units: 3 }
+      const action = await run({
+        fetch: (async () => { calls++; return sse([...okText, usageChunk(raw)]) }),
+        usageAdapter: () => { translations++; return usageAdapter() },
+        sleep: async () => {}
+      })
+      expect(calls).toBe(1)
+      expect(translations).toBe(1)
+      expect(action.kind).toBe("fail")
+      expect("error" in action && action.error).toContain("usage adapter failed")
+      expect(action.usage).toEqual({ provider: "test", model: "m", providerReports: [{ provider: "test", model: "m", providerSpecific: raw }] })
+    }
+  })
+
+  test("a missing retry report keeps token and cost totals unknown", async () => {
+    let calls = 0
+    const raw = { prompt_tokens: 10, completion_tokens: 4 }
+    const action = await run({
+      fetch: (async () => calls++ === 0
+        ? new Response("busy", { status: 429 })
+        : sse([...okText, usageChunk(raw)])),
+      usageAdapter: () => ({ promptTokens: 10, completionTokens: 4, costUsd: 1 }),
+      throttleRetryDelaysMs: [0], sleep: async () => {}
+    })
+    expect(calls).toBe(2)
+    expect(action.kind).toBe("complete")
+    expect(action.usage).toEqual({ providerReports: [{ provider: "test", model: "m", providerSpecific: raw }] })
+  })
+
+  test("partial usage survives a stream failure", async () => {
+    const raw = { prompt_tokens: 10 }
+    const encoder = new TextEncoder()
+    let reads = 0
+    const action = await run({
+      fetch: (async () => new Response(new ReadableStream({
+        async pull(controller) {
+          if (reads++ === 0) controller.enqueue(encoder.encode(`data: ${JSON.stringify(usageChunk(raw))}\n\n`))
+          else {
+            await new Promise((resolve) => setTimeout(resolve, 0))
+            controller.error(new Error("stream ended unexpectedly"))
+          }
+        }
+      }), { headers: { "content-type": "text/event-stream" } })),
+      throttleRetryDelaysMs: []
+    })
+    expect(action.kind).toBe("fail")
+    expect(action.usage?.providerReports?.[0]?.providerSpecific).toEqual(raw)
+    expect(action.usage?.completionTokens).toBeUndefined()
+  })
+
+  test("protocol envelopes preserve raw usage without SDK fallback", async () => {
+    const input = { input_tokens: 3, cache_creation_input_tokens: 10 }
+    const output = { output_tokens: 4 }
+    const converse = { inputTokens: 3, outputTokens: 4, cacheReadInputTokens: 10 }
+    for (const [protocol, response, reported, expected] of [
+      ["anthropic-messages", sse([{ type: "message_start", message: { usage: input } }, { type: "message_delta", usage: output }]), undefined, [input, output]],
+      ["openai-responses", sse([{ type: "response.completed", response: { usage: { ...input, ...output } } }]), undefined, { ...input, ...output }],
+      ["bedrock-converse", new Response("{}"), converse, converse],
+      ["openai-chat-completions", new Response("{}"), undefined, undefined]
+    ] as const) {
+      const adapter: ModelAdapter = {
+        id: "fixture", protocols: [protocol],
+        start: (context) => ({
+          reportedUsage: () => reported,
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              await (await context.fetch("https://model.test")).text()
+              yield { type: "TEXT_MESSAGE_START", messageId: "s", role: "assistant", timestamp: 1 } as never
+              yield { type: "TEXT_MESSAGE_CONTENT", messageId: "s", delta: "ok", timestamp: 2 } as never
+              yield { type: "TEXT_MESSAGE_END", messageId: "s", timestamp: 3 } as never
+              yield { type: "RUN_FINISHED", timestamp: 4, usage: { promptTokens: 999, completionTokens: 999 } } as never
+            }
+          }
+        })
+      }
+      const action = await Effect.runPromise(
+        Effect.flatMap(Infer, (model) => model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
+          Effect.provide(infer({ baseUrl: "https://model.test", apiKey: "k", provider: "p", model: "m", protocol, contextWindowTokens: 128_000, fetch: (async () => response) }, modelAdapters(adapter)))
+        ) as Effect.Effect<Action>
+      )
+      expect(action.kind).toBe("complete")
+      expect(action.usage?.providerReports?.[0]?.providerSpecific).toEqual(expected)
+      expect(action.usage?.promptTokens).toBeUndefined()
+      expect(action.usage?.completionTokens).toBeUndefined()
+    }
   })
 })
 
@@ -1215,7 +1202,11 @@ describe("truncation", () => {
       model: "m",
       baseUrl: "https://x",
       apiKey: "k",
-      fetch: fetchImpl as never
+      fetch: fetchImpl as never,
+      usageAdapter: (report) => {
+        const raw = report.providerSpecific as { prompt_tokens: number; completion_tokens: number; cost: number }
+        return { promptTokens: raw.prompt_tokens, completionTokens: raw.completion_tokens, costUsd: raw.cost, reportedCostUsd: raw.cost, costSource: "provider" }
+      }
     })
     const action = await Effect.runPromise(
       Effect.flatMap(Infer, (i) => i.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))).pipe(
@@ -1283,8 +1274,6 @@ describe("truncation", () => {
       ) as Effect.Effect<Action>
     )
     expect(routed.usage).toMatchObject({
-      costUsd: 0.002,
-      costSource: "provider",
       provider: "DeepInfra",
       model: "meta-llama/llama-3.1-70b-instruct"
     })

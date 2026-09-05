@@ -2,7 +2,7 @@ import type { ModelMessage, StreamChunk, Tool } from "@tanstack/ai"
 import type { InferenceIdentity } from "tardie/inference/observer"
 import type { ModelRequest } from "tardie/inference/request"
 import type { OutputMode } from "tardie/output/contract"
-import type { ModelPricing } from "tardie/inference/usage"
+import type { UsageAdapter } from "tardie/inference/usage"
 import type { ModelProtocol } from "./directory"
 import type { OutputCapability } from "./output"
 
@@ -34,8 +34,10 @@ export interface ModelConfig {
   readonly stream?: Partial<StreamBounds>
   // output states the endpoint guarantee; an omitted value promises no native contract support.
   readonly output?: OutputCapability
-  // pricing supplies the estimate used when the provider reports tokens without a billed cost.
-  readonly pricing?: ModelPricing
+  // usageAdapter interprets raw reports for this binding; omission preserves raw data with unknown metrics (model.test.ts, "raw usage stays uninterpreted without an adapter").
+  readonly usageAdapter?: UsageAdapter
+  // pricing is rejected at construction; explicit adapters can call priced (model.test.ts, "implicit pricing is rejected before dispatch").
+  readonly pricing?: never
   // throttleRetryDelaysMs sets the backoff bases and its length sets the retry count.
   readonly throttleRetryDelaysMs?: ReadonlyArray<number>
   // retryAfterJitterMs adds a random wait to a provider Retry-After value.

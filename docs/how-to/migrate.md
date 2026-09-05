@@ -167,9 +167,38 @@ Validate the import before cutover:
 
 Run the same representative task once with Tardigrade. Use the same model, settings, input, data, and timer boundary as the baseline. Check semantic output parity before comparing efficiency.
 
-Use `usageIn(events, turn)` or the recorded attempt usage to total Tardigrade input and output tokens. Each usage stamp keeps normalized cache-read, cache-write, and reasoning counts when the provider supplies them. Each `providerReports` entry keeps one physical request's unconventional fields unchanged under `providerSpecific`, including reports from retried requests. The field contains the provider object directly when the request produced one report and an array when it produced several. `reportedCostUsd` keeps the provider figure, and `estimatedCostUsd` keeps an independent projection from the configured price table. `costUsd` remains the provider figure when available and otherwise uses the table estimate. Measure latency from request delivery through the terminal event.
+Each recorded attempt keeps captured provider usage under `usage.providerReports[].providerSpecific`. One report contains the provider object directly. Multiple observations from one request appear as an array in arrival order. Retries retain their reports as separate entries. The default model binding records these reports with unknown normalized token counts and costs.
 
-A price table needs `cachedPromptUsdPerToken` or `cacheWritePromptUsdPerToken` when the matching usage bucket is greater than zero. Tardigrade leaves the estimate unknown when a reported cache bucket has no declared rate. Calling `priced` with a complete new table recomputes `estimatedCostUsd`; a table that cannot price the usage preserves a recorded estimate.
+A model binding can supply `ModelConfig.usageAdapter` to interpret a report under an explicit provider contract. The callback receives a `ProviderUsageReport` and returns optional `Usage` metrics. It can return `undefined` when it cannot interpret the report. Tardigrade preserves the raw report alongside those metrics. An adapter exception or invalid numeric metric fails the inference with the raw report attached. An adapter failure does not trigger a provider retry.
+
+For analysis after a run, pass a saved report and a callback to `usageFrom(report, adapter)`, or reduce the raw reports directly. The callback owns field selection, cache inclusion, reasoning inclusion, and the combination of multiple observations. Tardigrade does not infer those rules from provider names or field aliases.
+
+```ts
+import { usageFrom, type UsageAdapter } from "tardie"
+
+const report = {
+  provider: "example",
+  model: "model-a",
+  providerSpecific: { input_count: 10, output_count: 4 }
+}
+
+const exampleUsage: UsageAdapter = ({ providerSpecific }) => {
+  if (providerSpecific === null || typeof providerSpecific !== "object") return undefined
+  if (!("input_count" in providerSpecific) || !("output_count" in providerSpecific)) return undefined
+  const input = providerSpecific.input_count
+  const output = providerSpecific.output_count
+  if (typeof input !== "number" || typeof output !== "number") return undefined
+  return { promptTokens: input, completionTokens: output }
+}
+
+const usage = usageFrom(report, exampleUsage)
+```
+
+`usageIn(events, turn)` sums explicitly interpreted metrics from the event log. If any recorded attempt omits a metric, its numeric total stays unknown. A measured zero remains zero. Token counts must be non-negative safe integers, and costs must be non-negative finite numbers. Numeric strings require explicit conversion in the adapter. Transport interruptions can leave partial reports or no report, so benchmark acceptance must check accounting completeness.
+
+`priced(usage, table)` estimates cost from explicit prompt, completion, cache-read, and cache-write counts. An unused cache bucket needs an explicit zero. A positive cache bucket needs its matching rate. The helper keeps `reportedCostUsd` and `estimatedCostUsd` as distinct metrics. Its `costUsd` projection prefers an existing cost, then the reported cost, then the estimate. A complete table recomputes the estimate. An incomplete table preserves a recorded estimate or leaves it unknown. The binding rejects `ModelConfig.pricing`. Price tables belong in explicit usage adapters or analysis code.
+
+Measure latency from request delivery through the terminal event.
 
 For each numeric measure, report `change = Tardigrade - existing` and `percent = change / existing * 100`. A negative token, cost, latency, line, or dependency change is a reduction. Leave the percentage unavailable when the existing value is zero or either value is missing.
 

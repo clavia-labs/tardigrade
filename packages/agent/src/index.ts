@@ -153,6 +153,7 @@ export {
   sumUsage,
   ZERO_USAGE,
   type Usage,
+  type UsageAdapter,
   type ProviderUsageReport,
   type CostSource,
   type ModelPricing
