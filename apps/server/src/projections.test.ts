@@ -3,7 +3,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replyId } from "@clavia/tardigrade-core/communication/message"
 import { childCreated, threadCreated } from "@clavia/tardigrade-core/thread"
 
-import { statusOf, summaryOf, treeOf } from "./projections"
+import { statusOf, summaryOf, treeOf, type ThreadNode } from "./projections"
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
 // below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
@@ -129,7 +129,7 @@ describe("treeOf", () => {
     ])
 
   test("three levels, two roots", () => {
-    const roots = treeOf(forest())
+    const roots = treeOf(forest())!
     expect(roots.map((node) => node.id)).toEqual(["root", "other"])
     const root = roots[0]!
     expect(root.children.map((node) => node.id)).toEqual(["t1.0", "t1.1"])
@@ -139,7 +139,7 @@ describe("treeOf", () => {
   })
 
   test("every node carries its own summary, and a child names its parent", () => {
-    const root = treeOf(forest())[0]!
+    const root = treeOf(forest())![0]!
     expect(root.status).toBe("running")
     const child = root.children[0]!
     expect(child.parent).toBe("root")
@@ -153,7 +153,7 @@ describe("treeOf", () => {
     const logs = new Map<string, ReadonlyArray<Event>>([
       ["root", [created("root"), inbound("m1"), dispatched("t1"), called("t1.0", "workspace")]]
     ])
-    expect(treeOf(logs).map((node) => node.id)).toEqual(["root"])
+    expect(treeOf(logs)!.map((node) => node.id)).toEqual(["root"])
   })
 
   test("an empty registered child is absent", () => {
@@ -166,6 +166,55 @@ describe("treeOf", () => {
     const early = [created("early"), inbound("a")]
     const late = [created("late"), inbound("b")]
     const logs = new Map<string, ReadonlyArray<Event>>([["late", late], ["early", early]])
-    expect(treeOf(logs).map((node) => node.id)).toEqual(["early", "late"])
+    expect(treeOf(logs)!.map((node) => node.id)).toEqual(["early", "late"])
+  })
+})
+
+describe("treeOf bounds what it builds", () => {
+  // A wide, deep forest: root fans out to three children, one of them chains two levels further.
+  const forest = (): ReadonlyMap<string, ReadonlyArray<Event>> =>
+    new Map<string, ReadonlyArray<Event>>([
+      ["root", [created("root"), inbound("m1"), called("a1"), spawned("a1", "root", 1), called("a2"), spawned("a2", "root", 1), called("b1"), spawned("b1", "root", 1)]],
+      ["a1", [created("a1", "root", 1), inbound("a1")]],
+      ["a2", [created("a2", "root", 1), inbound("a2"), called("a2.1"), spawned("a2.1", "a2", 2), called("a2.2"), spawned("a2.2", "a2", 2)]],
+      ["a2.1", [created("a2.1", "a2", 2), inbound("a2.1")]],
+      ["a2.2", [created("a2.2", "a2", 2), inbound("a2.2"), called("a2.2.1"), spawned("a2.2.1", "a2.2", 3)]],
+      ["a2.2.1", [created("a2.2.1", "a2.2", 3), inbound("a2.2.1")]],
+      ["b1", [created("b1", "root", 1), inbound("b1")]],
+      ["other", [created("other"), inbound("m2")]]
+    ])
+  const idsOf = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<string> =>
+    nodes.flatMap((node) => [node.id, ...idsOf(node.children)])
+
+  test("a stated root builds only that subtree", () => {
+    const tree = treeOf(forest(), { root: "a2" })!
+    expect(tree).toHaveLength(1)
+    const a2 = tree[0]!
+    expect(a2.parent).toBe("root")
+    expect(idsOf(tree)).toEqual(["a2", "a2.1", "a2.2", "a2.2.1"])
+  })
+
+  test("an unknown root reads as absent", () => {
+    expect(treeOf(forest(), { root: "ghost" })).toBeUndefined()
+  })
+
+  test("maxDepth zero keeps every start childless", () => {
+    const roots = treeOf(forest(), { maxDepth: 0 })!
+    expect(roots.map((node) => node.id)).toEqual(["root", "other"])
+    expect(roots.every((node) => node.children.length === 0)).toBe(true)
+  })
+
+  test("maxDepth cuts the descent before the deepest level", () => {
+    const roots = treeOf(forest(), { maxDepth: 2 })!
+    expect(idsOf(roots)).toEqual(["root", "a1", "a2", "a2.1", "a2.2", "b1", "other"])
+    // a2.2.1 sits at level three, one past the bound, so no node was built for it.
+    expect(idsOf(roots).includes("a2.2.1")).toBe(false)
+  })
+
+  test("maxNodes stops the walk before later roots", () => {
+    // The walk is depth-first in listing order, so four nodes spend the budget on root's subtree
+    // before `other` starts, and `other` is never built.
+    const roots = treeOf(forest(), { maxNodes: 4 })!
+    expect(idsOf(roots)).toEqual(["root", "a1", "a2", "a2.1"])
   })
 })

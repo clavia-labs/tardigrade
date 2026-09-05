@@ -11,7 +11,8 @@ import {
   MODEL_CATALOG_SORT_ORDERS,
   MODEL_CATALOG_UNPRICED_ORDERS,
   type ModelCatalog,
-  InvocationSettled
+  InvocationSettled,
+  type TreeBounds
 } from "@clavia/tardigrade-client/contract"
 import { infer } from "@clavia/tardigrade-model/model"
 import {
@@ -141,7 +142,15 @@ const actorSupervisorOf = (
   keyOf: actorEventKeyOf
 })
 
-const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<ActorThreadNode> => {
+// threadTreeOf builds the tree of an actor's registered threads from its roster records, bounded
+// by `bounds` when stated: the walk starts at `root`, builds at most `maxDepth` levels beneath its
+// start, and builds at most `maxNodes` nodes, so a node the bounds exclude is never built
+// (actor.workers.ts, "a bounded tree read never builds what it does not return"). An unknown
+// `root` reads as undefined, because the roster has no such thread.
+const threadTreeOf = (
+  rows: ReadonlyArray<ActorThreadRecord>,
+  bounds: TreeBounds = {}
+): ReadonlyArray<ActorThreadNode> | undefined => {
   const entries = new Map<string, Omit<ActorThreadNode, "children">>()
   const children = new Map<string, string[]>()
   const roots: string[] = []
@@ -158,20 +167,33 @@ const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<Act
     if (parent === undefined) roots.push(id)
     else children.set(parent, [...children.get(parent) ?? [], id])
   }
+  const { root, maxDepth, maxNodes } = bounds
+  if (root !== undefined && !entries.has(root)) return undefined
   const visited = new Set<string>()
-  const node = (id: string, ancestors: ReadonlySet<string>): ActorThreadNode => {
+  let built = 0
+  const node = (id: string, ancestors: ReadonlySet<string>, level: number): ActorThreadNode | undefined => {
+    if (maxNodes !== undefined && built >= maxNodes) return undefined
     if (ancestors.has(id)) throw new Error(`thread tree contains a cycle at ${JSON.stringify(id)}`)
     const entry = entries.get(id)
     if (entry === undefined) throw new Error(`thread tree is missing ${JSON.stringify(id)}`)
+    built += 1
     visited.add(id)
     const next = new Set(ancestors).add(id)
-    return {
-      ...entry,
-      children: [...children.get(id) ?? []].sort().map((child) => node(child, next))
-    }
+    const walked = maxDepth !== undefined && level >= maxDepth ? [] :
+      [...children.get(id) ?? []].sort()
+        .map((child) => node(child, next, level + 1))
+        .filter((child): child is ActorThreadNode => child !== undefined)
+    return { ...entry, children: walked }
   }
-  const tree = roots.sort().map((root) => node(root, new Set()))
-  if (visited.size !== entries.size) throw new Error("thread tree contains an orphan or cycle")
+  const tree = (root === undefined ? roots.sort() : [root])
+    .map((start) => node(start, new Set(), 0))
+    .filter((node): node is ActorThreadNode => node !== undefined)
+  // The orphan check holds only for the unbounded walk: a bounded read stops on purpose, so the
+  // entries it never reached are not orphans (actor.workers.ts, "a bounded tree read never builds
+  // what it does not return").
+  if (root === undefined && maxDepth === undefined && maxNodes === undefined && visited.size !== entries.size) {
+    throw new Error("thread tree contains an orphan or cycle")
+  }
   return tree
 }
 const actorObjectNameOf = (actor: string, instance: string): string => JSON.stringify([actor, instance])
@@ -697,9 +719,9 @@ export class ActorDO extends DurableObject<Env> {
     })
   }
 
-  async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
+  async threadTree(bounds: TreeBounds = {}): Promise<ReadonlyArray<ActorThreadNode> | undefined> {
     const entries = (await this.threads()).filter((entry) => entry.state === "registered")
-    return threadTreeOf(entries)
+    return threadTreeOf(entries, bounds)
   }
 
   async alarm(): Promise<void> {
@@ -1142,6 +1164,35 @@ const selectedMethodTimeoutOf = (raw: string | null): { readonly timeoutMs: numb
   }
 }
 
+// treeBoundsOf reads the bounds of GET /v1/actors/:id/threads from its query string: an absent
+// bound reads as undefined, and a bound that is not the integer it must be reads as its error.
+// `maxDepth` counts levels beneath the start, `maxNodes` counts nodes in total, and both must
+// hold a whole count (contract.ts, TreeBounds).
+const treeBoundsOf = (
+  request: HttpServerRequest.HttpServerRequest
+): { readonly bounds: TreeBounds } | { readonly error: string } => {
+  const query = new URL(request.url, "http://worker").searchParams
+  const boundOf = (name: string, minimum: 0 | 1): { readonly value?: number } | { readonly error: string } => {
+    const raw = query.get(name)
+    if (raw === null) return {}
+    const value = Number(raw)
+    return Number.isSafeInteger(value) && value >= minimum
+      ? { value }
+      : { error: `${name} must be ${minimum === 0 ? "a non-negative" : "a positive"} integer` }
+  }
+  const depth = boundOf("maxDepth", 0)
+  if ("error" in depth) return depth
+  const nodes = boundOf("maxNodes", 1)
+  if ("error" in nodes) return nodes
+  return {
+    bounds: {
+      root: query.get("root") ?? undefined,
+      maxDepth: depth.value,
+      maxNodes: nodes.value
+    }
+  }
+}
+
 const authorized = (request: HttpServerRequest.HttpServerRequest, env: Env): boolean =>
   env.TARDIGRADE_TOKEN !== undefined && request.headers.authorization === `Bearer ${env.TARDIGRADE_TOKEN}`
 
@@ -1392,14 +1443,19 @@ const routes = [
       return json({ actor: instance, thread, method: methodName, call, status: "requested" }, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const instance = params.id ?? ""
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
       const stub = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
       if (stub === undefined) return json({ error: "unknown actor" }, 404)
-      return json(yield* Effect.promise(() => stub.threadTree()))
+      const selected = treeBoundsOf(request)
+      if ("error" in selected) return json({ error: selected.error }, 400)
+      const tree = yield* Effect.promise(() => stub.threadTree(selected.bounds))
+      // An undefined tree is the caller's root naming a thread the roster has never registered.
+      if (tree === undefined) return json({ error: "unknown thread" }, 404)
+      return json(tree)
     })
   )),
   HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", protectedRoute((request, env) =>

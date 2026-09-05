@@ -155,6 +155,16 @@ export const ThreadNode = Schema.Struct({
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
 }).annotate({ identifier: "ThreadNode" })
 
+// TreeBounds names the opt-in bounds of a tree or roster read. A read with a `root` builds only
+// that subtree, `maxDepth` is the number of levels it builds beneath its start, and `maxNodes`
+// caps the nodes the read builds in total (apps-server/src/projections.test.ts, "treeOf bounds
+// what it builds").
+export interface TreeBounds {
+  readonly root?: string | undefined
+  readonly maxDepth?: number | undefined
+  readonly maxNodes?: number | undefined
+}
+
 export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "cancelled", "parked"])
 
 export type TurnStatus = typeof TurnStatus.Type
@@ -447,6 +457,16 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
+// TreeDepth is a read's `maxDepth` bound: the levels it builds beneath its start, a non-negative
+// integer where zero keeps the start childless (apps-server/src/projections.test.ts, "treeOf bounds what it builds").
+const TreeDepth = Seq
+
+// TreeNodeCount is a read's `maxNodes` bound: the nodes it builds in total, a positive integer
+// so a bounded read always builds its start (apps-server/src/projections.test.ts, "treeOf bounds what it builds").
+const TreeNodeCount = Schema.Int.pipe(
+  Schema.check(Schema.makeFilter((value: number) => value > 0, { title: "above zero" }))
+)
+
 const RuntimeActorParams = { id: ActorInstanceId }
 
 const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
@@ -467,8 +487,13 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   }),
   HttpApiEndpoint.get("list", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
+    query: {
+      root: Schema.optionalKey(Schema.String),
+      maxDepth: Schema.optionalKey(TreeDepth),
+      maxNodes: Schema.optionalKey(TreeNodeCount)
+    },
     success: Schema.Array(ThreadSummary),
-    error: [UnknownActor.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   }),
   HttpApiEndpoint.get("events", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
@@ -478,6 +503,7 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   }),
   HttpApiEndpoint.get("tree", "/v1/actors/:id/threads/:thread/tree", {
     params: RuntimeThreadParams,
+    query: { maxDepth: Schema.optionalKey(TreeDepth), maxNodes: Schema.optionalKey(TreeNodeCount) },
     success: ThreadNode,
     error: [UnknownActor.schema, UnknownThread.schema]
   })
