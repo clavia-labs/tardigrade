@@ -12,6 +12,7 @@ import {
 } from "./cancellation"
 import type { ActorInvocation, ActorInvocationContext } from "./call"
 import { cancellationStateOf, initialMethodStates, reduceMethodStates, type ActorMethods } from "./method"
+import type { ActorMethodView } from "./view"
 
 // AlarmFired records the platform alarm crossing in an actor's private log.
 export interface AlarmFired extends Event {
@@ -110,7 +111,7 @@ const dispatchesOf = (log: ReadonlyArray<Event>): ReadonlyArray<Dispatch> => log
   }]
 })
 
-interface InvocationDeadline {
+export interface InvocationDeadline {
   readonly invocation: ActorInvocation
   readonly deadlineAt: number
 }
@@ -208,6 +209,42 @@ const deadlineCancellationTransition = (invocation: ActorInvocation, deadlineAt:
   })]
 })
 
+// deadlineCancellationsAt projects the invocation deadlines an observed time has crossed into the same cancellation targets the caller path uses (timeout.test.ts, "a crossed deadline projects its cancellation at the observed time"; cancellation.test.ts, "the core event and key identify the target invocation independently of its requester").
+export const deadlineCancellationsAt = (
+  log: ReadonlyArray<Event>,
+  methods: ActorMethods,
+  at: number
+): ReadonlyArray<InvocationDeadline> => {
+  const views = new Map<string, ActorMethodView<unknown>>()
+  return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
+    if (deadlineAt > at) return []
+    const method = methods[invocation.method]
+    if (method === undefined || method.cancellation === undefined || invocationSettled(log, invocation)) return []
+    let view = views.get(invocation.method)
+    if (view === undefined) {
+      view = replayProjection(method.projection, log)
+      views.set(invocation.method, view)
+    }
+    return cancellationStateOf(method, view, invocation) !== "running" ? [] : [{ invocation, deadlineAt }]
+  })
+}
+
+// deadlineCancellationEventsAt constructs the durable cancellation requests one observed crossing commits alongside its alarm fact (timeout.test.ts, "one crossing projects every crossed invocation"; test/actor.workers.ts, "an alarm commits its deadline cancellation atomically").
+export const deadlineCancellationEventsAt = (
+  log: ReadonlyArray<Event>,
+  methods: ActorMethods,
+  at: number
+): ReadonlyArray<Event> =>
+  deadlineCancellationsAt(log, methods, at).map(({ invocation, deadlineAt }) =>
+    cancellationRequested({
+      request: `deadline/${invocation.method}/${invocation.id}/${invocation.epoch}/${deadlineAt}`,
+      invocation,
+      cause: "deadline",
+      deadlineAt,
+      at
+    })
+  )
+
 // methodTimeoutDerivation turns alarm facts into method terminals without reading a clock.
 export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
   const terminal = terminalCalls(log)
@@ -219,18 +256,15 @@ export const methodTimeoutDerivation: CompleteTransitionDerivation = (log) => {
   })
 }
 
-// methodDeadlineCancellationDerivation turns an accepted invocation deadline into the same durable cancellation used by callers.
+// methodDeadlineCancellationDerivation projects one deadline cancellation per invocation a recorded alarm crossed, for logs written before the alarm handler committed them (timeout.test.ts, "a crossed deadline projects its cancellation before and after commit"; timeout.test.ts, "two alarms crossing one deadline project one cancellation").
 export const methodDeadlineCancellationDerivation = (methods: ActorMethods): CompleteTransitionDerivation => (log) => {
-  const alarms = alarmsOf(log)
-  return invocationDeadlinesOf(log).flatMap(({ invocation, deadlineAt }) => {
-    const cancellation = methods[invocation.method]?.cancellation
-    if (cancellation === undefined || invocationSettled(log, invocation)) return []
-    const alarm = alarmFor(alarms, deadlineAt)
-    const method = methods[invocation.method]
-    if (alarm === undefined || method === undefined ||
-      cancellationStateOf(method, replayProjection(method.projection, log), invocation) !== "running") return []
-    return [deadlineCancellationTransition(invocation, deadlineAt)]
-  })
+  const latestAlarmAt = alarmsOf(log).reduce<number | undefined>(
+    (latest, alarm) => latest === undefined ? alarm.at : Math.max(latest, alarm.at),
+    undefined
+  )
+  if (latestAlarmAt === undefined) return []
+  return deadlineCancellationsAt(log, methods, latestAlarmAt)
+    .map(({ invocation, deadlineAt }) => deadlineCancellationTransition(invocation, deadlineAt))
 }
 
 /** @deprecated Use methodTimeoutDerivation. This compatibility name describes a complete-history transition derivation. */

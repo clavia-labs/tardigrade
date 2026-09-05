@@ -74,6 +74,8 @@ export {
 } from "./response"
 export {
   alarmFired,
+  deadlineCancellationsAt,
+  deadlineCancellationEventsAt,
   earliestDeadlineOf,
   methodDeadlineCancellationDerivation,
   methodDeadlineCancellationReactor,
@@ -83,5 +85,6 @@ export {
   methodTimeoutReactor,
   type AlarmFired,
   type AlarmFiredFields,
-  type CallTimedOut
+  type CallTimedOut,
+  type InvocationDeadline
 } from "./timeout"
