@@ -525,7 +525,7 @@ describe("the bun host", () => {
       } else {
         expect(admissionAt).toBe(-1)
       }
-      // The one contract: no admission commits after the seal.
+      // The contract: no admission commits after the seal.
       if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
     }
     await h.close()
@@ -574,7 +574,7 @@ describe("the bun host", () => {
       const sealAt = log.findIndex((e) => e.type === "MethodSealed")
       expect(sealAt).toBeGreaterThan(-1)
       expect(admitted).toBe(admissionAt !== -1)
-      // The one contract: no admission commits after the seal.
+      // The contract: no admission commits after the seal.
       if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
     }
     await h.close()
