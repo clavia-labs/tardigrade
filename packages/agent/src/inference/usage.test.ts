@@ -119,6 +119,88 @@ describe("priced and usageFrom", () => {
     ).toMatchObject({ estimatedCostUsd: 4 * 0.001 + 4 * 0.0002 + 2 * 0.00125 + 4 * 0.002 })
   })
 
+  test("gateway prompt totals already include cache creation", () => {
+    const raw = {
+      prompt_tokens: 137973,
+      completion_tokens: 188,
+      total_tokens: 138161,
+      cache_creation_input_tokens: 137970,
+      prompt_tokens_details: { cached_tokens: 0 },
+      completion_tokens_details: { reasoning_tokens: 118 },
+      cost: 0,
+      market_cost: 0.8670275
+    }
+    const pricing = {
+      promptUsdPerToken: 10 / 1_000_000,
+      completionUsdPerToken: 50 / 1_000_000,
+      cachedPromptUsdPerToken: 1 / 1_000_000,
+      cacheWritePromptUsdPerToken: 12.5 / 1_000_000
+    }
+    const expected = {
+      promptTokens: 137973,
+      completionTokens: 188,
+      totalTokens: 138161,
+      cachedPromptTokens: 0,
+      cacheWritePromptTokens: 137970,
+      reasoningTokens: 118,
+      reportedCostUsd: 0,
+      costUsd: 0,
+      costSource: "provider" as const,
+      estimatedCostUsd: 3 * pricing.promptUsdPerToken + 137970 * pricing.cacheWritePromptUsdPerToken + 188 * pricing.completionUsdPerToken,
+      providerReports: [{ providerSpecific: raw }]
+    }
+    expect(usageFrom(raw, pricing)).toEqual(expected)
+    expect(
+      usageFrom([raw, { promptTokens: 137973, completionTokens: 188, totalTokens: 138161 }], pricing)
+    ).toEqual(expected)
+    const stamp = { provider: "vercel-ai-gateway", model: "openai/gpt-6-astra" }
+    const providerMetrics = { usage: raw, provider_metadata: undefined }
+    expect(usageFrom([raw, undefined], pricing, stamp, providerMetrics)).toEqual({
+      ...expected,
+      ...stamp,
+      providerReports: [{ ...stamp, providerSpecific: providerMetrics }]
+    })
+  })
+
+  test("prompt totals include cache reads and writes across field aliases", () => {
+    for (const prompt of [{ promptTokens: 10 }, { prompt_tokens: 10 }]) {
+      for (const cache of [
+        { cacheReadInputTokens: 4, cacheWriteInputTokens: 2 },
+        { cache_read_input_tokens: 4, cache_write_input_tokens: 2 },
+        { cacheReadInputTokens: 4, cacheCreationInputTokens: 2 },
+        { cache_read_input_tokens: 4, cache_creation_input_tokens: 2 }
+      ]) {
+        expect(usageFrom({ ...prompt, ...cache, completionTokens: 3, totalTokens: 13 })).toMatchObject({
+          promptTokens: 10,
+          completionTokens: 3,
+          totalTokens: 13,
+          cachedPromptTokens: 4,
+          cacheWritePromptTokens: 2
+        })
+      }
+    }
+  })
+
+  test("Anthropic and Converse input counts exclude cache reads and writes", () => {
+    for (const raw of [
+      { input_tokens: 4, output_tokens: 3, cache_read_input_tokens: 4, cache_creation_input_tokens: 2 },
+      { inputTokens: 4, outputTokens: 3, totalTokens: 7, cacheReadInputTokens: 4, cacheWriteInputTokens: 2 }
+    ]) {
+      const pricing = { ...table, cachedPromptUsdPerToken: 0.0002, cacheWritePromptUsdPerToken: 0.00125 }
+      const expected = {
+        promptTokens: 10,
+        completionTokens: 3,
+        cachedPromptTokens: 4,
+        cacheWritePromptTokens: 2,
+        estimatedCostUsd: 4 * 0.001 + 4 * 0.0002 + 2 * 0.00125 + 3 * 0.002
+      }
+      expect(usageFrom(raw, pricing)).toMatchObject(expected)
+      expect(
+        usageFrom([raw, { promptTokens: 4, completionTokens: 3, totalTokens: 7 }], pricing)
+      ).toMatchObject(expected)
+    }
+  })
+
   test("a normalized adapter view fills details the raw report omits", () => {
     const raw = { prompt_tokens: 10, completion_tokens: 4, cost: 0 }
     expect(

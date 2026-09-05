@@ -833,6 +833,47 @@ describe("infer: cost provenance", () => {
     expect(unknown).toMatchObject({ kind: "complete", output: "ok" })
   })
 
+  test("gateway cache creation is counted once through the streamed adapter", async () => {
+    const rawUsage = {
+      prompt_tokens: 137973,
+      completion_tokens: 188,
+      total_tokens: 138161,
+      cache_creation_input_tokens: 137970,
+      prompt_tokens_details: { cached_tokens: 0 },
+      cost: 0
+    }
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([{ type: "MessageReceived", id: "m1", text: "go", at: 1 }]))
+      ).pipe(
+        Effect.provide(
+          testInfer({
+            baseUrl: "https://model.test/v1",
+            apiKey: "k",
+            model: "test-model",
+            pricing: { ...table, cacheWritePromptUsdPerToken: 0.00125 },
+            fetch: (async () => sse([...okText, usageChunk(rawUsage)])) as unknown as typeof globalThis.fetch
+          })
+        )
+      ) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({
+      kind: "complete",
+      usage: {
+        promptTokens: 137973,
+        completionTokens: 188,
+        totalTokens: 138161,
+        cachedPromptTokens: 0,
+        cacheWritePromptTokens: 137970,
+        costUsd: 0,
+        costSource: "provider",
+        reportedCostUsd: 0,
+        estimatedCostUsd: 3 * 0.001 + 137970 * 0.00125 + 188 * 0.002,
+        providerReports: [{ providerSpecific: rawUsage }]
+      }
+    })
+  })
+
   test("multiple wire usage objects remain one lossless physical report", async () => {
     const detailed = {
       prompt_tokens: 10,

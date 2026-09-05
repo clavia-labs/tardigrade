@@ -102,27 +102,28 @@ interface TokenMetrics {
 const tokensOf = (value: unknown): TokenMetrics | undefined => {
   const rec = asRecord(value)
   if (rec === undefined) return undefined
-  const prompt = firstNumber(rec, ["promptTokens", "prompt_tokens", "inputTokens", "input_tokens"])
+  const inclusivePrompt = firstNumber(rec, ["promptTokens", "prompt_tokens"])
+  const prompt = inclusivePrompt ?? firstNumber(rec, ["inputTokens", "input_tokens"])
   const completion = firstNumber(rec, ["completionTokens", "completion_tokens", "outputTokens", "output_tokens"])
   if (prompt === undefined && completion === undefined) return undefined
   const total = firstNumber(rec, ["totalTokens", "total_tokens"])
-  const exclusiveCached = firstNumber(rec, ["cacheReadInputTokens", "cache_read_input_tokens"])
+  const inputCached = firstNumber(rec, ["cacheReadInputTokens", "cache_read_input_tokens"])
   const cached =
-    exclusiveCached ??
+    inputCached ??
     firstNumber(rec, ["cachedPromptTokens", "cached_prompt_tokens", "cachedTokens", "cached_tokens"]) ??
     nestedNumber(rec, [
       ["promptTokensDetails", ["cachedTokens", "cached_tokens"]],
       ["prompt_tokens_details", ["cachedTokens", "cached_tokens"]],
       ["input_tokens_details", ["cachedTokens", "cached_tokens"]]
     ])
-  const exclusiveCacheWrite = firstNumber(rec, [
+  const inputCacheWrite = firstNumber(rec, [
     "cacheWriteInputTokens",
     "cache_write_input_tokens",
     "cacheCreationInputTokens",
     "cache_creation_input_tokens"
   ])
   const cacheWrite =
-    exclusiveCacheWrite ??
+    inputCacheWrite ??
     firstNumber(rec, ["cacheWritePromptTokens", "cache_write_prompt_tokens"]) ??
     nestedNumber(rec, [
       ["promptTokensDetails", ["cacheWriteTokens", "cache_write_tokens"]],
@@ -136,8 +137,10 @@ const tokensOf = (value: unknown): TokenMetrics | undefined => {
       ["completion_tokens_details", ["reasoningTokens", "reasoning_tokens"]],
       ["output_tokens_details", ["reasoningTokens", "reasoning_tokens"]]
     ])
-  const cacheBucketsWereExclusive = exclusiveCached !== undefined || exclusiveCacheWrite !== undefined
-  const exclusivePromptTokens = (exclusiveCached ?? 0) + (exclusiveCacheWrite ?? 0)
+  // inclusivePrompt includes cache buckets even when a gateway uses input-token cache field names (usage.test.ts, "gateway prompt totals already include cache creation").
+  const cacheBucketsWereExclusive =
+    inclusivePrompt === undefined && (inputCached !== undefined || inputCacheWrite !== undefined)
+  const exclusivePromptTokens = cacheBucketsWereExclusive ? (inputCached ?? 0) + (inputCacheWrite ?? 0) : 0
   const normalizedTotal =
     total === undefined || (total === 0 && (prompt ?? 0) + (completion ?? 0) > 0)
       ? undefined
