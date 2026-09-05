@@ -11,6 +11,7 @@ import {
   repairFallback,
   VALIDATE_ONCE_FALLBACK,
   NATIVE_MODE,
+  OPENAI_CHAT_COMPLETIONS_USAGE_V1,
   type InferDelta,
   priced,
   type UsageAdapter,
@@ -758,6 +759,18 @@ describe("infer: explicit usage", () => {
     ) as Effect.Effect<Action>
   )
 
+  test("an invalid adapter descriptor fails construction before fetch", () => {
+    let calls = 0
+    expect(() => testInfer({
+      baseUrl: "https://model.test/v1",
+      apiKey: "k",
+      model: "m",
+      fetch: (async () => { calls++; return sse([]) }),
+      usageAdapter: { id: 1, version: "1", adapt: () => ({}) } as never
+    })).toThrow("non-empty string id")
+    expect(calls).toBe(0)
+  })
+
   test("raw usage stays uninterpreted without an adapter", async () => {
     const raw = {
       prompt_tokens: 137973, completion_tokens: 188, total_tokens: 138161,
@@ -766,6 +779,30 @@ describe("infer: explicit usage", () => {
     const action = await run({ fetch: (async () => sse([...okText, usageChunk(raw)])) })
     expect(action).toMatchObject({ kind: "complete", output: "ok" })
     expect(action.usage).toEqual({ provider: "test", model: "m", providerReports: [{ provider: "test", model: "m", providerSpecific: raw }] })
+  })
+
+  test("the named OpenAI Chat Completions adapter works through the model binding", async () => {
+    const raw = {
+      prompt_tokens: 10,
+      completion_tokens: 4,
+      total_tokens: 14,
+      prompt_tokens_details: { cached_tokens: 2, cache_write_tokens: 1 },
+      completion_tokens_details: { reasoning_tokens: 1 }
+    }
+    const action = await run({
+      fetch: (async () => sse([...okText, usageChunk(raw)])),
+      usageAdapter: OPENAI_CHAT_COMPLETIONS_USAGE_V1
+    })
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
+    expect(action.usage).toMatchObject({
+      promptTokens: 10,
+      completionTokens: 4,
+      totalTokens: 14,
+      cachedPromptTokens: 2,
+      cacheWritePromptTokens: 1,
+      reasoningTokens: 1,
+      usageAdapter: { id: "openai/chat-completions-usage", version: "1" }
+    })
   })
 
   test("an explicit adapter owns token and cost interpretation", async () => {
@@ -817,10 +854,33 @@ describe("infer: explicit usage", () => {
       })
       expect(calls).toBe(1)
       expect(translations).toBe(1)
-      expect(action.kind).toBe("fail")
-      expect("error" in action && action.error).toContain("usage adapter failed")
-      expect(action.usage).toEqual({ provider: "test", model: "m", providerReports: [{ provider: "test", model: "m", providerSpecific: raw }] })
+      expect(action).toMatchObject({ kind: "complete", output: "ok" })
+      expect(action.usage).toEqual({
+        provider: "test",
+        model: "m",
+        providerReports: [{ provider: "test", model: "m", providerSpecific: raw }],
+        accountingErrors: [{ kind: "adapter", message: expect.any(String) }]
+      })
     }
+  })
+
+  test("a named adapter error preserves descriptor provenance on valid output", async () => {
+    const descriptor = {
+      id: "test/usage-contract",
+      version: "3",
+      adapt: () => { throw new Error("contract mismatch") }
+    }
+    const raw = { future_units: 3 }
+    const action = await run({
+      fetch: (async () => sse([...okText, usageChunk(raw)])),
+      usageAdapter: descriptor
+    })
+    expect(action).toMatchObject({ kind: "complete", output: "ok" })
+    expect(action.usage).toMatchObject({
+      usageAdapter: { id: descriptor.id, version: descriptor.version },
+      accountingErrors: [{ kind: "adapter", message: "contract mismatch" }],
+      providerReports: [{ providerSpecific: raw }]
+    })
   })
 
   test("a missing retry report keeps token and cost totals unknown", async () => {

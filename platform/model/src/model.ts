@@ -26,7 +26,7 @@ import {
   fallbackSystemFor
 } from "./output"
 import type { OutputMode } from "tardie/output/contract"
-import { sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
+import { sumUsage, usageFrom, usageWithAccountingError, validateUsageAdapterSelection, type Usage } from "tardie/inference/usage"
 import type {
   ModelAdapterRegistry,
   ModelConfig,
@@ -188,7 +188,6 @@ export const DEFAULT_RETRY_AFTER_JITTER_MS = 1_000
 // isRetryableFailure recognizes status-bearing provider failures and flattened transport errors.
 // The latter have no HTTP response metadata (model.test.ts, "infer: transient retry").
 const isRetryableFailure = (e: unknown): boolean => {
-  if (e instanceof UsageAdapterError) return false
   const err = e as { status?: unknown; statusCode?: unknown; message?: unknown }
   const status = typeof err.status === "number" ? err.status : typeof err.statusCode === "number" ? err.statusCode : undefined
   if (status === 429 || (status !== undefined && status >= 500)) return true
@@ -533,8 +532,6 @@ const failed = <E extends Error>(error: E, usage: Usage | undefined, endpoint: A
 const spentOf = (parts: ReadonlyArray<Usage>, missed: boolean): Usage | undefined =>
   parts.length === 0 ? undefined : sumUsage(missed ? [...parts, {}] : parts)
 
-class UsageAdapterError extends Error {}
-
 // infer provides NativeOutputSupport in its layer type only for a statically known native capability that accepts tools.
 export const infer = <const C extends ModelConfig>(
   config: C,
@@ -545,6 +542,7 @@ export const infer = <const C extends ModelConfig>(
   if ("pricing" in config) {
     throw new TypeError("ModelConfig.pricing is unsupported; call priced inside usageAdapter")
   }
+  validateUsageAdapterSelection(config.usageAdapter)
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }
@@ -628,11 +626,18 @@ export const infer = <const C extends ModelConfig>(
       try {
         return { usage: usageFrom(report, config.usageAdapter), endpoint, wire }
       } catch (error) {
-        throw failed(
-          new UsageAdapterError(`usage adapter failed: ${error instanceof Error ? error.message : String(error)}`),
-          usageFrom(report),
-          endpoint
-        )
+        // Interpretation is accounting, so a malformed report cannot erase an otherwise valid
+        // model answer. The raw report and typed error stay on the consequence for a later
+        // coverage projection to mark incomplete (model.test.ts, "an adapter error preserves the
+        // model output and raw evidence").
+        const message = error instanceof Error ? error.message : String(error)
+        return {
+          usage: {
+            ...usageWithAccountingError(report, config.usageAdapter, message)
+          },
+          endpoint,
+          wire
+        }
       }
     }
     try {

@@ -146,17 +146,34 @@ export { agentKeys, outputRepaired, outputRetryRequested, TURN_FAILURE_CAUSES, t
 export { resumeTurn, type ResumeTurnOptions, type TurnDriver } from "./runtime/resume"
 export {
   usageIn,
+  coverageIn,
+  OPENAI_CHAT_COMPLETIONS_USAGE_V1,
   usageOf,
   usageFrom,
+  usageWithAccountingError,
+  validateUsageAdapterSelection,
   priced,
   costOf,
   sumUsage,
   ZERO_USAGE,
+  DEFAULT_USAGE_COVERAGE_METRICS,
+  USAGE_COVERAGE_SCOPE,
   type Usage,
   type UsageAdapter,
+  type UsageAdapterDescriptor,
+  type UsageAdapterIdentity,
+  type UsageAdapterSelection,
+  type UsageAccountingError,
   type ProviderUsageReport,
   type CostSource,
-  type ModelPricing
+  type ModelPricing,
+  type UsageCoverage,
+  type UsageCoverageMetric,
+  type UsageCoverageOptions,
+  type UsageCoverageGap,
+  type UsageCoverageUnresolved,
+  type CompleteUsageCoverage,
+  type IncompleteUsageCoverage
 } from "./inference/usage"
 
 // Where a settle left a turn. A caller driving its own host reads the answer here, because a

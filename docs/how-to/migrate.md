@@ -169,32 +169,45 @@ Run the same representative task once with Tardigrade. Use the same model, setti
 
 Each recorded attempt keeps captured provider usage under `usage.providerReports[].providerSpecific`. One report contains the provider object directly. Multiple observations from one request appear as an array in arrival order. Retries retain their reports as separate entries. The default model binding records these reports with unknown normalized token counts and costs.
 
-A model binding can supply `ModelConfig.usageAdapter` to interpret a report under an explicit provider contract. The callback receives a `ProviderUsageReport` and returns optional `Usage` metrics. It can return `undefined` when it cannot interpret the report. Tardigrade preserves the raw report alongside those metrics. An adapter exception or invalid numeric metric fails the inference with the raw report attached. An adapter failure does not trigger a provider retry.
-
-For analysis after a run, pass a saved report and a callback to `usageFrom(report, adapter)`, or reduce the raw reports directly. The callback owns field selection, cache inclusion, reasoning inclusion, and the combination of multiple observations. Tardigrade does not infer those rules from provider names or field aliases.
+A model binding selects an interpretation through `ModelConfig.usageAdapter`. `OPENAI_CHAT_COMPLETIONS_USAGE_V1` is a versioned adapter for the [OpenAI Chat Completions usage contract](https://github.com/openai/openai-python/blob/2a98f6a1dee448c6410531c89c2de0af4383c6a7/src/openai/types/completion_usage.py). It validates token counts and subset relationships. Missing or null optional breakdowns remain unknown. Cached input and reasoning output are parts of the reported input and output counts; they are not added to those counts. Selecting this adapter asserts that the route uses that contract. A gateway that serves a different usage schema needs a matching adapter, even when its request API accepts Chat Completions.
 
 ```ts
-import { usageFrom, type UsageAdapter } from "tardie"
+import { OPENAI_CHAT_COMPLETIONS_USAGE_V1, usageFrom } from "tardie"
 
-const report = {
-  provider: "example",
-  model: "model-a",
-  providerSpecific: { input_count: 10, output_count: 4 }
-}
-
-const exampleUsage: UsageAdapter = ({ providerSpecific }) => {
-  if (providerSpecific === null || typeof providerSpecific !== "object") return undefined
-  if (!("input_count" in providerSpecific) || !("output_count" in providerSpecific)) return undefined
-  const input = providerSpecific.input_count
-  const output = providerSpecific.output_count
-  if (typeof input !== "number" || typeof output !== "number") return undefined
-  return { promptTokens: input, completionTokens: output }
-}
-
-const usage = usageFrom(report, exampleUsage)
+const usage = usageFrom({
+  provider: "openai",
+  model: "example-model",
+  providerSpecific: {
+    prompt_tokens: 10,
+    completion_tokens: 4,
+    total_tokens: 14,
+    prompt_tokens_details: { cached_tokens: 2 },
+    completion_tokens_details: { reasoning_tokens: 1 }
+  }
+}, OPENAI_CHAT_COMPLETIONS_USAGE_V1)
 ```
 
-`usageIn(events, turn)` sums explicitly interpreted metrics from the event log. If any recorded attempt omits a metric, its numeric total stays unknown. A measured zero remains zero. Token counts must be non-negative safe integers, and costs must be non-negative finite numbers. Numeric strings require explicit conversion in the adapter. Transport interruptions can leave partial reports or no report, so benchmark acceptance must check accounting completeness.
+The adapter identity and version accompany the interpreted usage. A custom contract can supply a descriptor with `id`, `version`, and `adapt`, or a callback for local interpretation. Tardigrade preserves raw reports alongside interpreted metrics. An omitted adapter leaves metrics unknown. The model binding retains raw evidence and records an accounting error when interpretation fails; a valid model output remains available. Repairing interpretation does not repeat generation. Saved reports can be interpreted again with `usageFrom(report, adapter)`.
+
+Execution completion and accounting coverage are separate. `coverageIn(events, turn)` checks the framework's recorded inference invocations and their consequences. Its default requires prompt and completion token counts. A caller can choose other required metrics, including a cost metric, without making token-only collection depend on pricing. The result identifies missing metrics and unresolved evidence. Its `observed` field is a subtotal of known contributions, and only a result with `status: "complete"` has `total`.
+
+```ts
+import { coverageIn } from "tardie"
+
+const coverage = coverageIn(events, turn, {
+  required: ["promptTokens", "completionTokens"]
+})
+
+if (coverage.status === "complete") {
+  console.log(coverage.total.promptTokens, coverage.total.completionTokens)
+} else {
+  console.log(coverage.observed, coverage.missing, coverage.unresolved)
+}
+```
+
+Coverage is scoped to framework-recorded inference invocations. A recorded call with no consequence remains unresolved, including an earlier occurrence whose later retry returned a result. Internal transport retries can contribute several provider reports to one invocation. This projection does not establish that every physical HTTP request was durably recorded before submission, or recover a receipt that the provider never exposed. Custom transports must expose their own request evidence. The application decides whether incomplete coverage pauses collection, blocks publication, or requires intervention.
+
+`usageIn(events, turn)` returns interpreted usage with missing native-attempt evidence kept unknown. Use `coverageIn` when a report requires evidence of completeness and the identities of unresolved invocations. A measured zero remains zero. Token counts must be non-negative safe integers, and costs must be non-negative finite numbers. Numeric strings require explicit conversion in a custom adapter.
 
 `priced(usage, table)` estimates cost from explicit prompt, completion, cache-read, and cache-write counts. An unused cache bucket needs an explicit zero. A positive cache bucket needs its matching rate. The helper keeps `reportedCostUsd` and `estimatedCostUsd` as distinct metrics. Its `costUsd` projection prefers an existing cost, then the reported cost, then the estimate. A complete table recomputes the estimate. An incomplete table preserves a recorded estimate or leaves it unknown. The binding rejects `ModelConfig.pricing`. Price tables belong in explicit usage adapters or analysis code.
 
