@@ -510,7 +510,9 @@ export const actorCancellationProjection = <R>(
       const descendants = hasUnsettledProjectedChildren(state, invocation)
       // Mirrors pendingCancellationsOf exactly: `accepted` is the state at the request's own
       // position, so undefined means the request pre-dates the start and still applies, and a
-      // running owner with unsettled descendants stays pending past its own terminal.
+      // running owner with unsettled descendants stays pending past its own terminal
+      // (cancellation.properties.test.ts, "the control projection agrees with complete
+      // cancellation replay").
       const pending =
         (current === "running" && (record.accepted === undefined || record.accepted === "running")) ||
         (descendants && record.accepted !== undefined)

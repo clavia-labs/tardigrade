@@ -416,6 +416,44 @@ describe("actor cancellation", () => {
     expect(projection.output(projected).residuals).toBeUndefined()
   })
 
+  test("a settled owner stays pending on the control method while a linked child is unsettled", () => {
+    // The `$cancel` call answers pending until the family drains, not until its own target
+    // settles: a caller reading the status must not see a completed family with work open.
+    const cancel = cancellationMethodFor({ work })
+    const started = { type: "WorkStarted", id: "parent", at: 1 } as Event
+    const link = {
+      type: "InvocationLinked",
+      parent: { method: "work", id: "parent", epoch: 0 },
+      child: {
+        invocation: { method: "work", id: "child", epoch: 0 },
+        parent: { method: "work", id: "parent", epoch: 0 }
+      },
+      target: "worker:main:child",
+      at: 2
+    } as Event
+    const request = cancel.event({
+      invocation: { method: "$cancel", id: "x1", epoch: 0 },
+      input: { invocation: { method: "work", id: "parent", epoch: 0 } },
+      at: 3
+    })
+    const settled = { type: "WorkCompleted", id: "parent", at: 4 } as Event
+    const childAnswered = {
+      type: "ResponseReceived",
+      id: "child.done",
+      method: "work",
+      call: "child",
+      status: "completed",
+      output: "done",
+      from: "worker:main:child",
+      at: 5
+    } as Event
+    const caller = { method: "$cancel", id: "x1", epoch: 0 }
+
+    expect(cancel.state([started, link, request, settled], caller)).toEqual({ status: "pending" })
+    expect(cancel.state([started, link, request, settled, childAnswered], caller))
+      .toEqual({ status: "completed", output: { cancelled: false } })
+  })
+
   test("core ignores unsupported and nonexistent cancellation targets", () => {
     const unsupported = {
       type: "CancellationRequested",
