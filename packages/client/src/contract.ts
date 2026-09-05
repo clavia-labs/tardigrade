@@ -157,6 +157,8 @@ export const ThreadNode = Schema.Struct({
 
 // TreeBounds names the opt-in bounds of a tree or roster read. A read with a `root` builds only
 // that subtree, `maxDepth` is the number of levels it builds beneath its start, and `maxNodes`
+// caps the nodes the read builds in total (apps-server/src/projections.test.ts, "treeOf bounds
+// what it builds").
 export interface TreeBounds {
   readonly root?: string | undefined
   readonly maxDepth?: number | undefined
