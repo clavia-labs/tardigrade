@@ -80,12 +80,12 @@ describe("budget admission reacts to BudgetExhausted", () => {
 
   test("admission commits an intent before code execution becomes an effect", () => {
     const log = turn(1, 12)
-    const admission = rootReactor(log).find((transition) => transition.key === 'cd:["m1","c1"]')
+    const admission = rootReactor(log).find((transition) => transition.key === `cd:${JSON.stringify(["m1", "c1"])}`)
     expect(admission?.kind).toBe("intent")
     const execution = rootReactor([
       ...log,
       { type: "CodeDispatched", execId: "c1", code: "x1", turn: "m1", at: 3 }
-    ]).find((transition) => transition.key === 'cs:["m1","c1"]')
+    ]).find((transition) => transition.key === `cs:${JSON.stringify(["m1", "c1"])}`)
     expect(execution?.kind).toBe("effect")
   })
 
