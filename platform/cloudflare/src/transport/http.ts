@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HttpServer, HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
-import { UnknownThread } from "@clavia/tardigrade-client/contract"
+import { UnknownThread, type TreeBounds } from "@clavia/tardigrade-client/contract"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ModelPolicy } from "@clavia/tardigrade-agent"
 import type { ModelCatalogState } from "@clavia/tardigrade-model/catalog"
@@ -13,6 +13,35 @@ import { CatalogApi, CatalogDiscovery, layerCatalogHandlers } from "@clavia/tard
 import { layerRequestProblems } from "@clavia/tardigrade-http/contract"
 import type { Env } from "../env"
 import type { CloudflareDirectory } from "./directory"
+
+// treeBoundsOf reads the bounds of GET /v1/actors/:id/threads from its query string: an absent
+// bound reads as undefined, and a bound that is not the integer it must be reads as its error.
+// `maxDepth` counts levels beneath the start, `maxNodes` counts nodes in total, and both must
+// hold a whole count (contract.ts, TreeBounds).
+const treeBoundsOf = (
+  request: HttpServerRequest.HttpServerRequest
+): { readonly bounds: TreeBounds } | { readonly error: string } => {
+  const query = new URL(request.url, "http://worker").searchParams
+  const boundOf = (name: string, minimum: 0 | 1): { readonly value?: number } | { readonly error: string } => {
+    const raw = query.get(name)
+    if (raw === null) return {}
+    const value = Number(raw)
+    return Number.isSafeInteger(value) && value >= minimum
+      ? { value }
+      : { error: `${name} must be ${minimum === 0 ? "a non-negative" : "a positive"} integer` }
+  }
+  const depth = boundOf("maxDepth", 0)
+  if ("error" in depth) return depth
+  const nodes = boundOf("maxNodes", 1)
+  if ("error" in nodes) return nodes
+  return {
+    bounds: {
+      root: query.get("root") ?? undefined,
+      maxDepth: depth.value,
+      maxNodes: nodes.value
+    }
+  }
+}
 
 export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200
 
@@ -106,14 +135,18 @@ export const cloudflareHttp = ({
         return json(coordinate)
       })
     )),
-    HttpRouter.route("GET", "/v1/actors/:id/threads", workerRoute((_request, env) =>
+    HttpRouter.route("GET", "/v1/actors/:id/threads", workerRoute((request, env) =>
       Effect.gen(function* () {
         const params = yield* HttpRouter.params
         const instance = params.id ?? ""
         if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
         const stub = yield* Effect.promise(() => actorStub(env, actorName(), instance, false))
         if (stub === undefined) return json({ error: "unknown actor" }, 404)
-        return json(yield* Effect.promise(() => stub.threadTree()))
+        const selected = treeBoundsOf(request)
+        if ("error" in selected) return json({ error: selected.error }, 400)
+        const tree = yield* Effect.promise(() => stub.threadTree(selected.bounds))
+        if (tree === undefined) return json({ error: "unknown thread" }, 404)
+        return json(tree)
       })
     )),
     HttpRouter.route("POST", "/v1/actors/:id/threads/:thread/events", workerRoute((request, env) =>
