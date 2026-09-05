@@ -14,21 +14,21 @@ import { agentsPackage } from "./agents"
 interface CallPlan {
   readonly callId: string
   readonly failures: number
-  readonly failurePoint: "before" | "after"
+  readonly failurePoint: "record" | "before" | "after"
   readonly placement: "colocated" | "independent" | undefined
 }
 
 const callPlan = fc.record({
   callId: fc.stringMatching(/^[a-z][a-z0-9_]{0,12}$/),
   failures: fc.integer({ min: 0, max: 4 }),
-  failurePoint: fc.constantFrom<CallPlan["failurePoint"]>("before", "after"),
+  failurePoint: fc.constantFrom<CallPlan["failurePoint"]>("record", "before", "after"),
   placement: fc.option(fc.constantFrom<"colocated" | "independent">("colocated", "independent"), { nil: undefined })
 })
 
 const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLength: 1, maxLength: 7 })
 
 // childProtocol runs the implementation against the transitions in Child.tla. The parent log is
-// durable across attempts, while the router may fail on either side of the child commit.
+// durable across attempts, with finite failures before creation or on either side of delivery.
 const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const parent = threadAddressOf("property", "main", "ag.root")
   const host = createHost({ actorName: parent.actor, actorFor: () => undefined })
@@ -50,6 +50,14 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
   const plansByCall = new Map(calls.map((plan) => [plan.callId, plan]))
   const append = (events: ReadonlyArray<Event>): Effect.Effect<void> => Effect.sync(() => {
     for (const event of events) {
+      if (event.type === "ChildCreated") {
+        const callId = String(event.callId)
+        const left = remaining.get(callId) ?? 0
+        if (left > 0 && plansByCall.get(callId)?.failurePoint === "record") {
+          remaining.set(callId, left - 1)
+          throw new Error("injected creation record failure")
+        }
+      }
       const key = threadKeys.keyOf(event)
       if (key !== undefined && parentLog.some((candidate) => threadKeys.keyOf(candidate) === key)) continue
       parentLog.push(event)
@@ -82,12 +90,14 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
 
   for (const plan of calls) {
     for (let attempt = 0; attempt <= plan.failures; attempt++) {
-      await Effect.runPromise(
+      const result = await Effect.runPromise(
         run(
           { text: plan.callId, background: true, ...(plan.placement === undefined ? {} : { placement: plan.placement }) },
           { callId: plan.callId }
         ).pipe(Effect.provide(environment), Effect.exit)
       )
+      expect(result._tag).toBe(attempt < plan.failures ? "Failure" : "Success")
+      if (result._tag === "Success") expect(result.value).toEqual({ dispatched: true, callId: plan.callId })
     }
   }
 
@@ -100,7 +110,9 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
     const callActions = actions.filter((action) => action.callId === plan.callId)
     expect(callActions[0]?.kind).toBe("append")
     expect(callActions.filter((action) => action.kind === "append")).toHaveLength(1)
-    expect(callActions.filter((action) => action.kind === "send")).toHaveLength(plan.failures + 1)
+    expect(callActions.filter((action) => action.kind === "send")).toHaveLength(
+      plan.failurePoint === "record" ? 1 : plan.failures + 1
+    )
     for (const sent of callActions.filter((action) => action.kind === "send")) expect(sent.target).toEqual(record.address)
 
     const childLog = host.read(record.address.thread)
@@ -118,7 +130,79 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
 }
 
 describe("child creation protocol", () => {
-  test("matches Child.tla across retries and crash windows", async () => {
+  test("liveness: creation completes after finite failures when dispatch is retried", async () => {
     await fc.assert(fc.asyncProperty(plans, childProtocol), { numRuns: 200 })
+  })
+
+  test("safety: parent threads, turns, and depths isolate children while replay retains ownership", async () => {
+    await fc.assert(fc.asyncProperty(
+      fc.stringMatching(/^[a-z][a-z0-9_]{0,12}$/),
+      fc.string({ minLength: 1, maxLength: 30 }),
+      fc.string({ minLength: 1, maxLength: 30 }),
+      fc.integer({ min: 2, max: 5 }),
+      async (rootId, turnToken, callToken, depth) => {
+        const turn = `turn:${turnToken}`
+        const callId = `call:${callToken}`
+        const host = createHost({ actorName: "property", actorFor: () => undefined })
+        const targets = new Set<string>()
+        const run = agentsPackage().methods.run!
+        const dispatch = async (parent: ThreadAddress, level: number): Promise<ThreadAddress> => {
+          const events: Event[] = [...host.read(parent.thread)]
+          for (const event of events.filter((event) => event.type === "MessageReceived")) {
+            events.push({ type: "TurnCompleted", turn: event.id, output: "accepted", at: 1 })
+          }
+          let target: ThreadAddress | undefined
+          const environment = Layer.mergeAll(
+            Layer.succeed(Self, parent),
+            Layer.succeed(EventLog, withWatermark({
+              read: Effect.succeed(events),
+              append: (tail) => Effect.sync(() => {
+                for (const event of tail) {
+                  const key = threadKeys.keyOf(event)
+                  if (key !== undefined && events.some((prior) => threadKeys.keyOf(prior) === key)) continue
+                  events.push(event)
+                }
+              })
+            })),
+            Layer.succeed(Router, {
+              send: (envelope) => Effect.sync(() => {
+                target = envelope.link.target as ThreadAddress
+                host.commit(envelope as never)
+              })
+            })
+          )
+          for (const currentTurn of [turn, `${turn}x`]) {
+            events.push(
+              { type: "MessageReceived", id: currentTurn, text: "delegate", at: 1 },
+              { type: "PackageCalled", callId, name: "agents.run", turn: currentTurn, at: 2 }
+            )
+            const invoke = () => Effect.runPromise(run({ text: "child", background: true }, { callId })
+              .pipe(Effect.provide(environment)))
+            expect(await invoke()).toEqual({ dispatched: true, callId })
+            const first = target!
+            expect(first.thread).toMatch(/^[0-9a-f]{64}$/)
+            expect(first.thread).not.toBe(parent.thread)
+            expect(targets.has(first.thread)).toBe(false)
+            targets.add(first.thread)
+            expect(await invoke()).toEqual({ dispatched: true, callId })
+            expect(target).toEqual(first)
+            const records = events.filter((event) => event.type === "ChildCreated" && event.turn === currentTurn)
+            expect(records).toHaveLength(1)
+            expect(records[0]).toMatchObject({ address: first, callId, depth: level + 1 })
+            const childLog = host.read(first.thread)
+            expect(threadCreatedOf(childLog)).toMatchObject({ address: first, parent, depth: level + 1 })
+            expect(childLog.filter((event) => event.type === "MessageReceived")).toHaveLength(1)
+            events.push({ type: "TurnCompleted", turn: currentTurn, output: "done", at: 3 })
+          }
+          return target!
+        }
+        for (const thread of [rootId, `${rootId}x`]) {
+          let parent = threadAddressOf("property", "main", thread)
+          host.seed(thread, [threadCreated(parent, undefined, 0)])
+          for (let level = 0; level < depth; level++) parent = await dispatch(parent, level)
+        }
+        expect(targets.size).toBe(4 * depth)
+      }
+    ), { numRuns: 100 })
   })
 })

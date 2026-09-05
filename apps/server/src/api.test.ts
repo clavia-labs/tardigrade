@@ -987,8 +987,17 @@ describe("the tree", () => {
         const health = (await (await fetch(`${base}/healthz`)).json()) as { status: string }
         return health.status === "resting" ? health : undefined
       })
+      const tree = (await (await fetch(`${base}/v1/actors/main/threads/root/tree`)).json()) as ThreadNode
+      const childId = tree.children[0]!.id
+      const childEvents = (await (await fetch(`${base}/v1/actors/main/threads/${childId}/events`)).json()) as ReadonlyArray<EventRow>
+      expect(childId).toMatch(/^[0-9a-f]{64}$/)
+      expect(childEvents.some(({ event }) => event.type === "TurnCompleted")).toBe(true)
+      expect(childEvents[0]!.event).toMatchObject({
+        address: { thread: childId }, parent: { thread: "ag.root" }
+      })
+      await birth(base, childId, { id: "follow-up", text: "hello again" })
       return {
-        tree: (await (await fetch(`${base}/v1/actors/main/threads/root/tree`)).json()) as ThreadNode,
+        tree,
         listed: (await (await fetch(`${base}/v1/actors/main/threads`)).json()) as ReadonlyArray<ThreadSummary>,
         ghost: (await fetch(`${base}/v1/actors/main/threads/ghost/tree`)).status
       }

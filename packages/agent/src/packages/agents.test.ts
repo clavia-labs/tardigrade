@@ -17,7 +17,7 @@ import {
 import type { Link } from "@clavia/tardigrade-core/communication/link"
 import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { childKeyOf, childThreadId, threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/thread"
 import { codeSystemFor } from "../component/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
@@ -82,6 +82,11 @@ const turn = (id: string, at = 1): Event =>
 const called = (callId: string, turnId: string, at = 2): Event =>
   ({ type: "PackageCalled", callId, name: "agents.run", arguments: {}, turn: turnId, at } as Event)
 
+const expectedThread = (turn: string, call: string) => childThreadId({
+  parent: parseThreadAddress("mem:main:ag.root"),
+  child: childKeyOf(JSON.stringify([turn, call]))
+})
+
 describe("agentsPackage", () => {
   test("a foreground child records its invocation owner", async () => {
     const sent: Array<Sent> = []
@@ -109,7 +114,7 @@ describe("agentsPackage", () => {
       type: "InvocationLinked",
       parent: { method: "message", id: "m1", epoch: 2 },
       child: expect.objectContaining({ invocation: { method: "message", id: "child-1", epoch: 0 } }),
-      target: "mem:main:ag.2:m1child-1"
+      target: `mem:main:${await expectedThread("m1", "child-1")}`
     }))
     expect(sent[0]?.call).toMatchObject({
       parent: { method: "message", id: "m1", epoch: 2 },
@@ -209,9 +214,7 @@ describe("agentsPackage", () => {
         Effect.provide(env(host.self("ag.root"), sent, { "ag.root": [turn("m1"), called("c1", "m1")] }))
       )
     )
-    // Parity with the closure the in-process host used to pass: same actorName, the thread
-    // named by the parent run and call (agents.ts, childThreadId).
-    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: "ag.2:m1c1" })
+    expect(sent[0]?.link.target).toEqual({ actor: "mem", instance: "main", thread: await expectedThread("m1", "c1") })
     expect(sent[0]?.event).toMatchObject({ escalatable: true })
   })
 
@@ -233,7 +236,7 @@ describe("agentsPackage", () => {
     expect(result).toEqual({ error: "agents.run placement must be colocated or independent" })
   })
 
-  test("the callId is the child's identity and the link returns to the parent", async () => {
+  test("the callId identifies the child invocation and the link returns to the parent", async () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const answer = await Effect.runPromise(
@@ -246,7 +249,7 @@ describe("agentsPackage", () => {
     expect(brief.id).toBe("c3")
     expect(sent[0]!.link).toEqual({
       source: { actor: "mem", instance: "main", thread: "ag.root" },
-      target: { actor: "mem", instance: "main", thread: "ag.2:m1c3" }
+      target: { actor: "mem", instance: "main", thread: await expectedThread("m1", "c3") }
     })
   })
 
@@ -362,7 +365,7 @@ describe("agentsPackage", () => {
     )
     expect(parked).toBeInstanceOf(Park)
     expect((parked as Park).awaiting).toBe(replyId("c5"))
-    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe("mem:main:ag.2:m1c5")
+    expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe(`mem:main:${await expectedThread("m1", "c5")}`)
   })
 
   test("a cancelled reply settles the run as a failed answer", async () => {
@@ -435,7 +438,7 @@ describe("agentsPackage", () => {
 // A live parent log: an append lands where the next read looks, so a re-driven dispatch replays
 // against what its predecessor recorded, the way a durable store does after a crash.
 const liveEnv = (events: Event[], sent: Array<Sent>) => {
-  const self = parseThreadAddress("mem:main:ag.root")
+  const self = threadCreatedOf(events)!.address
   return Layer.mergeAll(
     Layer.succeed(Router, {
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
@@ -459,7 +462,7 @@ const turnWithDeadline = (id: string, deadlineAt: number): Event =>
     at: 1
   } as Event)
 
-describe("a child is named by its parent run and call", () => {
+describe("a child is named by its parent address, run, and call", () => {
   const run = agentsPackage().methods.run!
   const background = (text: string, callId: string) =>
     run({ text, background: true }, { callId })
@@ -485,14 +488,42 @@ describe("a child is named by its parent run and call", () => {
     await Effect.runPromise(background("second", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
 
     expect(threads(sent)).toEqual([
-      "ag.8:parent-areused-call",
-      "ag.8:parent-breused-call",
-      "ag.8:parent-breused-call"
+      await expectedThread("parent-a", "reused-call"),
+      await expectedThread("parent-b", "reused-call"),
+      await expectedThread("parent-b", "reused-call")
     ])
     expect(events.filter((event) => event.type === "ChildCreated")).toMatchObject([
-      { callId: "reused-call", turn: "parent-a", address: { thread: "ag.8:parent-areused-call" } },
-      { callId: "reused-call", turn: "parent-b", address: { thread: "ag.8:parent-breused-call" } }
+      { callId: "reused-call", turn: "parent-a", address: { thread: await expectedThread("parent-a", "reused-call") } },
+      { callId: "reused-call", turn: "parent-b", address: { thread: await expectedThread("parent-b", "reused-call") } }
     ])
+  })
+
+  test("a child spawning with its parent's turn and call ids cannot address itself", async () => {
+    const root = parseThreadAddress("mem:main:ag.root")
+    const events: Event[] = [threadCreated(root, undefined, 0), turn("m1"), called("c1", "m1")]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("child", "c1").pipe(Effect.provide(liveEnv(events, sent))))
+    const child = sent[0]!.link.target as ThreadAddress
+    const childEvents: Event[] = [
+      threadCreated(child, { parent: root, depth: 1 }, 0),
+      turn("m1"), called("c1", "m1")
+    ]
+    await Effect.runPromise(background("grandchild", "c1").pipe(Effect.provide(liveEnv(childEvents, sent))))
+    expect(new Set([root.thread, ...threads(sent)]).size).toBe(3)
+    expect(sent[1]?.lineage).toMatchObject({ parent: child, depth: 2 })
+  })
+
+  test("a turn-scoped legacy creation record retains its address on replay", async () => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("m1"), called("c1", "m1"),
+      { type: "ChildCreated", callId: "c1", turn: "m1",
+        address: { actor: "mem", instance: "main", thread: "ag.2:m1c1" }, depth: 1, at: 3 }
+    ]
+    const sent: Array<Sent> = []
+    await Effect.runPromise(background("child", "c1").pipe(Effect.provide(liveEnv(events, sent))))
+    expect(threads(sent)).toEqual(["ag.2:m1c1"])
+    expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(1)
   })
 
   test("a dispatch whose creation record never committed re-derives the same address", async () => {
@@ -507,7 +538,7 @@ describe("a child is named by its parent run and call", () => {
     await Effect.runPromise(background("scout", "crash-1").pipe(Effect.provide(liveEnv(events, sent))))
     events.splice(events.findIndex((event) => event.type === "ChildCreated"), 1)
     await Effect.runPromise(background("scout", "crash-1").pipe(Effect.provide(liveEnv(events, sent))))
-    expect(threads(sent)).toEqual(["ag.2:m1crash-1", "ag.2:m1crash-1"])
+    expect(threads(sent)).toEqual([await expectedThread("m1", "crash-1"), await expectedThread("m1", "crash-1")])
   })
 
   test("a creation record without a turn still names its child", async () => {
@@ -532,16 +563,13 @@ describe("a child is named by its parent run and call", () => {
   })
 
   test("a derived address that names another child dies rather than delivering", async () => {
-    // A legacy call id names its child ag.<callId>, so a run can derive that address for a
-    // different call: run "m1" with call "c1" names ag.2:m1c1, the child legacy call 2:m1c1
-    // owns. The dispatch dies instead of crossing the brief.
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
       turn("m1"),
       {
         type: "ChildCreated",
         callId: "2:m1c1",
-        address: { actor: "mem", instance: "main", thread: "ag.2:m1c1" },
+        address: { actor: "mem", instance: "main", thread: await expectedThread("m1", "c1") },
         depth: 1,
         at: 1
       } as Event,
@@ -553,7 +581,7 @@ describe("a child is named by its parent run and call", () => {
     )
     if (exit._tag !== "Failure") throw new Error("expected the colliding dispatch to die")
     expect(Cause.pretty(exit.cause)).toContain(
-      "agents.run c1 derives child address mem:main:ag.2:m1c1, which child 2:m1c1 already owns"
+      `agents.run c1 derives child address mem:main:${await expectedThread("m1", "c1")}, which child 2:m1c1 already owns`
     )
     expect(sent).toHaveLength(0)
   })

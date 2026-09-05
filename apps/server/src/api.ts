@@ -39,7 +39,8 @@ import { ModelCatalogStore } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { ServerConfig } from "./config"
-import { idOf, Threads, type ActorThreads } from "./host"
+import { Threads, type ActorThreads } from "./host"
+import { publicThreadId, resolveThreadId } from "./thread-compat"
 import type { InferenceStream } from "./inference-stream"
 import { problemResponse } from "./problem"
 import { treeOf, type ThreadSummary } from "./projections"
@@ -135,10 +136,10 @@ const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JS
 const HEARTBEAT = ": tardigrade\n\n"
 
 const actorThreadOf = (record: ActorThreadRecord): ActorThread => ({
-  id: idOf(record.thread) ?? record.thread,
+  id: publicThreadId(record.thread),
   ...(record.parentThread === undefined
     ? {}
-    : { parent: idOf(record.parentThread) ?? record.parentThread }),
+    : { parent: publicThreadId(record.parentThread) }),
   depth: record.depth
 })
 
@@ -352,7 +353,7 @@ const inferenceStreamResponse = (
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       unsubscribe = inference.subscribe((delta) => {
-        if (delta.instance !== actor || idOf(delta.thread) !== thread) return
+        if (delta.instance !== actor || delta.thread !== thread) return
         if ((controller.desiredSize ?? 1) <= 0) return
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(delta)}\n\n`))
       })
@@ -403,10 +404,12 @@ export const layerStream = (options: ApiOptions = {}) => {
       "/v1/actors/:id/threads/:thread/inference/stream",
       Effect.gen(function*() {
         const params = yield* HttpRouter.params
+        const threads = yield* (yield* Threads).ensure(paramOf(params, "id"))
+        const thread = yield* resolveThreadId(paramOf(params, "thread"), (thread) => Effect.map(threads.actorThread(thread), (record) => record !== undefined))
         return yield* inferenceStreamResponse(
           options.inference!,
           paramOf(params, "id"),
-          paramOf(params, "thread"),
+          thread,
           heartbeat,
           bufferCapacity
         )

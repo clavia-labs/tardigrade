@@ -18,8 +18,10 @@ import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope
 import {
   ChildCreated,
   childCreated,
+  childKeyOf,
   childLineageOf,
   ChildPlacement,
+  childThreadId,
   threadCreatedOf,
   type ThreadCreated,
   type ThreadLineage
@@ -41,55 +43,19 @@ import {
   type ModelPolicyOverride
 } from "../inference/access"
 
-// agentsPackage provides model catalog discovery and ad-hoc agents. `agents.providers` and
-// `agents.models` search the available providers and models. `agents.run({text})` runs a fresh agent to
-// quiescence and returns its terminal; `agents.run({text, background: true})` delivers the brief
-// and returns a pending handle, and `agents.result({id})` awaits that handle's reply later.
-//
-// Every call is its own agent. A call id is unique only within its parent turn, so the child's
-// native thread names the pair of both identifiers, and a Promise.all of five runs is five
-// agents by construction. A persistent named colleague is a later explicit feature, never an
-// accident of naming.
-//
-// Durability costs nothing here: both modes are package calls, so the recorded pair replays a
-// committed run and re-delivers a crashed dispatch. The child's address is a pure function of
-// the parent run and the call, and a replay reads the recorded ChildCreated, so a re-driven
-// dispatch reaches the same child and is absorbed as a duplicate.
-//
-// The package is a value any consumer mounts: its host privileges are services, not constructor
-// arguments. `Router` sends, `Self` names the calling thread, and `EventLog` supplies its durable
-// calls, responses, and creation record.
-//
-// A plain foreground run parks, the same mechanism `tasks.fire` (`src/packages/tasks.ts`) uses:
-// deliver the brief through a link from this thread, then await the reply row on this thread, host-side
-// `Park` when it has not landed yet (`src/code/execute.ts`'s proxy is what turns that into a promise
-// that never settles for the code body). It never holds a call open.
-//
-// An escalatable run keeps the same call pending while the child negotiates through the parent's
-// requestBudget method. The original call receives only the child's terminal response.
-
-// SpawnOptions is the placement's environment: who the family works as, how a child's budget is
-// drawn from the run, and the isolation labels a brief carries down. Every field has a default,
-// and `budget` is one of them rather than a constant this module reads: a spawn with no stated
-// budget takes the same ceiling the child's own reactor would, and a consumer that moved that
-// ceiling moves both (budget.ts, BudgetPolicy).
+// SpawnOptions configures child budgets, model access, output contracts, and inherited metadata.
 export interface SpawnOptions {
-  // The output contracts a spawning body may ask a child for, by name. Model-authored code has
-  // no TypeScript checking (packages/code/src/execution/reactor.ts runs it through AsyncFunction), so a
-  // name resolved here is the only path where the schema was proved at compile time by the host
-  // that declared it. A raw schema stays reachable and is preflighted instead (spawn.test.ts,
-  // "the output a spawn asks for").
+  // outputs supplies named output contracts available to child runs.
   readonly outputs?: Readonly<Record<string, OutputContract>>
   // catalog supplies provider and model discovery to the package.
   readonly catalog?: AgentCatalog
   // models narrows inherited authority and may select a default for children started by this package.
   readonly models?: ModelPolicyOverride
   readonly actorNameOf?: () => string | undefined
+  // reserve grants a child budget; implementations must reuse grants for replayed call IDs.
   readonly reserve?: (callId: string, want: number) => Promise<number>
   readonly shadowOf?: () => boolean
-  // The parent's explicit world label, when its own fire named a shared world instead of taking
-  // the anonymous one (docs/worlds.md). Forwarded onto every spawn's brief the same way `shadow`
-  // is, so a whole family stays on one shared world's facets.
+  // worldOf supplies the world label forwarded to child briefs.
   readonly worldOf?: () => string | undefined
   readonly budget?: Partial<BudgetPolicy>
 }
@@ -260,31 +226,21 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// childThreadId names a child after its parent run and call id. Length-prefixing keeps the pair
-// injective even when either identifier has punctuation, so two turns reusing one call id name
-// two children (agents.test.ts, "reused call ids across turns address distinct children").
-const childThreadId = (parentRunId: string, callId: string): string =>
-  `${parentRunId.length}:${parentRunId}${callId}`
+// sibling derives a child address within the parent's actor instance (agents.test.ts, "the default address is the host's own sibling").
+const sibling = async (parentRunId: string, callId: string, self: ThreadAddress): Promise<ThreadAddress> =>
+  threadAddressOf(self.actor, self.instance, await childThreadId({
+    parent: self,
+    child: childKeyOf(JSON.stringify([parentRunId, callId]))
+  }))
 
-// sibling is the default address: the child inherits the parent's actor instance and a thread
-// name derived from the parent run and call. Thread placement remains a separate host decision
-// (agents.test.ts, "the default address is the host's own sibling").
-const sibling = (parentRunId: string, callId: string, self: ThreadAddress): ThreadAddress =>
-  threadAddressOf(self.actor, self.instance, `ag.${childThreadId(parentRunId, callId)}`)
-
-// parentRunOf resolves the run a package call serves: its turn id and execution epoch. A call
-// outside any run has no child to name, so the dispatch dies rather than guessing.
+// parentRunOf returns the package call's owning turn and execution epoch, if present.
 const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: number } | undefined => {
   const turn = turnOf(call)
   return turn === undefined ? undefined : { turn, epoch: eventEpochOf(call) }
 }
 
-// childClaimOf resolves the child this dispatch owns. The recorded child is the ChildCreated
-// between this call's PackageCalled in the parent run and the next call reusing the id, so a
-// later turn reusing the id can never claim an earlier turn's child, and a replay reads its
-// own dispatch's record (agents.test.ts, "reused call ids across turns address distinct
-// children").
-const childClaimOf = (
+// childClaimOf scopes a child to its parent turn and call, preserving recorded addresses on replay (agents.test.ts).
+const childClaimOf = async (
   placement: unknown,
   events: ReadonlyArray<Event>,
   parent: ThreadCreated,
@@ -318,11 +274,8 @@ const childClaimOf = (
         depth: recorded.depth,
         ...(recorded.placement === undefined ? {} : { placement: recorded.placement })
       }
-  const target = recorded?.address ?? sibling(parentRunId, callId, source)
-  // A legacy call id names its child ag.<callId>, so the length-prefixed scheme can derive the
-  // same address for a different dispatch (agents.test.ts, "a derived address that names another
-  // child dies rather than delivering"). No in-band marker separates the schemes, so the
-  // collision dies instead of delivering the brief to the child another dispatch owns.
+  const target = recorded?.address ?? await sibling(parentRunId, callId, source)
+  // clash rejects a derived address already claimed by another recorded child (agents.test.ts, "a derived address that names another child dies rather than delivering").
   if (recorded === undefined) {
     const clash = events.find(
       (event): event is ChildCreated =>
@@ -346,6 +299,7 @@ const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
   return head?.models === undefined ? DEFAULT_MODEL_POLICY : modelPolicyOf(head.models)
 }
 
+// agentsPackage exposes model discovery, child dispatch, and result retrieval.
 export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog> => {
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
@@ -483,8 +437,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
       }),
       run: (args, ctx) =>
         Effect.gen(function* () {
-          // The three cross-thread privileges, read where the work happens: send, identity,
-          // observe. A host that binds them serves this method; nothing here closes over one.
           const router = yield* Router
           const source = yield* Self
           const log = yield* EventLog
@@ -506,12 +458,11 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if (parentRun === undefined) {
             return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
           }
-          const child = childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
+          const child = yield* Effect.promise(() =>
+            childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
+          )
           if ("error" in child) return child
           const { lineage, recorded: recordedChild, target } = child
-          // The contract parameter is `output`, and a near-miss spelling fails silently: no
-          // contract means a prose answer, so the caller's field reads come back undefined and
-          // the run returns something plausible and wrong. Say so instead.
           if (a?.output === undefined && a?.outputSchema !== undefined) {
             return { error: "agents.run takes the contract as `output`, not `outputSchema`" }
           }
@@ -527,9 +478,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if ("error" in declaredOutput) return declaredOutput
           const output = declaredOutput.contract
           const outputDeclaration = output === undefined ? undefined : { name: output.name, schema: output.schema }
-          // asked is the tool-call budget carried on the brief. It accepts a whole positive count
-          // because rounding could turn a requested child into an exhausted run (spawn.test.ts,
-          // "a fractional budget"). An absent budget takes the per-agent default.
           const asked = a?.budget
           let want = defaultBudget
           if (asked !== undefined) {
@@ -538,24 +486,12 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             }
             want = asked
           }
-          // Draw from the run's single budget before the child spawns, so the whole tree is bounded by
-          // it whatever the fan-out. A partial budget grants what is left; a spent budget grants 0, and
-          // then no agent spawns, which is how the tree stops. The draw is keyed on this call's id, so
-          // a re-driven code body reuses its grant and never draws twice.
           const budget = yield* Effect.promise(() => reserve(ctx.callId, want))
           if (budget <= 0) return { error: "the run's budget is exhausted; no budget to spawn this agent" }
-          // The child works as the same member the parent does: the actor rides every brief in the
-          // family, so a run's whole tree resolves providers identically.
           const actor = actorNameOf()
-          // The parent's own shadow reading, never the tool args: an agent cannot set or unset it, so
-          // a whole run family is shadow by construction from the fire alone. `world` rides along
-          // the same way, when the fire named an explicit shared one.
           const shadow = shadowOf()
           const world = worldOf()
-          // The owning run links a foreground child and bounds every child with its deadline:
-          // a background child is not linked, but it still answers the turn that fired it
-          // (agents.test.ts, "a background child inherits the owning turn deadline without a
-          // parent link").
+          // owner supplies the deadline for both dispatch modes (agents.test.ts, "a background child inherits the owning turn deadline without a parent link").
           const owner = { method: "message", id: parentRun.turn, epoch: parentRun.epoch }
           const parent = a?.background === true ? undefined : owner
           const parentDeadline = events.find((event) => {
@@ -597,28 +533,17 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             }, lineage))
           })
           if (a?.background === true) {
-            // A background run uses the same actor protocol. Its budget request can be served while
-            // no code body awaits it, and its terminal is collected later by agents.result.
             const at = yield* Clock.currentTimeMillis
             yield* dispatch(at)
             return { dispatched: true, callId: ctx.callId }
           }
-          // Foreground runs park on their terminal response. A replay reads that response
-          // before redelivering the same brief.
           const already = yield* awaitedBoundary(ctx.callId)
           if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
           const at = yield* Clock.currentTimeMillis
           yield* dispatch(at)
           return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
         }),
-      // Await a run already fired in the background: no delivery, the same reply-or-park read the
-      // plain foreground branch of `run` takes. `id` is the `callId` an earlier `background: true`
-      // run answered.
-      //
-      // The method response carries the contract accepted with the original call. A later argument
-      // cannot reinterpret prose that happens to be JSON as a shape nobody asked the child for
-      // (spawn.test.ts, "a later call cannot invent a contract the run never declared").
-      //
+      // result validates a background response against its recorded output contract (agents.test.ts, "a later call cannot invent a contract the run never declared").
       result: (args, ctx) =>
         Effect.gen(function* () {
           const a = args as { id?: unknown } | undefined
@@ -633,11 +558,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
   })
 }
 
-// outputAsked resolves what a code body asked the child to answer in. A name is a contract the
-// host declared, whose schema a TypeScript signature already checked. A schema object is the
-// dynamic escape hatch: model-authored code carries no compile-time proof, so the schema is
-// preflighted against the supported profile here, before the child is briefed and before any
-// model is called (output.ts, outputProfileErrors). Anything else is an error the caller reads.
+// outputAsked resolves a named contract or validates an inline schema (agents.test.ts, "the output a spawn asks for").
 const outputAsked = (
   asked: unknown,
   outputs: Readonly<Record<string, OutputContract>>,
@@ -668,9 +589,7 @@ const outputAsked = (
   return { contract: built.contract }
 }
 
-// INLINE_OUTPUT_NAME is the schema identity an inline schema carries on the wire. Every declared
-// contract names itself; an inline one has no name to carry, so the log and the provider both
-// read this one and an operator can tell the two apart.
+// INLINE_OUTPUT_NAME labels inline output schemas on the wire.
 export const INLINE_OUTPUT_NAME = "inline"
 
 interface SpawnBoundaryContext {
@@ -706,7 +625,7 @@ const contractOf = (
     : { contract: built.contract }
 }
 
-// awaitedBoundaryOf projects one child response from the caller's private log. A cancelled response remains structured and settles the wait (agents.test.ts, "a cancelled reply settles the run as a failed answer", "a cancelled reply with no reason settles as a bare cancelled error"). A delivered method response is a ResponseReceived carrying the round-zero boundary id (response.test.ts, "returns a terminal through the accepted call link").
+// awaitedBoundaryOf reads a round-zero child response and its recorded output contract (agents.test.ts).
 const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
   const response = events.find(
     (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
@@ -731,8 +650,8 @@ const awaitedBoundary = (turn: string): Effect.Effect<SpawnBoundary | undefined,
     return awaitedBoundaryOf(yield* log.read, turn)
   })
 
-// answerOf maps a child terminal to the package's public result. Cancellation metadata remains on SpawnBoundary while callers keep the existing error result (agents.test.ts, "a cancelled reply settles the run as a failed answer").
 const ERROR_PREFIX = "error: "
+// answerOf maps a child terminal to output or error, including cancellation (agents.test.ts, "a cancelled reply settles the run as a failed answer").
 const answerOf = (reply: SpawnBoundary): {
   readonly output?: string
   readonly error?: string
@@ -746,11 +665,7 @@ const answerOf = (reply: SpawnBoundary): {
     : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }
 }
 
-// shape renders a terminal as the code's return value.
-// A terminal under a contract comes back decoded and validated. A terminal that misses the
-// contract comes back as an error rather than as a value: the child's own reactor already refused
-// such an answer, so one arriving here means the reply did not come from that path, and reading it
-// as the contract's shape would be the reinterpretation this whole surface exists to prevent.
+// shape decodes successful output against its contract and reports validation failures (agents.test.ts, "a reply invalid under A but valid under B still fails as A").
 const shape = (
   answer: { output?: string; error?: string },
   turn: string,

@@ -439,12 +439,11 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
   }), { numRuns: 40 })
 }, 60_000)
 
-test("Rick cancels every foreground Morty across generated schedules", async () => {
-  await fc.assert(fc.asyncProperty(fc.record({
-    children: fc.integer({ min: 1, max: 6 }),
-    headroom: fc.integer({ min: 1, max: 3 }),
-    schedule: fc.array(fc.nat(), { minLength: 8, maxLength: 32 })
-  }), async ({ children, headroom, schedule }) => {
+const cancelForegroundMortys = async ({ children, headroom, schedule }: {
+  readonly children: number
+  readonly headroom: number
+  readonly schedule: ReadonlyArray<number>
+}) => {
     const concurrency = children + headroom
     let startedChild!: () => void
     const childStarted = new Promise<void>((resolve) => {
@@ -548,15 +547,31 @@ test("Rick cancels every foreground Morty across generated schedules", async () 
 
     const runs = root.filter((event) => event.type === "PackageCalled" && field(event, "name") === "agents.run")
     expect(runs).toHaveLength(children)
-    for (const run of runs) {
-      const child = scenario.host.read(childThreadsOf(root).get(String(field(run, "callId")))!)
+    const createdChildren = childThreadsOf(root)
+    expect(createdChildren.size).toBeGreaterThan(0)
+    expect(createdChildren.size).toBeLessThanOrEqual(children)
+    const attemptedCalls = new Set(runs.map((run) => String(field(run, "callId"))))
+    for (const [callId, thread] of createdChildren) {
+      expect(attemptedCalls.has(callId)).toBe(true)
+      const child = scenario.host.read(thread)
       expect(child.filter((event) => event.type === "CancellationRequested")).toHaveLength(1)
       expect(child.filter((event) => event.type === "TurnCancelled")).toHaveLength(1)
       expect(child.some((event) => event.type === "TurnCompleted")).toBe(false)
       expect(child.some((event) => event.type === "TextReturned")).toBe(false)
     }
     expect(scenario.host.resting()).toBe(true)
-  }), { numRuns: 20 })
+}
+
+test("Rick cancels every foreground Morty across generated schedules", async () => {
+  await fc.assert(fc.asyncProperty(fc.record({
+    children: fc.integer({ min: 1, max: 6 }),
+    headroom: fc.integer({ min: 1, max: 3 }),
+    schedule: fc.array(fc.nat(), { minLength: 8, maxLength: 32 })
+  }), (input) => cancelForegroundMortys(input)), { numRuns: 20 })
+}, 30_000)
+
+test("Rick cancels created Mortys while concurrent spawns are pending", async () => {
+  await cancelForegroundMortys({ children: 2, headroom: 1, schedule: Array(8).fill(0) })
 }, 30_000)
 
 test("Rick settles when a foreground Morty is cancelled", async () => {
