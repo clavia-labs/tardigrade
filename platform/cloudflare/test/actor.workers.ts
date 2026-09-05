@@ -11,6 +11,7 @@ import {
   modelCatalogForConfig,
   modelScopeFrom,
   retainBackgroundTask,
+  type ActorThreadNode,
   type Env
 } from "../src/worker"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
@@ -684,6 +685,125 @@ describe("cloudflare actor", () => {
       "ThreadRequested",
       "ThreadRegistered"
     ])
+  })
+
+  // claimTree writes requested-and-registered thread records straight into an actor instance's
+  // own log, the shape the supervisor's registration writes, so a tree test states a roster
+  // outright. The instance is the fixture's own, because worker storage outlives a test and a
+  // roster shaped for bounds would poison another test's unbounded read.
+  const claimTree = async (
+    instance: string,
+    claims: ReadonlyArray<readonly [thread: string, parent: string | undefined, depth: number]>,
+    extra: ReadonlyArray<readonly [key: string | null, event: string]> = []
+  ): Promise<void> => {
+    const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", instance]))
+    await directory.init("echo", instance)
+    await runInDurableObject(directory, (_instance, state) => {
+      const insert = (key: string | null, event: string) =>
+        state.storage.sql.exec(
+          `INSERT INTO events (seq, key, event) VALUES ((SELECT COALESCE(MAX(seq), 0) + 1 FROM events), ?, ?)`,
+          key,
+          event
+        )
+      for (const [thread, parent, depth] of claims) {
+        insert(
+          `thread:requested:ag.${thread}`,
+          `{"type":"ThreadRequested","thread":"ag.${thread}"${parent === undefined ? "" : `,"parentThread":"ag.${parent}"`},"depth":${depth},"at":1}`
+        )
+        insert(`thread:registered:ag.${thread}`, `{"type":"ThreadRegistered","thread":"ag.${thread}","at":2}`)
+      }
+      for (const [key, event] of extra) insert(key, event)
+    })
+  }
+
+  test("a bounded tree read never builds what it does not return", async () => {
+    // A wide root with four leaves, a deep chain four levels down, and a claim pair at its bottom
+    // whose second edge points back at itself. The pair's edges live in the claiming thread's own
+    // record, so no root path reaches it and the unbounded read fails its completeness check
+    // rather than answering (worker.ts, threadTreeOf). A bounded read that answers therefore
+    // proves the walk never built what the bounds exclude. The second claim of loop-a rides
+    // unkeyed rows, because its request and registration keys are spent on the first.
+    await claimTree("tree-bounds", [
+      ["wide-root", undefined, 0],
+      ["deep-0", undefined, 0],
+      ["leaf-1", "wide-root", 1],
+      ["leaf-2", "wide-root", 1],
+      ["leaf-3", "wide-root", 1],
+      ["leaf-4", "wide-root", 1],
+      ["deep-1", "deep-0", 1],
+      ["deep-2", "deep-1", 2],
+      ["deep-3", "deep-2", 3],
+      ["deep-4", "deep-3", 4],
+      ["loop-a", "deep-4", 5],
+      ["loop-b", "loop-a", 6]
+    ], [
+      [null, `{"type":"ThreadRequested","thread":"ag.loop-a","parentThread":"ag.loop-b","depth":7,"at":3}`],
+      [null, `{"type":"ThreadRegistered","thread":"ag.loop-a","at":4}`]
+    ])
+    const directory = (env as Env).ACTORS.getByName(JSON.stringify(["echo", "tree-bounds"]))
+    const nodeOf = (nodes: ReadonlyArray<ActorThreadNode>, id: string): ActorThreadNode | undefined => {
+      for (const node of nodes) {
+        if (node.id === id) return node
+        const found = nodeOf(node.children, id)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
+    const idsOf = (nodes: ReadonlyArray<ActorThreadNode>): ReadonlyArray<string> =>
+      nodes.flatMap((node) => [node.id, ...idsOf(node.children)])
+    const depthTwo = (await directory.threadTree({ maxDepth: 2 }))!
+    // The wide root keeps its four leaves, and the deep chain stops at its second level.
+    expect(nodeOf(depthTwo, "wide-root")?.children.map((node) => node.id))
+      .toEqual(["leaf-1", "leaf-2", "leaf-3", "leaf-4"])
+    expect(nodeOf(depthTwo, "deep-0")?.children.map((node) => node.id)).toEqual(["deep-1"])
+    expect(nodeOf(depthTwo, "deep-1")?.children.map((node) => node.id)).toEqual(["deep-2"])
+    expect(nodeOf(depthTwo, "deep-2")?.children).toEqual([])
+    expect(idsOf(depthTwo).some((id) => id === "deep-3" || id === "loop-a" || id === "loop-b")).toBe(false)
+    // The node budget runs out inside the chain, and the walk stops before wide-root entirely.
+    const budgetFour = (await directory.threadTree({ maxNodes: 4 }))!
+    expect(idsOf(budgetFour)).toEqual(["deep-0", "deep-1", "deep-2", "deep-3"])
+    expect(nodeOf(budgetFour, "deep-3")?.children).toEqual([])
+    // A stated root builds only its subtree, and the pair that walk never started on is absent.
+    const rooted = (await directory.threadTree({ root: "wide-root" }))!
+    expect(idsOf(rooted)).toEqual(["wide-root", "leaf-1", "leaf-2", "leaf-3", "leaf-4"])
+    // The unbounded read is a throw, not an answer: its completeness check reaches the pair.
+    // The three reads above read the same roster, so each walk that answered is proof the bounds
+    // held it. The unbounded call runs inside the object, because a promise that rejects across
+    // the RPC boundary leaves the object holding an unhandled rejection the suite reports.
+    const unbounded = await runInDurableObject(directory, (instance) =>
+      instance.threadTree().then(
+        () => "answered",
+        (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
+      )
+    )
+    expect(unbounded).toBe("thread tree contains an orphan or cycle")
+  })
+
+  test("the threads route carries the bounds and refuses what cannot count", async () => {
+    await claimTree("tree-route", [
+      ["wide-root", undefined, 0],
+      ["leaf-1", "wide-root", 1],
+      ["leaf-2", "wide-root", 1],
+      ["deep-0", undefined, 0],
+      ["deep-1", "deep-0", 1],
+      ["deep-2", "deep-1", 2]
+    ])
+    const read = async (query: string) =>
+      await SELF.fetch(`http://test/v1/actors/tree-route/threads${query}`, { headers: authorization })
+    const routeTree = async (query: string) =>
+      (await (await read(query)).json()) as ReadonlyArray<ActorThreadNode>
+    const depthOne = await routeTree("?maxDepth=1")
+    expect(depthOne.find((node) => node.id === "deep-0")?.children.map((node) => node.id)).toEqual(["deep-1"])
+    expect(depthOne.find((node) => node.id === "deep-0")?.children[0]?.children).toEqual([])
+    expect(depthOne.find((node) => node.id === "wide-root")?.children.map((node) => node.id))
+      .toEqual(["leaf-1", "leaf-2"])
+    const rooted = await routeTree("?root=wide-root")
+    expect(rooted.map((node) => node.id)).toEqual(["wide-root"])
+    expect(rooted[0]!.children.map((node) => node.id)).toEqual(["leaf-1", "leaf-2"])
+    expect((await read("?root=ghost")).status).toBe(404)
+    expect((await read("?maxDepth=-1")).status).toBe(400)
+    expect((await read("?maxNodes=0")).status).toBe(400)
+    expect((await read("?maxNodes=many")).status).toBe(400)
   })
 
   test("a re-delivery to a registered child delivers instead of recreating", async () => {
