@@ -36,12 +36,20 @@ export {
 export * from "./cancellation"
 export { methodInputValidationComponents, methodInputValidationTransitions } from "./validation"
 export {
+  METHOD_SEALED_EVENT_TYPE,
+  methodIsSealed,
+  methodSealOf,
+  methodSealed,
+  type MethodSealed
+} from "./seal"
+export {
   ActorInvocationSchema,
   ActorInvocationContextSchema,
   decodeActorInvocationContext,
   actorInvocationContextFrom,
   actorInvocationContextOf,
   methodIngressKeyOf,
+  methodSealKey,
   type ActorInvocation,
   type ActorInvocationContext,
   type ActorMethodCall
