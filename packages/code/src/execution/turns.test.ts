@@ -3,21 +3,29 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { trajectoryOf, turnEpochOf, turnHead, turnTerminalOf, turnView } from "./turns"
 
 // `heads()` (private to this module) is what `turnHead`/`turnView` fold over: every
-// `MessageReceived`, except a reply a package call was still parked on when it landed. That
-// exclusion is what stops a foreground `agents.run`/`tasks.fire` park from also spawning a ghost
-// turn once its outer turn completes and the reply row is still sitting on the log, unconsumed by
-// anything turnHead itself understands. A background spawn's reply is the opposite case: the call
-// that fired it has already returned by the time the reply lands, so it is NOT excluded, and
-// heads its own turn exactly as `agents.run({background:true})`/`tasks.fire({background:true})`
-// promise.
+// `MessageReceived`, except a reply an open package call was parked on when it landed, claimed
+// by the BlockedOn fact that names it. That exclusion stops a foreground `agents.run`/
+// `tasks.fire` park from also spawning a ghost turn once its outer turn completes and the reply
+// row sits on the log. A background spawn's reply is the opposite case: its call returned at
+// once, so no BlockedOn names the reply, and it heads its own turn exactly as
+// `agents.run({background:true})`/`tasks.fire({background:true})` promised.
 
 describe("turnHead: a reply claimed by a still-open package call", () => {
   test("is excluded: it never heads a turn on its own", () => {
     const log: ReadonlyArray<Event> = [
       { type: "PackageCalled", callId: "c1", name: "agents.run", arguments: {}, turn: "m1", at: 1 },
-      { type: "MessageReceived", id: "c1.reply", outcome: "completed", text: "4", from: "child", at: 2 }
+      { type: "BlockedOn", callId: "c1", awaiting: "c1.reply", turn: "m1", at: 2 },
+      { type: "MessageReceived", id: "c1.reply", outcome: "completed", text: "4", from: "child", at: 3 }
     ]
     expect(turnHead(log)).toBeUndefined()
+  })
+
+  test("a reply-shaped id no BlockedOn names heads its own turn", () => {
+    const log: ReadonlyArray<Event> = [
+      { type: "PackageCalled", callId: "c1", name: "agents.run", arguments: {}, turn: "m1", at: 1 },
+      { type: "MessageReceived", id: "c1.reply", outcome: "completed", text: "4", from: "child", at: 2 }
+    ]
+    expect(turnHead(log)).toMatchObject({ id: "c1.reply" })
   })
 
   test("a reply for a call that had already returned is not excluded: it heads its own turn", () => {

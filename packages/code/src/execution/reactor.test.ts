@@ -309,7 +309,7 @@ describe("the spill bound", () => {
     const spilled = (await drive(codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }, []))).find(
       (e) => e.type === "CodeSettled"
     ) as { tmp?: string; size?: number; preview?: string; result?: unknown }
-    expect(spilled.tmp).toBe("e1.result")
+    expect(spilled.tmp).toBe(`["t1","e1"].result`)
     expect(spilled.size).toBe(62)
     expect(spilled.preview).toBe('"qqq')
     const whole = (await drive(codeReactor)).find((e) => e.type === "CodeSettled") as { tmp?: string; result?: unknown }
@@ -338,7 +338,7 @@ describe("the pointer's note", () => {
   test("a scope with no workspace package gets a note with no verb", async () => {
     const events = await drive(bigLog(), codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }, []))
     const settle = events.find((e) => e.type === "CodeSettled") as { note?: string }
-    expect(settle.note).toContain("ref 'e1.result'")
+    expect(settle.note).toContain(`ref '["t1","e1"].result'`)
     expect(settle.note).not.toContain("workspace.read")
   })
 
@@ -348,7 +348,7 @@ describe("the pointer's note", () => {
       codeReactorFor({ spill: { spillBytes: 10, previewChars: 4, note: (ref) => `files.open({ref: '${ref}'})` } }, [])
     )
     const settle = events.find((e) => e.type === "CodeSettled") as { note?: string }
-    expect(settle.note).toBe("files.open({ref: 'e1.result'})")
+    expect(settle.note).toBe(`files.open({ref: '["t1","e1"].result'})`)
   })
 
   test("a workspace whose read takes no ref refuses at construction", () => {

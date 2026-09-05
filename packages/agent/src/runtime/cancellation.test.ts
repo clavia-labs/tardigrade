@@ -18,7 +18,8 @@ describe("tool cancellation", () => {
       reason: "operator stopped it"
     })
 
-    expect(transitions.map((transition) => transition.key)).toEqual(["tr:tool-1", "tr:tool-2"])
+    expect(transitions.map((transition) => transition.key))
+      .toEqual(["tr:" + JSON.stringify(["m1", "tool-1"]), "tr:" + JSON.stringify(["m1", "tool-2"])])
   })
 
   test("the incremental tool projection derives the same cancellation obligations", () => {

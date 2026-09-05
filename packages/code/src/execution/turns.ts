@@ -1,5 +1,4 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { REPLY_SUFFIX } from "./ids"
 
 // Turn attribution. A turn is headed by one MessageReceived; every event serving it carries
 // turn: <head id>. Attribution is a fact the event carries, never a derivation from position,
@@ -51,23 +50,25 @@ const activeStamped = (log: ReadonlyArray<Event>, turn: string): ReadonlyArray<E
   return stamped(log, turn).filter((event) => !isTerminal(event) || eventEpochOf(event) === epoch)
 }
 
-// claimedByPark: a reply an open package call was awaiting when it landed belongs to that call,
-// never to a fresh turn of its own; the awaiting body harvests it, and nothing else may react
-// to it as inbound. The verdict reads only events before the reply's own position, so later
-// appends cannot rewrite it (tla/runtime/Projection.tla, PrefixFaithful). A background spawn's reply is
-// the opposite case and is meant to head its own turn: its call returned at once, so no call is
-// open for it. Only agents.run ids can ever match: tasks.fire mints run- prefixed ids
-// (mintedRunId, src/grammar/grammar.ts), so a task reply is structurally never claimed.
+
+// A reply belongs to the open package call whose BlockedOn fact names its exact identity in the
+// same turn. The verdict reads only events before the reply's own position, so later appends
+// cannot rewrite it (tla/runtime/Projection.tla, PrefixFaithful). A reply no call awaits heads
+// its own turn: a background spawn's call returned at once, so no BlockedOn names its reply.
 const claimedByPark = (log: ReadonlyArray<Event>, index: number): boolean => {
   const id = idOf(log[index]!)
-  if (!id.endsWith(REPLY_SUFFIX)) return false
-  const callId = id.slice(0, -REPLY_SUFFIX.length)
+  const blocked = log.slice(0, index).findLast(
+    (event) => event.type === "BlockedOn" && String(event.awaiting) === id
+  )
+  if (blocked === undefined) return false
+  const callId = String(blocked.callId ?? "")
+  const turn = turnOf(blocked)
   let open = false
   for (let i = 0; i < index; i++) {
-    const e = log[i]!
-    if (e.type !== "PackageCalled" && e.type !== "PackageReturned") continue
-    if (String((e as { callId?: unknown }).callId) !== callId) continue
-    open = e.type === "PackageCalled"
+    const event = log[i]!
+    if (event.type !== "PackageCalled" && event.type !== "PackageReturned") continue
+    if (String(event.callId) !== callId || turnOf(event) !== turn) continue
+    open = event.type === "PackageCalled"
   }
   return open
 }

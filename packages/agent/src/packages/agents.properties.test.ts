@@ -9,7 +9,7 @@ import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/com
 import type { RoutedEnvelope } from "@clavia/tardigrade-core/communication/envelope"
 import { threadCreated, threadCreatedOf, threadKeys, type ChildCreated } from "@clavia/tardigrade-core/thread"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { agentsPackage } from "./agents"
+import { agentsPackage, childInvocationId } from "./agents"
 
 interface CallPlan {
   readonly callId: string
@@ -45,16 +45,19 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
       at: 2
     }))
   ]
+  // The brief names the child method invocation, not the bare package call id, so every action
+  // below keys by the spawn's durable identity.
+  const invocation = (callId: string): string => childInvocationId("turn-1", callId)
   const actions: Array<{ readonly kind: "append" | "send"; readonly callId: string; readonly target?: ThreadAddress }> = []
-  const remaining = new Map(calls.map((plan) => [plan.callId, plan.failures]))
-  const plansByCall = new Map(calls.map((plan) => [plan.callId, plan]))
+  const remaining = new Map(calls.map((plan) => [invocation(plan.callId), plan.failures]))
+  const plansByCall = new Map(calls.map((plan) => [invocation(plan.callId), plan]))
   const append = (events: ReadonlyArray<Event>): Effect.Effect<void> => Effect.sync(() => {
     for (const event of events) {
       const key = threadKeys.keyOf(event)
       if (key !== undefined && parentLog.some((candidate) => threadKeys.keyOf(candidate) === key)) continue
       parentLog.push(event)
       if (event.type === "ChildCreated") {
-        actions.push({ kind: "append", callId: String((event as { readonly callId?: unknown }).callId) })
+        actions.push({ kind: "append", callId: invocation(String((event as { readonly callId?: unknown }).callId)) })
       }
     }
   })
@@ -97,7 +100,7 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
 
   for (const plan of calls) {
     const record = records.find((candidate) => candidate.callId === plan.callId)!
-    const callActions = actions.filter((action) => action.callId === plan.callId)
+    const callActions = actions.filter((action) => action.callId === invocation(plan.callId))
     expect(callActions[0]?.kind).toBe("append")
     expect(callActions.filter((action) => action.kind === "append")).toHaveLength(1)
     expect(callActions.filter((action) => action.kind === "send")).toHaveLength(plan.failures + 1)
