@@ -73,6 +73,7 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["post", "/v1/actors/{id}/threads/{thread}/events"],
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"],
+  ["put", "/v1/actors/{id}/threads/{thread}/deletion-seal"],
   ["get", "/v1/actors/{id}/threads"],
   ["get", "/v1/actors/{id}/threads/{thread}/events"],
   ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
@@ -111,6 +112,24 @@ describe("the OpenAPI document", () => {
       "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"
     ]!["put"]!.responses
     expect(Object.keys(responses).sort()).toEqual(["200", "202", "400", "404", "409"])
+  })
+
+  test("describes every deletion-seal outcome", () => {
+    const spec = OpenApi.fromApi(ServerApi) as never as {
+      readonly paths: Record<string, Record<string, { readonly responses: Record<string, unknown> }>>
+    }
+    const responses = spec.paths["/v1/actors/{id}/threads/{thread}/deletion-seal"]!["put"]!.responses
+    expect(Object.keys(responses).sort()).toEqual(["200", "202", "400", "404"])
+  })
+
+  test("describes a sealed admission refusal on the call route", () => {
+    const spec = OpenApi.fromApi(ServerApi) as never as {
+      readonly paths: Record<string, Record<string, { readonly responses: Record<string, unknown> }>>
+    }
+    const responses = spec.paths[
+      "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"
+    ]!["put"]!.responses
+    expect(Object.keys(responses).sort()).toEqual(["202", "400", "404", "409"])
   })
 
   test("is served where the constant says, and renders at the docs path", async () => {

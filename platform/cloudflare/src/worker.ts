@@ -11,7 +11,8 @@ import {
   MODEL_CATALOG_SORT_ORDERS,
   MODEL_CATALOG_UNPRICED_ORDERS,
   type ModelCatalog,
-  InvocationSettled
+  InvocationSettled,
+  MethodSealed as MethodSealedProblem
 } from "@clavia/tardigrade-client/contract"
 import { infer } from "@clavia/tardigrade-model/model"
 import {
@@ -48,7 +49,11 @@ import {
   cancellationDispositionOf,
   cancellationRequested,
   cancellationRequestIdOf,
-  hasUnsettledInvocationChildren
+  hasUnsettledInvocationChildren,
+  methodIsSealed,
+  methodSealKey,
+  methodSealed,
+  unsettledInvocationParentsOf
 } from "@clavia/tardigrade-core/method"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
@@ -999,6 +1004,25 @@ export class ThreadDO extends DurableObject<Env> {
     return true
   }
 
+  // appendUnlessKeyPresent stages the root event only when no stored event carries the key, which
+  // is how a sealed method refuses an admission that raced the seal. It answers undefined for a
+  // thread this Durable Object has never initialized, the answer an unknown thread is made of.
+  async appendUnlessKeyPresent(thread: string, event: Event, key: string): Promise<boolean | undefined> {
+    if (!this.initialized()) return undefined
+    const actorThread = actorThreadOf(thread)
+    const ownedThread = this.thread()
+    if (ownedThread !== actorThread) {
+      throw new Error("request thread does not match the Thread DO identity")
+    }
+    const stamped = event.at === undefined ? { ...event, at: Date.now() } : event
+    const host = await this.host()
+    let admitted = false
+    await this.accept(host, async () => {
+      admitted = await host.stageRootUnlessKeyPresent(stamped, key)
+    })
+    return admitted
+  }
+
   private validateDelivery(envelope: ActorEnvelope): void {
     if (envelope.link.target.actor !== this.name()) throw new Error("delivery target does not match actor definition")
     if (envelope.link.target.instance !== this.instance()) throw new Error("delivery target does not match actor instance")
@@ -1305,6 +1329,13 @@ const routes = [
       const events = yield* Effect.promise(() => stub.events(thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
+      // The sealed method answers before its input is decoded, but the durable refusal is the
+      // conditional append below: a seal committed between this read and that write still wins.
+      if (methodIsSealed(events, methodName)) {
+        return json(MethodSealedProblem.of(
+          `Method ${JSON.stringify(methodName)} is permanently sealed on this thread.`
+        ), 409)
+      }
       const existing = events.map(actorInvocationContextFrom).find((context) =>
         context?.invocation.method === methodName && context.invocation.id === call &&
         context.invocation.epoch === 0 && context.deadlineAt !== undefined)
@@ -1328,8 +1359,19 @@ const routes = [
       }
       const decoded = methodEventOf(method, { ...context, input, at })
       if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const appended = yield* Effect.promise(() => stub.append(thread, invokedEventOf(context, decoded.event)))
-      if (!appended) return json({ error: "unknown thread" }, 404)
+      const appended = yield* Effect.promise(() =>
+        stub.appendUnlessKeyPresent(
+          thread,
+          invokedEventOf(context, decoded.event),
+          methodSealKey(methodName)
+        )
+      )
+      if (appended === undefined) return json({ error: "unknown thread" }, 404)
+      if (!appended) {
+        return json(MethodSealedProblem.of(
+          `Method ${JSON.stringify(methodName)} is permanently sealed on this thread.`
+        ), 409)
+      }
       return json({ actor: instance, thread, method: methodName, call, deadlineAt }, 202)
     })
   )),
@@ -1399,6 +1441,95 @@ const routes = [
       })))
       if (!appended) return json({ error: "unknown thread" }, 404)
       return json({ actor: instance, thread, method: methodName, call, status: "requested" }, 202)
+    })
+  )),
+  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/deletion-seal", protectedRoute((request, env) =>
+    Effect.gen(function* () {
+      const params = yield* HttpRouter.params
+      const instance = params.id ?? ""
+      const thread = params.thread ?? ""
+      if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
+      const payload = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as {
+        readonly method?: unknown
+        readonly reason?: unknown
+      }
+      const methodName = typeof payload.method === "string" ? payload.method : ""
+      const sealedMethod = methodsOf(deployedActor)?.[methodName]
+      if (sealedMethod === undefined) return json({ error: "unknown method" }, 404)
+      if (sealedMethod.cancellation === undefined) {
+        return json({ error: "method does not declare cancellation" }, 400)
+      }
+      if (payload.reason !== undefined && typeof payload.reason !== "string") {
+        return json({ error: "reason must be a string" }, 400)
+      }
+      const stub = yield* Effect.promise(() => threadStub(env, deployedActor, instance, thread))
+      if (stub === undefined) return json({ error: "unknown thread" }, 404)
+      let events = yield* Effect.promise(() => stub.events(thread)).pipe(
+        Effect.map((value) => value as ReadonlyArray<Event>)
+      )
+      const at = yield* Clock.currentTimeMillis
+      if (!methodIsSealed(events, methodName)) {
+        // The seal itself commits through the conditional append, so a repeated or concurrent
+        // seal is one seal, and the admission refusal it causes is the store's own decision.
+        const sealed = yield* Effect.promise(() =>
+          stub.appendUnlessKeyPresent(
+            thread,
+            methodSealed({
+              method: methodName,
+              ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+              at
+            }),
+            methodSealKey(methodName)
+          )
+        )
+        if (sealed === undefined) return json({ error: "unknown thread" }, 404)
+        events = yield* Effect.promise(() => stub.events(thread)).pipe(
+          Effect.map((value) => value as ReadonlyArray<Event>)
+        )
+      }
+      const directIds = [...new Set(events.flatMap((event) => {
+        const context = actorInvocationContextFrom(event)
+        return context?.invocation.method === methodName ? [context.invocation.id] : []
+      }))]
+      const candidates = [
+        ...directIds.map((id) => ({ method: methodName, id, epoch: sealedMethod.currentEpoch(events, id) })),
+        ...unsettledInvocationParentsOf(events)
+      ]
+      const seen = new Set<string>()
+      let pending = false
+      for (const candidate of candidates) {
+        const key = JSON.stringify([candidate.method, candidate.id, candidate.epoch])
+        if (seen.has(key)) continue
+        seen.add(key)
+        const method = methodsOf(deployedActor)?.[candidate.method]
+        if (method?.cancellation === undefined) {
+          return json({ error: `method ${JSON.stringify(candidate.method)} does not declare cancellation` }, 400)
+        }
+        const invocation = { ...candidate, epoch: method.currentEpoch(events, candidate.id) }
+        const disposition = cancellationDispositionOf(events, method, invocation)
+        // A logically settled parent with an unsettled linked child still owes the family its
+        // cancellation, so the drain keeps it in the requestable set.
+        const cascadeSettled = disposition === "settled" &&
+          hasUnsettledInvocationChildren(events, invocation)
+        if (disposition === "requested") {
+          pending = true
+          continue
+        }
+        if (disposition !== "requestable" && !cascadeSettled) continue
+        pending = true
+        const appended = yield* Effect.promise(() => stub.append(thread, cancellationRequested({
+          request: cancellationRequestIdOf(invocation),
+          invocation,
+          cause: "requested",
+          ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
+          at
+        })))
+        if (!appended) return json({ error: "unknown thread" }, 404)
+      }
+      return json(
+        { actor: instance, thread, method: methodName, status: pending ? "pending" : "drained" },
+        pending ? 202 : 200
+      )
     })
   )),
   HttpRouter.route("GET", "/v1/actors/:id/threads", protectedRoute((_request, env) =>

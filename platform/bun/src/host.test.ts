@@ -9,7 +9,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { actorFromProjections, type Actor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/method"
+import { methodSealed, methodSealKey, methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/method"
 import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
 import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
 import { linkOf } from "@clavia/tardigrade-core/communication/link"
@@ -525,6 +525,55 @@ describe("the bun host", () => {
       } else {
         expect(admissionAt).toBe(-1)
       }
+      // The one contract: no admission commits after the seal.
+      if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
+    }
+    await h.close()
+  })
+
+  test("an admission after a durable seal is refused", async () => {
+    const h = await createBunHost(options(freshPath()))
+    await h.commitRoot("bun:default:sealed", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    const sealed = await h.commitRootUnlessKeyPresent(
+      "bun:default:sealed",
+      methodSealed({ method: "message", at: 2 }),
+      methodSealKey("message")
+    )
+    expect(sealed).toBe(true)
+    const before = await h.read("sealed")
+    const admitted = await h.commitRootUnlessKeyPresent(
+      "bun:default:sealed",
+      { type: "MessageReceived", id: "m2", at: 3 } as Event,
+      methodSealKey("message")
+    )
+    expect(admitted).toBe(false)
+    expect(await h.read("sealed")).toEqual(before)
+    await h.close()
+  })
+
+  test("a real seal and a real admission race on the seal key", async () => {
+    const h = await createBunHost(options(freshPath()))
+    for (let round = 0; round < 10; round++) {
+      const thread = `seal-race-${round}`
+      const address = `bun:default:${thread}`
+      await h.commitRoot(address, { type: "MessageReceived", id: "m1", at: 1 } as Event)
+      // The seal and the admission both commit through the conditional append, which is the path
+      // the deletion-seal routes use: whichever transaction the single store connection runs
+      // first is the order the log keeps.
+      const seal = () => h.commitRootUnlessKeyPresent(address, methodSealed({ method: "message", at: 2 }), methodSealKey("message"))
+      const admission = () => h.commitRootUnlessKeyPresent(
+        address,
+        { type: "MessageReceived", id: "admitted", at: 2 } as Event,
+        methodSealKey("message")
+      )
+      const [admitted] = round % 2 === 0
+        ? await Promise.all([admission(), seal()])
+        : await Promise.all([(async () => { await seal(); return undefined })(), admission()]).then(([, a]) => [a])
+      const log = await h.read(thread)
+      const admissionAt = log.findIndex((e) => e.type === "MessageReceived" && String((e as { readonly id?: unknown }).id) === "admitted")
+      const sealAt = log.findIndex((e) => e.type === "MethodSealed")
+      expect(sealAt).toBeGreaterThan(-1)
+      expect(admitted).toBe(admissionAt !== -1)
       // The one contract: no admission commits after the seal.
       if (admissionAt !== -1) expect(admissionAt).toBeLessThan(sealAt)
     }

@@ -76,6 +76,8 @@ export const ResumeRefused = problemKind("resume-refused", "Resume Refused", 409
 
 // InvocationSettled reports that cancellation cannot change a completed or failed invocation.
 export const InvocationSettled = problemKind("invocation-settled", "Invocation Settled", 409)
+// MethodSealed reports that a durable thread seal permanently closed method admission.
+export const MethodSealed = problemKind("method-sealed", "Method Sealed", 409)
 
 // RequestPart names the request locations validated by HttpApi.
 export type RequestPart = "Params" | "Query" | "Payload" | "Headers"
@@ -221,6 +223,30 @@ const CancellationCancelledResult = Schema.Struct({
   ...CancellationFields,
   status: Schema.Literal("cancelled")
 }).annotate({ identifier: "CancellationCancelledResult" }).pipe(HttpApiSchema.status(200))
+
+// MethodSealRequest names the method whose admission the seal closes, beside the caller's reason.
+export const MethodSealRequest = Schema.Struct({
+  method: Schema.String,
+  reason: Schema.optionalKey(Schema.String)
+}).annotate({ identifier: "MethodSealRequest" })
+
+export type MethodSealRequest = typeof MethodSealRequest.Type
+
+const MethodSealPendingResult = Schema.Struct({
+  actor: Schema.String,
+  thread: Schema.String,
+  method: Schema.String,
+  status: Schema.Literal("pending")
+}).annotate({ identifier: "MethodSealPendingResult" }).pipe(HttpApiSchema.status(202))
+
+const MethodSealDrainedResult = Schema.Struct({
+  actor: Schema.String,
+  thread: Schema.String,
+  method: Schema.String,
+  status: Schema.Literal("drained")
+}).annotate({ identifier: "MethodSealDrainedResult" }).pipe(HttpApiSchema.status(200))
+
+export type MethodSealResult = typeof MethodSealPendingResult.Type | typeof MethodSealDrainedResult.Type
 
 export type CancellationResult = typeof CancellationRequestedResult.Type | typeof CancellationCancelledResult.Type
 
@@ -493,7 +519,7 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
     query: { timeoutMs: Schema.optionalKey(Seq) },
     payload: Schema.Unknown,
     success: MethodAccepted,
-    error: [InvalidRequest.schema, UnknownMethod.schema]
+    error: [InvalidRequest.schema, UnknownMethod.schema, MethodSealed.schema]
   }),
   HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
@@ -513,6 +539,12 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
       UnknownMethodCall.schema,
       InvocationSettled.schema
     ]
+  }),
+  HttpApiEndpoint.put("sealMethod", "/v1/actors/:id/threads/:thread/deletion-seal", {
+    params: RuntimeThreadParams,
+    payload: MethodSealRequest,
+    success: [MethodSealPendingResult, MethodSealDrainedResult],
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema]
   })
 )
 

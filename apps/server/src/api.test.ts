@@ -468,6 +468,94 @@ describe("actor methods", () => {
     expect(refusal.status).toBe(404)
     expect(refusal.body).toMatchObject({ title: "Unknown Method Call", status: 404 })
   })
+
+  test("a sealed method refuses admission and reports the seal", async () => {
+    const result = await serving(async (base) => {
+      const created = await put(base, "/v1/actors/main", {})
+      expect(created.status).toBe(200)
+      await callMessage(base, "alpha", "m1", "hello")
+      const sealed = await put(base, "/v1/actors/main/threads/alpha/deletion-seal", { method: "message", reason: "operator deleted the thread" })
+      const invoked = await put(base, "/v1/actors/main/threads/alpha/methods/message/calls/m2", { text: "too late" })
+      const resealed = await put(base, "/v1/actors/main/threads/alpha/deletion-seal", { method: "message" })
+      const rows = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      return {
+        sealed: { status: sealed.status, body: await sealed.json() },
+        invoked: { status: invoked.status, body: await invoked.json() },
+        resealed: { status: resealed.status, body: await resealed.json() },
+        seals: rows.filter((row) => row.event.type === "MethodSealed").map((row) => row.event)
+      }
+    })
+    expect(result.sealed).toEqual({
+      status: 200,
+      body: { actor: "main", thread: "alpha", method: "message", status: "drained" }
+    })
+    expect(result.invoked).toEqual({
+      status: 409,
+      body: {
+        type: "https://tardigrade.dev/problems/method-sealed",
+        title: "Method Sealed",
+        status: 409,
+        detail: "Method \"message\" is permanently sealed on this thread."
+      }
+    })
+    expect(result.resealed).toEqual({
+      status: 200,
+      body: { actor: "main", thread: "alpha", method: "message", status: "drained" }
+    })
+    expect(result.seals).toEqual([
+      expect.objectContaining({
+        type: "MethodSealed",
+        method: "message",
+        reason: "operator deleted the thread",
+        at: expect.any(Number)
+      })
+    ])
+  })
+
+  test("a seal drains settled calls without requesting cancellation", async () => {
+    const result = await serving(async (base) => {
+      const created = await put(base, "/v1/actors/main", {})
+      expect(created.status).toBe(200)
+      await callMessage(base, "alpha", "m1", "hello")
+      await callMessage(base, "alpha", "m2", "hello again")
+      const eventsBefore = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      const sealed = await put(base, "/v1/actors/main/threads/alpha/deletion-seal", { method: "message", reason: "deleted" })
+      const eventsAfter = await (await get(base, "/v1/actors/main/threads/alpha/events")).json() as ReadonlyArray<EventRow>
+      return {
+        status: sealed.status,
+        body: await sealed.json(),
+        cancellations: eventsAfter.filter((row) => row.event.type === "CancellationRequested").length -
+          eventsBefore.filter((row) => row.event.type === "CancellationRequested").length
+      }
+    })
+    expect(result.status).toBe(200)
+    expect(result.body).toEqual({ actor: "main", thread: "alpha", method: "message", status: "drained" })
+    expect(result.cancellations).toBe(0)
+  })
+
+  test("a method without cancellation refuses the seal", async () => {
+    const refusal = await serving(async (base) => {
+      const created = await put(base, "/v1/actors/main", {})
+      expect(created.status).toBe(200)
+      await callMessage(base, "alpha", "m1", "hello")
+      const response = await put(base, "/v1/actors/main/threads/alpha/deletion-seal", { method: "requestBudget" })
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(400)
+    expect(refusal.body).toMatchObject({ title: "Invalid Request", status: 400 })
+    expect(String(refusal.body["detail"])).toContain("does not declare cancellation")
+  })
+
+  test("a seal on a log that never existed is the only 404", async () => {
+    const refusal = await serving(async (base) => {
+      const created = await put(base, "/v1/actors/main", {})
+      expect(created.status).toBe(200)
+      const response = await put(base, "/v1/actors/main/threads/ghost/deletion-seal", { method: "message" })
+      return { status: response.status, body: await response.json() as Record<string, unknown> }
+    })
+    expect(refusal.status).toBe(404)
+    expect(refusal.body).toMatchObject({ title: "Unknown Thread", status: 404 })
+  })
 })
 
 describe("appending", () => {

@@ -10,7 +10,12 @@ import {
   actorInvocationContextFrom,
   cancellationRequested,
   cancellationDispositionOf,
-  cancellationRequestIdOf
+  cancellationRequestIdOf,
+  hasUnsettledInvocationChildren,
+  methodIsSealed,
+  methodSealKey,
+  methodSealed,
+  unsettledInvocationParentsOf
 } from "@clavia/tardigrade-core/method"
 
 import {
@@ -18,6 +23,7 @@ import {
   apiOf,
   InvalidRequest,
   InvocationSettled,
+  MethodSealed as MethodSealedProblem,
   invalidRequest,
   ModelCatalogUnavailable,
   RESERVED_ACTOR,
@@ -507,8 +513,15 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         const service = yield* Threads
         const threads = yield* service.ensure(params.id)
         const method = yield* methodOf(threads, params.method)
-        const existing = (yield* threads.events(params.thread))
-          .map(actorInvocationContextFrom)
+        const log = yield* threads.events(params.thread)
+        // The sealed method answers before anything is built, but the durable refusal is the
+        // conditional append below: a seal committed between this read and that write still wins.
+        if (methodIsSealed(log, params.method)) {
+          return yield* Effect.fail(MethodSealedProblem.of(
+            `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
+          ))
+        }
+        const existing = log.map(actorInvocationContextFrom)
           .find((context) => context?.invocation.method === params.method &&
             context.invocation.id === params.call && context.invocation.epoch === 0 && context.deadlineAt !== undefined)
         if (existing?.deadlineAt !== undefined) {
@@ -544,7 +557,16 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
             `The input for method ${JSON.stringify(params.method)} is invalid. ${failureMessage(failure)}`
           )
         })
-        yield* threads.append(params.thread, event)
+        const appended = yield* threads.appendUnlessKeyPresent(
+          params.thread,
+          event,
+          methodSealKey(params.method)
+        )
+        if (!appended) {
+          return yield* Effect.fail(MethodSealedProblem.of(
+            `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
+          ))
+        }
         return {
           actor: params.id,
           thread: params.thread,
@@ -620,6 +642,80 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
           method: params.method,
           call: params.call,
           status: "requested" as const
+        }
+      }))
+    .handle("sealMethod", ({ params, payload }) =>
+      Effect.gen(function*() {
+        const threads = yield* actorOf(yield* Threads, params.id)
+        const sealedMethod = yield* methodOf(threads, payload.method)
+        if (sealedMethod.cancellation === undefined) {
+          return yield* Effect.fail(InvalidRequest.of(
+            `Method ${JSON.stringify(payload.method)} does not declare cancellation.`
+          ))
+        }
+        const before = yield* logOf(threads.events, params.thread)
+        const at = yield* Clock.currentTimeMillis
+        if (!methodIsSealed(before, payload.method)) {
+          // The seal itself commits through the conditional append, so a repeated or concurrent
+          // seal is one seal, and the admission refusal it causes is the store's own decision.
+          yield* threads.appendUnlessKeyPresent(
+            params.thread,
+            methodSealed({
+              method: payload.method,
+              ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+              at
+            }),
+            methodSealKey(payload.method)
+          )
+        }
+        const log = yield* logOf(threads.events, params.thread)
+        const directIds = [...new Set(log.flatMap((event) => {
+          const context = actorInvocationContextFrom(event)
+          return context?.invocation.method === payload.method ? [context.invocation.id] : []
+        }))]
+        const direct = directIds.map((id) => ({
+          method: payload.method,
+          id,
+          epoch: sealedMethod.currentEpoch(log, id)
+        }))
+        const candidates = [...direct, ...unsettledInvocationParentsOf(log)]
+        const seen = new Set<string>()
+        let pending = false
+        for (const candidate of candidates) {
+          const key = JSON.stringify([candidate.method, candidate.id, candidate.epoch])
+          if (seen.has(key)) continue
+          seen.add(key)
+          const method = yield* methodOf(threads, candidate.method)
+          if (method.cancellation === undefined) {
+            return yield* Effect.fail(InvalidRequest.of(
+              `Method ${JSON.stringify(candidate.method)} does not declare cancellation.`
+            ))
+          }
+          const invocation = { ...candidate, epoch: method.currentEpoch(log, candidate.id) }
+          const disposition = cancellationDispositionOf(log, method, invocation)
+          // A logically settled parent with an unsettled linked child still owes the family its
+          // cancellation, so the drain keeps it in the requestable set.
+          const cascadeSettled = disposition === "settled" &&
+            hasUnsettledInvocationChildren(log, invocation)
+          if (disposition === "requested") {
+            pending = true
+            continue
+          }
+          if (disposition !== "requestable" && !cascadeSettled) continue
+          pending = true
+          yield* threads.append(params.thread, cancellationRequested({
+            request: cancellationRequestIdOf(invocation),
+            invocation,
+            cause: "requested",
+            ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+            at
+          }))
+        }
+        return {
+          actor: params.id,
+          thread: params.thread,
+          method: payload.method,
+          status: pending ? "pending" as const : "drained" as const
         }
       })))
 
