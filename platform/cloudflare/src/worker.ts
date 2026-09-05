@@ -47,7 +47,8 @@ import {
   actorMethodTimeoutOf,
   cancellationDispositionOf,
   cancellationRequested,
-  cancellationRequestIdOf
+  cancellationRequestIdOf,
+  hasUnsettledInvocationChildren
 } from "@clavia/tardigrade-core/method"
 import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
@@ -1375,10 +1376,14 @@ const routes = [
       if (method.state(events, invocation) === undefined) return json({ error: "unknown method call" }, 404)
       const disposition = cancellationDispositionOf(events, method, invocation)
       if (disposition === undefined) return json({ error: "unknown method call" }, 404)
-      if (disposition === "settled") {
+      // A logically settled parent with an unsettled linked child still owns the family's
+      // cancellation, so the request is admitted instead of refused.
+      const cascadeSettled = disposition === "settled" &&
+        hasUnsettledInvocationChildren(events, invocation)
+      if (disposition === "settled" && !cascadeSettled) {
         return json(InvocationSettled.of(`Invocation ${JSON.stringify(call)} has settled and cannot be cancelled.`), 409)
       }
-      if (disposition !== "requestable") {
+      if (disposition !== "requestable" && !cascadeSettled) {
         return json({ actor: instance, thread, method: methodName, call, status: disposition },
           disposition === "cancelled" ? 200 : 202)
       }

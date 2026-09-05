@@ -135,6 +135,9 @@ const echo = actorMethod({
   input: Schema.Struct({ text: Schema.String }),
   output: Schema.String,
   event: ({ invocation, input, at }) => ({ type: "EchoRequested", id: invocation.id, text: input.text, at }),
+  cancellation: {
+    event: ({ invocation, at }) => ({ type: "EchoCancelled", id: invocation.id, at })
+  },
   projection: {
     initial: initialEchoState,
     step: stepEchoState,
