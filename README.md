@@ -38,8 +38,8 @@ If you have an existing agent application, follow the [migration guide](docs/how
 
 ```bash
 bun add -g tardie@latest
-tdg init researcher --template quickstart
-cd researcher
+tdg init tardie-agent --template quickstart
+cd tardie-agent
 bun run dev
 ```
 
@@ -55,7 +55,7 @@ tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickst
 
 The API listens at [localhost:4242](http://localhost:4242) by default.
 
-<img alt="The researcher actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
+<img alt="An actor serving API requests from its generated Bun development server" src="docs/assets/dev-server.png">
 
 ## Examples
 
