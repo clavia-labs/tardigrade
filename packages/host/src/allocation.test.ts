@@ -54,7 +54,8 @@ test("distinct scopes and names separate trees at every depth", async () => {
       const store = memoryThreadDirectory()
       const allocator = registeredThreadAllocator(store)
       const root = { ...parent, thread: name }
-      const roots = [root, { ...root, [coordinate]: root[coordinate] + "x" }]
+      const roots = await Promise.all([root, { ...root, [coordinate]: root[coordinate] + "x" }].map((coordinate) =>
+        Effect.runPromise(allocator.allocate({ kind: "root", coordinate }))))
       const seen = new Set(roots.map((value) => JSON.stringify(value)))
       let frontier = roots
       for (let level = 0; level < depth; level++) {
