@@ -90,11 +90,16 @@ export const ModelCalled = Schema.Struct({
   at: Schema.Finite
 })
 
-// TextReturned is the prose the model emitted alongside its decision: working commentary,
-// journaled and never delivered. The final answer is `TurnCompleted.output`, never this.
+// TextReturned is prose the model emitted alongside an action. partial marks the accumulated
+// output journaled when an in-flight inference is cancelled, so a stopped answer survives the
+// turn's terminal (index.test.ts, "a cancelled inference journals the answer it had already
+// streamed"). The final answer of a completed turn is `TurnCompleted.output`, never this.
 export const TextReturned = Schema.Struct({
   type: Schema.Literal("TextReturned"),
   text: Schema.String,
+  partial: Schema.optional(Schema.Boolean),
+  turn: Schema.optional(Schema.String),
+  epoch: Schema.optional(Schema.Finite),
   at: Schema.Finite
 })
 
@@ -475,9 +480,9 @@ export const modelCalled = (
     }
   } & EpochStamp
 ): Event => ({ type: "ModelCalled", ...fields }) as Event
-
-export const textReturned = (fields: { readonly text: string } & Stamp): Event =>
-  ({ type: "TextReturned", ...fields }) as Event
+export const textReturned = (
+  fields: { readonly text: string; readonly partial?: boolean } & EpochStamp
+): Event => ({ type: "TextReturned", ...fields }) as Event
 
 export const turnCompleted = (
   fields: {

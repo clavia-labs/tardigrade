@@ -10,6 +10,7 @@ import { workspacePackage } from "@clavia/tardigrade-code/package/workspace"
 import { createHost, type Host, type ThreadEnv } from "@clavia/tardigrade-host/host"
 import type { Action } from "./log/events"
 import { Infer, NativeOutputSupport, type InferRequest } from "./inference/contract"
+import type { InferDelta } from "./inference/observer"
 import { boundaryOf } from "./output/boundary"
 import { resumeTurn } from "./runtime/resume"
 import { agentsPackage } from "./packages/agents"
@@ -28,7 +29,12 @@ const TEST_MODEL = { models: { default: { provider: "test", model_id: "test-mode
 // routes briefs and replies, parks and wakes the root, and ask returns
 // when the root settles. No app imports anywhere.
 
-type Mind = (request: InferRequest, key?: string) => Promise<Action>
+type Mind = (
+  request: InferRequest,
+  key?: string,
+  signal?: AbortSignal,
+  onDelta?: (delta: InferDelta) => void
+) => Promise<Action>
 
 type Settled = { readonly turn: string; readonly output?: string; readonly error?: string }
 
@@ -51,7 +57,10 @@ const hosted = (
     Layer.mergeAll(
       KeyValueStore.layerMemory,
       jsSandboxFor({}),
-      Layer.succeed(Infer, { react: (request: InferRequest, key?: string) => Effect.promise(() => mind(request, key)) }),
+      Layer.succeed(Infer, {
+        react: (request: InferRequest, key?: string, signal?: AbortSignal, onDelta?: (delta: InferDelta) => void) =>
+          Effect.promise(() => mind(request, key, signal, onDelta))
+      }),
       Layer.succeed(NativeOutputSupport, { withTools: true })
     )
   const host: Host = createHost<TestR>({
@@ -176,6 +185,175 @@ describe("an assembled agent", () => {
       expect.objectContaining({ request: "x1", turn: "m1", reason: "operator stopped it" })
     ])
     expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
+  })
+
+  // streamOf builds the delta sequence a binding emits while the provider streams: the same
+  // identity the request carried, one logical attempt, and the physical attempt the fragments
+  // belong to.
+  const streamOf = (
+    request: InferRequest,
+    key: string | undefined,
+    physical: string,
+    chunks: ReadonlyArray<string>,
+    onDelta: ((delta: InferDelta) => void) | undefined
+  ) => {
+    for (const [sequence, text] of chunks.entries()) {
+      onDelta?.({
+        ...request.identity,
+        logicalAttempt: key ?? request.identity.turn,
+        physicalAttempt: physical,
+        model: request.model ?? { provider: "test", model_id: "test-model" },
+        blockIndex: 0,
+        sequence,
+        text
+      })
+    }
+  }
+
+  test("a cancelled inference journals the answer it had already streamed", async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["hello ", "world"], onDelta)
+      markStarted()
+      await new Promise<void>(() => {})
+      return { kind: "complete", output: "late" }
+    })
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "MessageReceived",
+      id: "m1",
+      text: "wait",
+      at: 1
+    } as Event)
+    const driving = mind.host.drive()
+    await started
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested",
+      reason: "operator stopped it",
+      at: 2
+    } as Event)
+    await driving
+
+    const log = mind.host.read(ROOT_THREAD)
+    const partialsOf = (events: ReadonlyArray<Event>) =>
+      events.filter((event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true)
+    expect(partialsOf(log)).toEqual([
+      expect.objectContaining({ text: "hello world", partial: true, turn: "m1" })
+    ])
+    // The prose precedes the terminal that explains it, the order a tool answer keeps.
+    expect(log.findIndex((event) => partialsOf([event]).length > 0)).toBeLessThan(
+      log.findIndex((event) => event.type === "TurnCancelled")
+    )
+    expect(log.some((event) => event.type === "TurnCompleted")).toBe(false)
+
+    // The reload reads the same stopped answer back: replay of a cancelled turn neither
+    // re-infers nor appends a second partial.
+    let calls = 0
+    const reloaded = rlm(async () => {
+      calls += 1
+      return { kind: "complete", output: "must not run" }
+    }, [work()], log)
+    expect(calls).toBe(0)
+    expect(reloaded.host.read(ROOT_THREAD)).toEqual(log)
+  })
+
+  test("a retried physical attempt journals only the text it streamed", async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["the first attempt died"], onDelta)
+      streamOf(request, key, "p2", ["second ", "try"], onDelta)
+      markStarted()
+      await new Promise<void>(() => {})
+      return { kind: "complete", output: "late" }
+    })
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "MessageReceived",
+      id: "m1",
+      text: "wait",
+      at: 1
+    } as Event)
+    const driving = mind.host.drive()
+    await started
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event)
+    await driving
+
+    const log = mind.host.read(ROOT_THREAD)
+    expect(log.filter((event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true))
+      .toEqual([expect.objectContaining({ text: "second try", partial: true, turn: "m1" })])
+  })
+
+  test("a normally completing inference journals no partial", async () => {
+    const mind = rlm(async (request, key, _signal, onDelta) => {
+      streamOf(request, key, "p1", ["an ", "answer"], onDelta)
+      return { kind: "complete", output: "an answer" }
+    })
+    const answer = await mind.run("go")
+    expect(answer.output).toBe("an answer")
+    expect(mind.host.read(ROOT_THREAD).some(
+      (event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true
+    )).toBe(false)
+  })
+
+  test("a provider that settles on the abort signal journals its partial exactly once", async () => {
+    let markStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve
+    })
+    const mind = rlm(async (request, key, signal, onDelta) => {
+      streamOf(request, key, "p1", ["half ", "an answer"], onDelta)
+      markStarted()
+      await new Promise<void>((resolve) => {
+        if (signal?.aborted === true) resolve()
+        else signal?.addEventListener("abort", () => resolve(), { once: true })
+      })
+      return {
+        kind: "fail",
+        error: "the connection was aborted",
+        failure: { cause: "inference_error", attempts: 1 }
+      }
+    })
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "MessageReceived",
+      id: "m1",
+      text: "wait",
+      at: 1
+    } as Event)
+    const driving = mind.host.drive()
+    await started
+    mind.host.commitRoot(mind.host.self(ROOT_THREAD), {
+      type: "CancellationRequested",
+      request: "x1",
+      invocation: { method: "message", id: "m1", epoch: 0 },
+      cause: "requested",
+      at: 2
+    } as Event)
+    await driving
+
+    const log = mind.host.read(ROOT_THREAD)
+    const partials = log.filter(
+      (event) => event.type === "TextReturned" && (event as { readonly partial?: unknown }).partial === true
+    )
+    expect(partials).toEqual([expect.objectContaining({ text: "half an answer", partial: true, turn: "m1" })])
+    // Whichever side of the abort race wins, the turn ends in exactly one terminal.
+    const terminals = log.filter(
+      (event) => event.type === "TurnCancelled" || event.type === "TurnFailed" || event.type === "TurnCompleted"
+    )
+    expect(terminals).toHaveLength(1)
+    expect(log.indexOf(partials[0]!)).toBeLessThan(log.indexOf(terminals[0]!))
   })
 
   test("distinct cancel calls absorb into one terminal and both receive a response", async () => {

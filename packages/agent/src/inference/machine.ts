@@ -454,13 +454,51 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
           yield* events.append([mark])
           const actualRender = derived.renderAfter(mark)
           const trajectory = input.trajectory()
+          // An attempt stopped mid-stream journals what the model had already said. The deltas
+          // arrive through the binding's onDelta seam and accumulate per physical attempt, so a
+          // retried attempt's partial carries only its own text (index.test.ts, "a retried
+          // physical attempt journals only the text it streamed"). The terminal follows, so the
+          // prose precedes the state transition it explains (index.test.ts, "a cancelled
+          // inference journals the answer it had already streamed").
+          let partialOutput = ""
+          let physicalAttempt = ""
+          let partialPersisted = false
+          const persistPartialOutput = () => {
+            if (partialOutput === "" || partialPersisted) return Effect.void
+            partialPersisted = true
+            return Clock.currentTimeMillis.pipe(
+              Effect.flatMap((at) =>
+                events.append([
+                  textReturned({
+                    text: partialOutput,
+                    partial: true,
+                    turn: input.turn,
+                    ...epochStamp(input.epoch),
+                    at
+                  })
+                ])
+              ),
+              Effect.asVoid
+            )
+          }
           const action = yield* binding
-            .react({
-              trajectory,
-              identity: { ...self, turn: input.turn },
-              model: selected,
-              ...actualRender
-            }, input.attempt, signal)
+            .react(
+              {
+                trajectory,
+                identity: { ...self, turn: input.turn },
+                model: selected,
+                ...actualRender
+              },
+              input.attempt,
+              signal,
+              (delta) => {
+                if (physicalAttempt !== delta.physicalAttempt) {
+                  physicalAttempt = delta.physicalAttempt
+                  partialOutput = ""
+                }
+                partialOutput += delta.text
+              }
+            )
             .pipe(
               Effect.catchCause((cause) =>
                 Cause.hasInterruptsOnly(cause)
@@ -470,6 +508,14 @@ const inferTransitionsFor = (policy: Partial<InferPolicy>, derived: InferDerivat
                       error: failureMessage(cause),
                       failure: { cause: "inference_error", attempts: 1 }
                     })
+              ),
+              Effect.onInterrupt(persistPartialOutput),
+              // The provider can settle on the abort signal before Effect observes the
+              // interrupt. The shared guard makes both finalizers one durable write
+              // (index.test.ts, "a provider that settles on the abort signal journals its
+              // partial exactly once").
+              Effect.ensuring(
+                Effect.suspend(() => signal?.aborted === true ? persistPartialOutput() : Effect.void)
               )
             )
           const after = yield* Clock.currentTimeMillis

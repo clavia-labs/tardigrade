@@ -707,6 +707,105 @@ describe("ephemeral inference deltas", () => {
     ])
   })
 
+  test("react streams onDelta text with no observer configured", async () => {
+    const deltas: InferDelta[] = []
+    const fetchImpl = (async () => sse([
+      { id: "stream-3", choices: [{ index: 0, delta: { role: "assistant", content: "hel" } }] },
+      { id: "stream-3", choices: [{ index: 0, delta: { content: "lo" } }] },
+      { id: "stream-3", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }
+    ])) as unknown as typeof globalThis.fetch
+    const layer = testInfer(
+      { baseUrl: "https://model.test/v1", apiKey: "k", model: "gpt-test", provider: "openai", fetch: fetchImpl },
+      { physicalAttemptId: () => "physical-1" }
+    )
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([
+          { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+        ]), "m1/infer/0", undefined, (delta) => { deltas.push(delta) })
+      ).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "hello" })
+    expect(deltas).toEqual([
+      {
+        actor: "test",
+        instance: "main",
+        thread: "root",
+        turn: "m1",
+        logicalAttempt: "m1/infer/0",
+        physicalAttempt: "physical-1",
+        model: { provider: "openai", model_id: "gpt-test" },
+        blockIndex: 0,
+        sequence: 0,
+        text: "hel"
+      },
+      {
+        actor: "test",
+        instance: "main",
+        thread: "root",
+        turn: "m1",
+        logicalAttempt: "m1/infer/0",
+        physicalAttempt: "physical-1",
+        model: { provider: "openai", model_id: "gpt-test" },
+        blockIndex: 0,
+        sequence: 1,
+        text: "lo"
+      }
+    ])
+  })
+
+  test("a retried attempt streams onDelta under a fresh physical identity", async () => {
+    let starts = 0
+    let physical = 0
+    const deltas: InferDelta[] = []
+    const adapter: ModelAdapter = {
+      id: "test/bedrock",
+      protocols: ["bedrock-converse"],
+      start: () => {
+        const current = starts++
+        return {
+          stream: {
+            async *[Symbol.asyncIterator]() {
+              yield { type: "TEXT_MESSAGE_START", messageId: `b${current}`, role: "assistant", timestamp: 1 } as never
+              yield {
+                type: "TEXT_MESSAGE_CONTENT",
+                messageId: `b${current}`,
+                delta: current === 0 ? "discarded" : "winner",
+                timestamp: 2
+              } as never
+              if (current === 0) throw Object.assign(new Error("429 from Bedrock"), { status: 429 })
+              yield { type: "TEXT_MESSAGE_END", messageId: `b${current}`, timestamp: 3 } as never
+            }
+          }
+        }
+      }
+    }
+    const layer = infer({
+      baseUrl: "https://bedrock.test/us-east-1",
+      apiKey: "k",
+      model: "anthropic.claude-test",
+      protocol: "bedrock-converse",
+      provider: "bedrock",
+      contextWindowTokens: 128_000,
+      throttleRetryDelaysMs: [1],
+      sleep: async () => {}
+    }, modelAdapters(adapter), {
+      physicalAttemptId: () => `physical-${physical++}`
+    })
+    const action = await Effect.runPromise(
+      Effect.flatMap(Infer, (model) =>
+        model.react(reqOf([
+          { type: "MessageReceived", id: "m1", text: "go", at: 1 }
+        ]), "m1/infer/0", undefined, (delta) => { deltas.push(delta) })
+      ).pipe(Effect.provide(layer)) as Effect.Effect<Action>
+    )
+    expect(action).toMatchObject({ kind: "complete", output: "winner" })
+    expect(deltas.map(({ logicalAttempt, physicalAttempt, text }) => ({ logicalAttempt, physicalAttempt, text }))).toEqual([
+      { logicalAttempt: "m1/infer/0", physicalAttempt: "physical-0", text: "discarded" },
+      { logicalAttempt: "m1/infer/0", physicalAttempt: "physical-1", text: "winner" }
+    ])
+  })
+
   test("observer failure and saturation leave inference unchanged", async () => {
     let deliveries = 0
     const fetchImpl = (async () => sse([
