@@ -7,7 +7,7 @@ import {
 } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/keys"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
-import type { InvocationCancellation } from "../method/cancellation"
+import type { InvocationCancellation } from "../interaction/events"
 import type { ComponentMachine } from "./machine"
 import type { ComponentOutput } from "./output"
 

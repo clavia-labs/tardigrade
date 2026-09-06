@@ -4,9 +4,10 @@ import { KeyValueStore } from "effect/unstable/persistence"
 import { FetchHttpClient } from "effect/unstable/http"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { Router } from "@clavia/tardigrade-core/communication/router"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { Self, effect, settleActor } from "@clavia/tardigrade-core/runtime"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { Self, actorRuntimeOf, effect, settleActor } from "@clavia/tardigrade-core/runtime"
 import { actor, composeComponents, deriveComponent, legacyComponent } from "@clavia/tardigrade-core/actor"
 import {
   CODE_VIEW_ALGEBRA,
@@ -57,6 +58,7 @@ const memoryLog = (initial: ReadonlyArray<Event> = []) =>
   )
 
 const noRouter = Layer.mergeAll(
+  Layer.succeed(ThreadAllocator, { allocate: () => Effect.die(new Error("unexpected child allocation")) }),
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
@@ -88,8 +90,8 @@ describe("infer component", () => {
     const component = infer([budget([codeMode()]), compaction(), nativeOutput], TEST_MODEL)
     expect(component.machine).toBeDefined()
     const definition = assembled(component)
-    expect(definition.projections.every((reactor) => "initial" in reactor)).toBe(true)
-    expect(definition.projection).toBeDefined()
+    expect(actorRuntimeOf(definition).projections.every((reactor) => "initial" in reactor)).toBe(true)
+    expect(actorRuntimeOf(definition).projection).toBeDefined()
   })
 
   test("the actor owns model selection", () => {
@@ -405,8 +407,8 @@ describe("infer component", () => {
     const agent = assembled(infer([echoTable, later, nativeOutput], TEST_MODEL))
 
     expect(agent.components).toHaveLength(1)
-    expect(agent.projections).toHaveLength(1)
-    expect(agent.projection).toBeDefined()
+    expect(actorRuntimeOf(agent).projections).toHaveLength(1)
+    expect(actorRuntimeOf(agent).projection).toBeDefined()
     expect(() => renderOf([echoTable, later, nativeOutput], [{ type: "Ready" }])).toThrow('tool "echo" declared more than once')
   })
 

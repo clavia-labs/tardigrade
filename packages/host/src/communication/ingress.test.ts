@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
-import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
+import type { ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import { ActorUnavailable, ingressFrom, type IngressActor } from "./ingress"
 
 const message = (id: string): MessageReceived => ({

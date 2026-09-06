@@ -3,6 +3,11 @@ import { renderToString } from "katex"
 
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
 import { ActorDiagram } from "./diagrams/ActorDiagram"
+import { ActorCommunicationDiagram } from "./diagrams/ActorCommunicationDiagram"
+import { ActorInstancesDiagram } from "./diagrams/ActorInstancesDiagram"
+import { ChildThreadsDiagram } from "./diagrams/ChildThreadsDiagram"
+import { ThreadInvocationDiagram } from "./diagrams/ThreadInvocationDiagram"
+import { ThreadResolutionDiagram } from "./diagrams/ThreadResolutionDiagram"
 import { BehaviorTrajectoryDiagram } from "./diagrams/BehaviorTrajectoryDiagram"
 import { ComponentDiagram } from "./diagrams/ComponentDiagram"
 import { CompactionMachineDiagram } from "./diagrams/CompactionMachineDiagram"
@@ -237,6 +242,11 @@ const Link = ({ href, ...props }: ComponentPropsWithoutRef<"a">): ReactElement =
 
 export const mdxComponents = {
   ActorDiagram,
+  ActorInstancesDiagram,
+  ActorCommunicationDiagram,
+  ChildThreadsDiagram,
+  ThreadInvocationDiagram,
+  ThreadResolutionDiagram,
   BehaviorTrajectoryDiagram,
   Command,
   ComponentDiagram,

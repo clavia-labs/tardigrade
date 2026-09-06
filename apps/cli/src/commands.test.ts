@@ -127,6 +127,7 @@ const clientOf = (
     },
     methodState: state,
     state: (invocation) => {
+      if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.stateRefs.push(invocation)
       return state()
     },
@@ -139,6 +140,7 @@ const clientOf = (
       })
       return answers.fail === undefined
         ? Promise.resolve({
+          reference: { target: { actor: "agent", instance: actor, thread }, invocation: { method: name, id: invocation.id, epoch: 0 } },
           actor,
           thread,
           method: name,
@@ -148,7 +150,9 @@ const clientOf = (
         : Promise.reject(answers.fail)
     },
     append: refuse,
+    allocateRoot: (instance, name) => Promise.resolve({ actor: "agent", instance, thread: name }),
     cancel: (invocation, cancellation = {}) => {
+      if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.cancelled.push({
         invocation,
         ...(cancellation.reason === undefined ? {} : { reason: cancellation.reason })
@@ -666,6 +670,11 @@ describe("call", () => {
       id: "m1",
       input: { text: "summarize" }
     }])
+    expect(ran.recorded.stateRefs).toHaveLength(2)
+    for (const handle of ran.recorded.stateRefs) {
+      expect(handle.reference).toEqual({ target: { actor: "agent", instance: "main", thread: "root" },
+        invocation: { method: "message", id: "m1", epoch: 0 } })
+    }
   })
 
   test("a custom method receives its JSON input", async () => {
@@ -693,6 +702,7 @@ describe("call", () => {
       answers: { states: [{ status: "completed", output: "done" }] }
     })
     expect(JSON.parse(ran.lines[0] ?? "")).toEqual({
+      reference: { target: { actor: "agent", instance: "main", thread: "root" }, invocation: { method: "message", id: "m1", epoch: 0 } },
       actor: "main",
       thread: "root",
       method: "message",

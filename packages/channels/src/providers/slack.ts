@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto"
 import { Effect } from "effect"
-import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import {
   channelOf,
   type Channel,

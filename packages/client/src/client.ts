@@ -1,6 +1,9 @@
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
+import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
+import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
+import { httpCallOf } from "./invocation-compat"
 import type {
   ActorMethodCancellation,
   ActorMethodInput,
@@ -146,6 +149,7 @@ export type MethodCall<M extends ActorMethods, Name extends keyof M> = {
 
 // ActorCallRef addresses one logical method call across its control and state operations.
 export interface ActorCallRef<Name extends string = string> {
+  readonly reference?: InvocationCoordinate
   readonly actor: string
   readonly thread: string
   readonly method: Name
@@ -187,6 +191,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
+  readonly allocateRoot: (actor: string, name: string) => Promise<ThreadCoordinate>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // call commits one declared method call and returns its durable handle.
@@ -198,7 +203,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   ) => Promise<ActorCallHandle<Name>>
   // state reads one logical call's typed durable state.
   readonly state: <const Name extends keyof M & string>(
-    call: ActorCallRef<Name>
+    call: ActorCallRef<Name> | InvocationCoordinate
   ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
   // methodState preserves the positional state lookup for existing callers.
   readonly methodState: <const Name extends keyof M & string>(
@@ -209,7 +214,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   ) => Promise<ActorMethodState<ActorMethodOutput<M[Name]>>>
   // cancel ensures the singleton cancellation resource for a cancellable logical call.
   readonly cancel: <const Name extends CancellableMethod<M>>(
-    call: ActorCallRef<Name>,
+    call: ActorCallRef<Name> | InvocationCoordinate,
     options?: CancellationOptions
   ) => Promise<CancellationResult>
   // Resumes a failed turn by appending the TurnResumed its reactors already interpret. It is the
@@ -334,16 +339,18 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
   const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
     run(api.threads.append({ params: { id: actor, thread }, payload: event }))
-  const invocationState = (handle: ActorCallRef) =>
-    run(api.methods.methodState({
+  const invocationState = (call: ActorCallRef | InvocationCoordinate) => {
+    const handle = httpCallOf(call)
+    return run(api.methods.methodState({
       params: {
         id: handle.actor,
         thread: handle.thread,
         method: handle.method,
         call: handle.id
       },
-      query: {}
+      query: handle.epoch === undefined ? {} : { epoch: handle.epoch, actor: handle.definition }
     }))
+  }
 
   // turnsOf reads the `turns` projection through the derivation, which is where the resume
   // convenience gets the epoch it has to stamp. It is spelled by name rather than through
@@ -376,6 +383,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
+    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ params: { id: actor }, payload: { name } })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invoke({
@@ -384,8 +392,9 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         payload: call.input
       }))
       return {
-        actor: accepted.actor,
-        thread: accepted.thread,
+        reference: accepted.reference,
+        actor: accepted.reference.target.instance,
+        thread: accepted.reference.target.thread,
         method: name,
         id: accepted.call,
         deadlineAt: accepted.deadlineAt
@@ -397,16 +406,19 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
         params: { id: actor, thread, method: name, call },
         query: {}
       })) as never,
-    cancel: (call, cancellation = {}) =>
-      run(api.methods.cancel({
+    cancel: (reference, cancellation = {}) => {
+      const call = httpCallOf(reference)
+      return run(api.methods.cancel({
         params: {
           id: call.actor,
           thread: call.thread,
           method: call.method,
           call: call.id
         },
+        query: call.epoch === undefined ? {} : { epoch: call.epoch, actor: call.definition },
         payload: cancellation.reason === undefined ? {} : { reason: cancellation.reason }
-      })),
+      }))
+    },
     // A resume is an append, so the platform has no route for it and no guard over it. The check
     // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a

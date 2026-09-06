@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
+import { invokedEventOf } from "@clavia/tardigrade-core/interaction/envelope"
 import { resumeTurn, type TurnDriver } from "./resume"
 
 describe("resumeTurn", () => {

@@ -63,9 +63,7 @@ const layerScripted: Layer.Layer<Infer> = Layer.succeed(Infer)({
 const directActor: Actor<never> = {
   name: "reviewer",
   methods: {},
-  components: [],
-  projections: [],
-  keyOf: () => undefined
+  components: []
 }
 
 // booted starts the whole command on an ephemeral port and hands the body its base URL. ":memory:"
@@ -270,6 +268,9 @@ describe("tdg dev", () => {
     const state = await booted(async (baseUrl) => {
       const actorInstance = await fetch(`${baseUrl}/v1/actors/main`, { method: "PUT" })
       expect(actorInstance.status).toBe(200)
+      expect((await fetch(`${baseUrl}/v1/actors/main/threads`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "root" })
+      })).status).toBe(200)
       const accepted = await fetch(`${baseUrl}/v1/actors/main/threads/root/methods/greet/calls/layer-test`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
@@ -332,6 +333,9 @@ describe("tdg dev", () => {
 
   test("call drives a message to completed with no model credentials", async () => {
     const seen = await booted(async (baseUrl) => {
+      expect((await fetch(`${baseUrl}/v1/actors/main/threads`, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "root" })
+      })).status).toBe(200)
       const ran = await drive(baseUrl, ["call", "message", "{\"text\":\"survey the log\"}", "--thread", "root", "--id", "m1", "--poll", "10"])
       const listed = await drive(baseUrl, ["ls", "--json"])
       const logged = await drive(baseUrl, ["events", "root", "--types", "MessageReceived"])

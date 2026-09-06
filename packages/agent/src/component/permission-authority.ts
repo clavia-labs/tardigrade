@@ -3,7 +3,7 @@ import { HashMap, HashSet, Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
 import { externallyHandled, handles, component as defineComponent, type Component } from "@clavia/tardigrade-core/actor"
-import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { formatThreadAddress, isThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { PermissionDecision, requestPermissionMethod } from "../actor/permission"
 import { permissionRequestDecided, permissionRequestFailed } from "../log/events"
 

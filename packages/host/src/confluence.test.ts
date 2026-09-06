@@ -2,13 +2,13 @@ import { describe, expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { createHost, type HostOptions } from "./host"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
+import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 
 // The driver's confluence property: the order the driver services dirty
 // threads must not change any outcome. This is the driver-level bag law,
@@ -65,7 +65,7 @@ const playerProjection = (me: string, opponent: string): ErasedTransitionProject
 // once and the schedule genuinely matters.
 const THREADS = ["a", "b", "c", "d"]
 
-const scenario = (pick: HostOptions<Router>["pick"]) => {
+const scenario = async (pick: HostOptions<Router>["pick"]) => {
   const host = createHost<Router>({
     actorFor: (thread) => {
       const i = THREADS.indexOf(thread)
@@ -75,12 +75,12 @@ const scenario = (pick: HostOptions<Router>["pick"]) => {
     },
     ...(pick === undefined ? {} : { pick })
   })
-  host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
-  host.commitRoot("mem:main:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
+  await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve-1", n: 0, at: 0 } as Event)
+  await host.commitRoot("mem:main:b", { type: "MessageReceived", id: "serve-2", n: 0, at: 0 } as Event)
   return host
 }
 
-const fingerprint = (host: ReturnType<typeof scenario>): string =>
+const fingerprint = (host: Awaited<ReturnType<typeof scenario>>): string =>
   JSON.stringify(
     THREADS.map((thread) => [
       thread,
@@ -93,13 +93,13 @@ const fingerprint = (host: ReturnType<typeof scenario>): string =>
 
 describe("driver confluence", () => {
   test("any service order reaches the same quiescent outcome", async () => {
-    const baseline = scenario(undefined)
+    const baseline = await scenario(undefined)
     await baseline.drive()
     const expected = fingerprint(baseline)
 
     await fc.assert(
       fc.asyncProperty(fc.infiniteStream(fc.nat()), async (seeds) => {
-        const shuffled = scenario((dirty) => {
+        const shuffled = await scenario((dirty) => {
           const threads = [...dirty]
           return threads[seeds.next().value % threads.length]!
         })

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { Clock, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -6,8 +7,9 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { send, settleActor, effect, enabled } from "@clavia/tardigrade-core/runtime"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { guestBindings, Sandbox, type Bindings } from "@clavia/tardigrade-code/sandbox/service"
-import { Router } from "@clavia/tardigrade-core/communication/router"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent } from "@clavia/tardigrade-core/component"
 import { Infer, receive } from "./turn"
@@ -102,6 +104,7 @@ const zoho = (spies: { insert: number; search: number }): Package => definePacka
 
 // No other actors exist in these tests, so sending is a no-op.
 const noRouter = Layer.mergeAll(
+  Layer.succeed(ThreadAllocator, { allocate: () => Effect.die(new Error("unexpected child allocation")) }),
   Layer.succeed(Router, {
     send: () => Effect.void
   }),
@@ -913,8 +916,8 @@ describe("the mind on a native surface", () => {
             nativeOutput
     ], TEST_MODEL))
     expect(mind.components).toHaveLength(1)
-    expect(mind.projections).toHaveLength(1)
-    expect(mind.projection).toBeDefined()
+    expect(actorRuntimeOf(mind).projections).toHaveLength(1)
+    expect(actorRuntimeOf(mind).projection).toBeDefined()
     const layers = Layer.mergeAll(
       memoryLog(),
       noRouter,

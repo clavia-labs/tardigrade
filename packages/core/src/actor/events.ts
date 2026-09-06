@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/event"
-import type { ChildPlacement } from "../thread/lineage"
+import type { ChildPlacement } from "../interaction/relations"
 
 export interface ThreadRequested extends Event {
   readonly type: "ThreadRequested"

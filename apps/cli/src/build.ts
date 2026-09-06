@@ -62,8 +62,6 @@ const definitionFrom = (loaded: Record<string, unknown>): Actor<unknown> => {
     throw new Error(`actor entry name must match ${String(ACTOR_NAME_PATTERN)}`)
   }
   if (
-    !Array.isArray(candidate.projections) ||
-    typeof candidate.keyOf !== "function" ||
     !Array.isArray(candidate.components)
   ) {
     throw new Error("actor entry must contain reconciled components")

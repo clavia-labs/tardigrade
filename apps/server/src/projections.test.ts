@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { replyId } from "@clavia/tardigrade-core/communication/message"
-import { childCreated, threadCreated } from "@clavia/tardigrade-core/thread"
+import { replyId } from "@clavia/tardigrade-core/interaction/provider-message"
+import { childCreated, threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 
 import { statusOf, summaryOf, treeOf } from "./projections"
 

@@ -1,13 +1,8 @@
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { Chunk } from "effect"
 import { intent, type Transition } from "@clavia/tardigrade-core/runtime"
-import {
-  composeComponents,
-  inheritComponentContract,
-  component as defineComponent,
-  type ComponentRequirements,
-  type InvocationCancellation
-} from "@clavia/tardigrade-core/actor"
+import { composeComponents, inheritComponentContract, component as defineComponent, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { type InvocationCancellation } from "@clavia/tardigrade-core/interaction/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
 import { codeDispatched, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"

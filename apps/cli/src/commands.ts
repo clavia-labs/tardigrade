@@ -12,6 +12,7 @@ import {
   NO_ANSWER,
   ProblemError,
   type ActorClient,
+  type ActorCallHandle,
   type MethodState
 } from "@clavia/tardigrade-client"
 
@@ -204,21 +205,18 @@ const methodInput = (source: string): Effect.Effect<unknown, CliError.UserError>
 
 const settle = (
   client: ActorClient,
-  actor: string,
-  thread: string,
-  method: string,
-  callId: string,
+  handle: ActorCallHandle,
   pollMillis: number,
   timeoutMillis: number
 ): Effect.Effect<MethodState, CliError.UserError> =>
   Effect.gen(function*() {
     const started = yield* Clock.currentTimeMillis
     for (;;) {
-      const state = yield* call(() => client.methodState(actor, thread, method, callId))
+      const state = yield* call(() => client.state(handle))
       if (state.status !== "pending") return state
       if ((yield* Clock.currentTimeMillis) - started >= timeoutMillis) {
         return yield* userErrorOf(
-          `call ${callId} on thread ${thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${thread}\`.`
+          `call ${handle.id} on thread ${handle.thread} was still pending after ${timeoutMillis}ms. It is still running: read it with \`tdg events ${handle.thread}\`.`
         )
       }
       yield* Effect.sleep(pollMillis)
@@ -801,15 +799,15 @@ export const callCommand = Command.make("call", {
   Effect.gen(function*() {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
-    const thread = stated(flags.thread) ?? cli.mintId()
-    const id = stated(flags.id) ?? cli.mintId()
     const input = yield* methodInput(flags.input)
+    const thread = stated(flags.thread) ?? (yield* call(() => client.allocateRoot(flags.actor, cli.mintId()))).thread
+    const id = stated(flags.id) ?? cli.mintId()
     const accepted = yield* call(() => client.call(flags.actor, thread, flags.method, { id, input }))
     if (!flags.wait) {
       yield* Console.log(flags.json ? jsonOf(accepted) : `${accepted.thread} ${accepted.id} accepted`)
       return
     }
-    const state = yield* settle(client, accepted.actor, accepted.thread, accepted.method, accepted.id, flags.poll, flags.timeout)
+    const state = yield* settle(client, accepted, flags.poll, flags.timeout)
     yield* Console.log(
       flags.json
         ? jsonOf({ ...accepted, ...state })

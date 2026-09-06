@@ -5,9 +5,10 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { actor } from "@clavia/tardigrade-core/actor"
 import { Self, enabled, settleActor } from "@clavia/tardigrade-core/runtime"
-import { Router } from "@clavia/tardigrade-core/communication/router"
-import { threadAddressOf, parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { threadAddressOf, parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import { Infer } from "../runtime/turn"
 import { NativeOutputSupport } from "../inference/contract"
 import { budget, budgetOf, budgetPhase, budgetSpent, caller, canRequestBudget } from "./budget"
@@ -32,6 +33,7 @@ const rootReactor = (events: ReadonlyArray<Event>) => enabled(rootActor, events)
 
 // rest supplies the environment required by effect transitions in this assembled agent.
 const rest = Layer.mergeAll(
+  Layer.succeed(ThreadAllocator, { allocate: () => Effect.die(new Error("unexpected child allocation")) }),
   KeyValueStore.layerMemory,
   Layer.succeed(Router, {
     send: () => Effect.void
@@ -124,6 +126,7 @@ describe("budget admission reacts to BudgetExhausted", () => {
       read: Effect.sync(() => events as ReadonlyArray<Event>)
     }))
     const environment = Layer.mergeAll(
+      Layer.succeed(ThreadAllocator, { allocate: () => Effect.die(new Error("unexpected child allocation")) }),
       memory,
       KeyValueStore.layerMemory,
       Layer.succeed(Router, { send: () => Effect.void }),

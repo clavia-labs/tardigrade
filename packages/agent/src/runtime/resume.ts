@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { actorInvocationContextOf } from "@clavia/tardigrade-core/method"
-import { invokedEventOf } from "@clavia/tardigrade-core/communication/envelope"
+import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { invokedEventOf } from "@clavia/tardigrade-core/interaction"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { boundaryOf, type Boundary } from "../output/boundary"
 import { turnResumed } from "../log/events"

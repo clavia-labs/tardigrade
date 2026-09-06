@@ -9,11 +9,11 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { actorFromProjections, type Actor } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
-import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/method"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { methodTimeoutKeys, methodTimeoutDerivation } from "@clavia/tardigrade-core/interaction/timeout"
+import { formatThreadAddress, parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { hydrate, refs, spill } from "@clavia/tardigrade-code/storage/store"
 import { jsSandboxService, Sandbox } from "@clavia/tardigrade-code/sandbox/service"
 
@@ -106,6 +106,61 @@ const options = (path: string): BunHostOptions<never> => ({
 })
 
 describe("the bun host", () => {
+  test("root creation awaits the configured reservation and reuses it on later messages", async () => {
+    const requests: string[] = []
+    const host = await createBunHost({
+      ...options(freshPath()),
+      threadAllocator: { allocate: (request) => Effect.promise(async () => {
+        await Promise.resolve()
+        requests.push(request.kind)
+        if (request.kind !== "root") throw new Error("unexpected child allocation")
+        if (request.coordinate.thread === "denied") throw new Error("reservation refused")
+        return request.coordinate
+      }) }
+    })
+    try {
+      await expect(host.commitRoot(host.self("denied"), { type: "MessageReceived", id: "first", at: 1 })).rejects.toThrow("reservation refused")
+      expect(await host.read("denied")).toEqual([])
+      await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "first", at: 1 })
+      await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "second", at: 2 })
+      expect(requests).toEqual(["root", "root"])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("root and routed ingress reject invalid context without persisting events", async () => {
+    const host = await createBunHost(options(freshPath()))
+    try {
+      const target = parseThreadAddress(host.self("root"))
+      const call = { invocation: { method: "run", id: "call", epoch: -1 } }
+      const event = { type: "MessageReceived", id: "call", at: 1 }
+      const source = { ...target, thread: "parent" }
+      await expect(host.commitRoot(host.self("root"), { ...event, call })).rejects.toThrow('["invocation"]["epoch"]')
+      await expect(host.commit({ link: { source, target }, event, call, lineage: { parent: source, depth: 1 } })).rejects.toThrow('["invocation"]["epoch"]')
+      expect(await host.read("root")).toEqual([])
+    } finally {
+      await host.close()
+    }
+  })
+
+  test("opaque coordinates retain their identity after reopening", async () => {
+    const path = freshPath()
+    const address = { actor: "bun:worker", instance: "tenant:west", thread: "root:child" }
+    const config = { ...options(path), actorName: address.actor, actorInstance: address.instance }
+    const wire = formatThreadAddress(address)
+    const first = await createBunHost(config)
+    try {
+      expect(first.self(address.thread)).toBe(wire)
+      await first.commitRoot(wire, { type: "MessageReceived", id: "m1", at: 1 } as Event)
+      expect((await first.read(address.thread))[0]).toMatchObject({ type: "ThreadCreated", address })
+    } finally { await first.close() }
+    const reopened = await createBunHost(config)
+    try {
+      expect((await reopened.read(address.thread))[0]).toMatchObject({ type: "ThreadCreated", address })
+    } finally { await reopened.close() }
+  })
+
   test("the actor log survives reopen and wakes its follower", async () => {
     const path = freshPath()
     const first = await createBunHost(options(path))
@@ -357,7 +412,7 @@ describe("the bun host", () => {
         type: "CallDispatched",
         id: "inspect-1",
         method: "inspect",
-        target: "inspector:shared",
+        target: "inspector:main:shared",
         input: {},
         timeoutMs: 50,
         deadlineAt: 50,
@@ -389,7 +444,7 @@ describe("the bun host", () => {
       type: "CallTimedOut",
       call: "inspect-1",
       method: "inspect",
-      target: "inspector:shared",
+      target: "inspector:main:shared",
       timeoutMs: 50,
       deadlineAt: 50,
       at: 53

@@ -1,9 +1,10 @@
 import { Clock, Effect } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import { send, type Actor } from "@clavia/tardigrade-core/runtime"
-import type { Router } from "@clavia/tardigrade-core/communication/router"
+import { send, type ActorSource as Actor } from "@clavia/tardigrade-core/runtime"
+import type { Router } from "@clavia/tardigrade-core/transport/router"
 import type { Self } from "@clavia/tardigrade-core/runtime"
+import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import type { Infer, InferPolicy } from "../inference/contract"
 import type { OutputContract } from "../output/contract"
 import type { BudgetPolicy } from "../component/budget"
@@ -19,7 +20,7 @@ export { Infer } from "../inference/contract"
 // KeyValueStore for the spill store code mode writes bounded results to
 // (packages/code/src/spill.ts). Components add their own on top (core/component.ts,
 // ComponentRequirements).
-export type AgentR = Infer | EventLog | Router | Self | KeyValueStore.KeyValueStore
+export type AgentR = Infer | EventLog | Router | Self | ThreadAllocator | KeyValueStore.KeyValueStore
 
 // AgentPolicy is every policy value an assembled agent applies, one field per part that applies
 // one, so a caller sets a single number without listing reactors. Each field is itself partial

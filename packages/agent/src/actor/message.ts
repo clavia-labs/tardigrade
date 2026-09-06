@@ -1,7 +1,7 @@
 import { Schema } from "effect"
-import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/communication/message"
+import { MessageReceived, messageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/method"
+import { actorMethod, durableInputProjection } from "@clavia/tardigrade-core/actor/method"
 import { intent } from "@clavia/tardigrade-core/runtime"
 import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import {

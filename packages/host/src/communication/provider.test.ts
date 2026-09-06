@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { Router } from "@clavia/tardigrade-core/communication/router"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import { createHost } from "../host"
 
 const message: MessageReceived = {

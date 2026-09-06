@@ -28,10 +28,10 @@
   "exports": {
     "./actor": "./src/actor/index.ts",
     "./actor/*": "./src/actor/*.ts",
-    "./method": "./src/method/index.ts",
-    "./method/*": "./src/method/*.ts",
-    "./communication": "./src/communication/index.ts",
-    "./communication/*": "./src/communication/*.ts",
+    "./interaction": "./src/interaction/index.ts",
+    "./interaction/*": "./src/interaction/*.ts",
+    "./transport": "./src/transport/index.ts",
+    "./transport/*": "./src/transport/*.ts",
     "./component": "./src/component/index.ts",
     "./component/*": "./src/component/*.ts",
     "./effect": "./src/effect.ts",
@@ -48,8 +48,6 @@
     "./reconciliation/transition": "./src/compatibility/transition.ts",
     "./runtime": "./src/runtime/index.ts",
     "./runtime/*": "./src/runtime/*.ts",
-    "./thread": "./src/thread/index.ts",
-    "./thread/*": "./src/thread/*.ts",
     "./transition": "./src/transition/index.ts",
     "./transition/*": "./src/transition/*.ts",
     "./view": "./src/view.ts"

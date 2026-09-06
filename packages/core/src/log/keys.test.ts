@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { messageKeys } from "../communication/message"
+import { messageKeys } from "../interaction/provider-message"
 import { composeKeys, type KeyFragment } from "./keys"
 
 const aKeys: KeyFragment = {

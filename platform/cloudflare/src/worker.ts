@@ -31,28 +31,19 @@ import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProvid
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
-import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
-import { directoryRoute } from "@clavia/tardigrade-core/communication/router"
-import type { Transport } from "@clavia/tardigrade-core/communication/transport"
-import { invokedEventOf, isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import {
-  actorEventsOf,
-  actorEventKeyOf,
-  actorThreadsOf,
-  type ActorThreadRecord,
-  type ThreadRequested,
-} from "@clavia/tardigrade-core/actor"
-import {
-  actorInvocationContextFrom,
-  actorMethodTimeoutOf,
-  cancellationDispositionOf,
-  cancellationRequested,
-  cancellationRequestIdOf
-} from "@clavia/tardigrade-core/method"
-import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/thread"
+import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
+import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
+import type { Transport } from "@clavia/tardigrade-core/transport/transport"
+import { isActorEnvelope, type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import { ActorInstanceId, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { actorEventsOf, actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRequested } from "@clavia/tardigrade-core/actor"
+import { invocationCoordinateOf } from "@clavia/tardigrade-core/interaction"
+import { ThreadAllocator, allocateThread } from "@clavia/tardigrade-core/actor/allocation"
+import { DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
+import { existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-server/method-request"
+import { sameThreadAddress, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
-import { effect, restingActor, settleActor } from "@clavia/tardigrade-core/runtime"
+import { actorRuntimeOf, effect, restingActor, settleActor } from "@clavia/tardigrade-core/runtime"
 import { actorFromProjections } from "@clavia/tardigrade-core/runtime"
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
 import type { SandboxCallOutcome } from "@clavia/tardigrade-code/sandbox/service"
@@ -208,6 +199,7 @@ export const retainBackgroundTask = (
 type DefaultAssembly = ReturnType<typeof defaultAssemblyOf>
 
 interface MountedActor {
+  readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly name: string
   readonly actor: DefaultAssembly
   readonly methods: ActorMethods
@@ -640,15 +632,21 @@ export class ActorDO extends DurableObject<Env> {
     await this.synchronizeAlarm()
   }
 
-  async createThread(thread: string): Promise<void> {
+  async createThread(name: string): Promise<ThreadAddress> {
     const identity = this.identity()
+    const target = await Effect.runPromise(allocateThread({ kind: "root", coordinate: { ...identity, thread: name } }).pipe(
+      Effect.provideService(ThreadAllocator, mountedActor?.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR)
+    ))
+    const thread = target.thread
     const existing = (await this.threads()).find((entry) => entry.thread === thread)
     if (existing !== undefined && existing.parentThread !== undefined) {
       throw new Error("a child thread cannot be recreated as a root")
     }
     const stub = this.env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, thread))
     await stub.init(identity.actor, identity.instance, thread)
+    await stub.initializeRoot()
     await this.request({ type: "ThreadRequested", thread, depth: 0, at: Date.now() })
+    return target
   }
 
   // deliverChild records creation after the child log and actor supervisor accept the request (tla/ThreadCreation.tla, CreatedHasAccepted).
@@ -754,6 +752,10 @@ export class ThreadDO extends DurableObject<Env> {
     if (identity.actor !== name) throw new Error("actor definition does not match the Thread DO identity")
     if (identity.instance !== instance) throw new Error("actor instance does not match the Thread DO identity")
     if (identity.thread !== thread) throw new Error("thread does not match the Thread DO identity")
+  }
+
+  async initializeRoot(): Promise<void> {
+    await (await this.host()).initializeRoot(Date.now())
   }
 
   async exists(name: string, instance: string, thread: string): Promise<boolean> {
@@ -893,6 +895,7 @@ export class ThreadDO extends DurableObject<Env> {
     )
     const commitObserver = mountedActor?.commitObserverFor?.({ env: this.env, actorInstance, thread: currentThread })
     return createCloudflareThreadHost({
+      ...(mountedActor?.threadAllocator === undefined ? {} : { threadAllocator: mountedActor.threadAllocator }),
       storage: this.ctx.storage,
       actorName,
       actorInstance,
@@ -909,7 +912,7 @@ export class ThreadDO extends DurableObject<Env> {
       })(),
       routes: [independentRoute],
       ...(mountedActor?.storeFor === undefined ? {} : { store: mountedActor.storeFor({ env: this.env, actorInstance, thread: currentThread }) }),
-      keyOf: selectedAssembly.keyOf
+      keyOf: actorRuntimeOf(selectedAssembly).keyOf
     })
   }
 
@@ -1123,23 +1126,13 @@ const jsonSchemaOf = (schema: Schema.Constraint): unknown => {
     : { ...document.schema, $defs: document.definitions }
 }
 
-const methodEventOf = (
-  method: ActorMethods[string],
-  call: Parameters<ActorMethods[string]["eventOf"]>[0]
-): { readonly event: Event } | { readonly error: string } => {
-  try {
-    return { event: method.eventOf(call) }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
-}
-
-const selectedMethodTimeoutOf = (raw: string | null): { readonly timeoutMs: number } | { readonly error: string } => {
-  try {
-    return { timeoutMs: actorMethodTimeoutOf(raw === null ? undefined : Number(raw)) }
-  } catch (cause) {
-    return { error: cause instanceof Error ? cause.message : String(cause) }
-  }
+const invocationQueryOf = (request: HttpServerRequest.HttpServerRequest): { readonly epoch?: number } | { readonly error: string } => {
+  const actor = new URL(request.url, "http://worker").searchParams.get("actor")
+  if (actor !== null && actor !== deployedActor) return { error: "Invocation target actor does not match this deployment." }
+  const raw = new URL(request.url, "http://worker").searchParams.get("epoch")
+  if (raw === null) return {}
+  const epoch = Number(raw)
+  return raw.trim() !== "" && Number.isSafeInteger(epoch) && epoch >= 0 ? { epoch } : { error: "epoch must be a non-negative safe integer" }
 }
 
 const authorized = (request: HttpServerRequest.HttpServerRequest, env: Env): boolean =>
@@ -1271,17 +1264,17 @@ const routes = [
         : json({ actor: instance, definition: deployedActor })
     })
   )),
-  HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread", protectedRoute((_request, env) =>
+  HttpRouter.route("POST", "/v1/actors/:id/threads", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const instance = params.id ?? ""
-      const thread = params.thread ?? ""
       if (!Schema.is(ActorInstanceId)(instance)) return json({ error: "invalid actor instance id" }, 400)
-      const directory = yield* Effect.promise(() => actorStub(env, deployedActor, instance, false))
+      const payload = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
+      if (!Schema.is(Schema.Struct({ name: Schema.NonEmptyString }))(payload)) return json({ error: "name must be a nonempty string" }, 400)
+      const directory = yield* Effect.promise(() => actorStub(env, deployedActor, instance, true))
       if (directory === undefined) return json({ error: "unknown actor" }, 404)
-      const address = yield* Effect.promise(() => resolvePublicThread(env, deployedActor, instance, thread))
-      yield* Effect.promise(() => directory.createThread(address))
-      return json({ actor: instance, thread })
+      const coordinate = yield* Effect.promise(() => directory.createThread(payload.name))
+      return json(coordinate)
     })
   )),
   HttpRouter.route("PUT", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
@@ -1300,35 +1293,27 @@ const routes = [
       const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
-      const existing = events.map(actorInvocationContextFrom).find((context) =>
-        context?.invocation.method === methodName && context.invocation.id === call &&
-        context.invocation.epoch === 0 && context.deadlineAt !== undefined)
-      if (existing?.deadlineAt !== undefined) {
-        return json({ actor: instance, thread, method: methodName, call, deadlineAt: existing.deadlineAt }, 202)
-      }
+      const reference = invocationCoordinateOf(
+        { actor, instance, thread: stub.thread },
+        { method: methodName, id: call, epoch: 0 }
+      )
+      const existing = existingMethodRequest(events, reference)
+      if (existing !== undefined) return json(existing, 202)
       const requestedTimeout = new URL(request.url, "http://worker").searchParams.get("timeoutMs")
-      const selectedTimeout = selectedMethodTimeoutOf(requestedTimeout)
-      if ("error" in selectedTimeout) return json({ error: selectedTimeout.error }, 400)
-      const timeoutMs = selectedTimeout.timeoutMs
-      if (timeoutMs > method.timeoutMs) {
-        return json({ error: `timeoutMs cannot exceed method ${JSON.stringify(methodName)}'s declared ${method.timeoutMs}ms` }, 400)
-      }
       const input = yield* request.json.pipe(Effect.orElseSucceed(() => undefined))
       const at = yield* Clock.currentTimeMillis
-      const deadlineAt = at + timeoutMs
-      if (!Number.isSafeInteger(deadlineAt)) return json({ error: "timeoutMs produces an invalid deadline" }, 400)
-      const context = {
-        invocation: { method: methodName, id: call, epoch: 0 },
-        deadlineAt
-      }
-      const decoded = methodEventOf(method, { ...context, input, at })
-      if ("error" in decoded) return json({ error: decoded.error }, 400)
-      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, invokedEventOf(context, decoded.event)))
+      const prepared = yield* Effect.try({
+        try: () => prepareMethodRequest({ reference, method, input, at,
+          ...(requestedTimeout === null ? {} : { timeoutMs: Number(requestedTimeout) }) }),
+        catch: (failure) => failure instanceof Error ? failure.message : String(failure)
+      }).pipe(Effect.result)
+      if (prepared._tag === "Failure") return json({ error: prepared.failure }, 400)
+      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, prepared.success.event))
       if (!appended) return json({ error: "unknown thread" }, 404)
-      return json({ actor: instance, thread, method: methodName, call, deadlineAt }, 202)
+      return json(prepared.success.accepted, 202)
     })
   )),
-  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((_request, env) =>
+  HttpRouter.route("GET", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", protectedRoute((request, env) =>
     Effect.gen(function* () {
       const params = yield* HttpRouter.params
       const actor = deployedActor
@@ -1344,8 +1329,9 @@ const routes = [
       const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
-      const epoch = method.currentEpoch(events, call)
-      const state = method.state(events, { method: methodName, id: call, epoch })
+      const selectedEpoch = invocationQueryOf(request)
+      if ("error" in selectedEpoch) return json({ error: selectedEpoch.error }, 400)
+      const { state } = methodRequestState(events, method, { method: methodName, id: call, ...(selectedEpoch.epoch === undefined ? {} : { epoch: selectedEpoch.epoch }) })
       return state === undefined ? json({ error: "unknown method call" }, 404) : json(state)
     })
   )),
@@ -1360,17 +1346,16 @@ const routes = [
       const call = params.call ?? ""
       const method = methodsOf(actor)?.[methodName]
       if (method === undefined) return json({ error: "unknown method" }, 404)
-      if (method.cancellation === undefined) return json({ error: "method does not declare cancellation" }, 400)
       const stub = yield* Effect.promise(() => threadStub(env, actor, instance, thread))
       if (stub === undefined) return json({ error: "unknown thread" }, 404)
       const events = yield* Effect.promise(() => stub.stub.events(stub.thread)).pipe(
         Effect.map((value) => value as ReadonlyArray<Event>)
       )
-      const epoch = method.currentEpoch(events, call)
-      const invocation = { method: methodName, id: call, epoch }
-      if (method.state(events, invocation) === undefined) return json({ error: "unknown method call" }, 404)
-      const disposition = cancellationDispositionOf(events, method, invocation)
-      if (disposition === undefined) return json({ error: "unknown method call" }, 404)
+      const selectedEpoch = invocationQueryOf(request)
+      if ("error" in selectedEpoch) return json({ error: selectedEpoch.error }, 400)
+      const { invocation, status: disposition } = methodCancellationRequest(events, method, { method: methodName, id: call, ...(selectedEpoch.epoch === undefined ? {} : { epoch: selectedEpoch.epoch }) })
+      if (disposition === "unknown") return json({ error: "unknown method call" }, 404)
+      if (disposition === "unsupported") return json({ error: "method does not declare cancellation" }, 400)
       if (disposition === "settled") {
         return json(InvocationSettled.of(`Invocation ${JSON.stringify(call)} has settled and cannot be cancelled.`), 409)
       }
@@ -1381,13 +1366,8 @@ const routes = [
       const payload = (yield* request.json.pipe(Effect.orElseSucceed(() => ({})))) as { readonly reason?: unknown }
       if (payload.reason !== undefined && typeof payload.reason !== "string") return json({ error: "reason must be a string" }, 400)
       const at = yield* Clock.currentTimeMillis
-      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread, cancellationRequested({
-        request: cancellationRequestIdOf(invocation),
-        invocation,
-        cause: "requested",
-        ...(typeof payload.reason === "string" ? { reason: payload.reason } : {}),
-        at
-      })))
+      const appended = yield* Effect.promise(() => stub.stub.append(stub.thread,
+        methodCancellationEvent(invocation, at, typeof payload.reason === "string" ? payload.reason : undefined)))
       if (!appended) return json({ error: "unknown thread" }, 404)
       return json({ actor: instance, thread, method: methodName, call, status: "requested" }, 202)
     })
@@ -1480,6 +1460,7 @@ export type CloudflareWorkerStoreFor<WorkerEnv extends Env = Env> = (
 ) => CloudflareThreadStorePolicy
 
 interface CloudflareWorkerBaseOptions<WorkerEnv extends Env> {
+  readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly modelAdapters?: ModelAdapterRegistry
   readonly modelScope?: DeploymentModelScope
   readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<WorkerEnv>) => InferenceObserver
@@ -1514,6 +1495,7 @@ export const cloudflareWorker = <
     throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
   }
   mountedActor = {
+    ...(options?.threadAllocator === undefined ? {} : { threadAllocator: options.threadAllocator }),
     name: definition.name,
     actor: definition as unknown as DefaultAssembly,
     methods: definition.methods,

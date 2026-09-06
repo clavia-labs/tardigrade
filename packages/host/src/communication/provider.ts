@@ -1,8 +1,8 @@
 import { Effect } from "effect"
-import type { ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
-import type { ProviderEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
-import type { Transport } from "@clavia/tardigrade-core/communication/transport"
+import type { ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
+import type { ProviderEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
+import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 
 // Provider sends normalized messages to source-specific coordinates owned by one configured provider instance.
 export interface Provider<Source extends ProviderEndpoint = ProviderEndpoint> {

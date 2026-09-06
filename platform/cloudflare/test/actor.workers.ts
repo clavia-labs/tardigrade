@@ -28,9 +28,9 @@ const alarm = (thread: string) =>
 const createThread = async (thread: string): Promise<void> => {
   const actor = await SELF.fetch("http://test/v1/actors/main", { method: "PUT", headers: authorization })
   expect(actor.status).toBe(200)
-  const created = await SELF.fetch(`http://test/v1/actors/main/threads/${thread}`, { method: "PUT", headers: authorization })
+  const created = await SELF.fetch("http://test/v1/actors/main/threads", { method: "POST", headers: { ...authorization, "content-type": "application/json" }, body: JSON.stringify({ name: thread }) })
   expect(created.status).toBe(200)
-  expect(await created.json()).toEqual({ actor: "main", thread })
+  expect(await created.json()).toEqual({ actor: "echo", instance: "main", thread })
 }
 
 const methodState = async (thread: string, call: string): Promise<unknown> => {
@@ -99,6 +99,60 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+  })
+
+  test("root and staged creation await the host allocator before persistence", async () => {
+    await runInDurableObject(threadStub("root-reservation"), async (_instance, state) => {
+      let allowed = false
+      const requests: string[] = []
+      const host = await createCloudflareThreadHost({
+        storage: state.storage, actorName: "echo", actorInstance: "main", thread: "root-reservation",
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined }),
+        threadAllocator: { allocate: (request) => Effect.promise(async () => {
+          await Promise.resolve()
+          requests.push(request.kind)
+          if (!allowed) throw new Error("reservation refused")
+          if (request.kind !== "root") throw new Error("unexpected child allocation")
+          return request.coordinate
+        }) }
+      })
+      try {
+        const event = { type: "MessageReceived", id: "first", at: 1 }
+        await expect(host.commitRoot(event)).rejects.toThrow("reservation refused")
+        await expect(host.stageRoot(event)).rejects.toThrow("reservation refused")
+        expect(await host.read()).toEqual([])
+        allowed = true
+        await host.stageRoot(event)
+        await host.commitRoot({ ...event, id: "second", at: 2 })
+        expect(requests).toEqual(["root", "root", "root"])
+        expect((await host.read()).filter((event) => event.type === "ThreadCreated")).toHaveLength(1)
+      } finally {
+        await host.close()
+      }
+    })
+  })
+
+  test("root, routed, and staged ingress reject invalid context before persistence", async () => {
+    await runInDurableObject(threadStub("ingress-rejection"), async (_instance, state) => {
+      const target = { actor: "echo", instance: "main", thread: "ingress-rejection" }
+      const host = await createCloudflareThreadHost({
+        storage: state.storage, actorName: target.actor, actorInstance: target.instance, thread: target.thread,
+        actor: actorFromProjections({ transitions: [], keyOf: () => undefined })
+      })
+      try {
+        const call = { invocation: { method: "run", id: "call", epoch: -1 } }
+        const event = { type: "MessageReceived", id: "call", at: 1 }
+        const source = { ...target, thread: "parent" }
+        const envelope = { link: { source, target }, event, call, lineage: { parent: source, depth: 1 } }
+        await expect(host.commitRoot({ ...event, call })).rejects.toThrow('["invocation"]["epoch"]')
+        await expect(host.stageRoot({ ...event, call })).rejects.toThrow('["invocation"]["epoch"]')
+        await expect(host.commit(envelope)).rejects.toThrow('["invocation"]["epoch"]')
+        await expect(host.stage(envelope)).rejects.toThrow('["invocation"]["epoch"]')
+        expect(await host.read()).toEqual([])
+      } finally {
+        await host.close()
+      }
+    })
   })
 
   test("commit observers see only published durable heads", async () => {
@@ -289,12 +343,13 @@ describe("cloudflare actor", () => {
     expect(retained).toEqual([task])
   })
 
-  test("an ambiguous actor instance id is refused", async () => {
-    const invalidActor = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
+  test("an opaque actor instance ref retains its delimiter", async () => {
+    const response = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
       method: "PUT",
       headers: authorization
     })
-    expect(invalidActor.status).toBe(400)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ actor: "tenant:west", definition: "echo" })
   })
 
   test("actor instance path parameters are decoded once", async () => {
@@ -460,13 +515,16 @@ describe("cloudflare actor", () => {
       deadlineAt: expect.any(Number)
     })
     expect(await methodState("root", "workers-smoke")).toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
+    const wrongActor = await SELF.fetch("http://test/v1/actors/main/threads/root/methods/echo/calls/workers-smoke?actor=other&epoch=0", { headers: authorization })
+    expect(wrongActor.status).toBe(400)
     expect(await alarm("root")).toBeNull()
     const client = makeActorClient({
       baseUrl: "http://test",
       token: "workers-test-token",
       fetch: (input, init) => SELF.fetch(input, init)
     })
-    expect(await client.call("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } }))
+    const handle = await client.call("main", "root", "echo", { id: "workers-smoke", input: { text: "Run in workerd." } })
+    expect(handle)
       .toMatchObject({
         actor: "main",
         thread: "root",
@@ -474,7 +532,7 @@ describe("cloudflare actor", () => {
         id: "workers-smoke",
         deadlineAt: expect.any(Number)
       })
-    expect(await client.methodState("main", "root", "echo", "workers-smoke"))
+    expect(await client.state(handle.reference))
       .toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
     const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([

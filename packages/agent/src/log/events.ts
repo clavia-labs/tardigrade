@@ -1,8 +1,8 @@
 import { Schema } from "effect"
-import { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
-import { CancellationRequested } from "@clavia/tardigrade-core/method"
+import { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
 import type { Usage } from "../inference/usage"
 import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 
@@ -17,8 +17,9 @@ import { ModelRef, type ModelRef as ModelRefType } from "../inference/reference"
 
 // MessageReceived is the canonical inbound (core/message.ts), shared with every other actor
 // kind.
-export { MessageReceived } from "@clavia/tardigrade-core/communication/message"
-export { CancellationRequested, cancellationRequested } from "@clavia/tardigrade-core/method"
+export { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
+export { CancellationRequested } from "@clavia/tardigrade-core/interaction/events"
+export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cancellation"
 
 // Endpoint is who served one attempt, recorded whether or not the endpoint reported any spend.
 // `provider` and `model` are the configuration's own effective coordinates, so a replay reads

@@ -3,12 +3,13 @@ import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { component as defineComponent, legacyComponent } from "@clavia/tardigrade-core/component"
 import { enabled } from "@clavia/tardigrade-core/runtime/reconciler"
-import { actor, validateActor } from "./definition"
+import { actorRuntimeOf } from "../runtime/actor"
+import { actor, defineActor, validateActor, type ActorDefinition } from "./definition"
 import { actorRef } from "./reference"
-import { actorMethod, actorMethodsOf } from "../method/method"
-import { legacyActorMethod } from "../method/legacy"
-import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../method/cancellation"
-import { alarmFired } from "../method/timeout"
+import { actorMethod, actorMethodsOf } from "./method"
+import { legacyActorMethod } from "./method-compat"
+import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../interaction/cancellation"
+import { alarmFired } from "../interaction/timeout"
 import { calls, externallyHandled, handles, type CallerRef } from "./contract"
 
 const component = legacyComponent({ name: "inspect", derive: () => ({ view: undefined, transitions: [] }) })
@@ -22,14 +23,40 @@ const methods = actorMethodsOf({
 })
 
 describe("actor", () => {
+  test("defineActor leaves compilation outside the public definition", () => {
+    const definition = defineActor("release-analyst", methods, [component])
+    expect(Object.keys(definition).sort()).toEqual(["allocateChildThread", "allocateRootThread", "cancellation", "components", "contract", "methods", "name"])
+    const runtime = actorRuntimeOf(definition)
+    expect(runtime).toBe(actorRuntimeOf(definition))
+    expect(Object.keys(definition).sort()).toEqual(["allocateChildThread", "allocateRootThread", "cancellation", "components", "contract", "methods", "name"])
+    expect(runtime).not.toBe(actorRuntimeOf(defineActor("release-analyst", methods, [component])))
+    expect(enabled(runtime, [])).toEqual(enabled(definition, []))
+  })
+
+  test("references accept definitions without runtime assembly", () => {
+    const definition: ActorDefinition<typeof methods> = {
+      name: "release-analyst",
+      methods,
+      components: [component]
+    }
+    expect(actorRef(definition, "main", "shared")).toEqual({
+      address: { actor: "release-analyst", instance: "main", thread: "shared" },
+      methods
+    })
+  })
+
   test("binds a name and methods to composed components", () => {
     const definition = actor({ name: "release-analyst", methods, components: [component] })
     expect(definition.name).toBe("release-analyst")
     expect(definition.methods).toBe(methods)
     expect(definition.components).toEqual([component])
     expect(definition.cancellation).toEqual({ childTimeoutMs: DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS })
-    expect(definition.projections).toHaveLength(0)
-    expect(definition.projection).toBeDefined()
+    expect(definition).not.toHaveProperty("projections")
+    expect(definition).not.toHaveProperty("projection")
+    expect(definition).not.toHaveProperty("keyOf")
+    expect(actorRuntimeOf(definition).projections).toHaveLength(0)
+    expect(actorRuntimeOf(definition).projection).toBeDefined()
+    expect(actorRuntimeOf(definition)).toBe(actorRuntimeOf(definition))
     expect(actorRef(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
@@ -57,7 +84,7 @@ describe("actor", () => {
       type: "CallDispatched",
       id: "inspect-1",
       method: "inspect",
-      target: "inspector:shared",
+      target: "inspector:main:shared",
       input: { value: "release" },
       timeoutMs: 20,
       deadlineAt: 21,

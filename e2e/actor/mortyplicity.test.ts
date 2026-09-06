@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { threadAddressOf } from "@clavia/tardigrade-core/communication/endpoint"
-import { threadCreated } from "@clavia/tardigrade-core/thread"
-import { alarmFired } from "@clavia/tardigrade-core/method"
+import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { alarmFired } from "@clavia/tardigrade-core/interaction/timeout"
 import type { Action } from "tardie/log/events"
 import {
   actor,
@@ -291,7 +291,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
       }
     })
     scenario.host.seed(humanThread, [threadCreated(threadAddressOf("mem", "main", humanThread), undefined, 0)])
-    const turn = scenario.enqueue("Rick opens every portal")
+    const turn = await scenario.enqueue("Rick opens every portal")
     await scenario.drive()
     expect(scenario.host.resting()).toBe(true)
 
@@ -357,7 +357,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
           const deadlineAt = Number(field(operation.dispatch, "deadlineAt"))
           const remaining = deadlineAt - Date.now()
           if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, remaining))
-          scenario.host.commitRoot(
+          await scenario.host.commitRoot(
             scenario.host.self(operation.thread),
             alarmFired({ scheduledFor: deadlineAt, at: Date.now() })
           )
@@ -369,7 +369,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         expect(match).not.toBeNull()
         const mission = byKey.get(match?.[1] ?? "")!
         const permission = match?.[2] === "1" ? mission.firstPermission : mission.secondPermission
-        scenario.host.commitRoot(scenario.host.self(humanThread), permission === "fail"
+        await scenario.host.commitRoot(scenario.host.self(humanThread), permission === "fail"
           ? {
               type: "PermissionRequestFailed",
               callId: String(field(request, "id")),
@@ -505,7 +505,7 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
         return threads[choice % threads.length]!
       }
     })
-    const turn = scenario.enqueue("cancel every Morty")
+    const turn = await scenario.enqueue("cancel every Morty")
     const driving = scenario.drive()
     await childStarted
     const cancellation = {
@@ -516,8 +516,8 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
       reason: "Rick closed the portal",
       at: 2
     } as Event
-    scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), cancellation)
-    scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), {
+    await scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), cancellation)
+    await scenario.host.commitRoot(scenario.host.self(ROOT_THREAD), {
       ...cancellation,
       request: "rick-cancelled-again",
       at: 3
@@ -627,7 +627,7 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
   const scenario = actorScenario(assembled, mind, {
     driver: { maxConcurrentThreads: 2 }
   })
-  const turn = scenario.enqueue("wait for Morty")
+  const turn = await scenario.enqueue("wait for Morty")
   const driving = scenario.drive()
   await childStarted
 
@@ -637,7 +637,7 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
     .find((event) => event.type === "MessageReceived")
   if (childHead === undefined) throw new Error("the child has no message turn")
   const childTurn = String(field(childHead, "id"))
-  scenario.host.commitRoot(scenario.host.self(childThread), {
+  await scenario.host.commitRoot(scenario.host.self(childThread), {
     type: "CancellationRequested",
     request: "rick-cancelled-morty",
     invocation: { method: "message", id: childTurn, epoch: 0 },

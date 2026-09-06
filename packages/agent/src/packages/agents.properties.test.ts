@@ -3,12 +3,13 @@ import { Effect, Layer } from "effect"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
-import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import type { RoutedEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import { threadCreated, threadCreatedOf, threadKeys, type ChildCreated } from "@clavia/tardigrade-core/thread"
+import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import { threadCreated, threadCreatedOf, threadKeys, type ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { createHost } from "@clavia/tardigrade-host/host"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { agentsPackage } from "./agents"
 
 interface CallPlan {
@@ -26,6 +27,20 @@ const callPlan = fc.record({
 })
 
 const plans = fc.uniqueArray(callPlan, { selector: (plan) => plan.callId, minLength: 1, maxLength: 7 })
+
+const registeredAllocator = (): typeof ThreadAllocator.Service => {
+  const assignments = new Map<string, ThreadAddress>()
+  return { allocate: (request) => Effect.sync(() => {
+    if (request.kind === "root") return request.coordinate
+    const { parent, child } = request
+    const key = JSON.stringify([parent.actor, parent.instance, parent.thread, child])
+    const existing = assignments.get(key)
+    if (existing !== undefined) return existing
+    const target = { ...parent, thread: `registered:${assignments.size}` }
+    assignments.set(key, target)
+    return target
+  }) }
+}
 
 // childProtocol runs the implementation against the transitions in Child.tla. The parent log is
 // durable across attempts, with finite failures before creation or on either side of delivery.
@@ -67,7 +82,8 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
     }
   })
   const router = Layer.succeed(Router, {
-    send: (envelope: RoutedEnvelope) => Effect.sync(() => {
+    send: (envelope) => Effect.promise(async () => {
+      if (!isActorEnvelope(envelope)) throw new Error("expected actor delivery")
       const callId = String((envelope.event as { readonly id?: unknown }).id)
       const target = envelope.link.target as ThreadAddress
       actions.push({ kind: "send", callId, target })
@@ -75,15 +91,16 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
       const plan = plansByCall.get(callId)!
       if (left > 0) {
         remaining.set(callId, left - 1)
-        if (plan.failurePoint === "after") host.commit(envelope as never)
+        if (plan.failurePoint === "after") await host.commit(envelope as never)
         throw new Error(`injected ${plan.failurePoint} commit failure`)
       }
-      host.commit(envelope as never)
+      await host.commit(envelope as never)
     })
   })
   const environment = Layer.mergeAll(
     router,
     Layer.succeed(Self, parent),
+    Layer.succeed(ThreadAllocator, registeredAllocator()),
     Layer.succeed(EventLog, withWatermark({ append, read: Effect.succeed(parentLog) }))
   )
   const run = agentsPackage().methods.run!
@@ -97,7 +114,7 @@ const childProtocol = async (calls: ReadonlyArray<CallPlan>): Promise<void> => {
         ).pipe(Effect.provide(environment), Effect.exit)
       )
       expect(result._tag).toBe(attempt < plan.failures ? "Failure" : "Success")
-      if (result._tag === "Success") expect(result.value).toEqual({ dispatched: true, callId: plan.callId })
+      if (result._tag === "Success") expect(result.value).toMatchObject({ dispatched: true, callId: plan.callId })
     }
   }
 
@@ -146,6 +163,7 @@ describe("child creation protocol", () => {
         const host = createHost({ actorName: "property", actorFor: () => undefined })
         const targets = new Set<string>()
         const run = agentsPackage().methods.run!
+        const allocator = registeredAllocator()
         const dispatch = async (parent: ThreadAddress, level: number): Promise<ThreadAddress> => {
           const events: Event[] = [...host.read(parent.thread)]
           for (const event of events.filter((event) => event.type === "MessageReceived")) {
@@ -154,6 +172,7 @@ describe("child creation protocol", () => {
           let target: ThreadAddress | undefined
           const environment = Layer.mergeAll(
             Layer.succeed(Self, parent),
+            Layer.succeed(ThreadAllocator, allocator),
             Layer.succeed(EventLog, withWatermark({
               read: Effect.succeed(events),
               append: (tail) => Effect.sync(() => {
@@ -165,9 +184,9 @@ describe("child creation protocol", () => {
               })
             })),
             Layer.succeed(Router, {
-              send: (envelope) => Effect.sync(() => {
+              send: (envelope) => Effect.promise(async () => {
                 target = envelope.link.target as ThreadAddress
-                host.commit(envelope as never)
+                await host.commit(envelope as never)
               })
             })
           )
@@ -178,13 +197,12 @@ describe("child creation protocol", () => {
             )
             const invoke = () => Effect.runPromise(run({ text: "child", background: true }, { callId })
               .pipe(Effect.provide(environment)))
-            expect(await invoke()).toEqual({ dispatched: true, callId })
+            expect(await invoke()).toMatchObject({ dispatched: true, callId })
             const first = target!
-            expect(first.thread).toMatch(/^[0-9a-f]{64}$/)
             expect(first.thread).not.toBe(parent.thread)
             expect(targets.has(first.thread)).toBe(false)
             targets.add(first.thread)
-            expect(await invoke()).toEqual({ dispatched: true, callId })
+            expect(await invoke()).toMatchObject({ dispatched: true, callId })
             expect(target).toEqual(first)
             const records = events.filter((event) => event.type === "ChildCreated" && event.turn === currentTurn)
             expect(records).toHaveLength(1)

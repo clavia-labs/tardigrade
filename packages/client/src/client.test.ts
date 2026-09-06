@@ -176,6 +176,14 @@ describe("the token", () => {
 })
 
 describe("a declared actor method", () => {
+  test("allocates a root name and returns its assigned coordinate", async () => {
+    const coordinate = { actor: "agent", instance: "rick", thread: "assigned-root" }
+    answer = () => new Response(JSON.stringify(coordinate), { headers: { "content-type": "application/json" } })
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
+    expect(await client.allocateRoot("rick", "lab")).toEqual(coordinate)
+    expect(calls[0]?.method).toBe("POST")
+    expect(lastUrl().pathname).toBe("/v1/actors/rick/threads")
+  })
   test("discovers method schemas at the actor", async () => {
     answer = () => new Response(JSON.stringify([{
       name: "message",
@@ -195,7 +203,8 @@ describe("a declared actor method", () => {
       thread: "root",
       method: "message",
       call: "m1",
-      deadlineAt: 301_000
+      deadlineAt: 301_000,
+      reference: { target: { actor: "agent", instance: "main", thread: "root" }, invocation: { method: "message", id: "m1", epoch: 0 } }
     }), { status: 202, headers: { "content-type": "application/json" } })
     const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
     const accepted = await client.call("main", "root", "message", {
@@ -219,6 +228,20 @@ describe("a declared actor method", () => {
     const state: ActorMethodState<string> = await client.methodState("main", "root", "message", "m1")
     expect(state).toEqual({ status: "completed", output: "done" })
     expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message/calls/m1")
+  })
+
+  test("reference operations carry the actor and exact epoch", async () => {
+    const client = makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, methods: agentMethods })
+    const reference = { target: { actor: "agent", instance: "main", thread: "root" }, invocation: { method: "message", id: "m1", epoch: 2 } }
+    answer = () => Response.json({ status: "pending" })
+    await client.state(reference)
+    expect(lastUrl().searchParams.get("epoch")).toBe("2")
+    expect(lastUrl().searchParams.get("actor")).toBe("agent")
+    answer = () => Response.json({ actor: "main", thread: "root", method: "message", call: "m1", status: "requested" }, { status: 202 })
+    await client.cancel(reference)
+    expect(lastUrl().searchParams.get("epoch")).toBe("2")
+    expect(lastUrl().searchParams.get("actor")).toBe("agent")
+    expect(() => client.state({ reference, actor: "main", thread: "other", method: "message", id: "m1" })).toThrow("does not match")
   })
 
   test("reads state and requests cancellation through the invocation handle", async () => {

@@ -6,11 +6,11 @@ import {
 import type { Transition } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/keys"
 import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
-import type { InvocationCancellation } from "../method/cancellation"
+import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
 import type { ComponentOutput } from "./output"
 
-export type { InvocationCancellation } from "../method/cancellation"
+export type { InvocationCancellation } from "../interaction/events"
 
 /**
  * ComponentMachine erases private component state while preserving its Moore-style machine contract.

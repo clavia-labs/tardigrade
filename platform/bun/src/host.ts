@@ -7,35 +7,29 @@ import { SqlClient } from "effect/unstable/sql"
 import { SqliteClient, SqliteMigrator } from "@effect/sql-sqlite-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom, type AppendResult, type ThreadEventRow, type ThreadEventStore } from "@clavia/tardigrade-core/log"
-import { mappedDirectory } from "@clavia/tardigrade-core/communication/directory"
-import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/communication/router"
-import type { Transport } from "@clavia/tardigrade-core/communication/transport"
-import { isActorEnvelope, isProviderEnvelope, linkedEventOf, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/communication/envelope"
-import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
-import type { Link } from "@clavia/tardigrade-core/communication/link"
-import {
-  actorEventKeyOf,
-  actorThreadsOf,
-  type ActorThreadRecord,
-  type ThreadRegistered,
-  type ThreadRequested
-} from "@clavia/tardigrade-core/actor"
-import {
-  alarmFired,
-  earliestDeadlineOf,
-  methodIngressKeyOf,
-  type ActorInvocationContext,
-  type ActorMethods
-} from "@clavia/tardigrade-core/method"
+import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
+import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
+import type { Transport } from "@clavia/tardigrade-core/transport/transport"
+import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
+import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
+import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
+import { DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
+import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
+import type { Link } from "@clavia/tardigrade-core/transport/link"
+import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRegistered, type ThreadRequested } from "@clavia/tardigrade-core/actor"
+import { alarmFired, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
+import { methodIngressKeyOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
   EffectInterruptions,
   Self,
   createActorReconciler,
+  actorRuntimeOf,
   effectInterruptionRegistry,
   restingActor,
-  type Actor
+  type ActorSource as Actor
 } from "@clavia/tardigrade-core/runtime"
-import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/thread"
+import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
@@ -62,6 +56,7 @@ export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArr
 export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 export type BunHostOptions<R> = {
+  readonly threadAllocator?: typeof ThreadAllocator.Service
   // database stores the actor identity and event log. Each thread database lives at threadDatabase(thread).
   readonly database: string
   // threadDatabase selects the physical database for a thread. The default is bunThreadDatabasePath(database, thread).
@@ -100,6 +95,7 @@ export interface BunHost {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   readonly threads: () => Promise<ReadonlyArray<string>>
   readonly commitRoot: (address: string, event: Event) => Promise<void>
+  readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   readonly wake: (thread: string) => Promise<void>
   readonly drive: () => Promise<void>
   readonly recover: () => Promise<void>
@@ -484,7 +480,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     event: Event,
     lineage: ThreadLineage | undefined,
     link?: Link<unknown, ThreadAddress>,
-    call?: ActorInvocationContext
+    call?: unknown,
+    allocated = false
   ): Effect.Effect<void, never> => Effect.promise(async () => {
     const address = formatThreadAddress(target)
     if (lineage !== undefined && (
@@ -492,7 +489,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     )) {
       throw new Error("a child thread must inherit its actor instance")
     }
-    if (options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
+    if (!allocated && options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
       throw new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
     }
     const thread = threadOf(address)
@@ -504,9 +501,11 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
         : event
       const current = yield* threadRuntime.store.read
       const created = threadCreatedForDelivery(current, target, lineage, link?.source)
-      const landed = link !== undefined && (stamped.type === "MessageReceived" || call !== undefined)
-        ? linkedEventOf({ link, event: stamped, ...(call === undefined ? {} : { call }) })
-        : stamped
+      if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
+      const landed = receivedEventOf({ target, event: stamped, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
+      if (created === undefined && lineage === undefined && !allocated) {
+        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR))
+      }
       if (landed.type === "MessageReceived") {
         const id = String((landed as { id?: unknown }).id)
         if (current.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) {
@@ -515,7 +514,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }
       const at = (event as { readonly at?: unknown }).at
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
-      return yield* threadRuntime.store.append(created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
+      return yield* threadRuntime.store.append(allocated ? (created === undefined ? [landed] : [])
+        : created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
     }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } })))
     if (result.appended > 0) {
       threadRuntime.interruptions.interrupt([event])
@@ -541,7 +541,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     ...(options.routes ?? [])
   ]
   const router = Layer.succeed(Router, { send: (envelope) => sendThrough(routes, envelope) })
-  const self = (thread: string): string => `${actorName}:${actorInstance}:${thread}`
+  const self = (thread: string): string => formatThreadAddress({ actor: actorName, instance: actorInstance, thread })
 
   const layersOf = async (thread: string): Promise<Layer.Layer<R | EventLog>> => {
     const threadRuntime = await runtimeOf(thread)
@@ -559,7 +559,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Layer.succeed(EventLog, eventLogFrom(store)), router,
       Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
-      Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {})
+      Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {}),
+      Layer.succeed(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR)
     )
     const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunThreadEnv<R>))(thread)
     return Layer.mergeAll(extra.pipe(Layer.provide(ports)), ports) as Layer.Layer<R | EventLog>
@@ -605,7 +606,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       if (reconciliation?.actor !== actor) {
         reconciliation = {
           actor,
-          reconciler: createActorReconciler(actor)
+          reconciler: createActorReconciler(actorRuntimeOf(actor))
         }
         reconciliations.set(thread, reconciliation)
       }
@@ -702,6 +703,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
+    initializeRoot: (target, at) => Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true)),
     wake: (thread) => { driver.mark(thread); return drive() },
     drive,
     recover,

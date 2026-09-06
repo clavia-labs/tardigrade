@@ -6,7 +6,7 @@ import { actorFromProjections, Self, send } from "@clavia/tardigrade-core/runtim
 import { completeTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { Infer } from "../inference/contract"
 import { composeKeys } from "@clavia/tardigrade-core/log"
-import { messageKeys } from "@clavia/tardigrade-core/communication/message"
+import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { agentKeys } from "../log/events"
 
 const agentActorKeys = composeKeys(messageKeys, agentKeys)

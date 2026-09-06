@@ -5,26 +5,12 @@ export {
   ACTOR_NAME_PATTERN,
   type ActorArtifactManifest
 } from "./actor/artifact"
-export {
-  ACTOR_METHOD_NAME_PATTERN,
-  DEFAULT_ACTOR_METHOD_TIMEOUT_MS,
-  actorMethod,
-  actorMethodTimeoutOf,
-  actorMethodsOf,
-  legacyActorMethod,
-  type ActorInvocation,
-  type ActorMethod,
-  type ActorMethodCancellation,
-  type ActorMethodCancellationState,
-  type ActorMethodCall,
-  type ActorMethodDeclaration,
-  type ActorMethodDefinition,
-  type ActorMethodInput,
-  type ActorMethodOutput,
-  type ActorMethods,
-  type ActorMethodState,
-  type LegacyActorMethodDefinition
-} from "@clavia/tardigrade-core/method"
+export { ACTOR_METHOD_NAME_PATTERN, DEFAULT_ACTOR_METHOD_TIMEOUT_MS, actorMethod, actorMethodTimeoutOf, actorMethodsOf, type ActorMethod, type ActorMethodCancellation, type ActorMethodDeclaration, type ActorMethodDefinition, type ActorMethodInput, type ActorMethodOutput, type ActorMethods } from "@clavia/tardigrade-core/actor/method"
+export { legacyActorMethod, type LegacyActorMethodDefinition } from "@clavia/tardigrade-core/actor/method-compat"
+export { type InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
+export { type ActorInvocation, type ActorMethodCall } from "@clavia/tardigrade-core/interaction/invocation"
+export { type ActorMethodCancellationState } from "@clavia/tardigrade-core/interaction/state"
+export { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 export { AgentMessageInput, agentMessageMethod } from "./actor/message"
 export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
@@ -272,39 +258,6 @@ export {
   type PermissionRequest
 } from "./component/permission-authority"
 export { compaction } from "./component/compaction"
-export {
-  actor,
-  actorCall,
-  actorContractErrors,
-  actorContractOf,
-  actorRef,
-  calls,
-  composeComponents,
-  externallyHandled,
-  handles,
-  inheritComponentContract,
-  component,
-  incrementalComponent,
-  independentTransitions,
-  legacyComponent,
-  deriveComponent,
-  cancelComponent,
-  validateActor,
-  type Actor,
-  type ActorCall,
-  type ActorCallOptions,
-  type ActorCallContract,
-  type ActorContract,
-  type ActorMethodContract,
-  type ActorRef,
-  type Component,
-  type ComponentMachine,
-  type ComponentRequirements,
-  type CompositionOptions,
-  type ComponentOutput,
-  type ComponentDefinition,
-  type IncrementalComponentDefinition,
-  type LegacyComponentDefinition,
-  type TransitionReconciler,
-  type ViewAlgebra
-} from "@clavia/tardigrade-core/actor"
+export { actor, defineActor, allocateRootThread, allocateChildThread, actorContractErrors, actorContractOf, actorRef, bindThreadMethods, calls, composeComponents, externallyHandled, handles, inheritComponentContract, component, incrementalComponent, independentTransitions, legacyComponent, deriveComponent, cancelComponent, validateActor, type Actor, type ActorAllocation, type RootThreadOptions, type ChildThreadOptions, type ActorCallContract, type ActorContract, type ActorMethodContract, type ActorRef, type ThreadRef, type Component, type ComponentMachine, type ComponentRequirements, type CompositionOptions, type ComponentOutput, type ComponentDefinition, type IncrementalComponentDefinition, type LegacyComponentDefinition, type TransitionReconciler, type ViewAlgebra } from "@clavia/tardigrade-core/actor"
+export { actorCall, type ActorCall, type ActorCallOptions } from "@clavia/tardigrade-core/interaction/invoke"
+export { InvocationScope, InvocationFailed, InvocationCancelled, type InvocationOptions } from "@clavia/tardigrade-core/interaction"

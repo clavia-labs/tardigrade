@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { actorMethod } from "@clavia/tardigrade-core/method"
+import { actorMethod } from "@clavia/tardigrade-core/actor/method"
 import { permissionRequestReceived } from "../log/events"
 
 export const PermissionRequestInput = Schema.Struct({

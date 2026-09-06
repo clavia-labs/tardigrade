@@ -1,7 +1,7 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { formatThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
-import { REPLY_SUFFIX } from "@clavia/tardigrade-core/communication/message"
+import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
+import { REPLY_SUFFIX } from "@clavia/tardigrade-core/interaction/provider-message"
 import { canProgress, factsOf } from "@clavia/tardigrade-code/execution/projections"
 import { boundaryOf } from "tardie/output/boundary"
 
@@ -29,7 +29,7 @@ const idOf = (event: Event): string => String((event as { id?: unknown }).id ?? 
 
 // inboundOf returns the ids of the turns a log was asked to serve, in log order. A reply is an
 // inbound event and never an inbound turn: it answers an id this thread sent out, under that id's
-// own `<id>.reply` name (@clavia/tardigrade-core/communication/message, REPLY_SUFFIX), so listing it would report
+// own `<id>.reply` name (@clavia/tardigrade-core/interaction/provider-message, REPLY_SUFFIX), so listing it would report
 // a child's answer as a turn of the parent (projections.test.ts, "a reply message is not a turn").
 export const inboundOf = (events: ReadonlyArray<Event>): ReadonlyArray<string> => {
   const ids: string[] = []

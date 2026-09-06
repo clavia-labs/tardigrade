@@ -1,7 +1,9 @@
 import { Schema } from "effect"
 import { HttpApi, HttpApiEndpoint, HttpApiGroup, HttpApiMiddleware, HttpApiSchema, OpenApi } from "effect/unstable/httpapi"
 import { Event } from "@clavia/tardigrade-core/log/event"
-import { ActorInstanceId } from "@clavia/tardigrade-core/communication/endpoint"
+import { ActorInstanceId } from "@clavia/tardigrade-core/transport/endpoint"
+import { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
+import { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
 
 // V1_PREFIX prefixes every versioned route.
 export const V1_PREFIX = "/v1"
@@ -189,6 +191,7 @@ export type Accepted = typeof Accepted.Type
 
 // MethodAccepted identifies the method call committed for asynchronous reconciliation.
 export const MethodAccepted = Schema.Struct({
+  reference: InvocationCoordinate,
   actor: Schema.String,
   thread: Schema.String,
   method: Schema.String,
@@ -460,10 +463,17 @@ export const runtimeGroup = HttpApiGroup.make("runtime").add(
 
 // threadsGroup exposes thread logs and lineage.
 export const threadsGroup = HttpApiGroup.make("threads").add(
+  HttpApiEndpoint.post("allocateRoot", "/v1/actors/:id/threads", {
+    params: RuntimeActorParams,
+    payload: Schema.Struct({ name: Schema.NonEmptyString }),
+    success: ThreadCoordinate,
+    error: [InvalidRequest.schema]
+  }),
   HttpApiEndpoint.post("append", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
     payload: Append,
-    success: Accepted
+    success: Accepted,
+    error: [UnknownActor.schema, UnknownThread.schema]
   }),
   HttpApiEndpoint.get("list", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
@@ -493,16 +503,17 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
     query: { timeoutMs: Schema.optionalKey(Seq) },
     payload: Schema.Unknown,
     success: MethodAccepted,
-    error: [InvalidRequest.schema, UnknownMethod.schema]
+    error: [InvalidRequest.schema, UnknownMethod.schema, UnknownActor.schema, UnknownThread.schema]
   }),
   HttpApiEndpoint.get("methodState", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
-    query: {},
+    query: { epoch: Schema.optionalKey(Seq), actor: Schema.optionalKey(Schema.String) },
     success: MethodState,
-    error: [UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
+    error: [InvalidRequest.schema, UnknownActor.schema, UnknownThread.schema, UnknownMethod.schema, UnknownMethodCall.schema]
   }),
   HttpApiEndpoint.put("cancel", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call/cancellation", {
     params: RuntimeMethodCallParams,
+    query: { epoch: Schema.optionalKey(Seq), actor: Schema.optionalKey(Schema.String) },
     payload: CancellationRequest,
     success: [CancellationRequestedResult, CancellationCancelledResult],
     error: [

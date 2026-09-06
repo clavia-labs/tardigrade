@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { replyId } from "@clavia/tardigrade-core/communication/message"
+import { replyId } from "@clavia/tardigrade-core/interaction/provider-message"
 import { projection, projectionsOf } from "@clavia/tardigrade-client/contract"
 
 import { agentProjections, builtInActor } from "./actor"

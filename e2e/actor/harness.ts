@@ -1,6 +1,7 @@
 import { Effect, Layer, Schema } from "effect"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { KeyValueStore } from "effect/unstable/persistence"
-import { ChildCreated } from "@clavia/tardigrade-core/thread"
+import { ChildCreated } from "@clavia/tardigrade-core/interaction/relations"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { Actor } from "@clavia/tardigrade-core/actor"
 import { jsSandboxFor } from "@clavia/tardigrade-code/sandbox/defaults"
@@ -40,7 +41,7 @@ type TestR = AgentR | NativeOutputSupport
 
 export interface ActorScenario {
   readonly host: Host
-  readonly enqueue: (brief: string) => string
+  readonly enqueue: (brief: string) => Promise<string>
   readonly drive: () => Promise<void>
   readonly result: (turn: string) => { readonly turn: string; readonly output?: string; readonly error?: string }
   readonly run: (brief: string) => Promise<{ readonly turn: string; readonly output?: string; readonly error?: string }>
@@ -70,15 +71,15 @@ export const actorScenario = (
     actorName: "mem",
     actorFor: () => assembled,
     layersFor,
-    keyOf: assembled.keyOf,
+    keyOf: actorRuntimeOf(assembled).keyOf,
     ...(options.pick === undefined ? {} : { pick: options.pick }),
     ...(options.driver === undefined ? {} : { driver: options.driver })
   })
 
   let sequence = 0
-  const enqueue = (brief: string): string => {
+  const enqueue = async (brief: string): Promise<string> => {
     const turn = `run-${sequence++}`
-    host.commitRoot(host.self(ROOT_THREAD), {
+    await host.commitRoot(host.self(ROOT_THREAD), {
       type: "MessageReceived",
       id: turn,
       text: brief,
@@ -94,7 +95,7 @@ export const actorScenario = (
   }
   const drive = (): Promise<void> => host.drive()
   const run = async (brief: string) => {
-    const turn = enqueue(brief)
+    const turn = await enqueue(brief)
     await drive()
     return result(turn)
   }

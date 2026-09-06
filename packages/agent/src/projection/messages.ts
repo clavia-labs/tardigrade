@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { replayProjection, type Projection } from "@clavia/tardigrade-core/projection"
-import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/communication/message"
+import { terminalReportOutcomeOf } from "@clavia/tardigrade-core/interaction/provider-message"
 import { checkpointOf, keepFromIndex, resolvedContextPolicyOf, type ContextPolicy } from "../component/compaction"
 import {
   correctionText,

@@ -1,15 +1,17 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { completeTransitionProjection, transitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import type { Actor } from "@clavia/tardigrade-core/runtime"
 import { createHost } from "./host"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import { threadCreated } from "@clavia/tardigrade-core/thread"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
+import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { allocateChildCoordinate as allocateChildThread, ThreadAllocator, type ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 
 // The host against toy reactors, package-pure: no app vocabulary.
 // A "player" thread answers every unanswered ping on its log with a pong
@@ -78,6 +80,61 @@ const rally = () => {
 }
 
 describe("the host", () => {
+  test("root reservation and actor child allocation use the same async host allocator", async () => {
+    const parent = { actor: "mem", instance: "main", thread: "root" }
+    const target = { ...parent, thread: "registered-child" }
+    const allocations: ThreadAllocation[] = []
+    const host = createHost<ThreadAllocator>({
+      threadAllocator: { allocate: (request) => Effect.promise(async () => {
+        await Promise.resolve()
+        allocations.push(request)
+        return request.kind === "root" ? request.coordinate : target
+      }) },
+      actorFor: () => ({ keyOf: () => undefined, projections: [completeTransitionProjection((events) =>
+        events.some((event) => event.type === "Allocated") ? [] : [effect({
+          key: "allocate", input: {},
+          act: () => allocateChildThread({ parent, child: childKeyOf("step") }).pipe(
+            Effect.map((address) => [{ type: "Allocated", address, at: 2 }])
+          )
+        })]
+      )] })
+    })
+    await host.commitRoot(host.self("root"), { type: "Start", at: 1 })
+    await host.drive()
+    expect(host.read("root").find((event) => event.type === "Allocated")?.address).toEqual(target)
+    const delivery = envelopeOf(linkOf(parent, target), { type: "MessageReceived", id: "first", at: 3 }, { parent, depth: 1 })
+    await host.commit(delivery)
+    await host.commit(delivery)
+    await host.commit(envelopeOf(linkOf(parent, target), { type: "MessageReceived", id: "second", at: 4 }))
+    expect(host.read(target.thread).filter((event) => event.type === "ThreadCreated")).toHaveLength(1)
+    expect(host.read(target.thread).filter((event) => event.type === "MessageReceived")).toHaveLength(2)
+    await host.commitRoot(host.self("root"), { type: "Again", at: 3 })
+    expect(allocations).toEqual([
+      { kind: "root", coordinate: parent },
+      { kind: "child", parent, child: childKeyOf("step") }
+    ])
+  })
+
+  test("a refused root reservation leaves no creation record", async () => {
+    const host = createHost({
+      actorFor: () => undefined,
+      threadAllocator: { allocate: () => Effect.die(new Error("reserved by another creation")) }
+    })
+    await expect(host.commitRoot(host.self("root"), { type: "Start", at: 1 })).rejects.toThrow("reserved by another creation")
+    expect(host.read("root")).toEqual([])
+  })
+
+  test("root and routed ingress reject invalid invocation context without creating a thread", async () => {
+    const host = createHost({ actorFor: () => undefined })
+    const target = parseThreadAddress(host.self("root"))
+    const call = { invocation: { method: "run", id: "call", epoch: -1 } }
+    const event = { type: "MessageReceived", id: "call", at: 1 }
+    const source = { ...target, thread: "parent" }
+    await expect(host.commitRoot(host.self("root"), { ...event, call })).rejects.toThrow('["invocation"]["epoch"]')
+    await expect(host.commit({ link: { source, target }, event, call, lineage: { parent: source, depth: 1 } })).rejects.toThrow('["invocation"]["epoch"]')
+    expect(host.read("root")).toEqual([])
+  })
+
   test("reuses an incremental projection across drives", async () => {
     let reductions = 0
     const actor: Actor = {
@@ -93,9 +150,9 @@ describe("the host", () => {
     }
     const host = createHost({ actorFor: () => actor })
 
-    host.commitRoot("mem:main:root", { type: "First", at: 1 } as Event)
+    await host.commitRoot("mem:main:root", { type: "First", at: 1 } as Event)
     await host.drive()
-    host.commitRoot("mem:main:root", { type: "Second", at: 2 } as Event)
+    await host.commitRoot("mem:main:root", { type: "Second", at: 2 } as Event)
     await host.drive()
 
     expect(reductions).toBe(host.read("root").length)
@@ -136,10 +193,10 @@ describe("the host", () => {
       })]
     }
     const host = createHost({ actorFor: () => actor, keyOf: actor.keyOf })
-    host.commitRoot("mem:main:root", { type: "MessageReceived", id: "m1", at: 1 } as Event)
+    await host.commitRoot("mem:main:root", { type: "MessageReceived", id: "m1", at: 1 } as Event)
     const driving = host.drive()
     await started.promise
-    host.commitRoot("mem:main:root", {
+    await host.commitRoot("mem:main:root", {
       type: "CancellationRequested",
       request: "x1",
       invocation: { method: "message", id: "m1", epoch: 0 },
@@ -187,7 +244,7 @@ describe("the host", () => {
       keyOf: actor.keyOf
     })
     for (const thread of ["a", "b", "c"]) {
-      host.commitRoot(`mem:main:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
+      await host.commitRoot(`mem:main:${thread}`, { type: "MessageReceived", id: thread, at: 0 } as Event)
     }
 
     const driving = host.drive()
@@ -205,7 +262,7 @@ describe("the host", () => {
 
   test("one serve drives the whole rally to quiescence", async () => {
     const host = rally()
-    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.resting()).toBe(true)
     const total =
@@ -216,23 +273,23 @@ describe("the host", () => {
 
   test("redelivery is absorbed: same id, no second answer", async () => {
     const host = rally()
-    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     const before = host.read("a").length
-    host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
+    await host.commitRoot("mem:main:a", { type: "MessageReceived", id: "serve", n: 0, at: 0 } as Event)
     await host.drive()
     expect(host.read("a").length).toBe(before)
   })
 
   test("a sink thread takes deliveries and owes nothing", async () => {
     const host = rally()
-    host.commitRoot("mem:main:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
+    await host.commitRoot("mem:main:reg", { type: "MessageReceived", id: "note", at: 1 } as Event)
     await host.drive()
     expect(host.read("reg").map((event) => event.type)).toEqual(["ThreadCreated", "MessageReceived"])
     expect(host.resting()).toBe(true)
   })
 
-  test("a child is created with its first delivery and keeps that lineage", () => {
+  test("a child is created with its first delivery and keeps that lineage", async () => {
     const host = createHost({ actorFor: () => undefined })
     const parent = parseThreadAddress("mem:main:parent")
     const target = parseThreadAddress("mem:main:child")
@@ -241,39 +298,39 @@ describe("the host", () => {
       { type: "MessageReceived", id: "m1", text: "work", at: 7 } as Event,
       { parent, depth: 1 }
     )
-    host.commit(first)
-    host.commit(first)
+    await host.commit(first)
+    await host.commit(first)
     expect(host.read("child")).toEqual([
       threadCreated(target, { parent, depth: 1 }, 7),
       { ...first.event, link: first.link }
     ])
-    expect(() => host.commit(envelopeOf(
+    await expect(host.commit(envelopeOf(
       linkOf(parseThreadAddress("mem:main:other"), target),
       { type: "MessageReceived", id: "m2", text: "work", at: 8 } as Event,
       { parent: parseThreadAddress("mem:main:other"), depth: 1 }
-    ))).toThrow("already has different lineage")
+    ))).rejects.toThrow("already has different lineage")
   })
 
-  test("an initial actor delivery must carry child lineage", () => {
+  test("an initial actor delivery must carry child lineage", async () => {
     const host = createHost({ actorFor: () => undefined })
-    expect(() => host.commit(envelopeOf(
+    await expect(host.commit(envelopeOf(
       linkOf(parseThreadAddress("mem:main:parent"), parseThreadAddress("mem:main:child")),
       { type: "MessageReceived", id: "m1", text: "work", at: 1 } as Event
-    ))).toThrow("must carry lineage")
+    ))).rejects.toThrow("must carry lineage")
     expect(host.read("child")).toEqual([])
   })
 })
 
 describe("the router membrane", () => {
-  test("an unkeyed cross-thread event refuses loudly; a keyed one travels", () => {
+  test("an unkeyed cross-thread event refuses loudly; a keyed one travels", async () => {
     const host = createHost<never>({
       actorFor: () => undefined,
       keyOf: (e) => (e.type === "MessageReceived" || e.type === "Keyed" ? `k:${String((e as { id?: unknown }).id)}` : undefined)
     })
-    expect(() => host.commitRoot("mem:main:thread", { type: "Rogue", at: 1 } as never)).toThrow(
+    await expect(host.commitRoot("mem:main:thread", { type: "Rogue", at: 1 } as never)).rejects.toThrow(
       'unkeyed cross-thread event "Rogue"'
     )
-    host.commitRoot("mem:main:thread", { type: "Keyed", id: "k1", at: 1 } as never)
+    await host.commitRoot("mem:main:thread", { type: "Keyed", id: "k1", at: 1 } as never)
     expect(host.read("thread").map((event) => event.type)).toEqual(["ThreadCreated", "Keyed"])
   })
 })

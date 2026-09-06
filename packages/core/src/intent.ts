@@ -1,4 +1,4 @@
-import type { ActorInvocation } from "@clavia/tardigrade-core/method"
+import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { Event } from "@clavia/tardigrade-core/event"
 
 // Intent is simplest kind of work a projection can produce.
@@ -7,7 +7,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 export interface Intent<Input = unknown> {
   readonly kind: "intent"
   readonly key: string
-  readonly invocation?: ActorInvocation
+  readonly invocation?: InvocationRef
   readonly input: Input
   readonly events: (input: Input, at: number) => ReadonlyArray<Event>
 }
@@ -32,7 +32,7 @@ export interface Intent<Input = unknown> {
  */
 export const intent = <Input>(proposal: {
   readonly key: string
-  readonly invocation?: ActorInvocation
+  readonly invocation?: InvocationRef
   readonly input: Input
   readonly events: (input: Input, at: number) => ReadonlyArray<Event>
 }): Intent<never> => ({ kind: "intent", ...proposal }) as unknown as Intent<never>

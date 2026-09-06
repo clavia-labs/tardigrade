@@ -1,8 +1,8 @@
 import { Effect } from "effect"
-import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
-import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import type { ThreadAddress, ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
+import { methodEnvelopeOf } from "@clavia/tardigrade-core/interaction"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Provider } from "./provider"
 import type { Webhook, WebhookRequest, WebhookResponse } from "./webhook"
 

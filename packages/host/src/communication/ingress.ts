@@ -1,8 +1,8 @@
 import { Context, Data, Effect } from "effect"
-import type { ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import type { ActorEnvelope } from "@clavia/tardigrade-core/communication/envelope"
-import type { Directory } from "@clavia/tardigrade-core/communication/directory"
-import type { MessageReceived } from "@clavia/tardigrade-core/communication/message"
+import type { ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import type { Directory } from "@clavia/tardigrade-core/transport/directory"
+import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 
 // IngressActor commits one canonical inbound and schedules its actor driver.
 export interface IngressActor {

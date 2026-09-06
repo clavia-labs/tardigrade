@@ -1,5 +1,5 @@
 import { Clock, Context, Data, Effect } from "effect"
-import type { ProviderEndpoint } from "@clavia/tardigrade-core/communication/endpoint"
+import type { ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { ActorUnavailable } from "@clavia/tardigrade-host/communication/ingress"
 import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
 import type { Channel } from "@clavia/tardigrade-host/communication/channel"

@@ -1,14 +1,7 @@
-import {
-  actorCall,
-  actorInvocationContextOf,
-  calls,
-  composeComponents,
-  inheritComponentContract,
-  component as defineComponent,
-  type ActorRef,
-  type ComponentRequirements
-} from "@clavia/tardigrade-core/actor"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
+import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ActorRef, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
 import { requestPermissionMethod } from "../actor/permission"

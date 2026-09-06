@@ -1,5 +1,5 @@
 import { Effect as EffectRuntime } from "effect"
-import type { ActorInvocation } from "@clavia/tardigrade-core/method"
+import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { EventLog } from "@clavia/tardigrade-core/log"
 
@@ -17,7 +17,7 @@ export interface ExternalEffect<Input = unknown, Requirements = never> {
   readonly kind: "effect"
   readonly key: string
   readonly concurrent?: boolean
-  readonly invocation?: ActorInvocation
+  readonly invocation?: InvocationRef
   readonly input: Input
   readonly interrupts?: (input: Input, event: Event) => boolean
   readonly act: (
@@ -46,7 +46,7 @@ export interface ExternalEffect<Input = unknown, Requirements = never> {
  */
 export const effect = <Input, Requirements = never>(work: {
   readonly key: string
-  readonly invocation?: ActorInvocation
+  readonly invocation?: InvocationRef
   readonly input: Input
   readonly interrupts?: (input: Input, event: Event) => boolean
   readonly act: (

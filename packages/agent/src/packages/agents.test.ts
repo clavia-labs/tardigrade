@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Layer } from "effect"
+import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
+import { decodeActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
+import { Cause, Effect, Layer, Schema } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
 import { createHost } from "@clavia/tardigrade-host/host"
-import { boundaryId, replyId } from "@clavia/tardigrade-core/communication/message"
+import { boundaryId } from "@clavia/tardigrade-core/interaction/provider-message"
+import { actorMethodsOf } from "@clavia/tardigrade-core/actor/method"
+import { legacyActorMethod } from "@clavia/tardigrade-core/actor/method-compat"
+import { methodResponseDerivation } from "@clavia/tardigrade-core/interaction/respond"
+import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
+import { invocationResponseId, type InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
 import { agentsPackage, INLINE_OUTPUT_NAME } from "./agents"
 import { output, type OutputContract } from "../output/contract"
@@ -13,11 +20,14 @@ import {
   parseThreadAddress,
   type ThreadAddress,
   type ProviderEndpoint
-} from "@clavia/tardigrade-core/communication/endpoint"
-import type { Link } from "@clavia/tardigrade-core/communication/link"
-import type { Envelope } from "@clavia/tardigrade-core/communication/envelope"
+} from "@clavia/tardigrade-core/transport/endpoint"
+import type { Link } from "@clavia/tardigrade-core/transport/link"
+import type { Envelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
-import { childKeyOf, childThreadId, threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
+import { childThreadId, DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
 import { codeSystemFor } from "../component/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
@@ -39,6 +49,7 @@ const env = (
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
     }),
     Layer.succeed(Self, self),
+    Layer.succeed(ThreadAllocator, DEFAULT_THREAD_ALLOCATOR),
     Layer.succeed(EventLog, withWatermark({
       append: (committed) => Effect.sync(() => void appended.push(...committed)),
       read: Effect.succeed(events)
@@ -82,12 +93,39 @@ const turn = (id: string, at = 1): Event =>
 const called = (callId: string, turnId: string, at = 2): Event =>
   ({ type: "PackageCalled", callId, name: "agents.run", arguments: {}, turn: turnId, at } as Event)
 
+const legacyChild = (callId: string): Event => ({
+  type: "ChildCreated", callId, turn: "m1",
+  address: { actor: "mem", instance: "main", thread: `ag.${callId}` }, depth: 1, at: 2
+})
+
 const expectedThread = (turn: string, call: string) => childThreadId({
   parent: parseThreadAddress("mem:main:ag.root"),
   child: childKeyOf(JSON.stringify([turn, call]))
 })
 
 describe("agentsPackage", () => {
+  test("a host allocated coordinate is recorded and reused without allocating on replay", async () => {
+    const parent = parseThreadAddress("mem:main:root")
+    const target = { ...parent, thread: "allocated-by-host" }
+    const events: Event[] = [threadCreated(parent, undefined, 0), turn("turn"), called("call", "turn")]
+    const sent: Sent[] = []
+    let allocations = 0
+    const invoke = () => agentsPackage().methods.run!({ text: "work", background: true }, { callId: "call" }).pipe(
+      Effect.provideService(ThreadAllocator, { allocate: (request) => Effect.sync(() => {
+        allocations++
+        expect(request).toEqual({ kind: "child", parent, child: childKeyOf(JSON.stringify(["turn", "call"])) })
+        if (allocations > 1) throw new Error("replay must use its recorded coordinate")
+        return target
+      }) }),
+      Effect.provide(liveEnv(events, sent))
+    )
+    const first = await Effect.runPromise(invoke())
+    expect(await Effect.runPromise(invoke())).toEqual(first)
+    expect(allocations).toBe(1)
+    expect(sent.map((envelope) => envelope.link.target)).toEqual([target, target])
+    expect(events.filter((event) => event.type === "ChildCreated")).toMatchObject([{ address: target }])
+  })
+
   test("a foreground child records its invocation owner", async () => {
     const sent: Array<Sent> = []
     const appended: Array<Event> = []
@@ -127,7 +165,7 @@ describe("agentsPackage", () => {
     expect(system).not.toContain("agents.continue")
     expect(system).toContain("agents.providers({cursor?: string, search?: string, limit?: number})")
     expect(system).toContain("agents.models({cursor?: string, search?: string, limit?: number, provider?: string, sort?: \"promptUsdPerToken\" | \"completionUsdPerToken\" | \"cachedPromptUsdPerToken\" | \"cacheWritePromptUsdPerToken\", order?: \"asc\" | \"desc\", unpriced?: \"first\" | \"last\"})")
-    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, placement?: \"colocated\" | \"independent\", escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string}")
+    expect(system).toContain("agents.run({text: string, background?: boolean, output?: unknown, model?: {provider: string, model_id: string}, budget?: number, placement?: \"colocated\" | \"independent\", escalatable?: boolean}) -> {output?: unknown, error?: string, dispatched?: boolean, callId?: string, handle?: {target: object, invocation: object}}")
   })
 
   test("catalog searches return the host API pages", async () => {
@@ -244,7 +282,10 @@ describe("agentsPackage", () => {
         Effect.provide(env("mem:main:ag.root", sent, { "ag.root": [turn("m1"), called("c3", "m1")] }))
       )
     )
-    expect(answer).toEqual({ dispatched: true, callId: "c3" })
+    expect(answer).toEqual({ dispatched: true, callId: "c3", handle: {
+      target: { actor: "mem", instance: "main", thread: await expectedThread("m1", "c3") },
+      invocation: { method: "message", id: "c3", epoch: 0 }
+    } })
     const brief = sent[0]!.event as { id?: unknown }
     expect(brief.id).toBe("c3")
     expect(sent[0]!.link).toEqual({
@@ -341,7 +382,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const threads = {
-      "ag.root": [turn("m1"), called("c4", "m1"), response("c4", "completed", "4")]
+      "ag.root": [turn("m1"), called("c4", "m1"), legacyChild("c4"), response("c4", "completed", "4")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
       pkg.methods.run!({ text: "sum 2+2" }, { callId: "c4" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
@@ -364,7 +405,10 @@ describe("agentsPackage", () => {
       )
     )
     expect(parked).toBeInstanceOf(Park)
-    expect((parked as Park).awaiting).toBe(replyId("c5"))
+    expect((parked as Park).awaiting).toBe(invocationResponseId({
+      target: { actor: "mem", instance: "main", thread: await expectedThread("m1", "c5") },
+      invocation: { method: "message", id: "c5", epoch: 0 }
+    }))
     expect(formatThreadAddress(sent[0]!.link.target as ThreadAddress)).toBe(`mem:main:${await expectedThread("m1", "c5")}`)
   })
 
@@ -375,6 +419,7 @@ describe("agentsPackage", () => {
       "ag.root": [
         turn("m1"),
         called("c7", "m1"),
+        legacyChild("c7"),
         response("c7", "cancelled", "deadline reached", { cause: "deadline", deadlineAt: 9 })
       ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
@@ -389,7 +434,7 @@ describe("agentsPackage", () => {
     const sent: Array<Sent> = []
     const pkg = agentsPackage()
     const threads = {
-      "ag.root": [response("c8", "cancelled", "")]
+      "ag.root": [legacyChild("c8"), response("c8", "cancelled", "")]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
       pkg.methods.result!({ id: "c8" }, { callId: "r8" }).pipe(Effect.provide(env("mem:main:ag.root", sent, threads)))
@@ -403,7 +448,7 @@ describe("agentsPackage", () => {
     const pkg = agentsPackage()
     const threads = {
       "ag.root": [
-        response("c6", "failed", "nope")
+        legacyChild("c6"), response("c6", "failed", "nope")
       ]
     } as Readonly<Record<string, ReadonlyArray<Event>>>
     const answer = await Effect.runPromise(
@@ -444,6 +489,7 @@ const liveEnv = (events: Event[], sent: Array<Sent>) => {
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
     }),
     Layer.succeed(Self, self),
+    Layer.succeed(ThreadAllocator, DEFAULT_THREAD_ALLOCATOR),
     Layer.succeed(EventLog, withWatermark({
       append: (committed) => Effect.sync(() => void events.push(...committed)),
       read: Effect.sync(() => events)
@@ -468,6 +514,114 @@ describe("a child is named by its parent address, run, and call", () => {
     run({ text, background: true }, { callId })
   const threads = (sent: ReadonlyArray<Sent>): ReadonlyArray<string> =>
     sent.map(({ link }) => (link.target as ThreadAddress).thread)
+
+  test.each([
+    { status: "completed", state: { status: "completed", output: "second answer" }, answer: { output: "second answer" } },
+    { status: "failed", state: { status: "failed", error: "second failure" }, answer: { error: "second failure" } },
+    { status: "cancelled", state: { status: "cancelled", cause: "requested", reason: "second stopped" }, answer: { error: "cancelled: second stopped" } }
+  ] as const)("foreground replay isolates a reused call through $status delivery", async ({ state, answer }) => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("parent-a"), called("same", "parent-a")
+    ]
+    const sent: Array<Sent> = []
+    const invoke = () => agentsPackage().methods.run!({ text: "work" }, { callId: "same" })
+      .pipe(Effect.provide(liveEnv(events, sent)))
+    const park = () => Effect.runPromise(invoke().pipe(Effect.flip, Effect.orDie))
+    const deliver = async (envelope: Sent, terminal: Exclude<ActorMethodState<string>, { status: "pending" }>) => {
+      const target = envelope.link.target as ThreadAddress
+      expect(envelope.call).not.toHaveProperty("responseId")
+      expect(envelope.call).not.toHaveProperty("responseProtocol")
+      const reference = { target, invocation: decodeActorInvocationContext(envelope.call).invocation }
+      const methods = actorMethodsOf({
+        message: legacyActorMethod({
+          input: Schema.String,
+          output: Schema.String,
+          event: ({ invocation, input, at }) => ({ type: "MessageReceived", id: invocation.id, text: input, at }),
+          state: () => terminal
+        })
+      })
+      const childEvents = [{ ...envelope.event, call: envelope.call, link: envelope.link }]
+      const transitions = methodResponseDerivation(methods)(childEvents)
+      expect(transitions).toHaveLength(1)
+      const transition = transitions[0]!
+      if (transition.kind !== "effect") throw new Error("expected response delivery")
+      const received: Event[] = []
+      const delivered = await Effect.runPromise(
+        transition.act(transition.input, new AbortController().signal).pipe(Effect.provide(Layer.mergeAll(
+          Layer.succeed(Self, target),
+          Layer.succeed(Router, { send: (reply) => Effect.sync(() => {
+            if (!isActorEnvelope(reply)) throw new Error("expected actor reply")
+            expect(reply.link).toEqual({ source: target, target: envelope.link.source })
+            received.push(reply.event)
+            events.push(reply.event)
+          }) }),
+          Layer.succeed(EventLog, withWatermark({ append: () => Effect.void, read: Effect.succeed(childEvents) }))
+        )))
+      )
+      expect(received).toHaveLength(1)
+      expect(received[0]).toMatchObject({
+        type: "ResponseReceived", id: invocationResponseId(reference), reference,
+        method: "message", call: "same", status: terminal.status
+      })
+      expect(methodResponseDerivation(methods)([...childEvents, ...delivered])).toEqual([])
+      return reference
+    }
+
+    expect(await park()).toBeInstanceOf(Park)
+    const first = await deliver(sent[0]!, { status: "completed", output: "first answer" })
+    expect(await Effect.runPromise(invoke())).toEqual({ output: "first answer" })
+    expect(sent).toHaveLength(1)
+    events.push({ type: "TurnCompleted", turn: "parent-a", output: "done", at: 4 }, turn("parent-b"), called("same", "parent-b"))
+
+    const pending = await park()
+    expect(pending).toBeInstanceOf(Park)
+    const second = sent[1]!
+    const secondReference = { target: second.link.target as ThreadAddress, invocation: decodeActorInvocationContext(second.call).invocation }
+    expect(secondReference).not.toEqual(first)
+    expect((pending as Park).awaiting).toBe(invocationResponseId(secondReference))
+    expect(await park()).toEqual(pending)
+    expect(sent[2]!.link.target).toEqual(second.link.target)
+    expect(events.filter((event) => event.type === "ChildCreated")).toHaveLength(2)
+
+    await deliver(second, state)
+    expect(await Effect.runPromise(invoke())).toEqual(answer)
+    expect(await Effect.runPromise(invoke())).toEqual(answer)
+    expect(sent).toHaveLength(3)
+  })
+
+  test("handles distinguish reused calls while ambiguous legacy handles fail", async () => {
+    const events: Event[] = [
+      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
+      turn("parent-a"), called("same", "parent-a")
+    ]
+    const sent: Array<Sent> = []
+    const environment = liveEnv(events, sent)
+    const pkg = agentsPackage()
+    const first = await Effect.runPromise(background("first", "same").pipe(Effect.provide(environment))) as { handle: InvocationCoordinate }
+    events.push({ type: "TurnCompleted", turn: "parent-a", output: "done", at: 4 }, turn("parent-b"), called("same", "parent-b"))
+    const second = await Effect.runPromise(background("second", "same").pipe(Effect.provide(environment))) as { handle: InvocationCoordinate }
+    expect(first.handle).not.toEqual(second.handle)
+    events.push({
+      ...response("same", "completed", "first answer"),
+      id: invocationResponseId(first.handle), reference: first.handle,
+      from: formatThreadAddress(first.handle.target)
+    })
+    const read = (handle: InvocationCoordinate) => pkg.methods.result!({ handle }, { callId: "read" }).pipe(Effect.provide(environment))
+    expect(await Effect.runPromise(read(first.handle))).toEqual({ output: "first answer" })
+    const parked = await Effect.runPromise(read(second.handle).pipe(Effect.flip, Effect.orDie))
+    expect(parked).toBeInstanceOf(Park)
+    expect((parked as Park).awaiting).toBe(invocationResponseId(second.handle))
+    const legacy = await Effect.runPromise(pkg.methods.result!({ id: "same" }, { callId: "legacy" }).pipe(Effect.provide(environment)))
+    expect(legacy).toHaveProperty("error", expect.stringContaining("ambiguous"))
+    events.push({
+      ...response("same", "cancelled", "stopped"),
+      id: invocationResponseId(second.handle), reference: second.handle,
+      from: formatThreadAddress(second.handle.target)
+    })
+    expect(await Effect.runPromise(read(second.handle))).toEqual({ error: "cancelled: stopped" })
+    expect(await Effect.runPromise(read(first.handle))).toEqual({ output: "first answer" })
+  })
 
   test("reused call ids across turns address distinct children", async () => {
     const events: Event[] = [
@@ -680,7 +834,7 @@ describe("a run stays bound to the schema it was started under", () => {
 
   // The response carries the declaration the child accepted with its call.
   const threads = (declaration: unknown, text: string) => ({
-    "ag.root": [response("b1", "completed", text, {
+    "ag.root": [legacyChild("b1"), response("b1", "completed", text, {
       data: declaration === undefined ? undefined : { output: declaration },
       at: 2
     })]

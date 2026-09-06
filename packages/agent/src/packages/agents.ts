@@ -1,36 +1,24 @@
 import { Clock, Effect, Schema } from "effect"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
-import {
-  invocationLinked,
-  type ActorInvocationContext
-} from "@clavia/tardigrade-core/actor"
+import { type ActorInvocationContext } from "@clavia/tardigrade-core/interaction/invocation"
 import { EventLog } from "@clavia/tardigrade-core/log"
-import type { ResponseReceived } from "@clavia/tardigrade-core/method"
+import { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
+import { InvocationCoordinate, invocationCoordinateOf, invocationCoordinateJsonSchema, invocationLinked, invocationCoordinateKey, invocationResponseId, invocationTerminalOf, invocationResultOf, prepareInvocation, sendInvocation } from "@clavia/tardigrade-core/interaction"
+import { agentMessageMethod } from "../actor/message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { definePackage, type Package } from "@clavia/tardigrade-code/package/definition"
 import { eventEpochOf, turnOf, turnView } from "@clavia/tardigrade-code/execution/turns"
 import { budgetPolicyOf, type BudgetPolicy } from "../component/budget"
 import { Park } from "@clavia/tardigrade-code/execution/errors"
-import { boundaryId } from "@clavia/tardigrade-core/communication/message"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { methodEnvelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { childInvocationRef, legacyChildHandle } from "./agents-compat"
+import { ChildCreated, childCreated, childLineageOf, ChildPlacement, threadCreatedOf, type ThreadCreated, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { allocateChildCoordinate as allocateChildThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import {
-  ChildCreated,
-  childCreated,
-  childKeyOf,
-  childLineageOf,
-  ChildPlacement,
-  childThreadId,
-  threadCreatedOf,
-  type ThreadCreated,
-  type ThreadLineage
-} from "@clavia/tardigrade-core/thread"
-import {
-  threadAddressOf,
   formatThreadAddress,
   type ThreadAddress
-} from "@clavia/tardigrade-core/communication/endpoint"
+} from "@clavia/tardigrade-core/transport/endpoint"
 import { decodeOutput, outputFrom, type OutputContract } from "../output/contract"
 import { modelRefOf } from "../inference/reference"
 import {
@@ -226,13 +214,6 @@ const catalogQueryOf = (args: unknown): AgentCatalogQuery => {
   }
 }
 
-// sibling derives a child address within the parent's actor instance (agents.test.ts, "the default address is the host's own sibling").
-const sibling = async (parentRunId: string, callId: string, self: ThreadAddress): Promise<ThreadAddress> =>
-  threadAddressOf(self.actor, self.instance, await childThreadId({
-    parent: self,
-    child: childKeyOf(JSON.stringify([parentRunId, callId]))
-  }))
-
 // parentRunOf returns the package call's owning turn and execution epoch, if present.
 const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: number } | undefined => {
   const turn = turnOf(call)
@@ -240,14 +221,14 @@ const parentRunOf = (call: Event): { readonly turn: string; readonly epoch: numb
 }
 
 // childClaimOf scopes a child to its parent turn and call, preserving recorded addresses on replay (agents.test.ts).
-const childClaimOf = async (
+const childClaimOf = (
   placement: unknown,
   events: ReadonlyArray<Event>,
   parent: ThreadCreated,
   parentRunId: string,
   callId: string,
   source: ThreadAddress
-) => {
+) => Effect.gen(function* () {
   if (placement !== undefined && !Schema.is(ChildPlacement)(placement)) {
     return { error: "agents.run placement must be colocated or independent" }
   }
@@ -274,7 +255,9 @@ const childClaimOf = async (
         depth: recorded.depth,
         ...(recorded.placement === undefined ? {} : { placement: recorded.placement })
       }
-  const target = recorded?.address ?? await sibling(parentRunId, callId, source)
+  const target = recorded?.address ?? (yield* allocateChildThread({
+    parent: source, child: childKeyOf(JSON.stringify([parentRunId, callId]))
+  }))
   // clash rejects a derived address already claimed by another recorded child (agents.test.ts, "a derived address that names another child dies rather than delivering").
   if (recorded === undefined) {
     const clash = events.find(
@@ -292,7 +275,7 @@ const childClaimOf = async (
     }
   }
   return { recorded, target, lineage }
-}
+})
 
 const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
   const head = turnView(events)[0] as { readonly models?: unknown } | undefined
@@ -300,7 +283,7 @@ const inheritedModelsOf = (events: ReadonlyArray<Event>): ModelPolicy => {
 }
 
 // agentsPackage exposes model discovery, child dispatch, and result retrieval.
-export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog> => {
+export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self | EventLog | ThreadAllocator> => {
   const actorNameOf = options.actorNameOf ?? (() => undefined)
   const reserve = options.reserve ?? (async (_callId: string, want: number) => want)
   const shadowOf = options.shadowOf ?? (() => false)
@@ -323,7 +306,7 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
   const declared_ = Object.keys(outputs)
   return definePackage({
     name: "agents",
-    description: "Search known providers and available models, and run ad-hoc agents. providers() lists provider configuration requirements and availability. models() lists models from available providers with metadata and pricing; use provider to limit the search and sort to order a pricing field. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({id}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
+    description: "Search known providers and available models, and run ad-hoc agents. providers() lists provider configuration requirements and availability. models() lists models from available providers with metadata and pricing; use provider to limit the search and sort to order a pricing field. run({text}) starts a fresh agent with the brief and waits for its terminal answer; add background: true for a long job, and result({handle}) awaits the reply later. An escalatable child negotiates budget with its parent's requestBudget method while run remains pending.",
     annotations: {
       providers: { readOnlyHint: true, openWorldHint: false },
       models: { readOnlyHint: true, openWorldHint: false },
@@ -355,12 +338,12 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
         output: modelPageSchema
       },
       run: {
-        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { callId } at once; result({id: callId}) awaits the reply later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
+        description: `Brief a fresh agent. \`output\` makes the result structured and parsed: the name of a declared contract${declared_.length === 0 ? " (this host declares none)" : ` (${declared_.join(", ")})`}, or a JSON schema of your own. \`model\` selects one configured provider and model for this child. \`budget\` caps the agent's tool calls: at the cap it answers with its best result, so a research agent can not run forever. \`background: true\` returns { handle, callId } at once; result({handle}) awaits that exact invocation later. \`escalatable: true\` lets the child call its parent's requestBudget method at the cap while this run remains pending for one terminal answer.`,
         input: {
           type: "object",
           properties: {
             text: { type: "string", description: "the brief" },
-            background: { type: "boolean", description: "true: return { callId } at once, the reply arrives later via result()" },
+            background: { type: "boolean", description: "true: return { handle, callId } at once; await the invocation with result({handle})" },
             output: { description: "a declared contract's name, or a JSON schema for a structured answer" },
             model: {
               type: "object",
@@ -383,7 +366,8 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           properties: {
             ...foregroundBoundarySchema.properties,
             dispatched: { type: "boolean" },
-            callId: { type: "string" }
+            callId: { type: "string" },
+            handle: invocationCoordinateJsonSchema
           }
         }
       },
@@ -391,8 +375,10 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
         description: "Await a run fired with `background: true`. Answers its terminal once the reply lands; parks the execution until then. An answer comes back parsed when the child accepted a contract with that call.",
         input: {
           type: "object",
-          properties: { id: { type: "string", description: "the callId a background run answered" } },
-          required: ["id"]
+          properties: {
+            handle: { ...invocationCoordinateJsonSchema, description: "the invocation handle returned by agents.run" },
+            id: { type: "string", description: "legacy callId; accepted only when one recorded dispatch matches" }
+          }
         },
         output: {
           type: "object",
@@ -437,7 +423,6 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
       }),
       run: (args, ctx) =>
         Effect.gen(function* () {
-          const router = yield* Router
           const source = yield* Self
           const log = yield* EventLog
           const events = yield* log.read
@@ -458,11 +443,13 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           if (parentRun === undefined) {
             return yield* Effect.die(new Error(`agents.run ${ctx.callId} has no parent turn`))
           }
-          const child = yield* Effect.promise(() =>
-            childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
-          )
+          const child = yield* childClaimOf(a?.placement, events, created, parentRun.turn, ctx.callId, source)
           if ("error" in child) return child
           const { lineage, recorded: recordedChild, target } = child
+          const reference: InvocationCoordinate = recordedChild === undefined
+            ? invocationCoordinateOf(target, { method: "message", id: ctx.callId, epoch: 0 })
+            : childInvocationRef(recordedChild)
+          const responseId = invocationResponseId(reference)
           if (a?.output === undefined && a?.outputSchema !== undefined) {
             return { error: "agents.run takes the contract as `output`, not `outputSchema`" }
           }
@@ -502,26 +489,25 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               context.invocation.epoch === owner.epoch
           }) as ({ readonly call?: ActorInvocationContext } & Event) | undefined
           const childContext: ActorInvocationContext = {
-            invocation: { method: "message", id: ctx.callId, epoch: 0 },
+            invocation: reference.invocation,
             ...(parent === undefined ? {} : { parent }),
             ...(parentDeadline?.call?.deadlineAt === undefined ? {} : { deadlineAt: parentDeadline.call.deadlineAt })
           }
           const dispatch = (at: number) => Effect.gen(function* () {
-            const linked = parent === undefined
-              ? []
-              : [invocationLinked({ parent, child: childContext, target: formatThreadAddress(target), lineage, at })]
-            if (recordedChild === undefined || linked.length > 0) {
-              yield* log.append([
-                ...(recordedChild === undefined ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn)] : []),
-                ...linked
-              ])
-            }
-            yield* router.send(methodEnvelopeOf(linkOf(source, target), childContext, {
-              type: "MessageReceived",
-              id: ctx.callId,
-              text,
+            const prepared = prepareInvocation({
+              reference, method: agentMessageMethod, context: childContext, at,
+              input: { text, ...(selectedModel === undefined ? {} : { model: selectedModel }) }
+            })
+            const records: Event[] = recordedChild === undefined
+              ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn, reference.invocation)]
+              : []
+            if (childContext.parent !== undefined) records.push(invocationLinked({
+              parent: childContext.parent, child: childContext, target: formatThreadAddress(target), lineage, at
+            }))
+            if (records.length > 0) yield* log.append(records)
+            yield* sendInvocation({ target, context: childContext, lineage, event: {
+              ...prepared.event,
               ...(outputDeclaration === undefined ? {} : { output: outputDeclaration }),
-              ...(selectedModel === undefined ? {} : { model: selectedModel }),
               models,
               budget,
               ...(a?.escalatable === true ? { escalatable: true } : {}),
@@ -530,29 +516,49 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
               ...(world === undefined ? {} : { world }),
               from: self,
               at
-            }, lineage))
+            } })
           })
           if (a?.background === true) {
             const at = yield* Clock.currentTimeMillis
             yield* dispatch(at)
-            return { dispatched: true, callId: ctx.callId }
+            return { dispatched: true, callId: ctx.callId, handle: reference }
           }
-          const already = yield* awaitedBoundary(ctx.callId)
-          if (already !== undefined) return shape(answerOf(already), ctx.callId, output)
+          const already = childResultOf(yield* log.read, reference)
+          if (already !== undefined) return shape(already, output)
           const at = yield* Clock.currentTimeMillis
           yield* dispatch(at)
-          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(ctx.callId, 0) })
+          return yield* new Park({ callId: ctx.callId, awaiting: responseId })
         }),
       // result validates a background response against its recorded output contract (agents.test.ts, "a later call cannot invent a contract the run never declared").
       result: (args, ctx) =>
         Effect.gen(function* () {
-          const a = args as { id?: unknown } | undefined
-          const id = String(a?.id ?? "")
-          if (id === "") return { error: "agents.result needs { id }" }
-          const reply = yield* awaitedBoundary(id)
-          if (reply?.contractError !== undefined) return { error: reply.contractError }
-          if (reply !== undefined) return shape(answerOf(reply), id, reply.contract)
-          return yield* new Park({ callId: ctx.callId, awaiting: boundaryId(id, 0) })
+          const a = args as { id?: unknown; handle?: unknown } | undefined
+          const log = yield* EventLog
+          const events = yield* log.read
+          let record: ChildCreated
+          if (a?.handle !== undefined) {
+            if (!Schema.is(InvocationCoordinate)(a.handle)) return { error: "agents.result needs a valid invocation handle" }
+            const handle = a.handle
+            const found = events.find((event): event is ChildCreated => Schema.is(ChildCreated)(event) &&
+              invocationCoordinateKey(childInvocationRef(event)) === invocationCoordinateKey(handle))
+            if (found === undefined) return { error: "no recorded child dispatch for this invocation handle" }
+            record = found
+          } else {
+            const id = String(a?.id ?? "")
+            if (id === "") return { error: "agents.result needs { handle } or a legacy { id }" }
+            const found = legacyChildHandle(events, id)
+            if ("error" in found) return found
+            record = found
+          }
+          const reference = childInvocationRef(record)
+          const id = reference.invocation.id
+          const reply = childResultOf(events, reference)
+          if (reply !== undefined) {
+            const output = contractOf(reply.data, id)
+            if (output.contractError !== undefined) return { error: output.contractError }
+            return shape(reply, output.contract)
+          }
+          return yield* new Park({ callId: ctx.callId, awaiting: invocationResponseId(reference) })
         })
     }
   })
@@ -592,27 +598,10 @@ const outputAsked = (
 // INLINE_OUTPUT_NAME labels inline output schemas on the wire.
 export const INLINE_OUTPUT_NAME = "inline"
 
-interface SpawnBoundaryContext {
-  readonly contract?: OutputContract
-  readonly contractError?: string
-}
-
-// SpawnBoundary is one child terminal reported to its caller through the reversed accepted link.
-type SpawnBoundary = SpawnBoundaryContext & (
-  | { readonly outcome: "completed"; readonly text: string }
-  | { readonly outcome: "failed"; readonly text: string }
-  | {
-      readonly outcome: "cancelled"
-      readonly cause: "requested" | "deadline"
-      readonly reason?: string
-      readonly deadlineAt?: number
-    }
-)
-
 const contractOf = (
   data: unknown,
   turn: string
-): SpawnBoundaryContext => {
+): { readonly contract?: OutputContract; readonly contractError?: string } => {
   if (typeof data !== "object" || data === null || !("output" in data)) return {}
   const declaration = (data as { readonly output?: unknown }).output
   if (typeof declaration !== "object" || declaration === null) {
@@ -625,54 +614,23 @@ const contractOf = (
     : { contract: built.contract }
 }
 
-// awaitedBoundaryOf reads a round-zero child response and its recorded output contract (agents.test.ts).
-const awaitedBoundaryOf = (events: ReadonlyArray<Event>, turn: string): SpawnBoundary | undefined => {
-  const response = events.find(
-    (event) => event.type === "ResponseReceived" && event.id === boundaryId(turn, 0)
-  ) as ResponseReceived | undefined
-  if (response === undefined) return undefined
-  const contract = contractOf(response.data, turn)
-  if (response.status === "completed") return { outcome: "completed", text: String(response.output), ...contract }
-  if (response.status === "failed") return { outcome: "failed", text: `error: ${String(response.error)}`, ...contract }
-  return {
-    outcome: "cancelled",
-    cause: response.cause === "deadline" ? "deadline" : "requested",
-    ...(typeof response.reason === "string" && response.reason !== "" ? { reason: response.reason } : {}),
-    ...(typeof response.deadlineAt === "number" ? { deadlineAt: response.deadlineAt } : {}),
-    ...contract
-  }
-}
-
-// awaitedBoundary reads a child method response from the caller's own private log.
-const awaitedBoundary = (turn: string): Effect.Effect<SpawnBoundary | undefined, never, EventLog> =>
-  Effect.gen(function* () {
-    const log = yield* EventLog
-    return awaitedBoundaryOf(yield* log.read, turn)
-  })
-
-const ERROR_PREFIX = "error: "
-// answerOf maps a child terminal to output or error, including cancellation (agents.test.ts, "a cancelled reply settles the run as a failed answer").
-const answerOf = (reply: SpawnBoundary): {
-  readonly output?: string
-  readonly error?: string
-} => {
-  if (reply.outcome === "cancelled") {
-    const reason = reply.reason === undefined ? "" : `: ${reply.reason}`
-    return { error: `cancelled${reason}` }
-  }
-  return reply.outcome === "completed"
-    ? { output: reply.text }
-    : { error: reply.text.startsWith(ERROR_PREFIX) ? reply.text.slice(ERROR_PREFIX.length) : reply.text }
+// childResultOf reads the terminal state of an exact child invocation (agents.test.ts).
+const childResultOf = (events: ReadonlyArray<Event>, reference: InvocationCoordinate) => {
+  const terminal = invocationTerminalOf(events, reference)
+  if (terminal === undefined) return undefined
+  const state = invocationResultOf(terminal, Schema.String)
+  return state.status === "pending" ? undefined : state
 }
 
 // shape decodes successful output against its contract and reports validation failures (agents.test.ts, "a reply invalid under A but valid under B still fails as A").
 const shape = (
-  answer: { output?: string; error?: string },
-  turn: string,
+  state: Exclude<ActorMethodState<string>, { readonly status: "pending" }>,
   contract: OutputContract | undefined
 ): unknown => {
-  if (contract === undefined || answer.output === undefined) return answer
-  const decoded = decodeOutput(contract, answer.output)
+  if (state.status === "failed") return { error: state.error.replace(/^error: /, "") }
+  if (state.status === "cancelled") return { error: state.reason === undefined ? "cancelled" : `cancelled: ${state.reason}` }
+  if (contract === undefined) return { output: state.output }
+  const decoded = decodeOutput(contract, state.output)
   if (decoded.errors.length > 0) {
     return {
       error: `the run answered outside its declared contract "${contract.name}": ${decoded.errors.join("; ")}`

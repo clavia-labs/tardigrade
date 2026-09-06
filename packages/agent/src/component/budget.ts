@@ -1,14 +1,7 @@
 import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
-import {
-  actorCall,
-  actorInvocationContextOf,
-  calls,
-  composeComponents,
-  inheritComponentContract,
-  component as defineComponent,
-  type ActorRef,
-  type ComponentRequirements
-} from "@clavia/tardigrade-core/actor"
+import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
+import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ActorRef, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { budgetDenied, budgetExhausted, budgetGranted, budgetRequested } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnEpochOf, turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -21,10 +14,10 @@ import {
 import { Chunk } from "effect"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool, type AgentView } from "../runtime/composition"
 import type { ToolSpec } from "../inference/request"
-import { Router } from "@clavia/tardigrade-core/communication/router"
-import { formatThreadAddress, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import type { Link } from "@clavia/tardigrade-core/communication/link"
-import { threadCreatedOf } from "@clavia/tardigrade-core/thread"
+import { Router } from "@clavia/tardigrade-core/transport/router"
+import { formatThreadAddress, isThreadAddress, type ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import type { Link } from "@clavia/tardigrade-core/transport/link"
+import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { requestBudgetMethod } from "../actor/budget"
 
 // BudgetPolicy sets the tool-call limit for turns that declare no budget.

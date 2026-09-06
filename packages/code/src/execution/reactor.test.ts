@@ -6,7 +6,7 @@ import { composeKeys, EventLog, withWatermark } from "@clavia/tardigrade-core/lo
 import { settleActor } from "@clavia/tardigrade-core/runtime"
 import { replayProjection } from "@clavia/tardigrade-core/projection"
 import type { TransitionProjection } from "@clavia/tardigrade-core/transition"
-import { messageKeys } from "@clavia/tardigrade-core/communication/message"
+import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import { definePackage, type Package } from "../package/definition"
 import { guestBindings, Sandbox, type Bindings } from "../sandbox/service"
 import { DEFAULT_PACKAGE_CALL_POLICY, codeReactor, codeReactorFor, packageCallPolicyOf, type CodeProjectionState } from "./reactor"

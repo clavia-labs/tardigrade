@@ -1,17 +1,8 @@
 import type { Transition } from "@clavia/tardigrade-core/runtime"
 import type { TransitionProjection } from "@clavia/tardigrade-core/transition"
-import {
-  composeComponents,
-  deriveComponent,
-  handles,
-  inheritComponentContract,
-  component,
-  type Component,
-  type ComponentRequirements,
-  type ViewAlgebra
-} from "@clavia/tardigrade-core/actor"
+import { composeComponents, deriveComponent, handles, inheritComponentContract, component, type Component, type ComponentRequirements, type ViewAlgebra } from "@clavia/tardigrade-core/actor"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
-import { messageKeys } from "@clavia/tardigrade-core/communication/message"
+import { messageKeys } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ToolSpec } from "../inference/request"
 import { fallbackOf, type OutputFallback } from "../output/contract"

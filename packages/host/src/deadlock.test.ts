@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { Router } from "@clavia/tardigrade-core/communication/router"
+import { Router } from "@clavia/tardigrade-core/transport/router"
 import { effect } from "@clavia/tardigrade-core/effect"
 import { completeTransitionProjection, type ErasedTransitionProjection } from "@clavia/tardigrade-core/transition"
 import { createHost } from "./host"
 import type { AwaitEdge } from "./deadlock"
-import { parseThreadAddress } from "@clavia/tardigrade-core/communication/endpoint"
-import { linkOf } from "@clavia/tardigrade-core/communication/link"
-import { envelopeOf } from "@clavia/tardigrade-core/communication/envelope"
+import { parseThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
+import { linkOf } from "@clavia/tardigrade-core/transport/link"
+import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 
 // The deadlock sentinel against toy reactors, package-pure. Each thread's
 // body: on its brief, declare an await on its partner; on its await's
@@ -98,8 +98,8 @@ const brief: Event = { type: "MessageReceived", id: "brief", text: "go", at: 0 }
 describe("the deadlock sentinel", () => {
   test("without it, the knot rests forever, honestly", async () => {
     const h = knot(false)
-    h.commitRoot("mem:main:p", brief)
-    h.commitRoot("mem:main:c", brief)
+    await h.commitRoot("mem:main:p", brief)
+    await h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(h.resting()).toBe(true)
     expect(has(h.read("p"), "Settled")).toBe(false)
@@ -108,8 +108,8 @@ describe("the deadlock sentinel", () => {
 
   test("with it, one victim fails and the whole knot settles", async () => {
     const h = knot(true)
-    h.commitRoot("mem:main:p", brief)
-    h.commitRoot("mem:main:c", brief)
+    await h.commitRoot("mem:main:p", brief)
+    await h.commitRoot("mem:main:c", brief)
     await h.drive()
     expect(has(h.read("p"), "Settled")).toBe(true)
     expect(has(h.read("c"), "Settled")).toBe(true)

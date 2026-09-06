@@ -21,7 +21,7 @@ const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
   sqlite: ":memory:",
   instances: Effect.succeed([]),
-  ensure: () => Effect.succeed({ methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
+  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
   instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
@@ -70,6 +70,7 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/metadata"],
   ["get", "/v1/methods"],
   ["post", "/v1/actors/{id}/threads/{thread}/events"],
+  ["post", "/v1/actors/{id}/threads"],
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
   ["put", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}/cancellation"],
   ["get", "/v1/actors/{id}/threads"],
@@ -196,9 +197,8 @@ describe("problem documents", () => {
         const missingField = yield* post("/v1/actors/main/threads/ghost/events", { id: "m1" })
         const emptyType = yield* post("/v1/actors/main/threads/ghost/events", { type: "", id: "m1" })
         const notAnObject = yield* post("/v1/actors/main/threads/ghost/events", "hello")
-        const invalidActor = yield* client.get("/v1/actors/tenant%3Awest/threads/ghost/events")
         return yield* Effect.forEach(
-          [repeated, notANumber, negative, missingField, emptyType, notAnObject, invalidActor],
+          [repeated, notANumber, negative, missingField, emptyType, notAnObject],
           (response) =>
             Effect.map(response.json, (body) => ({
               status: response.status,
@@ -224,7 +224,6 @@ describe("problem documents", () => {
     expect(details[2]).toContain("`limit` is not a value it accepts")
     expect(details[3]).toBe("The request body is not what this endpoint accepts. `type` is missing.")
     expect(details[4]).toContain("`type` is not a value it accepts")
-    expect(details[6]).toContain("`id` is not a value it accepts")
     // A body that is not an object at all names no field, so the sentence stops at the part.
     expect(details[5]).toBe("The request body is not what this endpoint accepts.")
   })

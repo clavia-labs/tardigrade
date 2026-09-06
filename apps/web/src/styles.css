@@ -559,6 +559,30 @@ h1 span { display: block; white-space: nowrap; }
   .sdk-reference-list > div { grid-template-columns: 1fr; gap: 6px; }
 }
 .actor-diagram { width: min(100%, 620px); height: auto; margin: 0 auto; overflow: visible; }
+.actor-instances-diagram { display: block; width: min(100%, 400px); height: auto; margin: 28px auto; }
+.actor-communication-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; max-width: 760px; margin: 28px auto; }
+.actor-communication-comparison figure { margin: 0; min-width: 0; }
+.actor-communication-comparison figcaption { text-align: center; color: var(--ink-2); font-size: 13px; }
+.actor-communication-diagram { display: block; width: 100%; height: auto; }
+.actor-communication-person { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.actor-communication-diagram circle { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; }
+.actor-communication-diagram text { fill: var(--ink); font-family: var(--mono); font-size: 14px; text-anchor: middle; }
+.actor-communication-links path { fill: none; stroke: var(--moss-ink); stroke-width: 1.25; }
+.actor-communication-diagram marker path { fill: var(--moss-ink); }
+.actor-instances-diagram rect { fill: var(--moss-wash); stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; }
+.actor-instances-diagram text { fill: var(--ink); font-family: var(--mono); font-size: 16px; text-anchor: middle; }
+.actor-instances-diagram .actor-instances-label { fill: var(--ink-2); font-family: inherit; font-size: 12px; }
+.actor-instances-edges path { fill: none; stroke: var(--moss-ink); stroke-width: 1.25; }
+.actor-instances-diagram marker path { fill: var(--moss-ink); }
+.thread-resolution-illustration { display: block; width: min(100%, 420px); height: auto; margin: 20px auto; }
+.thread-resolution-illustration text { fill: var(--ink); font-family: var(--mono); font-size: 16px; text-anchor: middle; }
+.thread-resolution-illustration .resolution-caption { fill: var(--ink-2); font-family: inherit; font-size: 14px; }
+.thread-resolution-illustration .resolution-ref { font-size: 18px; }
+.thread-resolution-illustration .resolution-device { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.thread-resolution-illustration .resolution-screen { fill: var(--surface); stroke: rgb(var(--accent-rgb) / 30%); }
+.thread-resolution-illustration .resolution-thread { fill: var(--moss-wash); stroke: rgb(var(--accent-rgb) / 42%); }
+.thread-resolution-illustration .resolution-detail, .thread-resolution-illustration .resolution-routes path { fill: none; stroke: var(--moss-ink); stroke-width: 1.25; stroke-linecap: round; }
+.thread-resolution-illustration .resolution-routes circle, .thread-resolution-illustration .resolution-light { fill: var(--moss-ink); }
 .actor-diagram-boundary { fill: none; stroke: rgb(var(--accent-rgb) / 28%); stroke-width: 1; stroke-dasharray: 5 5; vector-effect: non-scaling-stroke; }
 .actor-diagram-boundary-label { fill: var(--moss-ink); font-family: var(--mono); font-size: 12px; letter-spacing: .06em; }
 .actor-diagram-node rect, .actor-diagram-log-frame { fill: transparent; stroke: rgb(var(--accent-rgb) / 42%); stroke-width: 1; vector-effect: non-scaling-stroke; }

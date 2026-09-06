@@ -12,4 +12,4 @@ export const mintedRunId = (mint: string): string => `${RUN_PREFIX}${mint}`
 export const callId = (execId: string, n: number): string => `${execId}.${n}`
 
 // replyId and REPLY_SUFFIX are retained as the stable response-id grammar.
-export { REPLY_SUFFIX, replyId } from "@clavia/tardigrade-core/communication/message"
+export { REPLY_SUFFIX, replyId } from "@clavia/tardigrade-core/interaction/provider-message"

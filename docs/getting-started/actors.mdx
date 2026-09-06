@@ -1,0 +1,131 @@
+---
+title: Actors
+description: Understand actor definitions, thread names, references, and host allocation.
+route: /docs/actors
+section: Getting Started
+sectionOrder: 2
+order: 3
+---
+
+In Tardigrade, an actor is an addressable entity with private state and behavior.
+
+A good analogy is to think of actors like regular people we interact with. People typically hold information that is only accessible to them. The only way to access this private information or elicit behaviors is by communicating with them.
+
+Similarly, in Tardigrade, actors hold state that is private to them. Hosts and other actors access this information and elicit behaviors through communicating via typed methods. This will become clearer as you walk through the concepts below.
+
+<ActorCommunicationDiagram />
+
+## Interface
+
+```ts
+interface Actor {
+  name: string
+  methods: ActorMethods
+  components: ReadonlyArray<Component>
+}
+```
+
+For example, an actor named `tardie` exposes a message method and uses components for inference and code execution with an MCP package.
+
+```ts
+import { defineActor } from "tardie"
+import { infer, codeMode } from "./components"
+import { message } from "./methods"
+import { mcpPackage } from "./packages"
+
+const tardie = defineActor(
+  "tardie",
+  { message },
+  [infer, codeMode(mcpPackage)],
+)
+```
+
+## Choose an instance
+
+An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `tardie`. Morty can use the same actor definition with a different instance identity.
+
+<ActorInstancesDiagram />
+
+## Allocating threads
+
+`tardie.allocateRootThread(...)` and `tardie.allocateChildThread(...)` return Effects that use the same host allocator when run. Repeating an allocation with the same scope and name returns a reference to the same logical thread.
+
+### Root threads
+
+The caller supplies a name within the actor instance. The host assigns the thread identity and returns a reference.
+
+```ts
+const rickRef = yield* tardie.allocateRootThread({ instance: "rick", name: "main" })
+const rickLabRef = yield* tardie.allocateRootThread({ instance: "rick", name: "lab" })
+const mortyRef = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
+const mortyLabRef = yield* tardie.allocateRootThread({ instance: "morty", name: "lab" })
+```
+
+Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these names because their instances provide separate scopes.
+
+<ActorInstancesDiagram threads />
+
+### Child threads
+
+A thread can create another logical thread in the same actor instance. For example, Rick's `"main"` thread can create a `"researcher"` thread. It lives alongside `"main"` and `"lab"` as another thread in Rick's instance. The parent-child relationship determines its naming scope.
+
+```ts
+const researcherRef = yield* tardie.allocateChildThread({
+  parent: rickRef,
+  name: "researcher",
+})
+```
+
+<ChildThreadsDiagram />
+
+## Invoking a thread
+
+Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickRef` identifies Rick's `"main"` thread, where a caller can invoke `tardie`'s `message` method.
+
+```ts
+const response = yield* rickRef.message({
+  text: "Help me build a portal gun.",
+}, { key: "portal-plan" })
+```
+
+Calls run inside an invocation-scoped actor action. A key identifies a call within that invocation, so replay reads the same result. While a call is pending, the runtime releases execution and later replays the action from its beginning. Other side effects in the action must also be replay-safe.
+
+<ThreadInvocationDiagram />
+
+### Resolving to a physical address
+
+A reference identifies a thread. The host resolves it to where that thread runs, so callers do not need to know its location. The receiving host is also responsible for access checks.
+
+<ThreadResolutionDiagram />
+
+## Complete example
+
+```ts expanded
+import { Effect } from "effect"
+import { defineActor } from "tardie"
+import { infer, codeMode } from "./components"
+import { message } from "./methods"
+import { mcpPackage } from "./packages"
+
+const tardie = defineActor(
+  "tardie",
+  { message },
+  [infer, codeMode(mcpPackage)],
+)
+
+const program = Effect.gen(function* () {
+  const rickRef = yield* tardie.allocateRootThread({ instance: "rick", name: "main" })
+  const rickLabRef = yield* tardie.allocateRootThread({ instance: "rick", name: "lab" })
+  const mortyRef = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
+  const mortyLabRef = yield* tardie.allocateRootThread({ instance: "morty", name: "lab" })
+
+  const rickResponse = yield* rickLabRef.message({
+    text: "Design an experiment to test the portal gun's power source.",
+  }, { key: "portal-experiment" })
+  const mortyResponse = yield* mortyRef.message({
+    text: "Help me plan my day around school and homework.",
+  }, { key: "school-plan" })
+
+  return { rickResponse, mortyResponse }
+})
+```

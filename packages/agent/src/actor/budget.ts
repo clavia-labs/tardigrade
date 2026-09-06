@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { actorMethod } from "@clavia/tardigrade-core/method"
+import { actorMethod } from "@clavia/tardigrade-core/actor/method"
 import { budgetRequestReceived } from "../log/events"
 
 const PositiveInteger = Schema.Int.pipe(

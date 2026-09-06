@@ -1,6 +1,6 @@
 import type { Event } from "@clavia/tardigrade-core/event"
 import type { Transition } from "@clavia/tardigrade-core/transition"
-import type { InvocationCancellation } from "../method/cancellation"
+import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
 import type { ComponentOutput } from "./output"
 

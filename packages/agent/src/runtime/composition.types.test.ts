@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test"
+import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent, type Actor } from "@clavia/tardigrade-core/actor"
 import {
   actor,
@@ -40,5 +41,5 @@ export const fallbackBrand = (): void => {
 }
 
 test("output strategy components carry their requirements without changing the runtime shape", () => {
-  expect(nativeOnly.projections).toHaveLength(repaired.projections.length)
+  expect(actorRuntimeOf(nativeOnly).projections).toHaveLength(actorRuntimeOf(repaired).projections.length)
 })
