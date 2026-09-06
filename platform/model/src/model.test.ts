@@ -744,11 +744,12 @@ describe("infer: cost provenance", () => {
   ]
   const table = { promptUsdPerToken: 0.001, completionUsdPerToken: 0.002 }
 
-  test("a billed cost is provider, an omitted cost is table or unknown", async () => {
+  test("TanStack usage owns token accounting and provider cost", async () => {
     const rawUsage = {
       prompt_tokens: 10,
       completion_tokens: 4,
       total_tokens: 14,
+      cache_creation_input_tokens: 6,
       prompt_tokens_details: { cached_tokens: 4 },
       completion_tokens_details: { reasoning_tokens: 2 },
       cost: 0
@@ -833,7 +834,7 @@ describe("infer: cost provenance", () => {
     expect(unknown).toMatchObject({ kind: "complete", output: "ok" })
   })
 
-  test("multiple wire usage objects remain one lossless physical report", async () => {
+  test("multiple wire reports remain raw while TanStack owns normalized usage", async () => {
     const detailed = {
       prompt_tokens: 10,
       completion_tokens: 4,
@@ -860,12 +861,12 @@ describe("infer: cost provenance", () => {
       ) as Effect.Effect<Action>
     )
     expect(action.usage).toMatchObject({
-      cachedPromptTokens: 4,
-      reasoningTokens: 2,
       reportedCostUsd: 0,
-      estimatedCostUsd: 6 * 0.001 + 4 * 0.0001 + 4 * 0.002,
+      estimatedCostUsd: 10 * 0.001 + 4 * 0.002,
       providerReports: [{ provider: "openai", model: "test-model", providerSpecific: [detailed, billed] }]
     })
+    expect(action.usage).not.toHaveProperty("cachedPromptTokens")
+    expect(action.usage).not.toHaveProperty("reasoningTokens")
   })
 })
 

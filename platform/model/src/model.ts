@@ -27,7 +27,7 @@ import {
   fallbackSystemFor
 } from "./output"
 import type { OutputMode } from "tardie/output/contract"
-import { sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
+import { costNumber, sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
 import type {
   ModelAdapterRegistry,
   ModelConfig,
@@ -427,6 +427,13 @@ const tapTokens = (
   }
 })
 
+const reportedCostOf = (value: unknown): number | undefined => {
+  if (!Array.isArray(value)) return costNumber(value)
+  let reported: number | undefined
+  for (const part of value) reported = costNumber(part) ?? reported
+  return reported
+}
+
 interface DeltaDelivery {
   readonly offer: (delta: InferDelta) => Effect.Effect<boolean>
   readonly finish: Effect.Effect<void>
@@ -636,21 +643,28 @@ export const infer = <const C extends ModelConfig>(
       // Wire-reported provenance wins: a router that names the upstream it served from records
       // the true split; the configured stamp covers a wire that stays silent.
       const reportedUsage = attempt.reportedUsage?.()
-      const providerMetrics = wire?.usageReports ?? (reportedUsage === undefined ? [] : [reportedUsage])
-      const usage = usageFrom(
-        [...providerMetrics, held.tokens],
+      const reports = wire?.usageReports
+      const providerMetrics = reports?.length === 1 ? reports[0] : (reports ?? reportedUsage)
+      const stamp = {
+        ...stampOf(config),
+        ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
+        ...(wire?.model === undefined ? {} : { model: wire.model })
+      }
+      const normalized = usageFrom(
+        held.tokens,
         config.pricing,
-        {
-          ...stampOf(config),
-          ...(wire?.provider === undefined ? {} : { provider: wire.provider }),
-          ...(wire?.model === undefined ? {} : { model: wire.model })
-        },
-        providerMetrics.length === 0
-          ? undefined
-          : providerMetrics.length === 1
-            ? providerMetrics[0]
-            : providerMetrics
+        stamp,
+        providerMetrics
       )
+      const reportedCostUsd = held.tokens?.cost ?? reportedCostOf(providerMetrics)
+      const usage = reportedCostUsd === undefined
+        ? normalized
+        : {
+            ...(normalized ?? { promptTokens: 0, completionTokens: 0, ...stamp }),
+            costUsd: reportedCostUsd,
+            costSource: "provider" as const,
+            reportedCostUsd
+          }
       return { usage, endpoint: endpointOf(config, wire), wire }
     }
     try {
