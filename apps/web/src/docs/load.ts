@@ -33,6 +33,8 @@ type DocFrontmatter = {
   readonly draft?: boolean | undefined
   readonly articleClass?: string | undefined
   readonly hideDescription?: boolean | undefined
+  readonly socialImage?: string | undefined
+  readonly socialImageAlt?: string | undefined
 }
 
 export type Doc = {
@@ -95,7 +97,9 @@ const readFrontmatter = (value: unknown, source: string): DocFrontmatter => {
     order: numberField(fields, "order", source),
     draft,
     articleClass,
-    hideDescription
+    hideDescription,
+    socialImage: fields.socialImage === undefined ? undefined : stringField(fields, "socialImage", source),
+    socialImageAlt: fields.socialImageAlt === undefined ? undefined : stringField(fields, "socialImageAlt", source)
   }
 }
 

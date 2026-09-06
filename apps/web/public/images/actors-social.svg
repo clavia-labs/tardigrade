@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#f8f7f0"/>
+  <defs>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0L8 4L0 8Z" fill="#2448ff"/>
+    </marker>
+  </defs>
+  <text x="64" y="110" fill="#151923" font-family="Arial, sans-serif" font-size="64" font-weight="600">Actors</text>
+  <text x="64" y="160" fill="#526177" font-family="Arial, sans-serif" font-size="26">Private state. Typed communication.</text>
+  <text x="1136" y="102" fill="#526177" font-family="Arial, sans-serif" font-size="23" text-anchor="end">Tardigrade</text>
+  <g transform="translate(40 230) scale(1.18)">
+    <g fill="none" stroke="#2448ff" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)">
+      <path d="M104 82L185 120"/>
+      <path d="M105 186L185 143"/>
+      <path d="M245 118L327 73"/>
+      <path d="M245 143L332 185"/>
+      <path d="M78 102L78 168"/>
+      <path d="M355 90L359 165"/>
+      <path d="M110 65Q220 4 325 54"/>
+    </g>
+    <g transform="translate(78 70)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle cy="-15" r="10"/><path d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z"/>
+    </g>
+    <g transform="translate(78 200)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle cy="-15" r="10"/><path d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z"/>
+    </g>
+    <g transform="translate(215 132)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle cy="-15" r="10"/><path d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z"/>
+    </g>
+    <g transform="translate(354 58)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle cy="-15" r="10"/><path d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z"/>
+    </g>
+    <g transform="translate(360 197)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle cy="-15" r="10"/><path d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z"/>
+    </g>
+    <text x="215" y="278" fill="#526177" font-family="Arial, sans-serif" font-size="21" text-anchor="middle">People</text>
+  </g>
+  <g transform="translate(640 230) scale(1.18)">
+    <g fill="none" stroke="#2448ff" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)">
+      <path d="M104 82L185 120"/>
+      <path d="M105 186L185 143"/>
+      <path d="M245 118L327 73"/>
+      <path d="M245 143L332 185"/>
+      <path d="M78 102L78 168"/>
+      <path d="M355 90L359 165"/>
+      <path d="M110 65Q220 4 325 54"/>
+    </g>
+    <g transform="translate(78 70)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle r="30"/><text y="6" fill="#151923" stroke="none" text-anchor="middle" font-family="monospace" font-size="17">A</text>
+    </g>
+    <g transform="translate(78 200)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle r="30"/><text y="6" fill="#151923" stroke="none" text-anchor="middle" font-family="monospace" font-size="17">B</text>
+    </g>
+    <g transform="translate(215 132)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle r="30"/><text y="6" fill="#151923" stroke="none" text-anchor="middle" font-family="monospace" font-size="17">C</text>
+    </g>
+    <g transform="translate(354 58)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle r="30"/><text y="6" fill="#151923" stroke="none" text-anchor="middle" font-family="monospace" font-size="17">D</text>
+    </g>
+    <g transform="translate(360 197)" fill="#edf1ff" stroke="#2448ff" stroke-width="1.5">
+      <circle r="30"/><text y="6" fill="#151923" stroke="none" text-anchor="middle" font-family="monospace" font-size="17">E</text>
+    </g>
+    <text x="215" y="278" fill="#526177" font-family="Arial, sans-serif" font-size="21" text-anchor="middle">Actors</text>
+  </g>
+</svg>
