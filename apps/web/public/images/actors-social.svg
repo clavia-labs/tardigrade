@@ -7,7 +7,7 @@
   </defs>
   <text x="64" y="110" fill="#151923" font-family="Arial, sans-serif" font-size="64" font-weight="600">Actors</text>
   <text x="64" y="160" fill="#526177" font-family="Arial, sans-serif" font-size="26">Private state. Typed communication.</text>
-  <text x="1136" y="102" fill="#526177" font-family="Arial, sans-serif" font-size="23" text-anchor="end">Tardigrade</text>
+  <text x="1136" y="598" fill="#526177" font-family="Arial, sans-serif" font-size="23" text-anchor="end">Tardigrade</text>
   <g transform="translate(40 230) scale(1.18)">
     <g fill="none" stroke="#2448ff" stroke-width="1.5" marker-start="url(#arrow)" marker-end="url(#arrow)">
       <path d="M104 82L185 120"/>
