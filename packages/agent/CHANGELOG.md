@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.22.2](https://github.com/clavia-labs/tardigrade/compare/v0.22.1...v0.22.2) (2026-09-06)
+
+
+### Bug Fixes
+
+* **cli:** align onboarding flow ([#391](https://github.com/clavia-labs/tardigrade/issues/391)) ([675172d](https://github.com/clavia-labs/tardigrade/commit/675172d1c254bc963360c46848bd2f653ca62eda))
+* **cloudflare:** commit deadline cancellation atomically ([#362](https://github.com/clavia-labs/tardigrade/issues/362)) ([5ca3a5c](https://github.com/clavia-labs/tardigrade/commit/5ca3a5c7c10ac60a00d8cfa6f26f756adc5a9689))
+* **host:** retain the active drive ([#387](https://github.com/clavia-labs/tardigrade/issues/387)) ([c16a07c](https://github.com/clavia-labs/tardigrade/commit/c16a07c6c79a69ad608d0dd55e2ccafe958bc0ea))
+* **model:** trust normalized usage ([#390](https://github.com/clavia-labs/tardigrade/issues/390)) ([4954c95](https://github.com/clavia-labs/tardigrade/commit/4954c9514660f790cb9b7966ceef62f5fc7b222d))
+
 ## [0.22.1](https://github.com/clavia-labs/tardigrade/compare/v0.22.0...v0.22.1) (2026-09-06)
 
 
