@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.22.1](https://github.com/clavia-labs/tardigrade/compare/v0.22.0...v0.22.1) (2026-09-06)
+
+
+### Bug Fixes
+
+* **agent:** scope child thread identities ([#381](https://github.com/clavia-labs/tardigrade/issues/381)) ([1091338](https://github.com/clavia-labs/tardigrade/commit/1091338c14d6d5cd8a33ab2a2092cd4ebabf9be1))
+* **core:** unify actor interactions ([#388](https://github.com/clavia-labs/tardigrade/issues/388)) ([061c10e](https://github.com/clavia-labs/tardigrade/commit/061c10e3a89dbcd8928c351ec06586925cdd6201))
+* **server:** preserve supplied root identifiers ([#384](https://github.com/clavia-labs/tardigrade/issues/384)) ([924a5c0](https://github.com/clavia-labs/tardigrade/commit/924a5c034c954c2dbcc85db238e7259ac614c22c))
+
 ## [0.22.0](https://github.com/clavia-labs/tardigrade/compare/v0.21.0...v0.22.0) (2026-09-04)
 
 
