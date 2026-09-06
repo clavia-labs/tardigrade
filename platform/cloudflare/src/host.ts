@@ -9,7 +9,7 @@ import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
 import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
-import { DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
+import { initializingThreadAllocator } from "@clavia/tardigrade-host/allocation"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { alarmFired, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
@@ -26,7 +26,7 @@ import {
 } from "@clavia/tardigrade-core/runtime"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
-import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
+import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/transport/provider"
 import { createThreadDriver } from "@clavia/tardigrade-host/driver"
 import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
@@ -40,6 +40,7 @@ type LayersFor<R> = [Exclude<R, CloudflarePorts>] extends [never]
   : { readonly layers: CloudflareThreadEnv<R> }
 
 export type CloudflareThreadHostOptions<R> = {
+  readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly storage: DurableObjectStorage
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly actorName: string
@@ -77,6 +78,11 @@ export interface CloudflareThreadHost {
 // createCloudflareThreadHost binds one actor thread to Effect SQL over its Durable Object storage.
 export async function createCloudflareThreadHost<R = never>(options: CloudflareThreadHostOptions<R>): Promise<CloudflareThreadHost> {
   const identity = { actor: options.actorName, instance: options.actorInstance, thread: options.thread }
+  const allocator: typeof ThreadAllocator.Service = options.threadAllocator ?? {
+    allocate: (request) => request.kind === "root" && request.key === undefined &&
+      request.coordinate.actor === identity.actor && request.coordinate.instance === identity.instance && request.coordinate.thread === identity.thread
+      ? Effect.succeed(identity) : Effect.die(new Error("thread allocation requires an actor directory"))
+  }
   const methods = "methods" in options.actor
     ? (options.actor as Actor<R> & { readonly methods: ActorMethods }).methods
     : undefined
@@ -136,7 +142,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
       const landed = receivedEventOf({ target, event: stamped, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
       if (created === undefined && lineage === undefined && !allocated) {
-        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR))
+        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator))
       }
       const at = (event as { readonly at?: unknown }).at
       if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
@@ -190,7 +196,15 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
     router,
     workspace,
     Layer.succeed(Self, identity),
-    Layer.succeed(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR)
+    Layer.succeed(ThreadAllocator, initializingThreadAllocator(
+      allocator,
+      options.initializeRoot ?? ((target, at) => {
+        if (target.actor !== identity.actor || target.instance !== identity.instance || target.thread !== identity.thread) {
+          return Promise.reject(new Error("root initialization requires the owning host"))
+        }
+        return Effect.runPromise(commitEffect(identity, threadCreated(identity, undefined, at), undefined, undefined, undefined, true, true))
+      })
+    ))
   )
   const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
     .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>

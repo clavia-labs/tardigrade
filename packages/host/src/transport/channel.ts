@@ -4,7 +4,7 @@ import { methodEnvelopeOf } from "@clavia/tardigrade-core/interaction"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
 import type { Provider } from "./provider"
-import type { Webhook, WebhookRequest, WebhookResponse } from "./webhook"
+import type { Webhook, WebhookRequest, WebhookResponse } from "./http/webhook"
 
 // ProviderInbound pairs one normalized message with the source coordinates required for a later reply.
 export interface ProviderInbound<Source extends ProviderEndpoint> {

@@ -11,7 +11,7 @@ import { Router } from "../transport/router"
 import { type ThreadLineage, invocationLinked, type InvocationLinked } from "./relations"
 import { CANCELLATION_CONTROL_METHOD, cancellationMethodFor } from "./cancellation"
 
-import type { ActorRef } from "../actor/reference"
+import type { ThreadTarget } from "../actor/reference"
 import { decodeActorInvocationContext, type ActorInvocationContext, InvocationRef, sameInvocation, decodeInvocationCoordinate, invocationIdForKey, invocationCoordinateKey, invocationCoordinateOf, type InvocationCoordinate } from "./invocation"
 
 import type { ActorMethodCancellation, ActorMethodDeclaration, ActorMethodInput, ActorMethodOutput, ActorMethods } from "../actor/method"
@@ -49,7 +49,7 @@ export type ActorCallOptions<
   Methods extends ActorMethods,
   Name extends MethodName<Methods>
 > = {
-  readonly target: ActorRef<Methods>
+  readonly target: ThreadTarget<Methods>
   readonly method: Name
   readonly input: ActorMethodInput<Methods[Name]>
   readonly context?: ActorInvocationContext
@@ -67,7 +67,7 @@ export interface ActorCall<Output, R = never> {
   readonly method: string
   readonly invocation: InvocationRef
   readonly context?: ActorInvocationContext
-  readonly target: ActorRef["address"]
+  readonly target: ThreadTarget["address"]
   readonly state: ActorMethodState<Output>
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
@@ -88,7 +88,7 @@ type ActorCallFor<Method extends ActorMethodDeclaration, Output, R> =
     : ActorCall<Output, R>
 
 export interface CancelInvocationOptions<Methods extends ActorMethods> extends ActorCancellationOptions {
-  readonly target: ActorRef<Methods>
+  readonly target: ThreadTarget<Methods>
   readonly invocation: InvocationRef
 }
 

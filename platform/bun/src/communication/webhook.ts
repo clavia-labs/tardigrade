@@ -1,14 +1,14 @@
 import { Clock, Context, Data, Effect } from "effect"
 import type { ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
-import type { ActorUnavailable } from "@clavia/tardigrade-host/communication/ingress"
-import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
-import type { Channel } from "@clavia/tardigrade-host/communication/channel"
+import type { ActorUnavailable } from "@clavia/tardigrade-host/transport/ingress"
+import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
+import type { Channel } from "@clavia/tardigrade-host/transport/channel"
 import {
   handleWebhook,
   type Webhook,
   type WebhookRequest,
   type WebhookResponse
-} from "@clavia/tardigrade-host/communication/webhook"
+} from "@clavia/tardigrade-host/transport/http/webhook"
 
 // WebhookRequestUnreadable reports a request whose raw HTTP body could not be captured.
 export class WebhookRequestUnreadable extends Data.TaggedError("WebhookRequestUnreadable")<{

@@ -13,7 +13,9 @@ import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
 import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
-import { DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
+import { instanceThreadAllocator, registeredThreadAllocator, initializingThreadAllocator, type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
+import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
+import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRegistered, type ThreadRequested } from "@clavia/tardigrade-core/actor"
@@ -32,7 +34,7 @@ import {
 import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
-import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/communication/provider"
+import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/transport/provider"
 import { createThreadDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
 import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
 import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
@@ -56,6 +58,8 @@ export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArr
 export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 export type BunHostOptions<R> = {
+  readonly allocation?: ThreadAllocationPolicy
+  readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly threadAllocator?: typeof ThreadAllocator.Service
   // database stores the actor identity and event log. Each thread database lives at threadDatabase(thread).
   readonly database: string
@@ -80,6 +84,8 @@ export type BunHostOptions<R> = {
 } & LayersFor<R>
 
 export interface BunHost {
+  readonly allocate: (request: ThreadAllocation) => Promise<ThreadAddress>
+  readonly assignThread: (request: ThreadAllocation) => Promise<ThreadAddress>
   readonly seed: (thread: string, events: ReadonlyArray<Event>) => Promise<void>
   readonly read: (thread: string) => Promise<ReadonlyArray<Event>>
   readonly readPage: (thread: string, mark: number, limit: number) => Promise<ReadonlyArray<ThreadEventRow>>
@@ -255,6 +261,19 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
   }
   const pathOf = options.threadDatabase ?? ((thread: string) => bunThreadDatabasePath(options.database, thread))
   const { runtime: directoryRuntime, sql: directorySql } = await openActorDirectory(options, actorName, actorInstance)
+  const assignments = sqlThreadDirectory(directorySql, "actor_events", (target, existingRoot) =>
+    directorySql<{ parent_thread: string | null }>`SELECT parent_thread FROM thread_directory WHERE thread = ${target.thread}`.pipe(
+      Effect.map((rows) => rows.length > 0 && (!existingRoot || rows[0]?.parent_thread !== null)), Effect.orDie
+    ))
+  const localAllocator = instanceThreadAllocator({ actor: actorName, instance: actorInstance }, registeredThreadAllocator({
+    get: (key) => Effect.promise(() => directoryRuntime.runPromise(assignments.get(key))),
+    claim: (key, target, existingRoot, request) => Effect.promise(async () => {
+      const thread = await directoryRuntime.runPromise(assignments.claim(key, target, existingRoot, request))
+      if (thread !== undefined) await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
+      return thread
+    })
+  }, options.allocation))
+  const rawAllocator = options.threadAllocator ?? localAllocator
   const actorCommits = await directoryRuntime.runPromise(PubSub.sliding<number>({ capacity: 1, replay: 1 }))
   const actorHead = async (): Promise<number> => {
     const rows = await directoryRuntime.runPromise(directorySql<{ head: number }>`SELECT COALESCE(MAX(seq), 0) AS head FROM actor_events`.pipe(Effect.orDie))
@@ -276,32 +295,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     `.pipe(
       Effect.map((rows) => ({
         cursor: Number(rows.at(-1)?.seq ?? 0),
-        threads: actorThreadsOf(rows.map((row) => JSON.parse(row.event) as Event))
+        threads: actorThreadsOf(rows.map((row) => JSON.parse(row.event) as Event)).filter((record) => record.state !== "allocated")
       })),
       Effect.orDie
     ))
-  const actorThread = (thread: string): Promise<ActorThreadRecord | undefined> =>
-    directoryRuntime.runPromise(directorySql<{
-      thread: string
-      parent_thread: string | null
-      depth: number
-      placement: string | null
-    }>`
-      SELECT thread, parent_thread, depth, placement FROM thread_directory WHERE thread = ${thread}
-    `.pipe(
-      Effect.map((rows) => {
-        const row = rows[0]
-        if (row === undefined) return undefined
-        return {
-          thread: row.thread,
-          ...(row.parent_thread === null ? {} : { parentThread: row.parent_thread }),
-          depth: Number(row.depth),
-          ...(row.placement === null ? {} : { placement: row.placement as ChildPlacement }),
-          state: "registered" as const
-        }
-      }),
-      Effect.orDie
-    ))
+  const actorThread = async (thread: string): Promise<ActorThreadRecord | undefined> =>
+    (await actorThreads()).threads.find((record) => record.thread === thread)
   await directoryRuntime.runPromise(PubSub.publish(actorCommits, await actorHead()))
   const appendActorEvent = async (event: Event): Promise<void> => {
     const result = await directoryRuntime.runPromise(directorySql.withTransaction(Effect.gen(function*() {
@@ -504,7 +503,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
       const landed = receivedEventOf({ target, event: stamped, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
       if (created === undefined && lineage === undefined && !allocated) {
-        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR))
+        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, rawAllocator))
       }
       if (landed.type === "MessageReceived") {
         const id = String((landed as { id?: unknown }).id)
@@ -560,7 +559,15 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       Layer.succeed(EffectInterruptions, threadRuntime.interruptions),
       Layer.succeed(KeyValueStore.KeyValueStore, threadRuntime.workspace),
       Layer.succeed(Self, parseThreadAddress(self(thread))), bunSandboxFor(options.sandbox ?? {}),
-      Layer.succeed(ThreadAllocator, options.threadAllocator ?? DEFAULT_THREAD_ALLOCATOR)
+      Layer.succeed(ThreadAllocator, initializingThreadAllocator(
+        rawAllocator,
+        options.initializeRoot ?? ((target, at) => {
+          if (target.actor !== actorName || target.instance !== actorInstance) {
+            return Promise.reject(new Error("root initialization requires the owning host"))
+          }
+          return Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
+        })
+      ))
     )
     const extra = (options.layersFor ?? (() => Layer.empty as unknown as BunThreadEnv<R>))(thread)
     return Layer.mergeAll(extra.pipe(Layer.provide(ports)), ports) as Layer.Layer<R | EventLog>
@@ -703,6 +710,10 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     commit: (envelope) => Effect.runPromise(commitEffect(envelope.link.target, envelope.event, envelope.lineage, envelope.link, envelope.call)),
     threads,
     commitRoot: (address, event) => Effect.runPromise(commitEffect(parseThreadAddress(address), event, undefined)),
+    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)),
+    allocate: (request) => Effect.runPromise(initializingThreadAllocator(rawAllocator, options.initializeRoot ?? ((target, at) =>
+      Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true))
+    )).allocate(request)),
     initializeRoot: (target, at) => Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true)),
     wake: (thread) => { driver.mark(thread); return drive() },
     drive,

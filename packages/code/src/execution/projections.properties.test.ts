@@ -6,7 +6,7 @@ import { factsOf, restingThread, workOwed } from "./projections"
 // The isomorphism harness: tla/runtime/Reconcile.tla's theorems, run against the
 // real kernel.
 //
-// Property 1 is the bag law (tla/runtime/Projection.tla): every derivation must
+// Property 1 is the bag law (tla/projection/Projection.tla): every derivation must
 // be invariant under permutation of the event array. This is the test
 // the old room fold could never pass, and the whole reason the kernel
 // exists.

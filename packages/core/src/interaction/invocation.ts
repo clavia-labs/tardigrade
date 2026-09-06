@@ -56,7 +56,7 @@ export const invocationCoordinateKey = (reference: InvocationCoordinate): string
 // invocationResponseId identifies the terminal awaited for an exact invocation (coordinate.test.ts).
 export const invocationResponseId = (reference: InvocationCoordinate): string => `response:${invocationCoordinateKey(reference)}`
 
-// invocationIdForKey scopes an idempotency key to a complete parent invocation (idempotency.properties.test.ts).
+// invocationIdForKey scopes an idempotency key to a complete parent invocation (idempotency.properties.test.ts; packages/host/tla/Identity.tla, CallSeparation).
 export const invocationIdForKey = (parent: InvocationCoordinate, key: string): string =>
   JSON.stringify(["invocation", invocationCoordinateKey(parent), Schema.decodeSync(Schema.NonEmptyString)(key)])
 

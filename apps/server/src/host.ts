@@ -12,8 +12,8 @@ import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { Envelope } from "@clavia/tardigrade-core/interaction/envelope"
 import type { Directory } from "@clavia/tardigrade-core/transport/directory"
-import { Ingress, ingressFrom } from "@clavia/tardigrade-host/communication/ingress"
-import type { Provider } from "@clavia/tardigrade-host/communication/provider"
+import { Ingress, ingressFrom } from "@clavia/tardigrade-host/transport/ingress"
+import type { Provider } from "@clavia/tardigrade-host/transport/provider"
 import {
   applyModelPolicy,
   ACTOR_ARTIFACT_VERSION,
@@ -31,9 +31,8 @@ import {
 } from "tardie"
 import type { Action } from "tardie/log/events"
 import { createBunHost, type BunHost, type BunHostOptions } from "@clavia/tardigrade-bun/host"
-import { allocateThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
-import { DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
 import { infer } from "@clavia/tardigrade-model/model"
 import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
@@ -86,7 +85,7 @@ export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
 }> {}
 
 export interface ActorThreads {
-  readonly allocateRoot: (name: string) => Effect.Effect<ThreadCoordinate>
+  readonly allocateRoot: (name?: string) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
   readonly sqlite: string
   readonly append: (id: string, event: Event) => Effect.Effect<void>
@@ -330,6 +329,7 @@ const layerThread = (
   )
 
 export interface ThreadsOptions {
+  readonly allocation?: BunHostOptions<never>["allocation"]
   readonly threadAllocator?: typeof ThreadAllocator.Service
   // The model seam. Absent, the binding is derived from ServerConfig; present, it replaces that
   // derivation whole, which is how a test runs a scripted mind with no credentials
@@ -405,7 +405,8 @@ const runtimeOf = async <R>(
   providers: ReadonlyArray<Provider>,
   maxConcurrentThreads: number,
   layersFor?: ActorThreadLayersFor<R>,
-  threadAllocator?: typeof ThreadAllocator.Service
+  threadAllocator?: typeof ThreadAllocator.Service,
+  allocation?: BunHostOptions<never>["allocation"]
 ): Promise<ActorRuntime> => {
   const actor = definition
   const environmentFor = ((candidate: string) => {
@@ -413,6 +414,7 @@ const runtimeOf = async <R>(
     return application === undefined ? thread : Layer.mergeAll(thread, application)
   }) as NonNullable<BunHostOptions<R>["layersFor"]>
   const host: BunHost = await createBunHost<R>({
+    ...(allocation === undefined ? {} : { allocation }),
     ...(threadAllocator === undefined ? {} : { threadAllocator }),
     database,
     actorName: summary.name,
@@ -486,14 +488,12 @@ const runtimeOf = async <R>(
       yield* Effect.promise(() => host.commit(placed))
     })
   const threads: ActorThreads = {
-    allocateRoot: (name) => Effect.gen(function* () {
-      const target = yield* allocateThread({ kind: "root", coordinate: { actor: summary.name, instance: actorInstance, thread: name } }).pipe(
-        Effect.provideService(ThreadAllocator, threadAllocator ?? DEFAULT_THREAD_ALLOCATOR)
-      )
-      const at = yield* Clock.currentTimeMillis
-      yield* Effect.promise(() => host.initializeRoot(target, at))
-      return target
-    }),
+    allocateRoot: (name) => Effect.promise(() => host.allocate({
+      kind: "root", coordinate: { actor: summary.name, instance: actorInstance, thread: name ?? "" },
+      // Unnamed HTTP requests create independent allocations.
+      // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
+      ...(name === undefined ? { key: crypto.randomUUID() } : {})
+    })),
     methods: definition.methods,
     sqlite: database === ":memory:" ? database : resolve(database),
     append: (id, event) =>
@@ -533,7 +533,7 @@ const runtimeOf = async <R>(
   }
 }
 
-type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers" | "threadAllocator">
+type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers" | "threadAllocator" | "allocation">
 
 export type ActorThreadsOptions<R> = ActorThreadsBaseOptions & ([ActorApplicationRequirements<R>] extends [never]
   ? { readonly layersFor?: ActorThreadLayersFor<R> }
@@ -585,7 +585,7 @@ export const layerActorThreads = <R>(
         options.providers ?? [],
         config.maxConcurrentThreads,
         options.layersFor,
-        options.threadAllocator
+        options.threadAllocator, options.allocation
       ).then((runtime) => {
         runtimes.set(id, runtime)
         opening.delete(id)
@@ -718,7 +718,7 @@ const make = (options: ThreadsOptions) =>
         options.providers ?? [],
         config.maxConcurrentThreads,
         undefined,
-        options.threadAllocator
+        options.threadAllocator, options.allocation
       )
       runtimes.set(summary.name, runtime)
       await runRegistry(registry.put(summary))
@@ -738,7 +738,7 @@ const make = (options: ThreadsOptions) =>
         options.providers ?? [],
         config.maxConcurrentThreads,
         undefined,
-        options.threadAllocator
+        options.threadAllocator, options.allocation
       ).then((runtime) => {
         instances.set(id, runtime)
         openingInstances.delete(id)

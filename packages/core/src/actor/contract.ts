@@ -1,4 +1,4 @@
-import type { ActorRef } from "./reference"
+import type { ThreadTarget } from "./reference"
 import type { ActorMethodDeclaration, ActorMethods } from "./method"
 import type { Component } from "@clavia/tardigrade-core/component"
 
@@ -18,7 +18,7 @@ export interface CallerRef<Methods extends ActorMethods = ActorMethods> {
 
 export interface CalledMethod {
   readonly method: ActorMethodDeclaration
-  readonly target: ActorRef | CallerRef
+  readonly target: ThreadTarget | CallerRef
 }
 
 // ComponentContract records method seams using the method declarations that execute them.

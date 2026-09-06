@@ -20,7 +20,7 @@ export interface ThreadLineage {
   readonly placement?: ChildPlacement
 }
 
-// ThreadCreated is the first event in one actor thread's log. Its address and lineage remain fixed for that log (tla/runtime/Thread.tla, CreationFirst and AcceptedMatchesCreated).
+// ThreadCreated is the first event in one actor thread's log. Its address and lineage remain fixed for that log (packages/host/tla/Thread.tla, CreationFirst and AcceptedMatchesCreated).
 export const ThreadCreated = Schema.Struct({
   type: Schema.Literal("ThreadCreated"),
   address: ThreadAddress,

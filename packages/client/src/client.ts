@@ -191,7 +191,7 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   // Appends one event to a thread's log. A brief is `{ type: "MessageReceived", id, text }`; the
   // platform requires nothing but `type` (contract.ts, Append).
   readonly append: (actor: string, thread: string, event: Append) => Promise<Accepted>
-  readonly allocateRoot: (actor: string, name: string) => Promise<ThreadCoordinate>
+  readonly allocateRoot: (actor: string, name?: string) => Promise<ThreadCoordinate>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
   // call commits one declared method call and returns its durable handle.
@@ -383,7 +383,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
-    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ params: { id: actor }, payload: { name } })),
+    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invoke({

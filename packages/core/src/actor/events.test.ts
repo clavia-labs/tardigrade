@@ -3,6 +3,18 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { actorEventKeyOf, actorThreadsOf } from "./events"
 
 describe("actor events", () => {
+  test("allocation and registration project into the same thread record", () => {
+    const allocated: Event = { type: "ThreadAllocated", thread: "quiet-fox-abcd", allocationKey: "spawn", parentThread: "main", depth: 1, at: 0 }
+    const requested: Event = { type: "ThreadRequested", thread: "quiet-fox-abcd", parentThread: "main", depth: 1, placement: "independent", at: 1 }
+    const registered: Event = { type: "ThreadRegistered", thread: "quiet-fox-abcd", at: 2 }
+    for (const [events, state] of [
+      [[allocated], "allocated"], [[allocated, requested], "requested"], [[allocated, requested, registered], "registered"]
+    ] as const) {
+      expect(actorThreadsOf(events)).toEqual([expect.objectContaining({ allocationKey: "spawn", thread: "quiet-fox-abcd", parentThread: "main", depth: 1, state })])
+    }
+    expect(actorEventKeyOf(allocated)).toBe("thread:allocated:quiet-fox-abcd")
+  })
+
   test("projects thread registration", () => {
     const events: ReadonlyArray<Event> = [
       { type: "ThreadRequested", thread: "child", parentThread: "root", depth: 1, at: 1 },

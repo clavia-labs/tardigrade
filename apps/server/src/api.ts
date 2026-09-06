@@ -6,7 +6,7 @@ import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { invocationCoordinateOf } from "@clavia/tardigrade-core/interaction"
-import { existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "./method-request"
+import { existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-host/transport/http/method-request"
 
 import {
   Api,

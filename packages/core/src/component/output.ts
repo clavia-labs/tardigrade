@@ -1,7 +1,7 @@
 import type { Transition } from "@clavia/tardigrade-core/transition"
 
 /**
- * ComponentOutput contains one component's view and enabled transitions (tla/runtime/Projection.tla, ViewFaithful; tla/runtime/Reconcile.tla, NoVoid).
+ * ComponentOutput contains one component's view and enabled transitions (tla/projection/Projection.tla, ViewFaithful; tla/runtime/Reconcile.tla, NoVoid).
  *
  *   ComponentOutput<View, Requirements>
  *                   │          │

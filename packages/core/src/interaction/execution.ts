@@ -4,7 +4,7 @@ import { Self } from "../runtime/reconciler"
 import { actorCall } from "./invoke"
 import type { ActorInvocationContext, InvocationCoordinate } from "./invocation"
 import type { ActorMethods, ActorMethodInput, ActorMethodOutput } from "../actor/method"
-import type { ActorRef } from "../actor/reference"
+import type { ThreadTarget } from "../actor/reference"
 
 import type { ThreadCoordinate } from "../actor/coordinate"
 import { childLineageOf, sameThreadAddress, threadCreatedOf } from "./relations"
@@ -37,7 +37,7 @@ export interface InvocationOptions {
 // invokeMethod replays a keyed call and yields execution while its result is pending (packages/host/src/invocation.test.ts).
 // The enclosing action restarts from its beginning; side effects outside keyed calls must be replay-safe.
 export const invokeMethod = <Methods extends ActorMethods, Name extends Extract<keyof Methods, string>>(
-  target: ActorRef<Methods>,
+  target: ThreadTarget<Methods>,
   method: Name,
   input: ActorMethodInput<Methods[Name]>,
   options: InvocationOptions,

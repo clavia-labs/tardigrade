@@ -2,7 +2,6 @@ import { expect, test } from "bun:test"
 import fc from "fast-check"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { threadAddressOf } from "@clavia/tardigrade-core/transport/endpoint"
-import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { alarmFired } from "@clavia/tardigrade-core/interaction/timeout"
 import type { Action } from "tardie/log/events"
 import {
@@ -290,7 +289,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         return threads[choice % threads.length]!
       }
     })
-    scenario.host.seed(humanThread, [threadCreated(threadAddressOf("mem", "main", humanThread), undefined, 0)])
+    await scenario.host.allocate({ kind: "root", coordinate: human.address })
     const turn = await scenario.enqueue("Rick opens every portal")
     await scenario.drive()
     expect(scenario.host.resting()).toBe(true)

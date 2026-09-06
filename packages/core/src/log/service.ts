@@ -40,7 +40,7 @@ export interface ThreadEventStore {
  *     ├── head             read the current watermark
  *     └── readFrom(mark)   read events after a watermark
  *
- * Bindings preserve append-only storage, total order, serialized writes, atomic batches, keyed deduplication, and ordered tail reads (tla/runtime/Log.tla). An absorbed keyed append leaves the head unchanged.
+ * Bindings preserve append-only storage, total order, serialized writes, atomic batches, keyed deduplication, and ordered tail reads (tla/log/Log.tla). An absorbed keyed append leaves the head unchanged.
  */
 export class EventLog extends Context.Service<
   EventLog,

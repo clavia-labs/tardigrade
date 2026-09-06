@@ -9,7 +9,7 @@ import { BunHttpServer } from "@effect/platform-bun"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import { Ingress } from "@clavia/tardigrade-host/communication/ingress"
+import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
 import { ACTOR_ARTIFACT_VERSION, Infer, type InferDelta, type InferRequest } from "tardie"
 import type { Action } from "tardie/log/events"
 
@@ -330,6 +330,20 @@ describe("actor methods", () => {
     })
     expect(message?.outputSchema).toMatchObject({ type: "string" })
     expect(budget?.inputSchema.$ref).toBe("#/$defs/BudgetRequestInput")
+  })
+
+  test("HTTP allocates fresh callable roots without names", async () => {
+    await serving(async (base) => {
+      const first = await post(base, "/v1/actors/main/threads", {})
+      const second = await post(base, "/v1/actors/main/threads", {})
+      expect(first.status).toBe(200)
+      expect(second.status).toBe(200)
+      const target = await first.json() as { thread: string }
+      const other = await second.json() as { thread: string }
+      expect(target.thread).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
+      expect(other.thread).not.toBe(target.thread)
+      expect((await put(base, `/v1/actors/main/threads/${target.thread}/methods/message/calls/m1`, { text: "hello" })).status).toBe(202)
+    })
   })
 
   test("HTTP invokes the assigned root ID without reallocating it", async () => {
@@ -1062,7 +1076,7 @@ describe("the tree", () => {
       const tree = (await (await fetch(`${base}/v1/actors/main/threads/root/tree`)).json()) as ThreadNode
       const childId = tree.children[0]!.id
       const childEvents = (await (await fetch(`${base}/v1/actors/main/threads/${childId}/events`)).json()) as ReadonlyArray<EventRow>
-      expect(childId).toMatch(/^[0-9a-f]{64}$/)
+      expect(childId).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
       expect(childEvents.some(({ event }) => event.type === "TurnCompleted")).toBe(true)
       expect(childEvents[0]!.event).toMatchObject({
         address: { thread: childId }, parent: { thread: "root" }

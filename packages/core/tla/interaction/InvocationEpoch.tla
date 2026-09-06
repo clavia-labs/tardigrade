@@ -1,7 +1,7 @@
 -------------------------- MODULE InvocationEpoch --------------------------
 (* InvocationEpoch models one active execution owner for each logical method call. *)
 
-EXTENDS FiniteSets, Naturals, TLC
+EXTENDS FiniteSets, Integers, TLC
 
 CONSTANT Epochs
 

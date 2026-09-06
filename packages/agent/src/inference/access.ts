@@ -150,7 +150,7 @@ const intersectModels = (left: ProviderModels, right: ProviderModels): ProviderM
   return new Set([...left].filter((model) => right.has(model)))
 }
 
-// intersectModelPolicies returns the authority shared by every layer (packages/core/tla/runtime/ModelPolicy.tla, ChildCannotWiden; HostCeiling).
+// intersectModelPolicies returns the authority shared by every layer (packages/core/tla/component/ModelPolicy.tla, ChildCannotWiden; HostCeiling).
 export const intersectModelPolicies = (policies: ReadonlyArray<ModelPolicy>): ModelPolicy => {
   const explicit = policies.filter((policy) => policy.allow !== "*")
   if (explicit.length === 0) return DEFAULT_MODEL_POLICY
@@ -169,7 +169,7 @@ export const intersectModelPolicies = (policies: ReadonlyArray<ModelPolicy>): Mo
   return { allow: selectorsOf(intersection) }
 }
 
-// applyModelPolicy attenuates incoming authority and inherits or overrides its default (packages/core/tla/runtime/ModelPolicy.tla, ChildCannotWiden; DefaultAllowed).
+// applyModelPolicy attenuates incoming authority and inherits or overrides its default (packages/core/tla/component/ModelPolicy.tla, ChildCannotWiden; DefaultAllowed).
 export const applyModelPolicy = (incoming: ModelPolicy, override: ModelPolicyOverride): ModelPolicy => {
   const authority = intersectModelPolicies([incoming, { allow: override.allow ?? "*" }])
   const selected = override.default ?? incoming.default

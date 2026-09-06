@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto"
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { WebhookRequest } from "@clavia/tardigrade-host/communication/webhook"
+import type { WebhookRequest } from "@clavia/tardigrade-host/transport/http/webhook"
 import { slack } from "./slack"
 
 const encode = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))

@@ -27,7 +27,7 @@ import { EventLog, withWatermark } from "@clavia/tardigrade-core/log"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { threadCreated, threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
-import { childThreadId, DEFAULT_THREAD_ALLOCATOR } from "@clavia/tardigrade-host/allocation"
+import { registeredThreadAllocator, memoryThreadDirectory } from "@clavia/tardigrade-host/allocation"
 import { codeSystemFor } from "../component/code"
 
 // The package is a value: its three privileges arrive as services, so a test binds them the way
@@ -35,6 +35,7 @@ import { codeSystemFor } from "../component/code"
 
 type SentLink = Link<ThreadAddress, ThreadAddress> | Link<ThreadAddress, ProviderEndpoint>
 type Sent = Envelope<ThreadAddress, Event, SentLink["target"]>
+const testAllocator = registeredThreadAllocator(memoryThreadDirectory())
 
 const env = (
   thread: string,
@@ -49,7 +50,7 @@ const env = (
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
     }),
     Layer.succeed(Self, self),
-    Layer.succeed(ThreadAllocator, DEFAULT_THREAD_ALLOCATOR),
+    Layer.succeed(ThreadAllocator, testAllocator),
     Layer.succeed(EventLog, withWatermark({
       append: (committed) => Effect.sync(() => void appended.push(...committed)),
       read: Effect.succeed(events)
@@ -98,10 +99,11 @@ const legacyChild = (callId: string): Event => ({
   address: { actor: "mem", instance: "main", thread: `ag.${callId}` }, depth: 1, at: 2
 })
 
-const expectedThread = (turn: string, call: string) => childThreadId({
+const expectedThread = async (turn: string, call: string) => (await Effect.runPromise(testAllocator.allocate({
+  kind: "child",
   parent: parseThreadAddress("mem:main:ag.root"),
   child: childKeyOf(JSON.stringify([turn, call]))
-})
+}))).thread
 
 describe("agentsPackage", () => {
   test("a host allocated coordinate is recorded and reused without allocating on replay", async () => {
@@ -489,7 +491,7 @@ const liveEnv = (events: Event[], sent: Array<Sent>) => {
       send: (envelope) => Effect.sync(() => void sent.push(envelope as Sent))
     }),
     Layer.succeed(Self, self),
-    Layer.succeed(ThreadAllocator, DEFAULT_THREAD_ALLOCATOR),
+    Layer.succeed(ThreadAllocator, testAllocator),
     Layer.succeed(EventLog, withWatermark({
       append: (committed) => Effect.sync(() => void events.push(...committed)),
       read: Effect.sync(() => events)

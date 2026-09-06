@@ -42,13 +42,13 @@ const tardie = defineActor(
 )
 ```
 
-## Choose an instance
+## Create an instance
 
 An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `tardie`. Morty can use the same actor definition with a different instance identity.
 
 <ActorInstancesDiagram />
 
-## Allocating threads
+## Allocate threads
 
 `tardie.allocateRootThread(...)` and `tardie.allocateChildThread(...)` return Effects that use the same host allocator when run. Repeating an allocation with the same scope and name returns a reference to the same logical thread.
 
@@ -80,6 +80,15 @@ const researcherRef = yield* tardie.allocateChildThread({
 
 <ChildThreadsDiagram />
 
+### Generated names
+
+Omit `name` to let the host assign a name. By default, generated names are friendly slugs such as `quiet-fox-k7m2`, made from an adjective, a noun, and a short random token. The host checks for collisions, retries if a name is already taken, and stores the assignment for reuse.
+
+```ts
+const rootRef = yield* tardie.allocateRootThread({ instance: "rick" })
+const childRef = yield* tardie.allocateChildThread({ parent: rootRef })
+```
+
 ## Invoking a thread
 
 Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickRef` identifies Rick's `"main"` thread, where a caller can invoke `tardie`'s `message` method.
@@ -90,13 +99,53 @@ const response = yield* rickRef.message({
 }, { key: "portal-plan" })
 ```
 
-Calls run inside an invocation-scoped actor action. A key identifies a call within that invocation, so replay reads the same result. While a call is pending, the runtime releases execution and later replays the action from its beginning. Other side effects in the action must also be replay-safe.
+Call methods from an actor action. The `key` acts as an idempotency key: retrying the action reuses the same call and its result.
 
 <ThreadInvocationDiagram />
 
 ### Resolving to a physical address
 
 A reference identifies a thread. The host resolves it to where that thread runs, so callers do not need to know its location. The receiving host is also responsible for access checks.
+
+For Rick's `main` thread, the Cloudflare host uses JSON arrays to name the actor instance and thread Durable Objects:
+
+```ts
+const actor = "tardie"
+const instance = "rick"
+const thread = "main"
+
+const supervisor = env.ACTORS.getByName(JSON.stringify([actor, instance]))
+const target = env.THREADS.getByName(JSON.stringify([actor, instance, thread]))
+```
+
+```text
+Durable Object namespaces
+├── ACTORS
+│   └── ["tardie","rick"]          # Rick's instance
+└── THREADS
+    ├── ["tardie","rick","main"]   # main
+    └── ["tardie","rick","lab"]    # lab
+```
+
+The Bun host stores each thread beside its actor instance's database. It encodes the thread ID as a base64url filename:
+
+```ts
+import { Buffer } from "node:buffer"
+import { join } from "node:path"
+
+const actorDatabase = "/data/tardie-rick.sqlite"
+const thread = "main"
+const filename = Buffer.from(thread, "utf8").toString("base64url")
+const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
+```
+
+```text
+/data/
+├── tardie-rick.sqlite          # Rick's instance database
+└── tardie-rick.sqlite.threads/
+    ├── bWFpbg.sqlite          # main
+    └── bGFi.sqlite            # lab
+```
 
 <ThreadResolutionDiagram />
 

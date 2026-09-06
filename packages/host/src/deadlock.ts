@@ -5,7 +5,7 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 // unanswered awaiting call is an edge to the thread whose settle answers
 // it. A cycle is a deadlock: every member thread rests honestly, blocked
 // on the world, and the world is the other members. No thread-local
-// invariant can see a cycle (packages/core/tla/communication/Delivery.tla, the
+// invariant can see a cycle (packages/core/tla/interaction/Delivery.tla, the
 // DeliveryDeadlock config is the pinned trace); only the tier that
 // sees all threads can break one.
 //

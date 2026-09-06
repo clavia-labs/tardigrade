@@ -1,19 +1,39 @@
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, Option, Schema } from "effect"
 import { childKeyOf, type ChildKey, ThreadCoordinate, threadCoordinateOf, actorCoordinateOf } from "./coordinate"
 
 import type { ActorDefinition } from "./definition"
 import type { ActorMethods } from "./method"
-import { bindThreadMethods, type ActorRef, type ThreadRef } from "./reference"
+import { bindThreadMethods, type ThreadTarget, type ThreadRef } from "./reference"
 
 export interface RootThreadOptions {
   readonly instance: string
-  readonly name: string
+  readonly name?: string
+  readonly key?: string
 }
 
 export interface ChildThreadOptions {
-  readonly parent: ActorRef
-  readonly name: string
+  readonly parent: ThreadTarget
+  readonly name?: string
+  readonly key?: string
 }
+
+// ThreadAllocationScope identifies allocations within one replayed action.
+export class ThreadAllocationScope extends Context.Service<ThreadAllocationScope, {
+  readonly key: (explicit?: string) => string
+}>()("tardigrade/ThreadAllocationScope") {}
+
+const allocationIdentity = (options: { readonly name?: string; readonly key?: string }) => Effect.gen(function* () {
+  if (options.name !== undefined) {
+    if (options.key !== undefined) return yield* Effect.die(new Error("named allocations do not accept a separate key"))
+    return { name: yield* Schema.decodeEffect(Schema.NonEmptyString)(options.name).pipe(Effect.orDie) }
+  }
+  const scope = yield* Effect.serviceOption(ThreadAllocationScope)
+  const explicit = options.key === undefined ? undefined : yield* Schema.decodeEffect(Schema.NonEmptyString)(options.key).pipe(Effect.orDie)
+  // Unscoped creation keys must remain independent of replay-seeded randomness.
+  // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
+  const key = Option.isSome(scope) ? scope.value.key(explicit) : explicit ?? crypto.randomUUID()
+  return { name: "", key }
+})
 
 export interface ActorAllocation<Methods extends ActorMethods> {
   readonly allocateRootThread: (options: RootThreadOptions) => Effect.Effect<ThreadRef<Methods>, never, ThreadAllocator>
@@ -25,7 +45,11 @@ export const allocateRootThread = <Methods extends ActorMethods>(
   actor: Pick<ActorDefinition<Methods>, "name" | "methods">,
   options: RootThreadOptions
 ): Effect.Effect<ThreadRef<Methods>, never, ThreadAllocator> => Effect.gen(function* () {
-  const address = yield* allocateThread({ kind: "root", coordinate: threadCoordinateOf(actorCoordinateOf(actor.name, options.instance), options.name) })
+  const identity = yield* allocationIdentity(options)
+  const address = yield* allocateThread({
+    kind: "root", coordinate: threadCoordinateOf(actorCoordinateOf(actor.name, options.instance), identity.name),
+    ...(identity.key === undefined ? {} : { key: identity.key })
+  })
   return bindThreadMethods({ address, methods: actor.methods })
 })
 
@@ -37,22 +61,25 @@ export const allocateChildThread = <Methods extends ActorMethods>(
   if (options.parent.address.actor !== actor.name) {
     return yield* Effect.die(new Error("child allocation requires a parent from the same actor definition"))
   }
+  const identity = yield* allocationIdentity(options)
   const address = yield* allocateChildCoordinate({
     parent: options.parent.address,
-    child: childKeyOf(options.name)
+    child: childKeyOf(identity.name || "unnamed"),
+    ...(identity.key === undefined ? {} : { key: identity.key })
   })
   return bindThreadMethods({ address, methods: actor.methods }, options.parent.address)
 })
 
 // ChildThreadRequest identifies a logical spawn within its parent's namespace.
 export interface ChildThreadRequest {
+  readonly key?: string
   readonly parent: ThreadCoordinate
   readonly child: ChildKey
 }
 
 // ThreadAllocation identifies a root name or a parent-scoped child name for host assignment.
 export type ThreadAllocation =
-  | { readonly kind: "root"; readonly coordinate: ThreadCoordinate }
+  | { readonly kind: "root"; readonly coordinate: ThreadCoordinate; readonly key?: string }
   | ({ readonly kind: "child" } & ChildThreadRequest)
 
 // ThreadAllocator assigns roots and children within a shared actor-instance namespace.
@@ -65,8 +92,9 @@ export class ThreadAllocator extends Context.Service<ThreadAllocator, {
 // allocateThread validates the host's assignment without prescribing its thread identity (allocation.test.ts).
 export const allocateThread = (request: ThreadAllocation) => Effect.gen(function* () {
   const parent = yield* Schema.decodeEffect(ThreadCoordinate)(request.kind === "root" ? request.coordinate : request.parent).pipe(Effect.orDie)
-  const normalized: ThreadAllocation = request.kind === "root" ? { kind: "root", coordinate: parent }
-    : { kind: "child", parent, child: childKeyOf(request.child) }
+  const key = request.key === undefined ? {} : { key: yield* Schema.decodeEffect(Schema.NonEmptyString)(request.key).pipe(Effect.orDie) }
+  const normalized: ThreadAllocation = request.kind === "root" ? { kind: "root", coordinate: parent, ...key }
+    : { kind: "child", parent, child: childKeyOf(request.child), ...key }
   const allocator = yield* ThreadAllocator
   const target = yield* allocator.allocate(normalized).pipe(
     Effect.flatMap(Schema.decodeEffect(ThreadCoordinate)), Effect.orDie

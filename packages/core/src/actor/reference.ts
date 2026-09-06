@@ -8,32 +8,33 @@ import type { EventLog } from "../log"
 import type { Router } from "../transport/router"
 import type { Self } from "../runtime/reconciler"
 
-// ActorRef identifies one callable actor thread and preserves its declared method surface.
+// ThreadTarget pairs a thread coordinate with its method declarations.
 // Its address and method declarations carry no authority to access the target.
 // TODO: Add transferable capabilities beside coordinates, scoped to target and operation.
-export interface ActorRef<Methods extends ActorMethods = ActorMethods> {
+export interface ThreadTarget<Methods extends ActorMethods = ActorMethods> {
   readonly address: ThreadCoordinate
   readonly methods: Methods
 }
 
-// actorRef binds an actor definition to one durable thread identity.
-export const actorRef = <Methods extends ActorMethods>(
+// threadTarget pairs an actor's method declarations with a thread coordinate.
+export const threadTarget = <Methods extends ActorMethods>(
   actor: Pick<ActorDefinition<Methods>, "name" | "methods">,
   instance: string,
   thread: string
-): ActorRef<Methods> => ({
+): ThreadTarget<Methods> => ({
   address: threadCoordinateOf(actorCoordinateOf(actor.name, instance), thread),
   methods: actor.methods
 })
 
-export type ThreadRef<Methods extends ActorMethods> = ActorRef<Methods> & {
+// ThreadRef exposes the actor's declared methods as callable Effects.
+export type ThreadRef<Methods extends ActorMethods> = ThreadTarget<Methods> & {
   readonly [Name in keyof Methods]: (
     input: ActorMethodInput<Methods[Name]>, options: InvocationOptions
   ) => Effect.Effect<ActorMethodOutput<Methods[Name]>, InvocationFailed | InvocationCancelled, InvocationScope | EventLog | Router | Self>
 }
 
 // bindThreadMethods exposes declared methods as replayable calls on a thread reference.
-export const bindThreadMethods = <Methods extends ActorMethods>(reference: ActorRef<Methods>, creationParent?: ThreadCoordinate): ThreadRef<Methods> => {
+export const bindThreadMethods = <Methods extends ActorMethods>(reference: ThreadTarget<Methods>, creationParent?: ThreadCoordinate): ThreadRef<Methods> => {
   const calls: Record<string, unknown> = Object.create(null)
   for (const name of Object.keys(reference.methods)) {
     if (name === "address" || name === "methods" || name === "then") {

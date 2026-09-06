@@ -6,14 +6,14 @@ import { activeMessageCall, childThread, pendingChildCount, waitingForResponse }
 const row = (seq: number, event: Event): EventRow => ({ seq, event })
 
 describe("childThread", () => {
-  test("uses the recorded child address", () => {
+  test.each(["a".repeat(64), "ag.6:turn-1call-1", "custom-child"])("preserves the recorded child address %s", (thread) => {
     const event = {
       type: "ChildCreated",
       callId: "call-1",
-      address: { actor: "react-chat", instance: "main", thread: "ag.6:turn-1call-1" }
+      address: { actor: "react-chat", instance: "main", thread }
     } as Event
 
-    expect(childThread(event)).toBe("6:turn-1call-1")
+    expect(childThread(event)).toBe(thread)
   })
 
   test("does not treat a call id as a child thread", () => {

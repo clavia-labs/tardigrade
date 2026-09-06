@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test"
 import { Context, Effect } from "effect"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
-import { Ingress } from "@clavia/tardigrade-host/ingress"
-import type { Webhook } from "@clavia/tardigrade-host/webhook"
+import { Ingress } from "@clavia/tardigrade-host/transport/ingress"
+import type { Webhook } from "@clavia/tardigrade-host/transport/http/webhook"
 import { bunChannelHandler, handleBunWebhook, webhookRequestFrom, webhookResponseFrom } from "./webhook"
-import { channelOf } from "@clavia/tardigrade-host/communication/channel"
+import { channelOf } from "@clavia/tardigrade-host/transport/channel"
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text)
 

@@ -1,7 +1,7 @@
 import { intent, Self, type Transition, type Intent } from "@clavia/tardigrade-core/runtime"
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
 import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
-import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ActorRef, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ThreadTarget, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { budgetDenied, budgetExhausted, budgetGranted, budgetRequested } from "../log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnEpochOf, turnHead, turnView } from "@clavia/tardigrade-code/execution/turns"
@@ -35,7 +35,7 @@ export type BudgetAuthorityMethods = {
 }
 
 // BudgetAuthority identifies an actor that handles requestBudget or resolves it from the accepted call.
-export type BudgetAuthority = ActorRef<BudgetAuthorityMethods> | CallerBudgetAuthority
+export type BudgetAuthority = ThreadTarget<BudgetAuthorityMethods> | CallerBudgetAuthority
 
 // caller selects the actor that invoked the current message call as its budget authority.
 export const caller = (): CallerBudgetAuthority => ({
@@ -210,7 +210,7 @@ const authorityFor = (
   log: ReadonlyArray<Event>,
   turn: string,
   authority: BudgetAuthority | undefined
-): ActorRef<BudgetAuthorityMethods> | undefined => {
+): ThreadTarget<BudgetAuthorityMethods> | undefined => {
   if (authority === undefined) return undefined
   if ("address" in authority) return authority
   const head = log.find((event) =>

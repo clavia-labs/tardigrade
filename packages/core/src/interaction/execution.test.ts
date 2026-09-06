@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect, Layer, Schema } from "effect"
 import { defineActor } from "../actor/definition"
-import { bindThreadMethods, actorRef } from "../actor/reference"
+import { bindThreadMethods, threadTarget } from "../actor/reference"
 
 import { legacyActorMethod } from "../actor/method-compat"
 import { actorCall } from "./invoke"
@@ -24,7 +24,7 @@ const count = legacyActorMethod({
   state: () => ({ status: "pending" })
 })
 const definition = defineActor("scientist", { research, count }, [])
-const reference = bindThreadMethods(actorRef(definition, "main", "worker"))
+const reference = bindThreadMethods(threadTarget(definition, "main", "worker"))
 const parent = { target: { actor: "scientist", instance: "main", thread: "root" }, invocation: { method: "review", id: "parent", epoch: 0 } }
 
 export const threadRefTypes = () => [

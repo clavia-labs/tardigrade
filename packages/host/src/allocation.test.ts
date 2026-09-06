@@ -1,124 +1,89 @@
-import { describe, expect, test } from "bun:test"
+import { expect, test } from "bun:test"
 import fc from "fast-check"
 import { Effect } from "effect"
-import { childKeyOf, threadIdOf, type ChildKey, type ThreadId } from "@clavia/tardigrade-core/actor/coordinate"
-import { childThreadId, DEFAULT_THREAD_ALLOCATOR } from "./allocation"
-import { allocateChildCoordinate as allocateChildThread, reserveRootThread, ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { registeredThreadAllocator, memoryThreadDirectory, initializingThreadAllocator, threadSlug } from "./allocation"
+import type { ThreadAllocation } from "@clavia/tardigrade-core/actor/allocation"
 
-const parent = { actor: "researcher", instance: "main", thread: "root" }
-const opaqueString = fc.array(fc.integer({ min: 0, max: 0xffff }), { minLength: 1, maxLength: 80 })
-  .map((units) => String.fromCharCode(...units))
-const coordinates = fc.record({
-  parent: fc.record({
-    actor: opaqueString,
-    instance: opaqueString.map((value) => value.replaceAll(":", "_")),
-    thread: opaqueString
-  }),
-  child: opaqueString.map((value) => childKeyOf(value))
+const parent = { actor: "tardie", instance: "rick", thread: "main" }
+const child = (name: string): ThreadAllocation => ({ kind: "child", parent, child: childKeyOf(name) })
+
+test("slugs use configurable words and a short random token", () => {
+  expect(threadSlug()).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
+  expect(threadSlug({ adjectives: ["quiet"], nouns: ["fox"], tokenLength: 6 })).toMatch(/^quiet-fox-[a-z2-7]{6}$/)
 })
 
-// Safety properties await derivation; the test runner's timeout also checks completion on sampled inputs.
-describe("child identity safety", () => {
-  test("root reservations and child assignments occupy disjoint namespaces", async () => {
-    await fc.assert(fc.asyncProperty(coordinates, async ({ parent, child }) => {
-      const root = { ...parent, thread: `root:${parent.thread}` }
-      const run = <A>(effect: Effect.Effect<A, never, ThreadAllocator>) =>
-        Effect.runPromise(effect.pipe(Effect.provideService(ThreadAllocator, DEFAULT_THREAD_ALLOCATOR)))
-      expect(await run(reserveRootThread(root))).toEqual(root)
-      const allocated = await run(allocateChildThread({ parent: root, child }))
-      expect(await run(allocateChildThread({ parent: root, child }))).toEqual(allocated)
-      await expect(run(reserveRootThread(allocated))).rejects.toThrow("reserved for hashed child")
-      expect(await run(reserveRootThread(root))).toEqual(root)
-    }))
-  })
+test("concurrent retries and a reopened allocator recover the persisted assignment", async () => {
+  const store = memoryThreadDirectory()
+  let generated = 0
+  const policy = { generate: () => `quiet-fox-${generated++}` }
+  const allocator = registeredThreadAllocator(store, policy)
+  const results = await Promise.all(Array.from({ length: 20 }, () => Effect.runPromise(allocator.allocate(child("researcher")))))
+  expect(new Set(results.map((result) => result.thread)).size).toBe(1)
+  const reopened = registeredThreadAllocator(store, { generate: () => { throw new Error("must reuse assignment") } })
+  expect(await Effect.runPromise(reopened.allocate(child("researcher")))).toEqual(results[0]!)
+})
 
-  test("replay stability: the persisted encoding matches a fixed digest", async () => {
-    const id = await childThreadId({ parent, child: childKeyOf("step") })
-    expect(String(id)).toBe("ddc9895cb08a2f469846924b97c3b997dfb82ed5f6d1ff9c04174d89af7dcb27")
-  })
+test("collisions retry and exhaustion fails without aliasing another thread", async () => {
+  const store = memoryThreadDirectory()
+  const first = registeredThreadAllocator(store, { generate: () => "quiet-fox-abcd", maxAttempts: 2 })
+  await Effect.runPromise(first.allocate(child("first")))
+  await expect(Effect.runPromise(first.allocate(child("second")))).rejects.toThrow("exhausted 2")
+  let calls = 0
+  const retry = registeredThreadAllocator(store, { generate: () => calls++ === 0 ? "quiet-fox-abcd" : "bright-owl-efgh" })
+  expect((await Effect.runPromise(retry.allocate(child("second")))).thread).toBe("bright-owl-efgh")
+})
 
-  test("scope separation: every coordinate and tuple boundary contributes", async () => {
-    await fc.assert(fc.asyncProperty(coordinates, async ({ parent, child }) => {
-      const ids = await Promise.all([
-        childThreadId({ parent, child }),
-        childThreadId({ parent: { ...parent, actor: parent.actor + "x" }, child }),
-        childThreadId({ parent: { ...parent, instance: parent.instance + "x" }, child }),
-        childThreadId({ parent: { ...parent, thread: parent.thread + "x" }, child }),
-        childThreadId({ parent, child: childKeyOf(child + "x") })
-      ])
-      expect(new Set(ids).size).toBe(ids.length)
-    }))
-    const pairs = [["a", "b:c"], ["a:b", "c"], ["a", "\ud800"], ["a", "\ufffd"]] as const
-    const ids = await Promise.all(pairs.map(([thread, child]) => childThreadId({
-      parent: { ...parent, thread }, child: childKeyOf(child)
-    })))
-    expect(new Set(ids).size).toBe(pairs.length)
-  })
+test("roots, children, and existing threads cannot claim each other's IDs", async () => {
+  const store = memoryThreadDirectory((target) => target.thread === "occupied")
+  const candidates = ["occupied", "main", "quiet-fox-abcd", "quiet-fox-abcd", "bright-owl-efgh"]
+  const allocator = registeredThreadAllocator(store, { generate: () => candidates.shift()! })
+  const root = await Effect.runPromise(allocator.allocate({ kind: "root", coordinate: parent }))
+  const spawned = await Effect.runPromise(allocator.allocate(child("researcher")))
+  const unnamed = await Effect.runPromise(allocator.allocate({ kind: "root", coordinate: { ...parent, thread: "" }, key: "create" }))
+  expect([root.thread, spawned.thread, unnamed.thread]).toEqual(["main", "quiet-fox-abcd", "bright-owl-efgh"])
+})
 
-  test("tree separation: distinct nodes have distinct addresses across roots and depths", async () => {
-    await fc.assert(fc.asyncProperty(
-      coordinates,
-      fc.constantFrom("actor", "instance", "thread"),
-      fc.uniqueArray(opaqueString, { minLength: 1, maxLength: 3 }),
-      fc.tuple(fc.integer({ min: 2, max: 4 }), fc.integer({ min: 2, max: 4 })),
-      async ({ parent }, coordinate, keys, depths) => {
-        // root uses a non-hex name to exclude aliases with generated descendants.
-        const root = { ...parent, thread: `root:${parent.thread}` }
-        const roots = [root, { ...root, [coordinate]: root[coordinate] + "x" }]
-        const addressKey = (address: typeof root) => JSON.stringify([address.actor, address.instance, address.thread])
-        const seen = new Set(roots.map(addressKey))
-        expect(seen.size).toBe(2)
-        for (const [index, origin] of roots.entries()) {
-          let frontier = [origin]
-          for (let depth = 0; depth < depths[index]!; depth++) {
-            const descendants = await Promise.all(frontier.flatMap((address) =>
-              keys.map(async (key) => {
-                const coordinates = { parent: address, child: childKeyOf(key) }
-                const thread = await childThreadId(coordinates)
-                expect(await childThreadId({ ...coordinates, parent: { ...address } })).toBe(thread)
-                return { ...address, thread }
-              })
-            ))
-            for (const descendant of descendants) {
-              const identity = addressKey(descendant)
-              expect(seen.has(identity)).toBe(false)
-              seen.add(identity)
-            }
-            frontier = descendants
-          }
+test("distinct scopes and names separate trees at every depth", async () => {
+  await fc.assert(fc.asyncProperty(
+    fc.string({ minLength: 1, maxLength: 20 }),
+    fc.constantFrom("actor", "instance", "thread"),
+    fc.uniqueArray(fc.string({ minLength: 1, maxLength: 20 }), { minLength: 1, maxLength: 3 }),
+    fc.integer({ min: 2, max: 4 }),
+    async (name, coordinate, names, depth) => {
+      const store = memoryThreadDirectory()
+      const allocator = registeredThreadAllocator(store)
+      const root = { ...parent, thread: name }
+      const roots = [root, { ...root, [coordinate]: root[coordinate] + "x" }]
+      const seen = new Set(roots.map((value) => JSON.stringify(value)))
+      let frontier = roots
+      for (let level = 0; level < depth; level++) {
+        const descendants = await Promise.all(frontier.flatMap((parent) => names.map(async (name) => {
+          const request: ThreadAllocation = { kind: "child", parent, child: childKeyOf(name) }
+          const target = await Effect.runPromise(allocator.allocate(request))
+          expect(await Effect.runPromise(registeredThreadAllocator(store).allocate(request))).toEqual(target)
+          return target
+        })))
+        for (const target of descendants) {
+          const identity = JSON.stringify(target)
+          expect(seen.has(identity)).toBe(false)
+          seen.add(identity)
         }
+        frontier = descendants
       }
-    ))
-  })
-
-  test("valid bounded output: derivations resolve and invalid coordinates reject", async () => {
-    await fc.assert(fc.asyncProperty(coordinates, async (input) => {
-      expect(await childThreadId(input)).toMatch(/^[0-9a-f]{64}$/)
-    }))
-    let thread = "root".repeat(10_000)
-    for (let depth = 0; depth < 20; depth++) {
-      thread = await childThreadId({ parent: { ...parent, thread }, child: childKeyOf("step".repeat(10_000)) })
-      expect(thread).toMatch(/^[0-9a-f]{64}$/)
     }
-    for (const invalid of ["", null, 1]) {
-      expect(() => childKeyOf(invalid)).toThrow()
-      expect(() => threadIdOf(invalid)).toThrow()
-    }
-    const child = childKeyOf("step")
-    for (const invalidParent of [
-      { ...parent, actor: "" },
-      { ...parent, instance: "" },
-      { ...parent, thread: "" }
-    ]) {
-      await expect(childThreadId({ parent: invalidParent, child })).rejects.toThrow()
-    }
-    await expect(childThreadId({ parent, child: "" as ChildKey })).rejects.toThrow()
-  })
+  ))
 })
 
-test("type safety: thread identifiers cannot substitute for child keys", () => {
-  const thread: ThreadId = threadIdOf("root")
-  // @ts-expect-error ThreadId cannot identify a parent-scoped child.
-  const child: ChildKey = thread
-  expect(String(child)).toBe("root")
+test("root initialization finishes before allocation returns and failures propagate", async () => {
+  const allocator = registeredThreadAllocator(memoryThreadDirectory())
+  const initialized: string[] = []
+  const service = initializingThreadAllocator(allocator, async (target) => { initialized.push(target.thread) })
+  const target = await Effect.runPromise(service.allocate({ kind: "root", coordinate: parent }))
+  expect(initialized).toEqual([target.thread])
+  await Effect.runPromise(service.allocate(child("researcher")))
+  expect(initialized).toHaveLength(1)
+  await expect(Effect.runPromise(initializingThreadAllocator(allocator,
+    () => Promise.reject(new Error("storage unavailable"))
+  ).allocate({ kind: "root", coordinate: parent }))).rejects.toThrow("storage unavailable")
 })

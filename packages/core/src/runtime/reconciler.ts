@@ -1,6 +1,7 @@
 import { Cause, Clock, Context, Effect, Option, type Tracer } from "effect"
 import { actorRuntimeOf, type ActorSource } from "./actor"
 import { InvocationScope, InvocationSuspended } from "../interaction/execution"
+import { ThreadAllocationScope } from "../actor/allocation"
 import { actorInvocationContextOf } from "../interaction/invocation"
 import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { ActorMethodCancellationState } from "@clavia/tardigrade-core/interaction/state"
@@ -14,7 +15,7 @@ import type { Projection } from "@clavia/tardigrade-core/projection"
 import type { ErasedTransitionProjection, Transition } from "@clavia/tardigrade-core/transition"
 
 // Actor runtime gives one log a single writer and derives all state from that log
-// (tla/runtime/Projection.tla). The platform serializes sends per actor.
+// (tla/projection/Projection.tla). The platform serializes sends per actor.
 
 // Self is the current actor's own address, bound by the platform per thread.
 export class Self extends Context.Service<Self, ThreadAddress>()("tardigrade/Self") {}
@@ -197,8 +198,20 @@ const runExternalEffect = <R>(
       : Effect.gen(function* () {
           const log = yield* EventLog
           const context = actorInvocationContextOf(yield* log.read, transition.invocation!) ?? { invocation: transition.invocation! }
+          const self = yield* Effect.serviceOption(Self)
+          let allocation = 0
           return yield* transition.act(transition.input, controller.signal).pipe(
-            Effect.provideService(InvocationScope, { context, signal: controller.signal })
+            Effect.provideService(InvocationScope, { context, signal: controller.signal }),
+            Effect.provideService(ThreadAllocationScope, {
+              key: (explicit) => {
+                if (Option.isNone(self)) throw new Error("unnamed allocation requires the caller coordinate")
+                return JSON.stringify([
+                  self.value.actor, self.value.instance, self.value.thread,
+                  context.invocation.method, context.invocation.id, context.invocation.epoch,
+                  transition.key, explicit === undefined ? ["position", allocation++] : ["key", explicit]
+                ])
+              }
+            })
           )
         })
     return yield* Effect.raceFirst(
@@ -271,7 +284,7 @@ const enabledFrom = <R>(
 }
 
 // restingActor reports whether the log enables no transition
-// (tla/runtime/Driver.tla, Accounting).
+// (packages/host/tla/Driver.tla, Accounting).
 export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>): boolean =>
   enabled(a, events).length === 0
 
@@ -279,7 +292,7 @@ export const restingActor = <R>(a: ActorSource<R>, events: ReadonlyArray<Event>)
 // output before another transition fires (actor.properties.test.ts, "a committed intent
 // invalidates every remaining transition from its snapshot"; tla/runtime/Coherence.tla,
 // NoSuppressedCommit). A fire may commit, advance, block, or wedge; a wedge dies, and the platform
-// alarm re-drives blocked work (tla/runtime/Driver.tla, EventuallyServed).
+// alarm re-drives blocked work (packages/host/tla/Driver.tla, EventuallyServed).
 export interface ActorReconciler<R> {
   readonly settle: Effect.Effect<void, never, EventLog | R>
   // isResting reports the result of the last completed settlement. A host must also account for work appended since that settlement.
@@ -287,7 +300,7 @@ export interface ActorReconciler<R> {
 }
 
 // createActorReconciler retains a sound projection and advances it from the durable watermark.
-// One instance belongs to one actor activation (tla/runtime/IncrementalProjection.tla, CacheSound).
+// One instance belongs to one actor activation (tla/projection/IncrementalProjection.tla, CacheSound).
 export const createActorReconciler = <R>(source: ActorSource<R>): ActorReconciler<R> => {
   const a = actorRuntimeOf(source)
   let cache: ProjectionCache<R> | undefined

@@ -1,5 +1,6 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
 import { actor, actorMethod, component } from "tardie"
+import { allocateRootThread } from "@clavia/tardigrade-core/actor"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -172,13 +173,21 @@ const worker = cloudflareWorker(actor({
       view: undefined,
       transitions: [...state.requests].flatMap(([id, text]) => state.completions.has(id) ? [] : [effect({
         key: `echo-complete:${id}`,
+        invocation: { method: "echo", id, epoch: 0 },
         input: { id, text },
         act: (input) => Effect.gen(function* () {
+          if (input.text === "allocate-root") {
+            const root = yield* allocateRootThread({ name: "echo", methods: { echo } }, {
+              instance: "main", name: "sdk-root"
+            })
+            const text = yield* root.echo({ text: "hello" }, { key: "root-echo" })
+            return [{ type: "EchoCompleted", id: input.id, text }]
+          }
           const application = yield* ThreadApplication
           application.calls += 1
           yield* Effect.promise(() => scheduler.wait(50))
           return [{ type: "EchoCompleted", ...input, text: `${application.prefix}:${application.thread}:${application.calls}:${input.text}` }]
-        })
+        }).pipe(Effect.orDie)
       })])
     })
   })]

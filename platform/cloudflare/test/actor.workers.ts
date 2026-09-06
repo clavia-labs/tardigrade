@@ -549,6 +549,43 @@ describe("cloudflare actor", () => {
     expect(await client.metadata()).toEqual({ name: "echo", storage: { kind: "durable-object" } })
   }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
 
+  test("the actor directory persists concurrent generated thread assignments", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    const request = { kind: "root" as const, coordinate: { actor: "echo", instance: "main", thread: "" }, key: "generated" }
+    const results = await Promise.all(Array.from({ length: 10 }, () => directory.allocateThread(request)))
+    expect(new Set(results.map((target) => target.thread)).size).toBe(1)
+    expect(results[0]!.thread).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
+    expect(await directory.allocateThread(request)).toEqual(results[0])
+    const rows = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ thread: string }>("SELECT json_extract(event, '$.thread') AS thread FROM events WHERE json_extract(event, '$.type') = 'ThreadAllocated'").toArray())
+    expect(rows.map((row) => row.thread)).toContain(results[0]!.thread)
+    expect(rows.filter((row) => row.thread === results[0]!.thread)).toHaveLength(1)
+    const tables = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray())
+    expect(tables.map((row) => row.name)).not.toContain("thread_assignments")
+  })
+
+  test("an actor action allocates a root through its Durable Object host before invoking it", async () => {
+    await createThread("sdk-caller")
+    const accepted = await SELF.fetch("http://test/v1/actors/main/threads/sdk-caller/methods/echo/calls/sdk-flow", {
+      method: "PUT", headers: { ...authorization, "content-type": "application/json" },
+      body: JSON.stringify({ text: "allocate-root" })
+    })
+    expect(accepted.status).toBe(202)
+    expect(await methodState("sdk-caller", "sdk-flow")).toEqual({
+      status: "completed", output: "workers:sdk-root:1:hello"
+    })
+    const response = await SELF.fetch("http://test/v1/actors/main/threads/sdk-root/events", { headers: authorization })
+    expect(response.status).toBe(200)
+    const events = await response.json() as ReadonlyArray<{ readonly event: { readonly type: string; readonly parent?: unknown } }>
+    expect(events.filter(({ event }) => event.type === "ThreadCreated")).toHaveLength(1)
+    expect(events[0]?.event.parent).toBeUndefined()
+    expect(events.filter(({ event }) => event.type === "EchoRequested")).toHaveLength(1)
+    const listed = await SELF.fetch("http://test/v1/actors/main/threads", { headers: authorization })
+    expect(await listed.json()).toEqual(expect.arrayContaining([expect.objectContaining({ id: "sdk-root", depth: 0 })]))
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("a mounted actor receives thread application services", async () => {
     const invoke = async (thread: string, call: string, text: string) => {
       await createThread(thread)
@@ -766,6 +803,7 @@ describe("cloudflare actor", () => {
       .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
       .filter((event) => event.thread.startsWith("ag.directory-"))
       .map((event) => event.type)).toEqual([
+      "ThreadAllocated",
       "ThreadRequested",
       "ThreadRegistered",
       "ThreadRequested",

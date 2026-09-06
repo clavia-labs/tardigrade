@@ -7,7 +7,7 @@ import {
   type Channel,
   type ChannelProvider,
   type ProviderReceipt
-} from "@clavia/tardigrade-host/communication/channel"
+} from "@clavia/tardigrade-host/transport/channel"
 
 export const SLACK_API_BASE_URL = "https://slack.com/api"
 export const SLACK_SIGNATURE_HEADER = "x-slack-signature"

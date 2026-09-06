@@ -1,7 +1,7 @@
 import { Effect } from "effect"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
-import { Ingress, type ActorUnavailable } from "./ingress"
+import { Ingress, type ActorUnavailable } from "../ingress"
 
 // WebhookRequest is the transport-neutral input captured from one HTTP request. Headers use lowercase names, body keeps the original bytes, and receivedAt is the host's acceptance time.
 export interface WebhookRequest {

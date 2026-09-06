@@ -183,6 +183,7 @@ describe("a declared actor method", () => {
     expect(await client.allocateRoot("rick", "lab")).toEqual(coordinate)
     expect(calls[0]?.method).toBe("POST")
     expect(lastUrl().pathname).toBe("/v1/actors/rick/threads")
+    expect(await client.allocateRoot("rick")).toEqual(coordinate)
   })
   test("discovers method schemas at the actor", async () => {
     answer = () => new Response(JSON.stringify([{

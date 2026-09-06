@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect } from "effect"
 import { defineActor } from "./definition"
-import { allocateRootThread, allocateChildThread, ThreadAllocator, type ThreadAllocation } from "./allocation"
+import { allocateRootThread, allocateChildThread, ThreadAllocator, ThreadAllocationScope, type ThreadAllocation } from "./allocation"
 
 import type { ThreadCoordinate } from "./coordinate"
 
@@ -64,4 +64,28 @@ test("a foreign actor parent is rejected before allocation", async () => {
   await expect(Effect.runPromise(effect.pipe(Effect.provideService(ThreadAllocator, host.service))))
     .rejects.toThrow("child allocation requires a parent from the same actor definition")
   expect(host.requests).toEqual([])
+})
+
+test("unnamed requests use action identity or an explicit retry key, otherwise create fresh requests", async () => {
+  const tardie = defineActor("tardie", {}, [])
+  const requests: ThreadAllocation[] = []
+  const service: typeof ThreadAllocator.Service = { allocate: (request) => Effect.sync(() => {
+    requests.push(request)
+    const target = request.kind === "root" ? request.coordinate : request.parent
+    return { ...target, thread: "assigned" }
+  }) }
+  const run = (key?: string) => tardie.allocateRootThread({ instance: "rick", ...(key === undefined ? {} : { key }) }).pipe(
+    Effect.provideService(ThreadAllocator, service)
+  )
+  await Effect.runPromise(run())
+  await Effect.runPromise(run())
+  expect(requests[0]?.key).not.toBe(requests[1]?.key)
+  await Effect.runPromise(run("retry"))
+  await Effect.runPromise(run("retry"))
+  expect(requests[2]?.key).toBe(requests[3]?.key)
+  await Effect.runPromise(run().pipe(Effect.provideService(ThreadAllocationScope, { key: () => "action/0" })))
+  expect(requests[4]?.key).toBe("action/0")
+  await expect(Effect.runPromise(tardie.allocateRootThread({ instance: "rick", name: "main", key: "retry" }).pipe(
+    Effect.provideService(ThreadAllocator, service)
+  ))).rejects.toThrow("named allocations do not accept a separate key")
 })

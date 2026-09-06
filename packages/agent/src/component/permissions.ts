@@ -1,6 +1,6 @@
 import { actorCall } from "@clavia/tardigrade-core/interaction/invoke"
 import { actorInvocationContextOf } from "@clavia/tardigrade-core/interaction/invocation"
-import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ActorRef, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
+import { calls, composeComponents, inheritComponentContract, component as defineComponent, type ThreadTarget, type ComponentRequirements } from "@clavia/tardigrade-core/actor"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self, type Transition } from "@clavia/tardigrade-core/runtime"
 import { AGENT_VIEW_ALGEBRA, type AgentComponent, type AgentTool } from "../runtime/composition"
@@ -26,7 +26,7 @@ export interface PermissionCall {
 }
 
 export interface PermissionsOptions {
-  readonly authority: ActorRef<PermissionAuthorityMethods>
+  readonly authority: ThreadTarget<PermissionAuthorityMethods>
   // request is a pure policy over one durable tool call. Reconciliation may evaluate it again.
   readonly request: (call: PermissionCall) => PermissionSubject | undefined
 }

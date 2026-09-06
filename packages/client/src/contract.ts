@@ -465,7 +465,7 @@ export const runtimeGroup = HttpApiGroup.make("runtime").add(
 export const threadsGroup = HttpApiGroup.make("threads").add(
   HttpApiEndpoint.post("allocateRoot", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
-    payload: Schema.Struct({ name: Schema.NonEmptyString }),
+    payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString) }),
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
   }),

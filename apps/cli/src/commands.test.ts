@@ -150,7 +150,7 @@ const clientOf = (
         : Promise.reject(answers.fail)
     },
     append: refuse,
-    allocateRoot: (instance, name) => Promise.resolve({ actor: "agent", instance, thread: name }),
+    allocateRoot: (instance, name) => Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" }),
     cancel: (invocation, cancellation = {}) => {
       if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.cancelled.push({

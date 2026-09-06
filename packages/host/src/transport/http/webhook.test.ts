@@ -4,7 +4,7 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import type { ThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
 import type { ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import type { MessageReceived } from "@clavia/tardigrade-core/interaction/provider-message"
-import { ActorUnavailable, Ingress, ingressFrom, type IngressActor } from "./ingress"
+import { ActorUnavailable, Ingress, ingressFrom, type IngressActor } from "../ingress"
 import { handleWebhook, type Webhook, type WebhookRequest, type WebhookResult } from "./webhook"
 
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text)

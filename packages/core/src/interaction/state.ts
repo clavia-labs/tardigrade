@@ -3,7 +3,7 @@ import type { ActorMethods, ActorMethodDeclaration } from "../actor/method"
 import type { Projection } from "../projection/projection"
 import type { InvocationRef } from "./invocation"
 
-// ActorMethodState reports whether an invocation is awaiting its single terminal response or has produced it (tla/communication/Method.tla, AtMostOneResponsePerCall).
+// ActorMethodState reports whether an invocation is awaiting its single terminal response or has produced it (tla/interaction/Method.tla, AtMostOneResponsePerCall).
 export type ActorMethodState<Output> =
   | { readonly status: "pending" }
   | { readonly status: "completed"; readonly output: Output; readonly data?: unknown }

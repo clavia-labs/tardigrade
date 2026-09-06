@@ -2,15 +2,11 @@ import { ProblemError, type Event, type EventRow } from "@clavia/tardigrade-clie
 
 import { actor, client } from "./chat-client"
 
-const ACTOR_THREAD_PREFIX = "ag."
-
 export const childThread = (event: Event): string | undefined => {
   const address = event.address
   if (typeof address !== "object" || address === null || !("thread" in address)) return undefined
   const thread = address.thread
-  return typeof thread === "string" && thread.startsWith(ACTOR_THREAD_PREFIX)
-    ? thread.slice(ACTOR_THREAD_PREFIX.length)
-    : undefined
+  return typeof thread === "string" ? thread : undefined
 }
 
 export const mergeEvents = (current: ReadonlyArray<EventRow>, row: EventRow): ReadonlyArray<EventRow> =>

@@ -169,22 +169,23 @@ describe("the bun host", () => {
     await first.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m1", at: 1 } as Event)
 
     expect(await waiting).toBeGreaterThan(0)
-    expect(await first.actorHead()).toBe(2)
+    expect(await first.actorHead()).toBe(3)
     expect(await first.readActorPage(0, 10)).toEqual([
-      { seq: 1, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
-      { seq: 2, event: expect.objectContaining({ type: "ThreadRegistered", thread: "alpha" }) }
+      { seq: 1, event: expect.objectContaining({ type: "ThreadAllocated", thread: "alpha" }) },
+      { seq: 2, event: expect.objectContaining({ type: "ThreadRequested", thread: "alpha" }) },
+      { seq: 3, event: expect.objectContaining({ type: "ThreadRegistered", thread: "alpha" }) }
     ])
     expect(await first.actorThreads()).toEqual({
-      cursor: 2,
-      threads: [{ thread: "alpha", depth: 0, state: "registered" }]
+      cursor: 3,
+      threads: [{ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" }]
     })
-    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", depth: 0, state: "registered" })
+    expect(await first.actorThread("alpha")).toEqual({ thread: "alpha", allocationKey: expect.any(String), depth: 0, state: "registered" })
     await first.close()
 
     const reopened = await createBunHost(options(path))
-    expect(await reopened.actorHead()).toBe(2)
+    expect(await reopened.actorHead()).toBe(3)
     await reopened.commitRoot("bun:default:alpha", { type: "MessageReceived", id: "m2", at: 2 } as Event)
-    expect(await reopened.actorHead()).toBe(2)
+    expect(await reopened.actorHead()).toBe(3)
     await reopened.close()
   })
 

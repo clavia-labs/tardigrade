@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactElement } from "react"
 import type { EventRow } from "@clavia/tardigrade-client"
 
 import { actor, client } from "../chat-client"
+import { allocateChatThread } from "../allocate-thread"
 import { activeMessageCall, mergeEvents, readEvents } from "../events"
 import { useStreamingText } from "../use-streaming-text"
 import { Composer } from "./Composer"
@@ -11,20 +12,37 @@ import { ThreadSidebar } from "./ThreadSidebar"
 import { Transcript } from "./Transcript"
 
 const THREAD_KEY = "tardigrade.chat.thread"
-const thread = localStorage.getItem(THREAD_KEY) ?? crypto.randomUUID()
-localStorage.setItem(THREAD_KEY, thread)
-
-const eventsKey = ["events", actor, thread] as const
+const initialThread = localStorage.getItem(THREAD_KEY)
+const initialName = crypto.randomUUID()
+const allocateThread = (name: string) => allocateChatThread(
+  (name) => client.allocateRoot(actor, name),
+  (thread) => localStorage.setItem(THREAD_KEY, thread),
+  name
+)
 
 const openThread = (id: string) => {
   localStorage.setItem(THREAD_KEY, id)
   location.reload()
 }
 
-const startThread = () => openThread(crypto.randomUUID())
-
 export const Chat = (): ReactElement => {
+  const root = useQuery({
+    queryKey: ["chat-root", actor],
+    queryFn: () => initialThread === null ? allocateThread(initialName) : Promise.resolve(initialThread)
+  })
+  if (root.data === undefined) return <p className={root.error ? "error" : "thread-empty"}>
+    {root.error ? String(root.error) : "Allocating thread…"}
+  </p>
+  return <ThreadChat thread={root.data} />
+}
+
+const ThreadChat = ({ thread }: { readonly thread: string }): ReactElement => {
   const cache = useQueryClient()
+  const eventsKey = ["events", actor, thread] as const
+  const start = useMutation({
+    mutationFn: allocateThread,
+    onSuccess: openThread
+  })
   const [selectedChild, setSelectedChild] = useState<string | undefined>(undefined)
   const [streamVersion, setStreamVersion] = useState(0)
   const events = useQuery({ queryKey: eventsKey, queryFn: () => readEvents(thread) })
@@ -71,7 +89,7 @@ export const Chat = (): ReactElement => {
       after: current.at(-1)?.seq,
       onEvent: (row) => cache.setQueryData<ReadonlyArray<EventRow>>(eventsKey, (held = []) => mergeEvents(held, row))
     })
-  }, [cache, events.isFetched, streamVersion])
+  }, [cache, events.isFetched, streamVersion, thread])
 
   useEffect(() => client.followThreads(actor, {
     onEvent: ({ event }) => {
@@ -101,7 +119,7 @@ export const Chat = (): ReactElement => {
         error={threads.error}
         loading={threads.isLoading}
         onOpen={openThread}
-        onStart={startThread}
+        onStart={() => { if (!start.isPending) start.mutate(crypto.randomUUID()) }}
         threads={threads.data ?? []}
       />
       <main className="shell">
@@ -119,11 +137,11 @@ export const Chat = (): ReactElement => {
             if (activeRootCall !== undefined) cancel.mutate({ id: activeRootCall, target: thread })
           }}
           onSend={(text) => send.mutate(text)}
-          pending={send.isPending}
+          pending={send.isPending || start.isPending}
           placeholder="Ask about the codebase"
           running={activeRootCall !== undefined}
         />
-        {events.error || send.error || cancel.error ? <p className="error">{String(events.error ?? send.error ?? cancel.error)}</p> : null}
+        {events.error || send.error || cancel.error || start.error ? <p className="error">{String(events.error ?? send.error ?? cancel.error ?? start.error)}</p> : null}
       </main>
       {selectedChild === undefined ? null : (
         <SideThread

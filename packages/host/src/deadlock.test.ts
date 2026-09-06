@@ -13,7 +13,7 @@ import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 // The deadlock sentinel against toy reactors, package-pure. Each thread's
 // body: on its brief, declare an await on its partner; on its await's
 // reply (however it ends), settle and answer whoever awaits it. Two
-// threads awaiting each other is packages/core/tla/communication/Delivery.tla's
+// threads awaiting each other is packages/core/tla/interaction/Delivery.tla's
 // DeliveryDeadlock trace: without the sentinel both rest forever;
 // with it, one victim edge fails, the fallout cascades, and the whole
 // knot settles.

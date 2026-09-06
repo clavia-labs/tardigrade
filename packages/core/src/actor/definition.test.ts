@@ -5,7 +5,7 @@ import { component as defineComponent, legacyComponent } from "@clavia/tardigrad
 import { enabled } from "@clavia/tardigrade-core/runtime/reconciler"
 import { actorRuntimeOf } from "../runtime/actor"
 import { actor, defineActor, validateActor, type ActorDefinition } from "./definition"
-import { actorRef } from "./reference"
+import { threadTarget } from "./reference"
 import { actorMethod, actorMethodsOf } from "./method"
 import { legacyActorMethod } from "./method-compat"
 import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../interaction/cancellation"
@@ -39,7 +39,7 @@ describe("actor", () => {
       methods,
       components: [component]
     }
-    expect(actorRef(definition, "main", "shared")).toEqual({
+    expect(threadTarget(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })
@@ -57,7 +57,7 @@ describe("actor", () => {
     expect(actorRuntimeOf(definition).projections).toHaveLength(0)
     expect(actorRuntimeOf(definition).projection).toBeDefined()
     expect(actorRuntimeOf(definition)).toBe(actorRuntimeOf(definition))
-    expect(actorRef(definition, "main", "shared")).toEqual({
+    expect(threadTarget(definition, "main", "shared")).toEqual({
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })
@@ -167,7 +167,7 @@ describe("actor", () => {
     const dependent = actor({
       name: "dependent",
       methods: {},
-      components: [calls(actorRef(remote, "main", "shared"), methods.inspect, component)]
+      components: [calls(threadTarget(remote, "main", "shared"), methods.inspect, component)]
     })
     expect(() => validateActor(dependent)).toThrow('actor "remote" does not declare the called method')
   })

@@ -7,7 +7,7 @@ import { threadAddressOf, type ThreadAddress } from "@clavia/tardigrade-core/tra
 import { envelopeOf } from "@clavia/tardigrade-core/interaction/envelope"
 import { linkOf } from "@clavia/tardigrade-core/transport/link"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
-import { createHost } from "./host"
+import { createHost } from "../host"
 
 interface GraphSpec {
   readonly participants: ReadonlyArray<number>

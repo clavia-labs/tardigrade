@@ -4,7 +4,7 @@ import type { Machine } from "@clavia/tardigrade-core/machine"
 /**
  * Projection specializes Machine to Event input.
  * Replaying step from initial must produce the state observed by output
- * See Projection Algebra (tla/runtime/ProjectionAlgebra.tla, ReducerLaw).
+ * See Projection Algebra (tla/projection/ProjectionAlgebra.tla, ReducerLaw).
  *
  *   Projection<State, Value>
  *              │      │

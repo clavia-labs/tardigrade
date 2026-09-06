@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import type { WebhookRequest } from "@clavia/tardigrade-host/communication/webhook"
+import type { WebhookRequest } from "@clavia/tardigrade-host/transport/http/webhook"
 import { telegram } from "./telegram"
 
 const bytes = (value: unknown): Uint8Array => new TextEncoder().encode(JSON.stringify(value))

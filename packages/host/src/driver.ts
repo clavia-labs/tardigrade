@@ -1,5 +1,5 @@
 // DriverPolicy controls graph-wide thread scheduling. The cap counts live thread settlements; each
-// thread still admits one settlement at a time (tla/runtime/ConcurrentDriver.tla,
+// thread still admits one settlement at a time (packages/host/tla/ConcurrentDriver.tla,
 // ConcurrencyBound and ThreadExclusive).
 export interface DriverPolicy {
   readonly maxConcurrentThreads: number
@@ -41,7 +41,7 @@ interface ThreadDriverOptions {
 
 // createThreadDriver schedules distinct threads concurrently and keeps an active thread dirty when a
 // delivery reaches it mid-settlement. A failed settlement releases its slot and restores the
-// thread's durable debt (tla/runtime/ConcurrentDriver.tla, ConcurrencyBound and Accounting).
+// thread's durable debt (packages/host/tla/ConcurrentDriver.tla, ConcurrencyBound and Accounting).
 export const createThreadDriver = (options: ThreadDriverOptions): ThreadDriver => {
   const policy = driverPolicyOf(options.policy)
   const dirty = new Set<string>()
