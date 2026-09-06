@@ -3,7 +3,7 @@ import fc from "fast-check"
 import { actorCoordinateOf, threadCoordinateOf } from "../actor/coordinate"
 
 import { formatThreadAddress, parseThreadAddress } from "../transport/endpoint"
-import { decodeInvocationCoordinate, invocationCoordinateKey, InvocationCoordinate, invocationCoordinateOf } from "./invocation"
+import { decodeInvocationCoordinate, invocationCoordinateKey, invocationResponseId, invocationKey, sameInvocation, InvocationCoordinate, invocationCoordinateOf } from "./invocation"
 import { Schema } from "effect"
 import { invocationTerminalOf } from "./result"
 import type { ResponseReceived } from "./events"
@@ -53,6 +53,11 @@ describe("interaction identity without hashing", () => {
     fc.assert(fc.property(coordinate, (reference) => {
       const references = [reference, ...neighboursOf(reference)]
       expect(new Set(references.map(invocationCoordinateKey)).size).toBe(references.length)
+      expect(new Set(references.map(invocationResponseId)).size).toBe(references.length)
+      expect(new Set(references.map(({ invocation }) => invocationKey(invocation))).size).toBe(4)
+      for (const [index, alternative] of references.entries()) {
+        expect(sameInvocation(reference.invocation, alternative.invocation)).toBe(index < 4)
+      }
     }))
   })
 

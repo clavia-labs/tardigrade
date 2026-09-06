@@ -14,7 +14,7 @@ export const InvocationRef = Schema.Struct({
 
 export type InvocationRef = typeof InvocationRef.Type
 
-// invocationKey identifies an invocation within its owning thread (../interaction/coordinate.test.ts).
+// invocationKey identifies an invocation within its owning thread (interaction.properties.test.ts).
 export const invocationKey = (invocation: InvocationRef): string =>
   JSON.stringify([invocation.method, invocation.id, invocation.epoch])
 
@@ -47,13 +47,13 @@ export const invocationCoordinateJsonSchema: JsonSchema.JsonSchema = (() => {
   })) as JsonSchema.JsonSchema
 })()
 
-// invocationCoordinateKey preserves every target and invocation coordinate (coordinate.test.ts).
+// invocationCoordinateKey preserves every target and invocation coordinate (interaction.properties.test.ts).
 export const invocationCoordinateKey = (reference: InvocationCoordinate): string => {
   const { target, invocation } = decodeInvocationCoordinate(reference)
   return JSON.stringify([target.actor, target.instance, target.thread, invocation.method, invocation.id, invocation.epoch])
 }
 
-// invocationResponseId identifies the terminal awaited for an exact invocation (coordinate.test.ts).
+// invocationResponseId identifies the terminal awaited for an exact invocation (interaction.properties.test.ts).
 export const invocationResponseId = (reference: InvocationCoordinate): string => `response:${invocationCoordinateKey(reference)}`
 
 // invocationIdForKey scopes an idempotency key to a complete parent invocation (idempotency.properties.test.ts; packages/host/tla/Identity.tla, CallSeparation).

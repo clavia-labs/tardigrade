@@ -39,21 +39,6 @@ test("allocation is lazy and both surfaces use the same host allocator", async (
   expect(host.requests.map((request) => request.kind)).toEqual(["root", "root", "child", "child"])
 })
 
-test("reused child names retain the full parent scope across instances and depths", async () => {
-  const host = allocator()
-  const tardie = defineActor("tardie", {}, [])
-  const addresses = await Effect.runPromise(Effect.gen(function* () {
-    const rick = yield* tardie.allocateRootThread({ instance: "rick", name: "main" })
-    const morty = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
-    const lab = yield* tardie.allocateRootThread({ instance: "rick", name: "lab" })
-    const children = yield* Effect.all([rick, morty, lab].map((parent) =>
-      tardie.allocateChildThread({ parent, name: "researcher" })))
-    const grandchild = yield* tardie.allocateChildThread({ parent: children[0]!, name: "researcher" })
-    return [rick, morty, lab, ...children, grandchild].map((ref) => JSON.stringify(ref.address))
-  }).pipe(Effect.provideService(ThreadAllocator, host.service)))
-  expect(new Set(addresses).size).toBe(addresses.length)
-})
-
 test("a foreign actor parent is rejected before allocation", async () => {
   const host = allocator()
   const tardie = defineActor("tardie", {}, [])

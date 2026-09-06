@@ -1,6 +1,5 @@
 import { expect, test } from "bun:test"
-import fc from "fast-check"
-import { decodeInvocationCoordinate, invocationCoordinateJsonSchema, invocationCoordinateKey, invocationResponseId, invocationKey, sameInvocation, InvocationRef } from "./invocation"
+import { decodeInvocationCoordinate, invocationCoordinateJsonSchema, InvocationRef } from "./invocation"
 
 import { Schema } from "effect"
 import { ActorCoordinate, ThreadCoordinate } from "../actor/coordinate"
@@ -27,29 +26,4 @@ test("the embeddable invocation schema retains nested constraints", () => {
     }
   })
   expect(JSON.stringify(invocationCoordinateJsonSchema)).not.toContain('"$ref"')
-})
-
-test("invocation references separate targets, methods, calls, and epochs", () => {
-  fc.assert(fc.property(fc.string({ minLength: 1 }), fc.nat({ max: 1000 }), (name, epoch) => {
-    const reference = decodeInvocationCoordinate({
-      target: { actor: name, instance: "main", thread: name },
-      invocation: { method: "message", id: name, epoch }
-    })
-    const alternatives = [reference,
-      ...(["actor", "instance", "thread"] as const).map((field) => ({
-        ...reference, target: { ...reference.target, [field]: reference.target[field] + "x" }
-      })),
-      ...(["method", "id"] as const).map((field) => ({
-        ...reference, invocation: { ...reference.invocation, [field]: reference.invocation[field] + "x" }
-      })),
-      { ...reference, invocation: { ...reference.invocation, epoch: epoch + 1 } }
-    ]
-    expect(new Set(alternatives.map(invocationCoordinateKey)).size).toBe(alternatives.length)
-    expect(new Set(alternatives.map(invocationResponseId)).size).toBe(alternatives.length)
-    expect(new Set(alternatives.map(({ invocation }) => invocationKey(invocation))).size).toBe(4)
-    for (const [index, alternative] of alternatives.entries()) {
-      expect(sameInvocation(reference.invocation, alternative.invocation)).toBe(index < 4)
-    }
-    expect(invocationCoordinateKey(decodeInvocationCoordinate(JSON.parse(JSON.stringify(reference))))).toBe(invocationCoordinateKey(reference))
-  }))
 })

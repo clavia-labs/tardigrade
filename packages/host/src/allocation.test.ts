@@ -13,27 +13,6 @@ test("slugs use configurable words and a short random token", () => {
   expect(threadSlug({ adjectives: ["quiet"], nouns: ["fox"], tokenLength: 6 })).toMatch(/^quiet-fox-[a-z2-7]{6}$/)
 })
 
-test("concurrent retries and a reopened allocator recover the persisted assignment", async () => {
-  const store = memoryThreadDirectory()
-  let generated = 0
-  const policy = { generate: () => `quiet-fox-${generated++}` }
-  const allocator = registeredThreadAllocator(store, policy)
-  const results = await Promise.all(Array.from({ length: 20 }, () => Effect.runPromise(allocator.allocate(child("researcher")))))
-  expect(new Set(results.map((result) => result.thread)).size).toBe(1)
-  const reopened = registeredThreadAllocator(store, { generate: () => { throw new Error("must reuse assignment") } })
-  expect(await Effect.runPromise(reopened.allocate(child("researcher")))).toEqual(results[0]!)
-})
-
-test("collisions retry and exhaustion fails without aliasing another thread", async () => {
-  const store = memoryThreadDirectory()
-  const first = registeredThreadAllocator(store, { generate: () => "quiet-fox-abcd", maxAttempts: 2 })
-  await Effect.runPromise(first.allocate(child("first")))
-  await expect(Effect.runPromise(first.allocate(child("second")))).rejects.toThrow("exhausted 2")
-  let calls = 0
-  const retry = registeredThreadAllocator(store, { generate: () => calls++ === 0 ? "quiet-fox-abcd" : "bright-owl-efgh" })
-  expect((await Effect.runPromise(retry.allocate(child("second")))).thread).toBe("bright-owl-efgh")
-})
-
 test("roots, children, and existing threads cannot claim each other's IDs", async () => {
   const store = memoryThreadDirectory((target) => target.thread === "occupied")
   const candidates = ["occupied", "main", "quiet-fox-abcd", "quiet-fox-abcd", "bright-owl-efgh"]

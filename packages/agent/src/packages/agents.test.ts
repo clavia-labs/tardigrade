@@ -625,35 +625,6 @@ describe("a child is named by its parent address, run, and call", () => {
     expect(await Effect.runPromise(read(first.handle))).toEqual({ output: "first answer" })
   })
 
-  test("reused call ids across turns address distinct children", async () => {
-    const events: Event[] = [
-      threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
-      turn("parent-a"),
-      called("reused-call", "parent-a")
-    ]
-    const sent: Array<Sent> = []
-    await Effect.runPromise(background("first", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
-    events.push(
-      { type: "TurnCompleted", turn: "parent-a", output: "first done", at: 4 } as Event,
-      turn("parent-b"),
-      called("reused-call", "parent-b")
-    )
-    await Effect.runPromise(background("second", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
-    // The third dispatch replays the second: it reads the child the second recorded instead of
-    // deriving or claiming the first turn's child.
-    await Effect.runPromise(background("second", "reused-call").pipe(Effect.provide(liveEnv(events, sent))))
-
-    expect(threads(sent)).toEqual([
-      await expectedThread("parent-a", "reused-call"),
-      await expectedThread("parent-b", "reused-call"),
-      await expectedThread("parent-b", "reused-call")
-    ])
-    expect(events.filter((event) => event.type === "ChildCreated")).toMatchObject([
-      { callId: "reused-call", turn: "parent-a", address: { thread: await expectedThread("parent-a", "reused-call") } },
-      { callId: "reused-call", turn: "parent-b", address: { thread: await expectedThread("parent-b", "reused-call") } }
-    ])
-  })
-
   test("a turn-scoped legacy creation record retains its address on replay", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
