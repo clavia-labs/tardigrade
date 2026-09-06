@@ -23,7 +23,7 @@ Use `bunx tardie <command>` to run a command without installing it. Tardigrade r
   <div className="cli-command-row"><code>tdg setup default</code><p>Choose the default model from configured providers</p></div>
   <div className="cli-command-row"><code>tdg lint &lt;entry&gt;</code><p>Validate an actor before building or deploying</p></div>
   <div className="cli-command-row"><code>tdg build &lt;entry&gt;</code><p>Build and validate an actor artifact</p></div>
-  <div className="cli-command-row"><code>tdg dev</code><p>Build actor.ts and serve the local API and Voyager</p></div>
+  <div className="cli-command-row"><code>tdg thread create</code><p>Allocate a root thread and print its assigned identity</p></div>
   <div className="cli-command-row"><code>tdg methods</code><p>List the actor's methods and schemas</p></div>
   <div className="cli-command-row"><code>tdg call &lt;method&gt; &lt;input&gt;</code><p>Call a method with JSON input and wait for its result</p></div>
   <div className="cli-command-row"><code>tdg call state &lt;method&gt; &lt;invocation&gt;</code><p>Read an invocation's durable state</p></div>
@@ -92,14 +92,11 @@ A command flag takes precedence over an environment variable. An environment var
 | Server to call | `--url` | | `http://localhost:4242` |
 | Bearer token | `--token` | `TARDIGRADE_TOKEN` | none |
 | Actor instance | `--actor` | | `main` |
-| Port for `dev` | `--port` | `PORT` | `4242`, then a lower available port |
-| Store for `dev` | `--db` | `TARDIGRADE_DB` | `.tardigrade/actor.sqlite` |
-| Concurrent threads for `dev` | `--max-concurrent-threads` | `TARDIGRADE_MAX_CONCURRENT_THREADS` | `4` |
 | Project configuration | | `TARDIGRADE_CONFIG_PATH` | `wrangler.jsonc` |
 | Model catalog cache | | `TARDIGRADE_MODEL_CATALOG_CACHE` | `.tardigrade/models.json` |
 | Provider credentials | | Variables named by each provider's `env` list | Values saved by interactive setup in `.dev.vars` |
 
-The generated `bun run dev` script loads `.dev.vars` and starts `server.ts`. It stores actor threads in `.tardigrade/actor.sqlite` under the actor directory. Keep that directory present until the server stops. A deployment reads credentials from its platform secret store. Edit `server.ts` to supply application Effect services or change the server composition. `tdg dev` remains available for projects that use the bundled API and Voyager server.
+The generated `bun run dev` script loads `.dev.vars` and starts `server.ts`. It stores instance databases in `.tardigrade/actor.sqlite.actors/`, with each instance's thread databases in a sibling `.sqlite.threads/` directory. Keep these directories present until the server stops. A deployment reads credentials from its platform secret store. Edit `server.ts` to supply application Effect services or change the server composition.
 
 ## Validate and run locally
 
@@ -128,14 +125,16 @@ Each response includes `revision`, `status`, `refreshed_at`, `total`, `limit`, `
 
 ## Call and control methods
 
+Use `tdg thread create --name root` to allocate a named root before invoking it. Omit `--name` for a host-generated friendly name. The command prints the assigned thread ID; `--json` prints its actor, instance, and thread coordinates. Pass the assigned ID to `--thread` when calling a method.
+
 `tdg call` creates a thread unless `--thread` names an existing thread. It waits for completion by default. Use `--no-wait` to print the durable handle immediately. Use the returned thread and invocation ID to read state or request cancellation:
 
 ```bash
 tdg methods --json
-tdg call message '{"text":"What is the weather in Singapore?"}'
-tdg call inspect '{"path":"README.md"}' --no-wait --thread root --id m1
-tdg call state inspect m1 --thread root
-tdg call cancel inspect m1 --thread root --reason "operator stopped it"
+tdg thread create --name root
+tdg call message '{"text":"What is the weather in Singapore?"}' --no-wait --thread root --id m1
+tdg call state message m1 --thread root
+tdg call cancel message m1 --thread root --reason "operator stopped it"
 ```
 
 Reuse `--id` for an idempotent retry. `tdg call state` and `tdg call cancel` require the same actor instance, thread, method, and invocation ID as the original call. The server resolves the active execution epoch.

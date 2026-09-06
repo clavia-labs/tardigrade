@@ -61,7 +61,6 @@ import {
   threadsTable
 } from "./render"
 import { Cli, type CliServices } from "./services"
-import { traceUrlFor } from "./workflow"
 
 // The command tree. Every command is a declaration: its flags, its arguments, and its description
 // are values, so the help a person reads and the completions a shell installs are generated from
@@ -682,6 +681,7 @@ export const devCommand = Command.make("dev", {
     })
     return yield* Effect.mapError(Layer.launch(layer), userErrorOf)
   })).pipe(
+      Command.unlisted,
       Command.withDescription(
         "Build actor.ts, boot its API, and serve the built UI at one loopback URL."
       ),
@@ -774,11 +774,28 @@ export const callCancelCommand = Command.make("cancel", {
     }])
   )
 
+export const threadCreateCommand = Command.make("create", {
+  name: Flag.string("name").pipe(
+    Flag.withDescription("An instance-scoped root name. Omit to generate a friendly name."),
+    Flag.optional
+  ),
+  ...remote
+}, (flags) => Effect.gen(function*() {
+  const client = yield* clientOf(flags)
+  const coordinate = yield* call(() => client.allocateRoot(flags.actor, stated(flags.name)))
+  yield* Console.log(flags.json ? jsonOf(coordinate) : coordinate.thread)
+})).pipe(Command.withDescription("Allocate a root thread and print its assigned identity."))
+
+export const threadCommand = Command.make("thread").pipe(
+  Command.withDescription("Allocate actor threads."),
+  Command.withSubcommands([threadCreateCommand])
+)
+
 export const callCommand = Command.make("call", {
   method: Argument.string("method").pipe(Argument.withDescription("The declared method to call")),
   input: Argument.string("input").pipe(Argument.withDescription("The method input as JSON")),
   thread: Flag.string("thread").pipe(
-    Flag.withDescription("The thread id. A fresh id is minted unless stated."),
+    Flag.withDescription("An existing thread id. Omit to allocate a new root."),
     Flag.optional
   ),
   id: callId,
@@ -800,7 +817,7 @@ export const callCommand = Command.make("call", {
     const cli = yield* Cli
     const client = yield* clientOf(flags)
     const input = yield* methodInput(flags.input)
-    const thread = stated(flags.thread) ?? (yield* call(() => client.allocateRoot(flags.actor, cli.mintId()))).thread
+    const thread = stated(flags.thread) ?? (yield* call(() => client.allocateRoot(flags.actor))).thread
     const id = stated(flags.id) ?? cli.mintId()
     const accepted = yield* call(() => client.call(flags.actor, thread, flags.method, { id, input }))
     if (!flags.wait) {
@@ -811,8 +828,6 @@ export const callCommand = Command.make("call", {
     yield* Console.log(
       flags.json
         ? jsonOf({ ...accepted, ...state })
-        : state.status === "completed"
-        ? `${methodLines(accepted.thread, accepted.id, state)}\n\ntrace\n  ${traceUrlFor(client.baseUrl, accepted.thread)}`
         : methodLines(accepted.thread, accepted.id, state)
     )
     if (state.status !== "completed") {
@@ -972,7 +987,7 @@ export const tdg = Command.make("tdg").pipe(
   Command.withDescription("Build, run, and inspect durable actors."),
   Command.withSubcommands([
     { group: "CREATE", commands: [initCommand, setupCommand, lintCommand, buildCommand] },
-    { group: "RUN", commands: [devCommand, callCommand] },
+    { group: "RUN", commands: [devCommand, threadCommand, callCommand] },
     { group: "CATALOG", commands: [providersCommand, modelsCommand, methodsCommand] },
     { group: "INSPECT", commands: [lsCommand, eventsCommand] }
   ])

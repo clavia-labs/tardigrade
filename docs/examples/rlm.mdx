@@ -21,7 +21,7 @@ An RLM puts long context inside a code environment. The model inspects and parti
 
 ## Build it with Tardigrade
 
-Code mode provides the environment. Packages expose files, fetch, workspace storage, and child agents. Budgets and compaction keep the recursive work bounded.
+Code mode provides the environment. Packages expose fetch, workspace storage, and child agents. Budgets and compaction keep the recursive work bounded.
 
 <div className="example-source-heading"><span>README.md / Compose an agent</span><a href="https://github.com/clavia-labs/tardigrade#compose-an-agent" rel="noreferrer" target="_blank">View on GitHub</a></div>
 
@@ -29,7 +29,7 @@ Code mode provides the environment. Packages expose files, fetch, workspace stor
 import {
   actor, agentMethods, agentsPackage, budget,
   budgetAuthority, caller, codeMode, compaction,
-  fetchPackage, filesPackage, infer,
+  fetchPackage, infer,
   outputValidateOnce, system, workspacePackage
 } from "tardie"
 
@@ -45,7 +45,6 @@ const rlm = actor({
       instructions,
       budget([
         codeMode([
-          filesPackage(),
           fetchPackage(),
           agentsPackage(),
           workspacePackage()

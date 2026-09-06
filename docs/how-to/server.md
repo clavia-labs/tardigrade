@@ -59,7 +59,7 @@ Declared request failures are `application/problem+json`.
   "detail": "No thread named \"ghost\" has ever existed." }
 ```
 
-`unknown-projection` lists what the actor declares. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client asks the operator to inspect the actor host logs. For the compatibility `tdg dev` command, it also asks the operator to check that the project directory and `.tardigrade/actor.sqlite` still exist before restarting the server.
+`unknown-projection` lists what the actor declares. `invalid-request` names the field it refused. An unexpected storage failure returns 500. The client asks the operator to inspect the actor host logs.
 
 ## Configuration
 

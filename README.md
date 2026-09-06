@@ -38,18 +38,19 @@ If you have an existing agent application, follow the [migration guide](docs/how
 
 ```bash
 bun add -g tardie@latest
-tdg init researcher
+tdg init researcher --template quickstart
 cd researcher
 bun run dev
 ```
 
 `tdg init` configures the first provider and model. Edit `actor.ts` to describe the agent. The [CLI guide](docs/references/cli.mdx) covers non-interactive setup, more providers, and deployment.
 
-From another shell, discover the actor's methods and call one:
+From another shell, discover the actor's methods, allocate a root thread, and send it a message:
 
 ```bash
-tdg methods --actor researcher
-tdg call message '{"text":"read this repo and tell me what it does"}' --actor researcher
+tdg methods
+tdg thread create --name quickstart
+tdg call message '{"text":"What is the weather in Singapore?"}' --thread quickstart
 ```
 
 The API listens at [localhost:4242](http://localhost:4242) by default.

@@ -5,10 +5,10 @@ import { CLOUDFLARE_MODEL_CATALOG_MIGRATION } from "@clavia/tardigrade-cloudflar
 import type { ModelProtocol } from "@clavia/tardigrade-model/directory"
 
 import { CELLD_PROJECT_CONFIG_PATH, celldConfigOf } from "./celld"
-import { actorTemplate, type InitTemplate } from "./template"
+import { actorTemplate, DEFAULT_INIT_TEMPLATE, type InitTemplate } from "./template"
 import type { SetupAnswers, SetupFiles } from "./setup"
 import { dependencyVersionIn, versionIn } from "./version"
-import { callCommand, shellWord } from "./workflow"
+import { callCommand, RLM_ONBOARDING_BRIEF, shellWord } from "./workflow"
 import { emptyModelLock, MODEL_LOCK_FILE, type ModelLock } from "./model-lock"
 
 export const DEFAULT_ACTOR_ENTRY = "actor.ts"
@@ -31,6 +31,7 @@ export interface InitActorOptions {
 }
 
 export interface InitializedActor {
+  readonly template: InitTemplate
   readonly name: string
   readonly directory: string
   readonly entry: string
@@ -208,7 +209,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
     throw error
   }
 
-  return { name, directory, entry, server, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration }
+  return { name, directory, entry, server, worker, manifest, celldManifest, packageManifest, modelLock, catalogMigration, template: options.template ?? DEFAULT_INIT_TEMPLATE }
 }
 
 const shownPath = (cwd: string, path: string): string => {
@@ -263,7 +264,8 @@ export const initSummary = (
     "  bun run dev",
     "",
     styled("→ call from another terminal", "1;36", colors),
-    `  ${callCommand()}`,
+    "  tdg thread create --name main",
+    `  ${callCommand(actor.template === "rlm" ? RLM_ONBOARDING_BRIEF : undefined)}`,
     "",
     styled("↗ deploy", "1;36", colors),
     summaryField("Cloudflare", "bunx wrangler deploy", colors),

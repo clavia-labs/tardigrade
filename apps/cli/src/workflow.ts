@@ -1,5 +1,8 @@
-// DEFAULT_ONBOARDING_BRIEF is the first message suggested after an actor is pushed.
-export const DEFAULT_ONBOARDING_BRIEF = "Read this repository and tell me what it does"
+// DEFAULT_ONBOARDING_BRIEF is the first message suggested for the quickstart template.
+export const DEFAULT_ONBOARDING_BRIEF = "What is the weather in Singapore?"
+
+// RLM_ONBOARDING_BRIEF is a delegation task supported by the RLM template.
+export const RLM_ONBOARDING_BRIEF = "Create a child agent and ask it to fetch a fun fact about recursion."
 
 // shellWord quotes a generated shell argument when spaces or shell punctuation make a bare word unsafe (workflow.test.ts).
 export const shellWord = (value: string): string =>
@@ -8,14 +11,4 @@ export const shellWord = (value: string): string =>
 // callCommand renders the local quickstart command with its method input stated (workflow.test.ts).
 export const callCommand = (
   brief: string = DEFAULT_ONBOARDING_BRIEF
-): string => `tdg call message ${shellWord(JSON.stringify({ text: brief }))}`
-
-// traceUrlFor selects the thread in the Voyager served at the API origin (apps/voyager/src/nav.ts, Route).
-export const traceUrlFor = (baseUrl: string, thread: string): string => {
-  const url = new URL(baseUrl)
-  url.pathname = "/"
-  url.search = ""
-  url.hash = ""
-  url.searchParams.set("thread", thread)
-  return url.toString()
-}
+): string => `tdg call message ${shellWord(JSON.stringify({ text: brief }))} --thread main`

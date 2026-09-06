@@ -56,6 +56,7 @@ const catalogFetch = (): typeof fetch =>
   (async () => Response.json(catalogSource, { headers: { etag: "catalog-test" } })) as unknown as typeof fetch
 
 interface Recorded {
+  readonly allocated: Array<{ instance: string; name: string | undefined }>
   readonly invoked: Array<{ thread: string; method: string; id: string; input: unknown }>
   readonly stateRefs: Array<ActorCallRef>
   readonly cancelled: Array<{ invocation: ActorCallRef; reason?: string }>
@@ -150,7 +151,10 @@ const clientOf = (
         : Promise.reject(answers.fail)
     },
     append: refuse,
-    allocateRoot: (instance, name) => Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" }),
+    allocateRoot: (instance, name) => {
+      recorded.allocated.push({ instance, name })
+      return Promise.resolve({ actor: "agent", instance, thread: name ?? "generated" })
+    },
     cancel: (invocation, cancellation = {}) => {
       if ("target" in invocation) throw new Error("CLI fixture expects a legacy handle")
       recorded.cancelled.push({
@@ -199,6 +203,7 @@ const drive = async (
 ): Promise<Ran> => {
   const lines: Array<string> = []
   const recorded: Recorded = {
+    allocated: [],
     invoked: [],
     stateRefs: [],
     cancelled: [],
@@ -251,7 +256,8 @@ describe("parsing", () => {
   test("the root with no subcommand prints its help", async () => {
     const ran = await drive([])
     expect(ran.lines.join("\n")).toContain("tdg")
-    expect(ran.lines.join("\n")).toContain("dev")
+    expect(ran.lines.join("\n")).not.toMatch(/^\s+dev\s/m)
+    expect(ran.lines.join("\n")).toContain("thread")
     expect(ran.lines.join("\n")).toContain("events")
   })
 
@@ -647,6 +653,26 @@ describe("methods", () => {
   })
 })
 
+describe("thread allocation", () => {
+  test("a named root can be passed to a method call", async () => {
+    const created = await drive(["thread", "create", "--name", "quickstart", "--actor", "rick"])
+    expect(created.failed).toBe(false)
+    expect(created.recorded.allocated).toEqual([{ instance: "rick", name: "quickstart" }])
+    expect(created.recorded.invoked).toEqual([])
+    const invoked = await drive(["call", "message", "{\"text\":\"Hello\"}", "--actor", "rick", "--thread", created.lines[0]!, "--no-wait"])
+    expect(invoked.failed).toBe(false)
+    expect(invoked.recorded.allocated).toEqual([])
+    expect(invoked.recorded.invoked[0]?.thread).toBe("quickstart")
+  })
+
+  test("unnamed allocation returns the host identity as JSON", async () => {
+    const created = await drive(["thread", "create", "--json"])
+    expect(created.failed).toBe(false)
+    expect(created.recorded.allocated).toEqual([{ instance: "main", name: undefined }])
+    expect(JSON.parse(created.lines[0]!)).toEqual({ actor: "agent", instance: "main", thread: "generated" })
+  })
+})
+
 describe("call", () => {
   test("a pending call is polled until it settles, and the output is printed", async () => {
     const ran = await drive(
@@ -662,7 +688,7 @@ describe("call", () => {
     )
     expect(ran.failed).toBe(false)
     expect(ran.lines[0]).toBe(
-      "root m1 completed\nthe summary\n\ntrace\n  http://localhost:0/?thread=root"
+      "root m1 completed\nthe summary"
     )
     expect(ran.recorded.invoked).toEqual([{
       thread: "root",
@@ -682,12 +708,13 @@ describe("call", () => {
       answers: { states: [{ status: "completed", output: { findings: 3 } }] }
     })
     expect(ran.recorded.invoked).toEqual([{
-      thread: "minted-1",
+      thread: "generated",
       method: "inspect",
-      id: "minted-2",
+      id: "minted-1",
       input: { path: "README.md", depth: 2 }
     }])
     expect(ran.lines[0]).toContain('{\n  "findings": 3\n}')
+    expect(ran.recorded.allocated).toEqual([{ instance: "main", name: undefined }])
   })
 
   test("--no-wait prints the durable handle without reading state", async () => {

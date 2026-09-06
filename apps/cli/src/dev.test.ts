@@ -331,11 +331,14 @@ describe("tdg dev", () => {
     expect(seen.index).toBe(200)
   })
 
-  test("call drives a message to completed with no model credentials", async () => {
+  test("CLI root allocation and invocation complete without model credentials", async () => {
     const seen = await booted(async (baseUrl) => {
-      expect((await fetch(`${baseUrl}/v1/actors/main/threads`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "root" })
-      })).status).toBe(200)
+      const created = await drive(baseUrl, ["thread", "create", "--name", "root"])
+      expect(created.failed).toBe(false)
+      expect(created.lines[0]).toBe("root")
+      const retried = await drive(baseUrl, ["thread", "create", "--name", "root"])
+      expect(retried.failed).toBe(false)
+      expect(retried.lines).toEqual(created.lines)
       const ran = await drive(baseUrl, ["call", "message", "{\"text\":\"survey the log\"}", "--thread", "root", "--id", "m1", "--poll", "10"])
       const listed = await drive(baseUrl, ["ls", "--json"])
       const logged = await drive(baseUrl, ["events", "root", "--types", "MessageReceived"])
@@ -344,11 +347,26 @@ describe("tdg dev", () => {
     })
     expect(seen.ran.failed).toBe(false)
     expect(seen.ran.lines[0]).toBe(
-      `root m1 completed\nthe scripted answer\n\ntrace\n  ${seen.baseUrl}/?thread=root`
+      "root m1 completed\nthe scripted answer"
     )
     expect(JSON.parse(seen.listed.lines[0] ?? "")).toMatchObject([{ id: "root", status: "settled" }])
     expect(seen.logged.lines[0]).toContain("MessageReceived")
     expect(seen.logged.lines[0]).toContain("survey the log")
     expect(seen.ghost.failed).toBe(true)
+  })
+
+  test("unnamed CLI roots use host-generated names", async () => {
+    await booted(async (baseUrl) => {
+      const created = await drive(baseUrl, ["thread", "create", "--json"])
+      expect(created.failed).toBe(false)
+      const coordinate = JSON.parse(created.lines[0]!)
+      expect(coordinate.thread).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]+$/)
+      const called = await drive(baseUrl, ["call", "message", "{\"text\":\"Hello\"}", "--json", "--poll", "10"])
+      expect(called.failed).toBe(false)
+      const result = JSON.parse(called.lines[0]!)
+      expect(result.thread).toMatch(/^[a-z]+-[a-z]+-[a-z0-9]+$/)
+      expect(result.thread).not.toBe(coordinate.thread)
+      expect(result.status).toBe("completed")
+    })
   })
 })

@@ -167,7 +167,8 @@ describe("initSummary", () => {
     bun run dev
 
   → call from another terminal
-    tdg call message '{"text":"Read this repository and tell me what it does"}'
+    tdg thread create --name main
+    tdg call message '{"text":"What is the weather in Singapore?"}' --thread main
 
   ↗ deploy
     Cloudflare  bunx wrangler deploy
