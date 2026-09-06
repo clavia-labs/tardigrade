@@ -260,25 +260,23 @@ export class ThreadDO extends DurableObject<Env> {
     this.kick(host)
   }
 
-  // kick starts reconciliation while the Durable Object is active and leaves its alarm armed until the host rests (test/actor.workers.ts, "a mounted actor exposes durable methods").
+  // kick retains each admission's drive through synchronization and releases at rest (tla/ActiveDrive.tla, AdmissionRetained and JoinedWorkDrained).
   private kick(host: CloudflareThreadHost): void {
-    if (this.driving !== undefined) return
-    let failed = false
-    const driving = (async () => {
-      try {
-        await host.drive()
-        await this.synchronizeAlarm(host)
-      } catch (cause) {
-        failed = true
-        console.error("actor drive failed; the alarm remains armed", cause)
-      }
-    })()
-    this.driving = driving
-    retainBackgroundTask(this.ctx, this.backgroundTaskOwner, driving)
-    void driving.finally(() => {
-      if (this.driving === driving) this.driving = undefined
-      if (!failed && host.work() > 0) this.kick(host)
-    })
+    if (this.driving === undefined) {
+      this.driving = Promise.resolve().then(async () => {
+        try {
+          do {
+            await host.drive()
+            await this.synchronizeAlarm(host)
+          } while (host.work() > 0)
+        } catch (cause) {
+          console.error("actor drive failed; the alarm remains armed", cause)
+        } finally {
+          this.driving = undefined
+        }
+      })
+    }
+    retainBackgroundTask(this.ctx, this.backgroundTaskOwner, this.driving)
   }
 
   async append(thread: string, event: Event): Promise<boolean> {

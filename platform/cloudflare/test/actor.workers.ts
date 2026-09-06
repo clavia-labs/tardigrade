@@ -458,6 +458,49 @@ describe("cloudflare actor", () => {
     expect(retained).toEqual([task])
   })
 
+  test("an admission during a live drive joins that drive", async () => {
+    const observed = await runInDurableObject(threadStub("ag.drive-retention"), async (instance, state) => {
+      const dob = instance as unknown as {
+        init(name: string, actorInstance: string, thread: string): Promise<void>
+        kick(host: unknown): void
+        driving: Promise<void> | undefined
+      }
+      await dob.init("echo", "main", "ag.drive-retention")
+      const { promise: synchronizing, resolve: admitSynchronization } = Promise.withResolvers<void>()
+      const entered = Promise.withResolvers<void>()
+      let owed = 1
+      let drains = 0
+      let synchronizePasses = 0
+      const host = {
+        drive: async () => {
+          drains += 1
+          owed = 0
+        },
+        work: () => owed,
+        resting: async () => owed === 0,
+        nextMethodDeadline: async () => {
+          synchronizePasses += 1
+          if (synchronizePasses === 1) {
+            entered.resolve()
+            await synchronizing
+          }
+          return undefined
+        }
+      }
+      dob.kick(host)
+      await entered.promise
+      const live = dob.driving
+      owed = 2
+      dob.kick(host)
+      const joined = dob.driving === live
+      admitSynchronization()
+      await live
+      return { drains, joined, resting: dob.driving === undefined, standingAlarm: await state.storage.getAlarm() }
+    })
+
+    expect(observed).toEqual({ drains: 2, joined: true, resting: true, standingAlarm: null })
+  }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
   test("an opaque actor instance ref retains its delimiter", async () => {
     const response = await SELF.fetch("http://test/v1/actors/tenant%3Awest", {
       method: "PUT",
