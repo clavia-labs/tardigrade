@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.22.3](https://github.com/clavia-labs/tardigrade/compare/v0.22.2...v0.22.3) (2026-09-07)
+
+
+### Bug Fixes
+
+* **host:** simplify thread creation ([#395](https://github.com/clavia-labs/tardigrade/issues/395)) ([018aca9](https://github.com/clavia-labs/tardigrade/commit/018aca9beac49ee855f9567a5c67f857dbe11113))
+
 ## [0.22.2](https://github.com/clavia-labs/tardigrade/compare/v0.22.1...v0.22.2) (2026-09-06)
 
 
