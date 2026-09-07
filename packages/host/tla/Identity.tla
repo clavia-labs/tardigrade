@@ -37,7 +37,7 @@ Allocated == {n \in Nodes: assigned[n] # None}
 Available(n, token) == \A other \in Allocated:
   Address(n, token) # Address(other, assigned[other])
 
-(* Claim abstracts the atomic read, collision check, and ThreadAllocated append in allocation-sql.ts. *)
+(* Claim abstracts the atomic read, collision check, and ThreadRequested append in allocation-sql.ts. *)
 Claim(n) ==
   /\ Ready(n)
   /\ assigned[n] = None

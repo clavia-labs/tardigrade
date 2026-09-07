@@ -33,7 +33,7 @@ const registeredAllocator = (): typeof ThreadAllocator.Service => {
   return { allocate: (request) => Effect.sync(() => {
     if (request.kind === "root") return request.coordinate
     const { parent, child } = request
-    const key = JSON.stringify([parent.actor, parent.instance, parent.thread, child])
+    const key = JSON.stringify([parent.actor, parent.instance, parent.thread, child, request.key])
     const existing = assignments.get(key)
     if (existing !== undefined) return existing
     const target = { ...parent, thread: `registered:${assignments.size}` }

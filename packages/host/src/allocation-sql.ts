@@ -12,7 +12,7 @@ export const sqlThreadDirectory = (
   occupied: (target: ThreadCoordinate, existingRoot: boolean) => Effect.Effect<boolean>
 ): ThreadAllocationStore => {
   const get = (key: string) => sql<{ thread: string }>`SELECT json_extract(event, '$.thread') AS thread
-    FROM ${sql(table)} WHERE json_extract(event, '$.type') = 'ThreadAllocated'
+    FROM ${sql(table)} WHERE json_extract(event, '$.type') IN ('ThreadRequested', 'ThreadAllocated')
     AND json_extract(event, '$.allocationKey') = ${key}`.pipe(
     Effect.map((rows) => rows[0]?.thread), Effect.orDie
   )

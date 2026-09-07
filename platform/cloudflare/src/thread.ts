@@ -1,3 +1,4 @@
+import { threadCreatedOf, type ThreadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { cloudflareRpcTransport } from "./transport/rpc"
 import { DurableObject } from "cloudflare:workers"
 import { Effect, Layer, Schema } from "effect"
@@ -313,12 +314,16 @@ export class ThreadDO extends DurableObject<Env> {
     await this.ctx.storage.sync()
   }
 
-  async commitCreation(): Promise<void> {
+  async commitCreation(): Promise<ThreadCreated | undefined> {
+    if (!this.initialized()) return undefined
     const host = await this.host()
+    const created = threadCreatedOf(await host.read())
+    if (created === undefined) return undefined
     await this.arm()
     await this.commitTurn()
     host.publishStaged()
     this.kick(host)
+    return created
   }
 
   async deliver(envelope: ActorEnvelope): Promise<void> {

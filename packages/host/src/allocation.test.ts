@@ -18,9 +18,24 @@ test("roots, children, and existing threads cannot claim each other's IDs", asyn
   const candidates = ["occupied", "main", "quiet-fox-abcd", "quiet-fox-abcd", "bright-owl-efgh"]
   const allocator = registeredThreadAllocator(store, { generate: () => candidates.shift()! })
   const root = await Effect.runPromise(allocator.allocate({ kind: "root", coordinate: parent }))
-  const spawned = await Effect.runPromise(allocator.allocate(child("researcher")))
+  const spawned = await Effect.runPromise(allocator.allocate({ ...child("researcher"), key: "spawn" }))
   const unnamed = await Effect.runPromise(allocator.allocate({ kind: "root", coordinate: { ...parent, thread: "" }, key: "create" }))
   expect([root.thread, spawned.thread, unnamed.thread]).toEqual(["main", "quiet-fox-abcd", "bright-owl-efgh"])
+})
+
+test("named allocations use the name and report conflicts without generating a replacement", async () => {
+  const store = memoryThreadDirectory((target) => target.thread === "occupied")
+  const allocator = registeredThreadAllocator(store, { generate: () => { throw new Error("named allocation must not generate") } })
+  const run = (request: ThreadAllocation) => Effect.runPromise(allocator.allocate(request))
+  expect((await run({ kind: "root", coordinate: parent })).thread).toBe("main")
+  const request = child("researcher")
+  expect((await run(request)).thread).toBe("researcher")
+  expect((await run(request)).thread).toBe("researcher")
+  await expect(run(child("main"))).rejects.toThrow('thread name "main" is already taken')
+  await expect(run(child("occupied"))).rejects.toThrow('thread name "occupied" is already taken')
+  await expect(run({ ...request, kind: "child", parent: { ...parent, thread: "other" }, child: childKeyOf("researcher") })).rejects.toThrow("already taken")
+  await expect(run({ kind: "root", coordinate: { ...parent, thread: "researcher" } })).rejects.toThrow("already taken")
+  await expect(run({ kind: "root", coordinate: { ...parent, thread: "occupied" } })).rejects.toThrow("already taken")
 })
 
 test("distinct scopes and names separate trees at every depth", async () => {
@@ -39,7 +54,7 @@ test("distinct scopes and names separate trees at every depth", async () => {
       let frontier = roots
       for (let level = 0; level < depth; level++) {
         const descendants = await Promise.all(frontier.flatMap((parent) => names.map(async (name) => {
-          const request: ThreadAllocation = { kind: "child", parent, child: childKeyOf(name) }
+          const request: ThreadAllocation = { kind: "child", parent, child: childKeyOf(name), key: name }
           const target = await Effect.runPromise(allocator.allocate(request))
           expect(await Effect.runPromise(registeredThreadAllocator(store).allocate(request))).toEqual(target)
           return target

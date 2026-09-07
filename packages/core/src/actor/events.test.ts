@@ -4,15 +4,27 @@ import { actorEventKeyOf, actorThreadsOf } from "./events"
 
 describe("actor events", () => {
   test("allocation and registration project into the same thread record", () => {
-    const allocated: Event = { type: "ThreadAllocated", thread: "quiet-fox-abcd", allocationKey: "spawn", parentThread: "main", depth: 1, at: 0 }
-    const requested: Event = { type: "ThreadRequested", thread: "quiet-fox-abcd", parentThread: "main", depth: 1, placement: "independent", at: 1 }
-    const registered: Event = { type: "ThreadRegistered", thread: "quiet-fox-abcd", at: 2 }
+    const requested: Event = { type: "ThreadRequested", thread: "quiet-fox-abcd", allocationKey: "spawn", parentThread: "main", depth: 1, at: 1 }
+    const registered: Event = { type: "ThreadRegistered", thread: "quiet-fox-abcd", placement: "independent", at: 2 }
     for (const [events, state] of [
-      [[allocated], "allocated"], [[allocated, requested], "requested"], [[allocated, requested, registered], "registered"]
+      [[requested], "requested"], [[requested, registered], "registered"]
     ] as const) {
       expect(actorThreadsOf(events)).toEqual([expect.objectContaining({ allocationKey: "spawn", thread: "quiet-fox-abcd", parentThread: "main", depth: 1, state })])
     }
-    expect(actorEventKeyOf(allocated)).toBe("thread:allocated:quiet-fox-abcd")
+    expect(actorThreadsOf([requested, registered])[0]?.placement).toBe("independent")
+    expect(actorEventKeyOf(requested)).toBe("thread:requested:quiet-fox-abcd")
+  })
+
+  test("legacy allocations retain their identity and registration metadata", () => {
+    const allocated: Event = { type: "ThreadAllocated", thread: "old-child", allocationKey: "spawn", parentThread: "main", depth: 1, at: 0 }
+    const requested: Event = { type: "ThreadRequested", thread: "old-child", parentThread: "main", depth: 1, placement: "independent", at: 1 }
+    const registered: Event = { type: "ThreadRegistered", thread: "old-child", at: 2 }
+    expect(actorThreadsOf([allocated])[0]).toMatchObject({ allocationKey: "spawn", state: "requested" })
+    for (const events of [[allocated, requested, registered], [requested, registered, allocated]]) {
+      expect(actorThreadsOf(events)).toEqual([{
+        allocationKey: "spawn", thread: "old-child", parentThread: "main", depth: 1, placement: "independent", state: "registered"
+      }])
+    }
   })
 
   test("projects thread registration", () => {
