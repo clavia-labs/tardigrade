@@ -30,5 +30,5 @@ test("connect interrupts an in-flight request with the caller's abort reason", a
     })
   }) as typeof fetch })
   const thread = client.thread({ actor: "tardie", instance: "rick", thread: "main" })
-  await expect(thread.message("hello", { key: "request", signal: controller.signal })).rejects.toBe(reason)
+  await expect(thread.methods.message("hello", { key: "request", signal: controller.signal })).rejects.toBe(reason)
 })

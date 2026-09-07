@@ -76,7 +76,7 @@ export const allocateChildThread = <Methods extends ActorMethods>(
   actor: Pick<ActorDefinition<Methods>, "name" | "methods">,
   options: ChildThreadOptions
 ): Effect.Effect<ThreadRef<Methods>, never, ThreadAllocator> => Effect.gen(function* () {
-  const parent = "methods" in options.parent ? targetCoordinate(options.parent) : options.parent
+  const parent = "coordinate" in options.parent || "address" in options.parent ? targetCoordinate(options.parent) : options.parent
   if (parent.actor !== actor.name) {
     return yield* Effect.die(new Error("child allocation requires a parent from the same actor definition"))
   }

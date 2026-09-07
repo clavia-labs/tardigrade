@@ -43,11 +43,11 @@ test("local and HTTP references preserve allocations and results across restart"
   try {
     const rick = await host.allocateRootThread({ instance: "rick", name: "main" })
     const morty = await host.allocateRootThread({ instance: "morty", name: "main" })
-    expect(await rick.message({ text: "C-137" }, { key: "portal" })).toBe("C-137")
+    expect(await rick.methods.message({ text: "C-137" }, { key: "portal" })).toBe("C-137")
     expect(await morty.message({ text: "school" }, { key: "portal" })).toBe("school")
     expect(await rick.message({ text: "relay" }, { key: "relay" })).toBe("relayed")
     const researcher = await host.allocateChildThread({ parent: rick.coordinate, name: "researcher" })
-    expect(await researcher.message({ text: "research" }, { key: "work" })).toBe("research")
+    expect(await researcher.methods.message({ text: "research" }, { key: "work" })).toBe("research")
     server = await serve(host, { port: 0, token: "test" })
     const endpoint = new URL("v1/actors/rick/threads/main/methods/message", server.url)
     const headers = { authorization: "Bearer test", "Content-Type": "application/json" }
@@ -60,7 +60,7 @@ test("local and HTTP references preserve allocations and results across restart"
     expect(retried.headers.get("Location")).toBe(location)
     const remote = connect({ actor, url: server.url.href, token: "test", pollIntervalMs: 1 })
     const remoteRick = await remote.allocateRootThread({ instance: "rick", name: "main" })
-    expect(await remoteRick.message({ text: "retry" }, { key: "portal" })).toBe("C-137")
+    expect(await remoteRick.methods.message({ text: "retry" }, { key: "portal" })).toBe("C-137")
     const meeseeks = await remote.allocateChildThread({ parent: researcher.coordinate, name: "meeseeks" })
     expect(await meeseeks.message({ text: "look at me" }, { key: "work" })).toBe("look at me")
     const generated = await remote.allocateRootThread({ instance: "rick", key: "stable" })

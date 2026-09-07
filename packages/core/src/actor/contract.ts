@@ -1,4 +1,4 @@
-import { targetCoordinate, type ThreadTarget } from "./target"
+import { targetCoordinate, targetMethods, type ThreadTarget } from "./target"
 import type { ActorMethodDeclaration, ActorMethods } from "./method"
 import type { Component } from "@clavia/tardigrade-core/component"
 
@@ -164,7 +164,7 @@ export const actorContractOf = (
     })),
     undeclaredHandlers: contract.handles.filter((handled) => nameOf(methods, handled.method) === undefined),
     calls: contract.calls.map((call) => {
-      const methodName = nameOf(call.target.methods, call.method)
+      const methodName = nameOf(isCaller(call.target) ? call.target.methods : targetMethods(call.target), call.method)
       return { ...call, ...(methodName === undefined ? {} : { methodName }) }
     })
   }

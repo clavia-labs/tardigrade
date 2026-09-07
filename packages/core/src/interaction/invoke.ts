@@ -11,7 +11,7 @@ import { Router } from "../transport/router"
 import { type ThreadLineage, invocationLinked, type InvocationLinked } from "./relations"
 import { CANCELLATION_CONTROL_METHOD, cancellationMethodFor } from "./cancellation"
 
-import { targetCoordinate, type ThreadTarget } from "../actor/target"
+import { targetCoordinate, targetMethods, type ThreadTarget } from "../actor/target"
 import { decodeActorInvocationContext, type ActorInvocationContext, InvocationRef, sameInvocation, decodeInvocationCoordinate, invocationIdForKey, invocationCoordinateKey, invocationCoordinateOf, type InvocationCoordinate } from "./invocation"
 
 import type { ActorMethodCancellation, ActorMethodDeclaration, ActorMethodInput, ActorMethodOutput, ActorMethods } from "../actor/method"
@@ -134,7 +134,7 @@ export const actorCall = <
     }
   }
   const target = formatThreadAddress(targetCoordinate(options.target))
-  const declaration = options.target.methods[options.method] as ActorMethodDeclaration
+  const declaration = targetMethods(options.target)[options.method] as ActorMethodDeclaration
   const invocation: InvocationRef = {
     method: options.method,
     id: options.id,
@@ -308,7 +308,7 @@ export const cancelInvocation = <Methods extends ActorMethods>(
   log: ReadonlyArray<Event>,
   options: CancelInvocationOptions<Methods>
 ): ActorCall<CancellationResult, Router | Self> => {
-  const method = cancellationMethodFor(options.target.methods)
+  const method = cancellationMethodFor(targetMethods(options.target))
   return actorCall(log, {
     id: options.id,
     target: {

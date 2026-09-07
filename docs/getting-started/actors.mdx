@@ -150,7 +150,9 @@ const child = await host.allocateChildThread({ parent: root.coordinate })
 Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickMain` identifies Rick's `"main"` thread, where a caller can invoke `meeseeks`'s `message` method.
 
 ```ts
-const response = await rickMain.message({
+Object.keys(rickMain.methods) // ["message"]
+
+const response = await rickMain.methods.message({
   text: "Help me build a portal gun.",
 }, { key: "portal-plan" })
 ```
@@ -212,10 +214,10 @@ try {
   const mortyMain = await host.allocateRootThread({ instance: "morty", name: "main" })
   const mortyLab = await host.allocateRootThread({ instance: "morty", name: "lab" })
 
-  const rickResponse = await rickLab.message({
+  const rickResponse = await rickLab.methods.message({
     text: "Design an experiment to test the portal gun's power source.",
   }, { key: "portal-experiment" })
-  const mortyResponse = await mortyMain.message({
+  const mortyResponse = await mortyMain.methods.message({
     text: "Help me plan my day around school and homework.",
   }, { key: "school-plan" })
 

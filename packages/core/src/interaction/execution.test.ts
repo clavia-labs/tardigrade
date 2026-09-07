@@ -29,7 +29,7 @@ const parent = { target: { actor: "scientist", instance: "main", thread: "root" 
 
 export const threadRefTypes = () => [
   // @ts-expect-error research accepts its declared input
-  reference.research({ items: [] }, { key: "review" }),
+  reference.methods.research({ items: [] }, { key: "review" }),
   // @ts-expect-error callers must provide a stable key
   reference.count({ items: [] }),
   // @ts-expect-error undeclared methods are absent
@@ -60,7 +60,7 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
       type: "ResponseReceived", reference: call.reference, id: "reply", from: formatThreadAddress(reference.coordinate),
       method: "research", call: call.id, epoch: 0, at: 1, ...outcome
     }]
-    return Effect.runPromise(reference.research({ topic: "energy" }, { key: "review" }).pipe(
+    return Effect.runPromise(reference.methods.research({ topic: "energy" }, { key: "review" }).pipe(
       Effect.provide(Layer.mergeAll(
         Layer.succeed(InvocationScope, { context: { invocation: parent.invocation }, signal: new AbortController().signal }),
         Layer.succeed(Self, parent.target),
@@ -79,8 +79,14 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
   expect(await run({ status: "completed", output: 123 })).toBeInstanceOf(InvocationFailed)
 })
 
-test("reference metadata and promise assimilation names cannot be shadowed", () => {
-  for (const name of ["coordinate", "address", "methods", "then"]) {
-    expect(() => bindThreadMethods({ coordinate: parent.target, methods: { [name]: research } })).toThrow("conflicts with the thread reference surface")
+test("method namespaces preserve metadata and promise assimilation", async () => {
+  for (const name of ["coordinate", "address", "methods", "then", "__proto__"]) {
+    const ref = bindThreadMethods({ coordinate: parent.target, methods: { [name]: research } })
+    expect(Object.keys(ref.methods)).toEqual([name])
+    expect(typeof ref.methods[name]).toBe("function")
+    expect(ref.coordinate).toEqual(parent.target)
+    expect(ref.address).toBe(ref.coordinate)
+    expect(await Promise.resolve(ref)).toBe(ref)
+    expect(Object.hasOwn(ref, "then")).toBe(false)
   }
 })

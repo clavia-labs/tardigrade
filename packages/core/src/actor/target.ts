@@ -2,12 +2,8 @@ import { threadCoordinateOf, type ThreadCoordinate, actorCoordinateOf } from "./
 import type { ActorDefinition } from "./definition"
 import type { ActorMethods } from "./method"
 
-// ThreadTarget pairs a thread coordinate with its method declarations.
-// Its coordinate and method declarations carry no authority to access the target.
-// TODO: Add transferable capabilities beside coordinates, scoped to target and operation.
-export type ThreadTarget<Methods extends ActorMethods = ActorMethods> = {
-  readonly methods: Methods
-} & ({
+// ThreadLocation accepts the current coordinate spelling and the legacy address spelling.
+type ThreadLocation = {
   readonly coordinate: ThreadCoordinate
   /** @deprecated Use coordinate. */
   readonly address?: ThreadCoordinate
@@ -15,7 +11,44 @@ export type ThreadTarget<Methods extends ActorMethods = ActorMethods> = {
   readonly coordinate?: ThreadCoordinate
   /** @deprecated Use coordinate. */
   readonly address: ThreadCoordinate
-})
+}
+
+const declarations = Symbol.for("tardigrade/thread-methods")
+
+type DeclaredTarget<Methods extends ActorMethods> = ThreadLocation & { readonly methods: Methods }
+
+// ThreadTarget accepts declaration targets and callable references without treating calls as schemas.
+export type ThreadTarget<Methods extends ActorMethods = ActorMethods> = ThreadLocation & (
+  { readonly methods: Methods } | { readonly [declarations]: Methods }
+)
+
+// targetMethods retrieves declarations for runtime planning and contract validation (reference.test.ts).
+export const targetMethods = <Methods extends ActorMethods>(target: ThreadTarget<Methods>): Methods =>
+  declarations in target ? target[declarations] : target.methods
+
+export type MethodAliases<Calls> = {
+  /** @deprecated Use the callable methods map. */
+  readonly [Name in Exclude<keyof Calls, "coordinate" | "address" | "methods" | "then">]: Calls[Name]
+}
+
+export type CallableThread<Methods extends ActorMethods, Calls> = {
+  readonly coordinate: ThreadCoordinate
+  /** @deprecated Use coordinate. */
+  readonly address: ThreadCoordinate
+  readonly methods: Calls
+  readonly [declarations]: Methods
+} & MethodAliases<Calls>
+
+// callableThread groups calls under methods and keeps nonconflicting direct aliases (reference.test.ts).
+export const callableThread = <Methods extends ActorMethods, Calls extends Readonly<Record<string, unknown>>>(coordinate: ThreadCoordinate, methods: Methods, calls: Calls): CallableThread<Methods, Calls> => {
+  const reference = { coordinate, address: coordinate, methods: calls }
+  Object.defineProperty(reference, declarations, { value: methods })
+  for (const [name, call] of Object.entries(calls)) {
+    if (name === "then" || Object.hasOwn(reference, name)) continue
+    Object.defineProperty(reference, name, { value: call })
+  }
+  return reference as CallableThread<Methods, Calls>
+}
 
 // targetCoordinate resolves either spelling and rejects conflicting coordinates (reference.test.ts).
 export const targetCoordinate = (target: ThreadTarget): ThreadCoordinate => {
@@ -27,7 +60,7 @@ export const targetCoordinate = (target: ThreadTarget): ThreadCoordinate => {
   return coordinate
 }
 
-export type ResolvedThreadTarget<Methods extends ActorMethods> = ThreadTarget<Methods> & {
+export type ResolvedThreadTarget<Methods extends ActorMethods> = DeclaredTarget<Methods> & {
   readonly coordinate: ThreadCoordinate
   /** @deprecated Use coordinate. */
   readonly address: ThreadCoordinate

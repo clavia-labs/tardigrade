@@ -1,3 +1,4 @@
+import { callableThread, type CallableThread } from "./target"
 import { invocationTimeoutOf } from "../interaction/prepare"
 import { Effect, Schema } from "effect"
 import { allocateRootThread, allocateChildThread, ThreadAllocator, type ThreadAllocation, type RootThreadOptions, type ChildThreadOptions } from "./allocation"
@@ -11,9 +12,7 @@ export interface CallOptions {
   readonly signal?: AbortSignal
 }
 
-export type ClientThread<Methods extends ActorMethods> = {
-  readonly coordinate: ThreadCoordinate
-} & { readonly [Name in keyof Methods]: (input: ActorMethodInput<Methods[Name]>, options: CallOptions) => Promise<ActorMethodOutput<Methods[Name]>> }
+export type ClientThread<Methods extends ActorMethods> = CallableThread<Methods, { readonly [Name in keyof Methods]: (input: ActorMethodInput<Methods[Name]>, options: CallOptions) => Promise<ActorMethodOutput<Methods[Name]>> }>
 
 export interface ActorClient<Methods extends ActorMethods> {
   readonly allocateRootThread: (options: RootThreadOptions) => Promise<ClientThread<Methods>>
@@ -28,13 +27,10 @@ export interface ActorClientTransport {
 
 // actorClient binds typed Promise methods to an allocation and invocation transport.
 export const actorClient = <Methods extends ActorMethods>(actor: Pick<ActorDefinition<Methods>, "name" | "methods">, transport: ActorClientTransport): ActorClient<Methods> => {
-  for (const name of Object.keys(actor.methods)) {
-    if (name === "coordinate" || name === "then") throw new Error(`reserved client method name: ${name}`)
-  }
   const thread = (value: ThreadCoordinate): ClientThread<Methods> => {
     const coordinate = Schema.decodeSync(ThreadCoordinate)(value)
     if (coordinate.actor !== actor.name || !coordinate.instance || !coordinate.thread) throw new Error("thread coordinate must identify a thread of this actor")
-    return Object.assign({ coordinate }, Object.fromEntries(Object.entries(actor.methods).map(([name, method]) => [name, async (input: unknown, options: CallOptions) => {
+    return callableThread(coordinate, actor.methods, Object.fromEntries(Object.entries(actor.methods).map(([name, method]) => [name, async (input: unknown, options: CallOptions) => {
       Schema.decodeSync(Schema.NonEmptyString)(options.key)
       invocationTimeoutOf(method, options.timeoutMs)
       options.signal?.throwIfAborted()
