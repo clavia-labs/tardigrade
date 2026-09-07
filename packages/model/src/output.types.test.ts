@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import type { Layer } from "effect"
-import type { NativeOutputSupport } from "tardie"
+import type { NativeOutputSupport } from "@clavia/tardigrade-agent"
 import { infer } from "./model"
 import { modelAdapters } from "./adapter"
 import { openAICompatibleAdapter } from "./openai"

@@ -1,7 +1,8 @@
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
-import { actor, actorMethod, component } from "tardie"
+import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
+import { Infer } from "@clavia/tardigrade-agent"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
@@ -17,6 +18,8 @@ import {
   retainBackgroundTask,
   type Env
 } from "../src/worker"
+import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { modelLayer, modelsFrom } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
@@ -142,7 +145,7 @@ describe("cloudflare actor", () => {
         revision: "bundled",
         refreshedAt: 1,
         status: "cached",
-        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: {} }] }]
+        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000, maxOutputTokens: 4000 } }] }]
       }
     })
     const config = {
@@ -161,6 +164,21 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+    const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters())
+    )))
+    expect(binding.resolve()).toMatchObject({
+      model: config.default,
+      catalogRevision: "bundled",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 4000,
+      models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
+    })
+    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
+    const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters())
+    )))
+    expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {
@@ -693,6 +711,26 @@ describe("cloudflare actor", () => {
       })
     expect(await client.state(handle.reference))
       .toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
+    const methodUrl = "http://test/v1/actors/main/threads/root/methods/echo"
+    const retried = await SELF.fetch(methodUrl, {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json", "Idempotency-Key": "workers-smoke" },
+      body: JSON.stringify({ text: "Run in workerd." })
+    })
+    expect(retried.status).toBe(202)
+    expect(retried.headers.get("location")).toContain("/calls/workers-smoke")
+    for (const [headers, input, status] of [
+      [{ ...authorization }, { text: "missing key" }, 400],
+      [{ ...authorization, "Idempotency-Key": "invalid" }, { text: 42 }, 400],
+      [{ authorization: "Bearer wrong", "Idempotency-Key": "invalid" }, { text: "unauthorized" }, 401]
+    ] as const) {
+      const refused = await SELF.fetch(methodUrl, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(input)
+      })
+      expect(refused.status).toBe(status)
+    }
+    const badEpoch = await SELF.fetch(`${methodUrl}/calls/workers-smoke?epoch=-1`, { headers: authorization })
+    expect(badEpoch.status).toBe(400)
     const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",

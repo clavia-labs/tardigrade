@@ -13,7 +13,7 @@ import {
   NATIVE_MODE,
   type InferDelta,
   type InferenceIdentity
-} from "tardie"
+} from "@clavia/tardigrade-agent"
 
 // reqOf wraps a trajectory in the render the actor would derive: the code surface half.
 const surfaceRender = renderOf([codeMode(), nativeOutput], [])
@@ -22,7 +22,7 @@ const reqOf = (trajectory: ReadonlyArray<Event>) => ({
   identity: { actor: "test", instance: "main", thread: "root", turn: "m1" },
   ...surfaceRender
 })
-import { Infer } from "tardie"
+import { Infer } from "@clavia/tardigrade-agent"
 import {
   actionOf,
   DEFAULT_STREAM_BOUNDS,
@@ -50,7 +50,7 @@ import {
   outputModeOf,
   outputPreflight
 } from "./output"
-import type { Action } from "tardie/log/events"
+import type { Action } from "@clavia/tardigrade-agent/log/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 
 const testAdapters = modelAdapters(openAICompatibleAdapter, anthropicAdapter, registeredBedrockAdapter)

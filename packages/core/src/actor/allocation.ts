@@ -37,10 +37,8 @@ export interface ChildThreadOptions {
   readonly key?: string // allocation key for idempotent thread creation
 }
 
-// ThreadAllocationScope identifies allocations within one replayed action.
-export class ThreadAllocationScope extends Context.Service<ThreadAllocationScope, {
-  readonly key: (explicit?: string) => string
-}>()("tardigrade/ThreadAllocationScope") {}
+export { ThreadAllocationScope } from "../runtime/context"
+import { ThreadAllocationScope } from "../runtime/context"
 
 const allocationIdentity = (options: { readonly name?: string; readonly key?: string }) => Effect.gen(function* () {
   if (options.name !== undefined) {

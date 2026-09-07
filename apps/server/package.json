@@ -26,6 +26,7 @@
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.110",

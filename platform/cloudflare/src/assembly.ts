@@ -1,15 +1,14 @@
 import { cloudflareDirectory } from "./transport/directory"
 import { Effect, Layer, Schema } from "effect"
 import { HttpClient } from "effect/unstable/http"
-import { actor, agentMethods, agentsPackage, applyModelPolicy, budget, codeMode, compaction, fetchPackage, Infer, infer as inferAgent, intersectModelPolicies, modelAllowedBy, outputValidateOnce, workspacePackage, type ActorMethods, type InferenceObserver, type ModelPolicy, type ModelRef } from "tardie"
-import type { Action } from "tardie/log/events"
+import { Infer, type InferenceObserver, type ModelPolicy, type ModelRef } from "@clavia/tardigrade-agent"
+import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { infer } from "@clavia/tardigrade-model/model"
+import { modelLayer as hostModelLayer } from "@clavia/tardigrade-model/host"
 import type { ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
-import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-model/catalog-page"
 import { canonicalModelConfig, modelConfigOf, type ModelConfig, type ModelProviderConfig } from "@clavia/tardigrade-model/config"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
 import { type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
@@ -22,7 +21,6 @@ import { layerCloudflareModelCatalogRepository } from "./catalog"
 import { structuredWorkerConfigOf } from "./config"
 import type { Env } from "./env"
 
-const DEFAULT_ACTOR_NAME = "default"
 export const CLOUDFLARE_CHILD_PLACEMENTS = ["independent"] as const satisfies ReadonlyArray<ChildPlacement>
 export const DEFAULT_CLOUDFLARE_CHILD_PLACEMENT: ChildPlacement = "independent"
 
@@ -49,13 +47,11 @@ export const retainBackgroundTask = (
   if (owner === "request") scope.waitUntil(task)
 }
 
-export type DefaultAssembly = ReturnType<typeof defaultAssemblyOf>
-
 interface MountedActor {
   readonly allocation?: ThreadAllocationPolicy
   readonly threadAllocator?: typeof ThreadAllocator.Service
   readonly name: string
-  readonly actor: DefaultAssembly
+  readonly actor: Actor<never>
   readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
   readonly modelScope?: DeploymentModelScope
@@ -68,7 +64,6 @@ interface MountedActor {
 }
 
 export let mountedActor: MountedActor | undefined
-export let deployedActor = DEFAULT_ACTOR_NAME
 
 export const EMPTY_MODEL_SCOPE: ModelCatalog = {
   source: "models.dev",
@@ -121,7 +116,7 @@ export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
 // DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the interpreter catalog once per Thread DO activation.
 export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
 
-export const deployed = (name: string): boolean => deployedActor === name
+export const deployed = (name: string): boolean => mountedActor?.name === name
 export const directory = cloudflareDirectory(deployed)
 
 interface CloudflareProvider extends ModelProviderConfig {
@@ -182,83 +177,23 @@ export const modelPolicyFrom = (env: Env): ModelPolicy => {
   return { ...(parsed.default === undefined ? {} : { default: parsed.default }), allow: parsed.allow }
 }
 
-const providerAvailabilityFromModels = (models: CloudflareModels | undefined) => models === undefined
-  ? {}
-  : providerAvailabilitiesOf(models, Object.fromEntries(
-      Object.values(models.providers).flatMap((provider) => provider.env.map((name) => [name, provider.apiKey]))
-    ))
-
-const selectedModelFrom = (
-  models: CloudflareModels,
-  scope: ModelCatalog,
-  reference?: ModelRef
-) => {
-  const selected = reference ?? models.default
-  if (!modelAllowedBy(models, selected)) throw new Error(`model ${selected.provider}/${selected.model_id} is excluded by the host model policy`)
-  const provider = models.providers[selected.provider]
-  if (provider === undefined) throw new Error(`provider ${JSON.stringify(selected.provider)} is not configured; update TARDIGRADE_CONFIG.models`)
-  const binding = scope.providers.find((candidate) => candidate.id === selected.provider)
-    ?.models.find((candidate) => candidate.id === selected.model_id)
-  if (binding === undefined) throw new Error(`model ${selected.provider}/${selected.model_id} is absent from the deployment lock; run \`tdg models lock\``)
-  const contextWindowTokens = binding.metadata.contextWindowTokens
-  if (contextWindowTokens === undefined) {
-    throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
-  }
-  return { reference: selected, provider, metadata: binding.metadata, contextWindowTokens, catalogRevision: scope.revision }
-}
+const hostModelConfig = (models: CloudflareModels | undefined) => ({
+  model: models ?? { allow: "*" as const, providers: {} },
+  modelCredentials: Object.fromEntries(Object.values(models?.providers ?? {}).flatMap((provider) =>
+    provider.env.map((name) => [name, provider.apiKey])))
+})
 
 export const modelLayer = (
   models: CloudflareModels | undefined,
   scope: ModelCatalog,
   adapters: ModelAdapterRegistry,
   observer?: InferenceObserver
-) => {
-  if (models === undefined) {
-    const failed: Action = { kind: "fail", error: "no model is configured", failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({
-      resolve: () => { throw new Error("no model is configured: set TARDIGRADE_CONFIG.models") },
-      react: () => Effect.succeed(failed)
-    })
-  }
-  const availableModels = (): ModelPolicy => {
-    const configured: ModelPolicy = {
-      allow: scope.providers.flatMap((provider) =>
-        models.providers[provider.id] !== undefined && provider.models.length > 0
-          ? [{ provider: provider.id, model_ids: provider.models.map((model) => model.id) }]
-          : []
-      )
-    }
-    return { ...intersectModelPolicies([models, configured]), default: models.default }
-  }
-  return Layer.succeed(Infer, {
-    resolve: (reference) => {
-      const selected = selectedModelFrom(models, scope, reference)
-      return {
-        model: selected.reference,
-        models: availableModels(),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.metadata.maxOutputTokens }),
-        catalogRevision: selected.catalogRevision
-      }
-    },
-    react: (request, key, signal) => {
-      if (request.model === undefined) return Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
-      const selectedModel = selectedModelFrom(models, scope, request.model)
-      const selected = infer({
-        baseUrl: selectedModel.provider.baseUrl,
-        apiKey: selectedModel.provider.apiKey,
-        model: request.model.model_id,
-        protocol: selectedModel.provider.protocol,
-        provider: request.model.provider,
-        ...(selectedModel.provider.region === undefined ? {} : { region: selectedModel.provider.region }),
-        contextWindowTokens: selectedModel.contextWindowTokens,
-        ...(selectedModel.metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: selectedModel.metadata.maxOutputTokens }),
-        ...(selectedModel.metadata.pricing === undefined ? {} : { pricing: selectedModel.metadata.pricing })
-      }, adapters, observer === undefined ? {} : { observer })
-      return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(selected))
-    }
-  })
-}
+) => Layer.effect(Infer, Effect.map(Infer, (binding) => ({
+  ...binding,
+  react: (request, key, signal) => models !== undefined && request.model === undefined
+    ? Effect.succeed({ kind: "fail" as const, error: "the actor selected no model", failure: { cause: "inference_error" as const, attempts: 0 } })
+    : binding.react(request, key, signal)
+}))).pipe(Layer.provide(hostModelLayer(hostModelConfig(models), { snapshot: scope }, adapters, observer)))
 
 const positiveInteger = (raw: string | undefined, fallback: number, name: string): number => {
   if (raw === undefined) return fallback
@@ -308,81 +243,17 @@ export const optionalNonNegativeInteger = (raw: string | undefined, name: string
   return nonNegativeInteger(raw, 0, name)
 }
 
-const optionalRatio = (raw: string | undefined, name: string): number | undefined => {
-  if (raw === undefined) return undefined
-  const value = Number(raw)
-  if (!Number.isFinite(value) || value <= 0 || value >= 1) {
-    throw new Error(`${name} must be between 0 and 1, got ${JSON.stringify(raw)}`)
-  }
-  return value
-}
-
 export const sandboxTransportOf = (raw: string | undefined): WorkerLoaderSandboxTransport => {
   const selected = raw ?? "capability"
   if (selected === "capability" || selected === "replay") return selected
   throw new Error(`TARDIGRADE_SANDBOX_TRANSPORT must be "capability" or "replay", got ${JSON.stringify(raw)}`)
 }
 
-function defaultAssemblyOf(
-  env: Env,
-  models: CloudflareModels | undefined,
-  scope: ModelCatalog,
-  catalog: ModelCatalogState
-) {
-  const fireRatio = optionalRatio(env.TARDIGRADE_COMPACTION_FIRE_RATIO, "TARDIGRADE_COMPACTION_FIRE_RATIO")
-  const keepRatio = optionalRatio(env.TARDIGRADE_COMPACTION_KEEP_RATIO, "TARDIGRADE_COMPACTION_KEEP_RATIO")
-  const snapshot = catalog.snapshot
-  const availability = providerAvailabilityFromModels(models)
-  const agentCatalog = snapshot === undefined
-    ? undefined
-    : {
-        providers: (query: Parameters<typeof providersPageOf>[2]) => {
-          const effective = applyModelPolicy(models ?? { allow: "*" }, query?.models ?? {})
-          return providersPageOf(snapshot, availability, { ...query, models: effective, policy: effective })
-        },
-        models: (query: Parameters<typeof modelsPageOf>[2]) => {
-          const effective = applyModelPolicy(models ?? { allow: "*" }, query?.models ?? {})
-          return modelsPageOf(snapshot, availability, { ...query, models: effective, policy: effective })
-        }
-      }
-  return actor({
-    name: DEFAULT_ACTOR_NAME,
-    methods: agentMethods,
-    components: [inferAgent([
-      budget([codeMode([
-        agentsPackage(agentCatalog === undefined ? {} : { catalog: agentCatalog }),
-        workspacePackage(),
-        fetchPackage()
-      ])]),
-      compaction({
-        ...(models === undefined ? {} : {
-          contextWindowTokens: (model: ModelRef | undefined) =>
-            selectedModelFrom(models, scope, model ?? models.default).contextWindowTokens
-        }),
-        ...(fireRatio === undefined ? {} : { fireRatio }),
-        ...(keepRatio === undefined ? {} : { keepRatio })
-      }),
-      outputValidateOnce
-    ])]
-  })
-}
+export const assemblyOf = (name: string): Actor<never> | undefined =>
+  mountedActor?.name === name ? mountedActor.actor : undefined
 
-export const assemblyOf = (
-  name: string,
-  env: Env,
-  models: CloudflareModels | undefined,
-  scope: ModelCatalog,
-  catalog: ModelCatalogState
-): DefaultAssembly | undefined => {
-  if (mountedActor !== undefined) return mountedActor.name === name ? mountedActor.actor : undefined
-  if (name !== DEFAULT_ACTOR_NAME) return undefined
-  return defaultAssemblyOf(env, models, scope, catalog)
-}
-
-export const methodsOf = (name: string): ActorMethods | undefined => {
-  if (mountedActor !== undefined) return mountedActor.name === name ? mountedActor.methods : undefined
-  return name === DEFAULT_ACTOR_NAME ? agentMethods : undefined
-}
+export const methodsOf = (name: string): ActorMethods | undefined =>
+  mountedActor?.name === name ? mountedActor.methods : undefined
 
 type CloudflareWorkerProvided = CloudflarePorts | Infer | HttpClient.HttpClient
 type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
@@ -427,5 +298,4 @@ export type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
 // mountActor installs the assembly shared by the HTTP entry point and Durable Objects.
 export const mountActor = (value: MountedActor): void => {
   mountedActor = value
-  deployedActor = value.name
 }

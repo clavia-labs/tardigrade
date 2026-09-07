@@ -1,6 +1,6 @@
 # Cloudflare platform
 
-This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, event log, and thread tree. D1 stores the public model catalog. The Worker bundle carries the model scope resolved for its deployment. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
+This binding mounts each actor supervisor in an `ActorDO` and each thread in a `ThreadDO`. The Actor DO stores the actor identity, event log, and thread tree. D1 stores the public model catalog. Actors using the supplied inference binding pass their deployment model scope through `modelScope`. Actors without inference do not need a model lock or provider credentials. Each Thread DO stores one event log, one workspace, and one alarm lifecycle. Each accepted event commits its log append and recovery alarm before reconciliation starts. The alarm covers interrupted drives and the earliest unresolved method deadline. Code mode uses the `LOADER` Dynamic Worker binding. Generated code runs in a fresh Worker with direct network access disabled and calls host packages through an RPC capability.
 
 Celld implements the Worker, SQLite Durable Object, alarm, and Worker Loader surfaces this binding uses. Code Mode uses JSON replay on Celld because its loaded Worker environment cannot carry capability stubs. The [Celld deployment guide](../../docs/platforms/celld.mdx) covers the generated manifest and node configuration.
 
@@ -11,9 +11,16 @@ Cloudflare assigns background tasks to the `host` by default because a Durable O
 Each actor thread has a separate Thread DO, SQLite database, driver, alarm lifecycle, and isolate heap. The object name derives from the actor definition and thread identity. Actor delivery uses the complete `ThreadAddress`, so a child thread routes to its own Thread DO when it uses the same actor definition.
 
 ```ts
+import { createWorker } from "tardie/worker"
+import definition from "./actor"
+
+const { worker, ActorDO, ThreadDO } = createWorker(definition)
+
 export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition)
+export default worker
 ```
+
+The application entry point supplies its actor. Point the application's Wrangler configuration at that entry point. The platform module has no default actor.
 
 The standard Durable Object adapter supports `independent` placement. Pass `defaultChildPlacement: "independent"` to state the default explicitly. A request for `colocated` placement fails because ordinary Durable Object namespaces cannot guarantee it. A future Facets adapter can advertise `colocated` placement without changing the actor or thread contracts.
 
@@ -138,7 +145,6 @@ bun run --cwd platform/cloudflare typecheck
 bun run --cwd platform/cloudflare test
 bun run --cwd platform/cloudflare test:workers
 bun run --cwd platform/cloudflare bundle
-bun run --cwd platform/cloudflare deploy
 ```
 
 The [Worker Loader platform](../worker-loader/README.md) owns Code Mode sandbox policy and its shared workerd and Celld runtime tests.
@@ -225,8 +231,6 @@ The response has status `202` and identifies the accepted destination.
 | --- | --- | --- |
 | `TARDIGRADE_TOKEN` | unset | Protects every endpoint except `/healthz`; an unset value closes the event API |
 | `TARDIGRADE_ALARM_DELAY_MILLIS` | `120000` | Sets the recovery wake delay for an interrupted actor drive |
-| `TARDIGRADE_COMPACTION_FIRE_RATIO` | `0.8` | Compacts when rendered context crosses this fraction of the selected model window |
-| `TARDIGRADE_COMPACTION_KEEP_RATIO` | `0.5` | Keeps this fraction of the selected model window verbatim after compaction |
 | `TARDIGRADE_MODEL_CATALOG_URL` | `https://models.dev/api.json` | Selects the public model catalog source |
 | `TARDIGRADE_MODEL_CATALOG_LOAD_POLICY` | `refresh` | Uses `refresh` to fetch once per isolate or `cache-first` to prefer the D1 catalog |
 | `TARDIGRADE_MODEL_CATALOG_TIMEOUT_MILLIS` | `10000` | Bounds a catalog refresh request |

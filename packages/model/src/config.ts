@@ -1,4 +1,5 @@
-import { modelAllowedBy, modelPolicyOf, modelRefOf, type ModelPolicy } from "tardie/agent"
+import { modelRefOf } from "@clavia/tardigrade-agent/inference/reference"
+import { modelAllowedBy, modelPolicyOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
 import { modelProtocolOf, type ModelProtocol } from "./directory"
 
 export interface ModelProviderConfig {

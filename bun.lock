@@ -14,6 +14,7 @@
         "beautiful-mermaid": "^1.1.3",
         "effect": "4.0.0-rc.110",
         "knip": "^6.15.0",
+        "oxc-parser": "0.143.0",
         "oxlint": "^1.69.0",
       },
     },
@@ -37,6 +38,7 @@
       "name": "@clavia/tardigrade-server",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
@@ -150,10 +152,10 @@
         "@cfworker/json-schema": "^4.1.1",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
-        "@clavia/tardigrade-host": "workspace:*",
         "effect": "4.0.0-rc.110",
       },
       "devDependencies": {
+        "@clavia/tardigrade-host": "workspace:*",
         "fast-check": "^4.9.0",
       },
     },
@@ -170,9 +172,10 @@
       "name": "@clavia/tardigrade-client",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "effect": "4.0.0-rc.110",
-        "tardie": "workspace:*",
       },
     },
     "packages/code": {
@@ -208,6 +211,52 @@
         "fast-check": "^4.9.0",
       },
     },
+    "packages/http": {
+      "name": "@clavia/tardigrade-http",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
+        "@clavia/tardigrade-model": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+      "devDependencies": {
+        "@effect/platform-bun": "4.0.0-rc.110",
+      },
+    },
+    "packages/model": {
+      "name": "@clavia/tardigrade-model",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@tanstack/ai": "0.46.0",
+        "@tanstack/ai-anthropic": "0.16.7",
+        "@tanstack/ai-openai": "0.20.0",
+        "effect": "4.0.0-rc.110",
+      },
+      "devDependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+        "@smithy/fetch-http-handler": "^5.6.3",
+        "@smithy/node-http-handler": "^4.11.2",
+        "@tanstack/ai-bedrock": "0.2.3",
+      },
+      "peerDependencies": {
+        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
+        "@smithy/fetch-http-handler": "^5.6.3",
+        "@smithy/node-http-handler": "^4.11.2",
+        "@tanstack/ai-bedrock": "0.2.3",
+      },
+      "optionalPeers": [
+        "@aws-sdk/client-bedrock-runtime",
+        "@smithy/fetch-http-handler",
+        "@smithy/node-http-handler",
+        "@tanstack/ai-bedrock",
+      ],
+    },
     "packages/tardie": {
       "name": "tardie",
       "version": "0.0.1",
@@ -240,15 +289,16 @@
       "name": "@clavia/tardigrade-cloudflare",
       "version": "0.0.1",
       "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
+        "@clavia/tardigrade-http": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/sql-sqlite-do": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
-        "tardie": "workspace:*",
       },
       "devDependencies": {
         "@cloudflare/vitest-pool-workers": "^0.20.1",
@@ -257,54 +307,6 @@
         "vitest": "^4.1.10",
         "wrangler": "^4.119.0",
       },
-    },
-    "platform/http": {
-      "name": "@clavia/tardigrade-http",
-      "version": "0.0.1",
-      "dependencies": {
-        "@clavia/tardigrade-agent": "workspace:*",
-        "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-code": "workspace:*",
-        "@clavia/tardigrade-core": "workspace:*",
-        "@clavia/tardigrade-host": "workspace:*",
-        "@clavia/tardigrade-model": "workspace:*",
-        "effect": "4.0.0-rc.110",
-      },
-      "devDependencies": {
-        "@effect/platform-bun": "4.0.0-rc.110",
-      },
-    },
-    "platform/model": {
-      "name": "@clavia/tardigrade-model",
-      "version": "0.0.1",
-      "dependencies": {
-        "@clavia/tardigrade-bun": "workspace:*",
-        "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-core": "workspace:*",
-        "@tanstack/ai": "0.46.0",
-        "@tanstack/ai-anthropic": "0.16.7",
-        "@tanstack/ai-openai": "0.20.0",
-        "effect": "4.0.0-rc.110",
-        "tardie": "workspace:*",
-      },
-      "devDependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-        "@smithy/fetch-http-handler": "^5.6.3",
-        "@smithy/node-http-handler": "^4.11.2",
-        "@tanstack/ai-bedrock": "0.2.3",
-      },
-      "peerDependencies": {
-        "@aws-sdk/client-bedrock-runtime": "^3.1079.0",
-        "@smithy/fetch-http-handler": "^5.6.3",
-        "@smithy/node-http-handler": "^4.11.2",
-        "@tanstack/ai-bedrock": "0.2.3",
-      },
-      "optionalPeers": [
-        "@aws-sdk/client-bedrock-runtime",
-        "@smithy/fetch-http-handler",
-        "@smithy/node-http-handler",
-        "@tanstack/ai-bedrock",
-      ],
     },
     "platform/worker-loader": {
       "name": "@clavia/tardigrade-worker-loader",
@@ -431,9 +433,9 @@
 
     "@clavia/tardigrade-host": ["@clavia/tardigrade-host@workspace:packages/host"],
 
-    "@clavia/tardigrade-http": ["@clavia/tardigrade-http@workspace:platform/http"],
+    "@clavia/tardigrade-http": ["@clavia/tardigrade-http@workspace:packages/http"],
 
-    "@clavia/tardigrade-model": ["@clavia/tardigrade-model@workspace:platform/model"],
+    "@clavia/tardigrade-model": ["@clavia/tardigrade-model@workspace:packages/model"],
 
     "@clavia/tardigrade-react-rlm-chat-server": ["@clavia/tardigrade-react-rlm-chat-server@workspace:examples/react-rlm-chat/server"],
 

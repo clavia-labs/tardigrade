@@ -46,7 +46,7 @@ export const DEFAULT_MODEL_LIST_TIMEOUT_MILLIS = 10_000
 // Preset is one entry in the provider select. `baseUrl` prefills the next prompt and stays
 // editable; an absent one asks with no default. `provider` names the endpoint's vendor, which
 // also selects a protocol other than the OpenAI-compatible one the model binding speaks by
-// default (platform/model/src/model.ts).
+// default (packages/model/src/model.ts).
 //
 // The list is short on purpose. Every URL here is a promise to keep it correct, so an endpoint this
 // repository does not track belongs behind "Other" rather than in the list.

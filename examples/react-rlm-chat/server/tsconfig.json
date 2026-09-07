@@ -6,7 +6,7 @@
     "types": ["@cloudflare/workers-types"],
     "paths": {
       "tardie/worker": ["../../../platform/cloudflare/src/index.ts"],
-      "tardie/model/*": ["../../../platform/model/src/*.ts"],
+      "tardie/model/*": ["../../../packages/model/src/*.ts"],
       "tardie/bun/*": ["../../../platform/bun/src/*.ts"],
       "tardie/server/*": ["../../../apps/server/src/*.ts"]
     }

@@ -4,17 +4,20 @@ import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
-import type { ActorSummary, ActorArtifact } from "@clavia/tardigrade-client/contract"
+import type { ActorSummary, ActorArtifact, ActorMetadata } from "@clavia/tardigrade-client/contract"
 
 export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
   readonly message: string
   readonly cause: unknown
 }> {}
 
+import type { ThreadStatusOf } from "./projections"
+
 export interface ActorThreads {
   readonly allocateRoot: (name?: string, options?: { readonly key?: string; readonly parent?: string }) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
-  readonly sqlite: string
+  readonly storage: ActorMetadata["storage"]
+  readonly statusOf: ThreadStatusOf
   readonly append: (id: string, event: Event) => Effect.Effect<void>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
@@ -35,7 +38,7 @@ export class Threads extends Context.Service<
   Threads,
   {
     readonly methods: ActorThreads["methods"]
-    readonly sqlite: ActorThreads["sqlite"]
+    readonly storage: ActorThreads["storage"]
     readonly actorName?: string
     // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
     // client never waits on it (a delivery answers 202 and the client polls the turn); a test and

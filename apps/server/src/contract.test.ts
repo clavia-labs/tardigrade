@@ -19,9 +19,9 @@ import { layerGaugeResting } from "./driver-gauge"
 // A Threads that owns nothing, so every read is the empty log a 404 is made of.
 const layerThreadsEmpty = Layer.succeed(Threads)({
   methods: {},
-  sqlite: ":memory:",
+  storage: { kind: "memory" },
   instances: Effect.succeed([]),
-  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, sqlite: ":memory:", append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
+  ensure: () => Effect.succeed({ allocateRoot: () => Effect.die(new Error("unexpected allocation")), methods: {}, statusOf: () => "settled", storage: { kind: "memory" }, append: () => Effect.void, events: () => Effect.succeed([]), eventsPage: () => Effect.succeed([]), awaitHead: () => Effect.never, actorEventsPage: () => Effect.succeed([]), actorThreads: Effect.succeed({ cursor: 0, threads: [] }), actorThread: () => Effect.never, awaitActorHead: () => Effect.never, list: Effect.succeed([]), settled: Effect.void }),
   instance: () => Effect.succeed(undefined as ActorThreads | undefined),
   append: () => Effect.void,
   events: () => Effect.succeed([]),
@@ -58,7 +58,7 @@ const BOOT_MS = 20_000
 
 setDefaultTimeout(BOOT_MS)
 
-// Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream). `turns` appears because this build's actor declares it (actor.ts, agentProjections).
+// Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream).
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["post", "/v1/actors/{id}/threads/{thread}/methods/{method}"],
   ["get", "/v1/providers"],
@@ -77,7 +77,6 @@ const ROUTES: ReadonlyArray<readonly [string, string]> = [
   ["get", "/v1/actors/{id}/threads"],
   ["get", "/v1/actors/{id}/threads/{thread}/events"],
   ["get", "/v1/actors/{id}/threads/{thread}/methods/{method}/calls/{call}"],
-  ["get", "/v1/actors/{id}/threads/{thread}/projections/turns"],
   ["get", "/v1/actors/{id}/threads/{thread}/tree"],
   ["get", "/healthz"]
 ]
@@ -157,7 +156,7 @@ describe("problem documents", () => {
       Effect.gen(function*() {
         const unknownThread = yield* client.get("/v1/actors/main/threads/ghost/events")
         const unknownProjection = yield* client.get("/v1/actors/main/threads/ghost/projections/facts")
-        const unknownTurn = yield* client.get("/v1/actors/main/threads/ghost/projections/turns?at=1")
+        const unknownTurn = yield* client.get("/v1/actors/main/threads/ghost/methods/message/calls/m1")
         return [
           { status: unknownThread.status, type: unknownThread.headers["content-type"], body: yield* unknownThread.json },
           {
@@ -192,7 +191,7 @@ describe("problem documents", () => {
       Effect.gen(function*() {
         const post = (path: string, body: unknown) =>
           client.post(path, { body: HttpBody.jsonUnsafe(body) })
-        const repeated = yield* client.get("/v1/actors/main/threads/ghost/projections/turns?at=1&at=2")
+        const repeated = yield* client.get("/v1/actors/main/threads/ghost/events?after=1&after=2")
         const notANumber = yield* client.get("/v1/actors/main/threads/ghost/events?after=soon")
         const negative = yield* client.get("/v1/actors/main/threads/ghost/events?limit=-1")
         const missingField = yield* post("/v1/actors/main/threads/ghost/events", { id: "m1" })
@@ -220,7 +219,7 @@ describe("problem documents", () => {
       })
     }
     const details = refusals.map((refusal) => String(refusal.body["detail"]))
-    expect(details[0]).toBe("The query is not what this endpoint accepts. `at` is not a value it accepts.")
+    expect(details[0]).toBe("The query is not what this endpoint accepts. `after` is not a value it accepts.")
     expect(details[1]).toContain("`after` is not a value it accepts")
     expect(details[2]).toContain("`limit` is not a value it accepts")
     expect(details[3]).toBe("The request body is not what this endpoint accepts. `type` is missing.")

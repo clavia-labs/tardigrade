@@ -1,11 +1,10 @@
-import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-host/transport/ingress"
+import { restingActor } from "@clavia/tardigrade-core/runtime/reconciler"
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import type { IngressActor } from "@clavia/tardigrade-host/transport/ingress"
 import type { Directory } from "@clavia/tardigrade-core/transport/directory"
 import { resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
-import { Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
-import { DriverGauge } from "@clavia/tardigrade-http/driver-gauge"
-import { bunHttpThreads } from "./http-threads"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime/actor"
-import { Clock, Context, Effect } from "effect"
+import { Clock, Effect } from "effect"
 import { join } from "node:path"
 import type { Actor } from "@clavia/tardigrade-core/actor/definition"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
@@ -18,7 +17,7 @@ import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
 import { isActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
 import { threadCreated, threadCreatedOf, childLineageOf } from "@clavia/tardigrade-core/interaction/relations"
 import { formatThreadAddress } from "@clavia/tardigrade-core/transport/endpoint"
-import { existingMethodRequest, prepareMethodRequest } from "@clavia/tardigrade-host/transport/http/method-request"
+import { existingInvocation, prepareMethodInvocation } from "@clavia/tardigrade-host/invocation"
 import { bunInstances } from "./instances"
 import { createBunHost, type BunHost, type BunHostOptions } from "./host"
 
@@ -42,10 +41,15 @@ export interface Host<Methods extends ActorMethods> extends ActorClient<Methods>
 }
 
 export interface HostBackend {
-  readonly http: Context.Context<Threads | DriverGauge | Ingress>
+  readonly actor: string
+  readonly methods: ActorMethods
+  readonly storage: string
+  readonly resting: (events: ReadonlyArray<Event>) => boolean
+  readonly instances: ReadonlyMap<string, BunHost>
+  readonly ensure: (instance: string) => Promise<BunHost>
   readonly resolve: Directory<ThreadCoordinate, IngressActor>["resolve"]
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadCoordinate>
-  readonly submit: (coordinate: ThreadCoordinate, name: string, input: unknown, call: CallOptions) => Promise<ReturnType<typeof prepareMethodRequest>["accepted"]>
+  readonly submit: (coordinate: ThreadCoordinate, name: string, input: unknown, call: CallOptions) => Promise<ReturnType<typeof prepareMethodInvocation>["accepted"]>
   readonly state: (reference: InvocationCoordinate) => Promise<ActorMethodState<unknown> | undefined>
 }
 
@@ -102,10 +106,6 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
     await host.commit({ link: { source: request.parent, target }, lineage, event: threadCreated(target, lineage, Date.now()) })
     return target
   }
-  const httpThreads = (instance: string, runtime: BunHost): ActorThreads => bunHttpThreads(runtime, {
-    actor: options.actor.name, instance, methods: options.actor.methods, sqlite: options.storage, allocate
-  })
-  const ensure = (id: string) => Effect.promise(async () => httpThreads(id, await instanceOf(options.actor.name, id)))
   const resolve: HostBackend["resolve"] = (target) => target.actor !== options.actor.name
     ? Effect.succeed(undefined as IngressActor | undefined)
     : Effect.map(Effect.promise(() => instanceOf(target.actor, target.instance)), (runtime) => ({
@@ -119,24 +119,13 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
       }),
       schedule: Effect.sync(() => { for (const instance of pool.instances.values()) instance.schedule() })
     }))
-  const http = Context.make(Threads, {
-    methods: options.actor.methods,
-    sqlite: options.storage,
-    actorName: options.actor.name,
-    definitions: Effect.succeed([{ name: options.actor.name, builtIn: false }]),
-    instances: Effect.sync(() => [...pool.instances.keys()].sort().map((id) => ({ id, definition: options.actor.name }))),
-    ensure,
-    instance: (id) => Effect.sync(() => { const runtime = pool.instances.get(id); return runtime === undefined ? undefined : httpThreads(id, runtime) }),
-    append: (instance, thread, event) => Effect.flatMap(ensure(instance), (threads) => threads.append(thread, event)),
-    events: (instance, thread) => Effect.flatMap(ensure(instance), (threads) => threads.events(thread)),
-    list: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.list),
-    settled: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.settled)
-  }).pipe(Context.add(DriverGauge, {
-    resting: Effect.promise(async () => (await Promise.all([...pool.instances.values()].map((runtime) => runtime.resting()))).every(Boolean)),
-    dirty: Effect.sync(() => [...pool.instances.values()].reduce((total, runtime) => total + runtime.work(), 0))
-  }))
   const backend: HostBackend = {
-    http: Context.add(http, Ingress, ingressFrom({ resolve })),
+    actor: options.actor.name,
+    methods: options.actor.methods,
+    storage: options.storage,
+    resting: (events) => restingActor(options.actor, events),
+    instances: pool.instances,
+    ensure: (instance) => instanceOf(options.actor.name, instance),
     resolve,
     allocate,
     submit: async (coordinate, name, input, call) => {
@@ -148,9 +137,9 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
       const events = await host.read(coordinate.thread)
       if (threadCreatedOf(events) === undefined) throw new Error("thread does not exist")
       const reference = { target: coordinate, invocation: { method: name, id: call.key, epoch: method.currentEpoch(events, call.key) } }
-      let receipt = existingMethodRequest(events, reference)
+      let receipt = existingInvocation(events, reference)
       if (receipt === undefined) {
-        const prepared = prepareMethodRequest({ reference, method, input, at: Date.now(), ...(call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs }) })
+        const prepared = prepareMethodInvocation({ reference, method, input, at: Date.now(), ...(call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs }) })
         await host.commitRoot(formatThreadAddress(coordinate), prepared.event)
         receipt = prepared.accepted
       }

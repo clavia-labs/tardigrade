@@ -16,18 +16,17 @@ import {
   type InferRequest,
   type InferenceObserver,
   type InferenceObserverPolicy
-} from "tardie"
-import type { Action, AttemptEndpoint } from "tardie/log/events"
-import { assertSupportedBun } from "@clavia/tardigrade-bun/runtime"
-import { modelRequest, type ModelRequest, type ToolSpec } from "tardie/inference/request"
-import type { AgentMessage } from "tardie/projection/messages"
+} from "@clavia/tardigrade-agent"
+import type { Action, AttemptEndpoint } from "@clavia/tardigrade-agent/log/events"
+import { modelRequest, type ModelRequest, type ToolSpec } from "@clavia/tardigrade-agent/inference/request"
+import type { AgentMessage } from "@clavia/tardigrade-agent/projection/messages"
 import {
   capabilityOf,
   outputModeOf,
   fallbackSystemFor
 } from "./output"
-import type { OutputMode } from "tardie/output/contract"
-import { costNumber, sumUsage, usageFrom, type Usage } from "tardie/inference/usage"
+import type { OutputMode } from "@clavia/tardigrade-agent/output/contract"
+import { costNumber, sumUsage, usageFrom, type Usage } from "@clavia/tardigrade-agent/inference/usage"
 import type {
   ModelAdapterRegistry,
   ModelConfig,
@@ -570,7 +569,6 @@ export const infer = <const C extends ModelConfig>(
   adapters: ModelAdapterRegistry,
   options: ModelInferOptions = {}
 ): Layer.Layer<Infer | NativeOutputProvided<C>> => {
-  assertSupportedBun()
   if (!Number.isSafeInteger(config.contextWindowTokens) || config.contextWindowTokens <= 0) {
     throw new Error(`contextWindowTokens must be a positive integer, got ${config.contextWindowTokens}`)
   }

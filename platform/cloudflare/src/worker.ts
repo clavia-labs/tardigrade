@@ -1,11 +1,12 @@
 import { cloudflareHttp } from "./transport/http"
-import type { Actor, ActorMethods, InferenceObserver } from "tardie"
+import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
+import type { InferenceObserver } from "@clavia/tardigrade-agent"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
 import type { CommitObserver } from "@clavia/tardigrade-host/commit"
 import { type CloudflareThreadStorePolicy } from "./storage"
 import { type CloudflareThreadEnv } from "./host"
 import type { Env } from "./env"
-import { CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, DEFAULT_BACKGROUND_TASK_OWNER, type DefaultAssembly, deployedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerLayerContext, type CloudflareWorkerArguments, mountActor } from "./assembly"
+import { CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, DEFAULT_BACKGROUND_TASK_OWNER, mountedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerLayerContext, type CloudflareWorkerArguments, mountActor } from "./assembly"
 import { ActorDO } from "./actor"
 import { ThreadDO } from "./thread"
 export { ActorDO, type ActorThreadNode } from "./actor"
@@ -14,10 +15,16 @@ export type { Env } from "./env"
 export { DEFAULT_CLOUDFLARE_EVENT_LIMIT } from "./transport/http"
 export { CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, BACKGROUND_TASK_OWNERS, type BackgroundTaskOwner, DEFAULT_BACKGROUND_TASK_OWNER, backgroundTaskOwnerOf, retainBackgroundTask, type DeploymentModelScope, modelScopeFrom, modelCatalogForConfig, DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS, DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY, type CloudflareWorkerLayerContext, type CloudflareWorkerStoreFor, type CloudflareWorkerOptions } from "./assembly"
 
-const worker = cloudflareHttp({
-  actorName: () => deployedActor, methodsOf, publicCatalog,
+const http = cloudflareHttp({
+  actorName: () => mountedActor!.name, methodsOf, publicCatalog,
   providerAvailabilityFrom, modelPolicyFrom, directory
 })
+
+const worker: ExportedHandler<Env> = {
+  fetch: (request, env, context) => mountedActor === undefined
+    ? Response.json({ error: "no actor is mounted; call createWorker(actor) in the Worker entry point" }, { status: 503 })
+    : http.fetch!(request, env, context)
+}
 
 // cloudflareWorker mounts a defined actor and its application layers into the Worker host (test/actor.workers.ts, "a mounted actor receives thread application services").
 export const cloudflareWorker = <
@@ -36,7 +43,7 @@ export const cloudflareWorker = <
     ...(options?.threadAllocator === undefined ? {} : { threadAllocator: options.threadAllocator }),
     ...(options?.allocation === undefined ? {} : { allocation: options.allocation }),
     name: definition.name,
-    actor: definition as unknown as DefaultAssembly,
+    actor: definition as unknown as Actor<never>,
     methods: definition.methods,
     modelAdapters: options?.modelAdapters ?? modelAdapters(),
     ...(options?.modelScope === undefined ? {} : { modelScope: options.modelScope }),

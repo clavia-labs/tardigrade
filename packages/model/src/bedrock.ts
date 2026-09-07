@@ -1,8 +1,8 @@
 import * as BedrockRuntime from "@aws-sdk/client-bedrock-runtime"
 import { FetchHttpHandler } from "@smithy/fetch-http-handler"
 import { BedrockConverseTextAdapter, type BEDROCK_CONVERSE_MODELS } from "@tanstack/ai-bedrock"
-import type { OutputRequest } from "tardie/inference/request"
-import { NATIVE_MODE, type OutputMode } from "tardie/output/contract"
+import type { OutputRequest } from "@clavia/tardigrade-agent/inference/request"
+import { NATIVE_MODE, type OutputMode } from "@clavia/tardigrade-agent/output/contract"
 import { outputNameFor, outputSchemaFor } from "./output"
 import type { ModelAdapter, ModelConfig, ModelStopClass, StreamBounds } from "./adapter"
 

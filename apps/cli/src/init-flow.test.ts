@@ -11,7 +11,7 @@ import { Cli } from "./services"
 const repository = new URL("../../../", import.meta.url).pathname
 const namespaces: Readonly<Record<string, string>> = {
   core: "packages/core/src/index.ts", agent: "packages/agent/src/index.ts", code: "packages/code/src/index.ts",
-  http: "platform/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "platform/model/src/model.ts", server: "apps/server/src/index.ts"
+  http: "packages/http/src/http.ts", bun: "platform/bun/src/index.ts", model: "packages/model/src/model.ts", server: "apps/server/src/index.ts"
 }
 
 // bundleServer resolves the public package namespaces against their publish sources.

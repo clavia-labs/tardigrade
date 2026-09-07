@@ -1,8 +1,8 @@
 import type { ModelMessage, StreamChunk, Tool } from "@tanstack/ai"
-import type { InferenceIdentity } from "tardie/inference/observer"
-import type { ModelRequest } from "tardie/inference/request"
-import type { OutputMode } from "tardie/output/contract"
-import type { ModelPricing } from "tardie/inference/usage"
+import type { InferenceIdentity } from "@clavia/tardigrade-agent/inference/observer"
+import type { ModelRequest } from "@clavia/tardigrade-agent/inference/request"
+import type { OutputMode } from "@clavia/tardigrade-agent/output/contract"
+import type { ModelPricing } from "@clavia/tardigrade-agent/inference/usage"
 import type { ModelProtocol } from "./directory"
 import type { OutputCapability } from "./output"
 

@@ -1,5 +1,5 @@
-import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "tardie/output/contract"
-import type { OutputRequest } from "tardie/inference/request"
+import { NATIVE_MODE, outputNameErrors, outputProfileErrors, type OutputMode } from "@clavia/tardigrade-agent/output/contract"
+import type { OutputRequest } from "@clavia/tardigrade-agent/inference/request"
 
 // The binding's half of the output contract: what an endpoint promises about a declared schema,
 // what that promise costs a request, and how the schema reaches each wire. A turn that declares a

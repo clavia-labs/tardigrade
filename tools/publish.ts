@@ -38,8 +38,8 @@ const sources = [
   { dir: "platform/bun", namespace: "bun" },
   { dir: "platform/worker-loader", namespace: "worker-loader" },
   { dir: "platform/cloudflare", namespace: "cloudflare" },
-  { dir: "platform/model", namespace: "model" },
-  { dir: "platform/http", namespace: "http" },
+  { dir: "packages/model", namespace: "model" },
+  { dir: "packages/http", namespace: "http" },
   { dir: "apps/server", namespace: "server" },
   { dir: "apps/cli", namespace: "cli" }
 ] as const

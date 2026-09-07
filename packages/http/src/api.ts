@@ -1,24 +1,17 @@
-import { Clock, Context, Duration, Effect, Layer, Schema, Stream } from "effect"
+import { Context, Duration, Effect, Layer, Stream, type Schema } from "effect"
 import { HttpRouter, HttpServerRequest, HttpServerResponse } from "effect/unstable/http"
 import { HttpApiBuilder, type HttpApiEndpoint } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
-import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
-import { invocationCoordinateOf } from "@clavia/tardigrade-core/interaction"
-import { methodRequestLocation, existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-host/transport/http/method-request"
 
 import {
   Api,
   apiOf,
   InvalidRequest,
-  InvocationSettled,
   invalidRequest,
-  ModelCatalogUnavailable,
   RESERVED_ACTOR,
   unacceptableField,
-  UnknownMethod,
-  UnknownMethodCall,
   UnknownActor,
   UnknownProjection,
   UnknownThread,
@@ -29,11 +22,8 @@ import {
   type ProjectionDeclaration,
   type ThreadNode
 } from "@clavia/tardigrade-client/contract"
-import { agentProjections } from "./agent-projections"
-import { ModelCatalogStore } from "./catalog"
-import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
-import { modelsPageOf, providersPageOf } from "@clavia/tardigrade-model/catalog-page"
-import { ServerConfig } from "./config"
+import { methodHandlers } from "./methods"
+import { catalogHandlers, type CatalogDiscovery } from "./models"
 import { Threads, type ActorThreads } from "./threads"
 import { publicThreadId, resolveThreadId } from "./thread-compat"
 import type { InferenceStream } from "./inference-stream"
@@ -58,7 +48,16 @@ export const DEFAULT_SSE_HEARTBEAT = Duration.seconds(5)
 // DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY bounds unread transient frames per browser connection.
 export const DEFAULT_INFERENCE_STREAM_BUFFER_CAPACITY = 64
 
+export type HttpProjections = Record<string, {
+  readonly run: ProjectionDeclaration["run"]
+  readonly params: Readonly<Record<string, Schema.Top & { readonly DecodingServices: never; readonly EncodingServices: never }>>
+  readonly result: Schema.Top & { readonly DecodingServices: never; readonly EncodingServices: never }
+}>
+
 export interface ApiOptions {
+  readonly token?: string | undefined
+  readonly catalog?: typeof CatalogDiscovery.Service
+  readonly projections?: HttpProjections
   readonly limit?: number
   readonly heartbeat?: Duration.Input
   readonly inference?: InferenceStream
@@ -86,17 +85,6 @@ const actorOf = (threads: Context.Service.Shape<typeof Threads>, id: string) =>
   Effect.flatMap(threads.instance(id), (actor) =>
     actor === undefined ? Effect.fail(UnknownActor.of(unknownActorDetail(id))) : Effect.succeed(actor))
 
-const unknownMethodDetail = (name: string, methods: Readonly<Record<string, unknown>>): string => {
-  const declared = Object.keys(methods)
-  const available = declared.length === 0
-    ? "This actor declares no methods."
-    : `This actor declares ${declared.map((method) => JSON.stringify(method)).join(", ")}.`
-  return `No method named ${JSON.stringify(name)} is declared. ${available}`
-}
-
-const failureMessage = (failure: unknown): string =>
-  failure instanceof Error ? failure.message : String(failure)
-
 // logOf reads a thread's events, failing the route when the log is empty. A thread exists once its
 // log has an event (docs/how-to/server.md, "Creation is delivery"), so an empty log is the only
 // unknown thread there is.
@@ -123,7 +111,7 @@ const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: R
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
 
 const rosterOf = (threads: ActorThreads) =>
-  Effect.map(threads.list, (entries) => flatten(treeOf(logsOf(entries))))
+  Effect.map(threads.list, (entries) => flatten(treeOf(logsOf(entries), threads.statusOf)))
 
 const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
@@ -444,7 +432,7 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
           const threads = yield* actorOf(yield* Threads, params.id)
           // The forest is built over every log because parentage is a claim in the PARENT's log; a
           // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
-          const node = findNode(treeOf(logsOf(yield* threads.list)), params.thread)
+          const node = findNode(treeOf(logsOf(yield* threads.list), threads.statusOf), params.thread)
           if (node === undefined) {
             return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
           }
@@ -457,144 +445,15 @@ export const layerRuntimeGroup = HttpApiBuilder.group(Api, "runtime", (handlers)
   handlers.handle("metadata", () =>
     Effect.map(Threads, (threads) => ({
       name: threads.actorName ?? RESERVED_ACTOR,
-      storage: { kind: "sqlite", location: threads.sqlite }
+      storage: threads.storage
     }))))
 
 // ServerApi is the surface this process serves: the platform's log routes, actor methods, and declared projections.
-export const ServerApi = apiOf(agentProjections)
+export const ServerApi = Api
 
-// jsonSchemaOf attaches every generated definition to the root schema that references it.
-const jsonSchemaOf = (schema: Schema.Constraint): unknown => {
-  const document = Schema.toJsonSchemaDocument(schema)
-  return Object.keys(document.definitions).length === 0
-    ? document.schema
-    : { ...document.schema, $defs: document.definitions }
-}
+export const layerMethodsGroup = methodHandlers(Threads)
 
-const methodOf = (threads: ActorThreads, name: string) => {
-  const method = threads.methods[name]
-  return method === undefined
-    ? Effect.fail(UnknownMethod.of(unknownMethodDetail(name, threads.methods)))
-    : Effect.succeed(method)
-}
-
-const invokeMethod = (
-  params: { readonly id: string; readonly thread: string; readonly method: string; readonly call: string },
-  query: { readonly actor?: string; readonly timeoutMs?: number },
-  payload: unknown
-) =>
-      Effect.gen(function*() {
-        const service = yield* Threads
-        if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) return yield* Effect.fail(InvalidRequest.of("Invocation target actor does not match this deployment."))
-        const threads = yield* actorOf(service, params.id)
-        const method = yield* methodOf(threads, params.method)
-        const events = yield* logOf(threads.events, params.thread)
-        const reference = invocationCoordinateOf(
-          threadCreatedOf(events)?.address ?? { actor: service.actorName ?? RESERVED_ACTOR, instance: params.id, thread: params.thread },
-          { method: params.method, id: params.call, epoch: 0 }
-        )
-        const existing = existingMethodRequest(events, reference)
-        if (existing !== undefined) return existing
-        const at = yield* Clock.currentTimeMillis
-        const prepared = yield* Effect.try({
-          try: () => prepareMethodRequest({ reference, method, input: payload, at,
-            ...(query.timeoutMs === undefined ? {} : { timeoutMs: query.timeoutMs }) }),
-          catch: (failure) => InvalidRequest.of(failureMessage(failure))
-        })
-        yield* threads.append(params.thread, prepared.event)
-        return prepared.accepted
-      })
-
-// layerMethodsGroup invokes and reads the method declarations carried by the mounted actor runtime.
-export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
-  handlers
-    .handle("methods", () =>
-      Effect.map(Threads, (threads) =>
-        Object.entries(threads.methods).map(([name, method]) => ({
-          name,
-          cancellable: method.cancellation !== undefined,
-          timeoutMs: method.timeoutMs,
-          inputSchema: jsonSchemaOf(method.input),
-          outputSchema: jsonSchemaOf(method.output)
-        }))))
-    .handle("invoke", ({ params, query, payload }) => Effect.map(invokeMethod(params, query, payload), (receipt) =>
-      HttpServerResponse.jsonUnsafe(receipt, { status: 202, headers: { location: methodRequestLocation(receipt.reference) } })))
-    .handle("invokeMethod", ({ params, query, payload, headers }) => Effect.gen(function* () {
-      const call = headers["idempotency-key"]
-      if (!call.trim()) return yield* Effect.fail(InvalidRequest.of("Idempotency-Key must be a nonempty header"))
-      const receipt = yield* invokeMethod({ ...params, call }, query, payload)
-      return HttpServerResponse.jsonUnsafe(receipt, { status: 202, headers: { location: methodRequestLocation(receipt.reference) } })
-    }))
-    .handle("methodState", ({ params, query }) =>
-      Effect.gen(function*() {
-        const service = yield* Threads
-        if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) {
-          return yield* Effect.fail(InvalidRequest.of("Invocation target actor does not match this deployment."))
-        }
-        const threads = yield* actorOf(service, params.id)
-        const method = yield* methodOf(threads, params.method)
-        const log = yield* logOf(threads.events, params.thread)
-        const { state } = methodRequestState(log, method, { method: params.method, id: params.call, ...(query.epoch === undefined ? {} : { epoch: query.epoch }) })
-        if (state === undefined) {
-          return yield* Effect.fail(
-            UnknownMethodCall.of(
-              `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
-            )
-          )
-        }
-        return state
-      }))
-    .handle("cancel", ({ params, query, payload }) =>
-      Effect.gen(function*() {
-        const service = yield* Threads
-        if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) {
-          return yield* Effect.fail(InvalidRequest.of("Invocation target actor does not match this deployment."))
-        }
-        const threads = yield* actorOf(service, params.id)
-        const method = yield* methodOf(threads, params.method)
-        const log = yield* logOf(threads.events, params.thread)
-        const { invocation, status: disposition } = methodCancellationRequest(log, method, { method: params.method, id: params.call, ...(query.epoch === undefined ? {} : { epoch: query.epoch }) })
-        if (disposition === "unknown") {
-          return yield* Effect.fail(UnknownMethodCall.of(
-            `No call named ${JSON.stringify(params.call)} exists for method ${JSON.stringify(params.method)} on this thread.`
-          ))
-        }
-        if (disposition === "unsupported") {
-          return yield* Effect.fail(InvalidRequest.of(
-            `Method ${JSON.stringify(params.method)} does not declare cancellation.`
-          ))
-        }
-        if (disposition === "settled") {
-          return yield* Effect.fail(InvocationSettled.of(
-            `Invocation ${JSON.stringify(params.call)} has settled and cannot be cancelled.`
-          ))
-        }
-        if (disposition !== "requestable") {
-          return {
-            actor: params.id,
-            thread: params.thread,
-            method: params.method,
-            call: params.call,
-            status: disposition
-          }
-        }
-        const at = yield* Clock.currentTimeMillis
-        yield* threads.append(params.thread, methodCancellationEvent(invocation, at, payload.reason))
-        return {
-          actor: params.id,
-          thread: params.thread,
-          method: params.method,
-          call: params.call,
-          status: "requested" as const
-        }
-      })))
-
-// layerProjectionsGroup implements every declared projection the same way, because there is only
-// one way: read the thread's log, hand it to `run` with the decoded query, and answer what comes
-// back. Nothing about a projection's meaning reaches this module; the actor holds all of it.
-// readOf is the whole of what serving a projection is: refuse an actor this build does not serve,
-// read the thread's log, and hand it to `run` with the decoded query. Nothing about what a
-// projection means reaches this module; the actor holds all of it (actor.ts, agentProjections).
+// readOf applies a custom projection to an existing thread log (http.test.ts, custom log projections).
 const readOf = (declaration: ProjectionDeclaration) =>
 (request: {
   readonly params: { readonly id: string; readonly thread: string }
@@ -606,7 +465,7 @@ const readOf = (declaration: ProjectionDeclaration) =>
     return declaration.run(log, request.query)
   })
 
-export const layerProjectionsGroup = HttpApiBuilder.group(ServerApi, "projections", (handlers) => {
+export const layerProjectionsGroup = (projections: HttpProjections = {}) => HttpApiBuilder.group(apiOf(projections), "projections", (handlers) => {
   // Every declared name gets the same handler, built from the same record the endpoints were
   // generated from, so the two cannot disagree about which names exist. The type is the group's
   // own endpoint map with every key required: `handleAll` accepts a partial record, and a partial
@@ -621,28 +480,31 @@ export const layerProjectionsGroup = HttpApiBuilder.group(ServerApi, "projection
     >
   }
   const served = Object.fromEntries(
-    Object.entries(agentProjections).map(([name, declaration]) => [name, readOf(declaration)])
+    Object.entries(projections).map(([name, declaration]) => [name, readOf(declaration)])
   ) as unknown as Complete
   return handlers.handleAll(served)
 })
 
 // The name a request asked for when the actor never declared it.
-const declaredProjections = Object.keys(agentProjections)
-const declaredDetail = declaredProjections.length === 0
-  ? "This actor declares no projections."
-  : `This actor declares ${declaredProjections.map((name) => JSON.stringify(name)).join(", ")}.`
+export const layerUnknownProjection = (projections: HttpProjections = {}) => {
+  const declaredProjections = Object.keys(projections)
+  const declaredDetail = declaredProjections.length === 0
+    ? "This actor declares no projections."
+    : `This actor declares ${declaredProjections.map((name) => JSON.stringify(name)).join(", ")}.`
 
-export const layerUnknownProjection = HttpRouter.add(
-  "GET",
-  "/v1/actors/:id/threads/:thread/projections/:name",
-  Effect.gen(function*() {
-    const params = yield* HttpRouter.params
-    const name = paramOf(params, "name")
-    return problemResponse(
-      UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${declaredDetail}`)
-    )
-  })
-)
+  return HttpRouter.add(
+    "GET",
+    "/v1/actors/:id/threads/:thread/projections/:name",
+    Effect.gen(function*() {
+      const params = yield* HttpRouter.params
+      const name = paramOf(params, "name")
+      return problemResponse(
+        UnknownProjection.of(`No projection named ${JSON.stringify(name)} is mounted here. ${declaredDetail}`)
+      )
+    })
+  )
+
+}
 
 export const layerDefinitionsGroup = HttpApiBuilder.group(ServerApi, "definitions", (handlers) =>
   handlers
@@ -674,31 +536,4 @@ export const layerActorsGroup = HttpApiBuilder.group(ServerApi, "actors", (handl
         return { id: params.id, definition: threads.actorName ?? RESERVED_ACTOR }
       })))
 
-const catalogSnapshot = Effect.flatMap(ModelCatalogStore, (catalog) =>
-  catalog.snapshot === undefined
-    ? Effect.fail(ModelCatalogUnavailable.of(
-      "No validated model catalog is available. Check the server startup logs and catalog configuration."
-    ))
-    : Effect.succeed(catalog.snapshot))
-
-const catalogDiscovery = Effect.all([catalogSnapshot, ServerConfig]).pipe(
-  Effect.map(([catalog, config]) => ({
-    catalog,
-    availability: providerAvailabilitiesOf(config.model, config.modelCredentials),
-    policy: { ...(config.model.default === undefined ? {} : { default: config.model.default }), allow: config.model.allow }
-  }))
-)
-
-// layerModelsGroup pages the process snapshot using provider readiness derived without credential values.
-export const layerModelsGroup = HttpApiBuilder.group(ServerApi, "models", (handlers) =>
-  handlers
-    .handle("providers", ({ query }) => Effect.flatMap(catalogDiscovery, ({ catalog, availability, policy }) =>
-      Effect.try({
-        try: () => providersPageOf(catalog, availability, { ...query, policy }),
-        catch: (error) => InvalidRequest.of(failureMessage(error))
-      })))
-    .handle("models", ({ query }) => Effect.flatMap(catalogDiscovery, ({ catalog, availability, policy }) =>
-      Effect.try({
-        try: () => modelsPageOf(catalog, availability, { ...query, policy }),
-        catch: (error) => InvalidRequest.of(failureMessage(error))
-      }))))
+export const layerModelsGroup = (options: ApiOptions = {}) => catalogHandlers(Effect.succeed(options.catalog))

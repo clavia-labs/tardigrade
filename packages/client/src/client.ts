@@ -1,3 +1,7 @@
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { REPLY_SUFFIX } from "@clavia/tardigrade-core/interaction/provider-message"
+import { boundaryOf } from "@clavia/tardigrade-agent/output/boundary"
+import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { Effect, type Schema } from "effect"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
@@ -8,9 +12,9 @@ import type {
   ActorMethodCancellation,
   ActorMethodInput,
   ActorMethodOutput,
-  ActorMethods,
-  ActorMethodState
-} from "tardie"
+  ActorMethods
+} from "@clavia/tardigrade-core/actor/method"
+import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 
 import {
   actorApiOf,
@@ -36,8 +40,7 @@ import {
   type ModelCatalogSortOrder,
   type ModelCatalogUnpricedOrder,
   type ProviderCatalogPage,
-  type Projections,
-  type TurnView
+  type Projections
 } from "./contract"
 import { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 import { actorThreadsStream, inferenceStream, stream, type ActorThreadsStreamOptions, type InferenceStreamOptions, type OpenEventSource, type StreamOptions } from "./stream"
@@ -360,22 +363,18 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     }))
   }
 
-  // turnsOf reads the `turns` projection through the derivation, which is where the resume
-  // convenience gets the epoch it has to stamp. It is spelled by name rather than through
-  // `projection` because `resume` is on every client while the declaration is not: a client built
-  // for an actor that declares no `turns` says so instead of failing on an undefined call.
-  const turnsOf = async (actor: string, thread: string, turn: string): Promise<ReadonlyArray<TurnView>> => {
-    const call = (api.projections as Record<string, ProjectionCall | undefined>)["turns"]
-    if (call === undefined) {
-      throw new ProblemError({
-        ...ResumeRefused.of(
-          "This client was built without a `turns` projection, so it cannot tell whether a turn failed."
-        )
-      })
+  // logOf follows server-sized pages until exhaustion (client.test.ts, "resume follows every event page").
+  const logOf = async (actor: string, thread: string): Promise<ReadonlyArray<Event>> => {
+    const log: Event[] = []
+    let after = 0
+    for (;;) {
+      const page = await run(api.threads.events({ params: { id: actor, thread }, query: { after } }))
+      if (page.length === 0) return log
+      const next = page[page.length - 1]!.seq
+      if (next <= after) throw new ProblemError({ title: UNREADABLE_EXCHANGE_TITLE, status: NO_ANSWER, detail: "Event page did not advance its cursor." })
+      log.push(...page.map((row) => row.event))
+      after = next
     }
-    // call erases the selected endpoint failure before run converts it to ProblemError.
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-    return await run(call({ params: { id: actor, thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
   return {
@@ -428,34 +427,36 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       }))
     },
     // A resume is an append, so the platform has no route for it and no guard over it. The check
-    // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
+    // below is advisory: it reads the event log to refuse the obvious mistake early and to
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a
     // TurnResumed, and a TurnResumed for a turn that is not failed derives nothing, so a race costs
     // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
     // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/log/events.ts,
     // agentKeys).
     resume: async (actor, thread, turn) => {
-      const views = await turnsOf(actor, thread, turn)
-      const view = views.find((candidate) => candidate.turn === turn)
-      if (view === undefined) {
+      const log = await logOf(actor, thread)
+      if (turn.endsWith(REPLY_SUFFIX) || !log.some((event) => event.type === "MessageReceived" && String((event as { id?: unknown }).id ?? "") === turn)) {
         throw new ProblemError({
           ...ResumeRefused.of(`No turn named ${JSON.stringify(turn)} has been served on this thread.`)
         })
       }
-      if (view.status !== "failed") {
+      const boundary = boundaryOf(log, turn)
+      const status = boundary?.kind === "requesting" ? "parked" : boundary?.kind ?? "pending"
+      if (status !== "failed") {
         throw new ProblemError({
           ...ResumeRefused.of(
-            `turn ${JSON.stringify(turn)} cannot resume because its active epoch is ${view.status}`
+            `turn ${JSON.stringify(turn)} cannot resume because its active epoch is ${status}`
           )
         })
       }
       // The next execution epoch, stamped the way the library stamps it
       // (packages/agent/src/runtime/resume.ts, resumeTurn).
+      const epoch = turnEpochOf(log, turn)
       return append(actor, thread, {
         type: "TurnResumed",
         turn,
-        failedEpoch: view.epoch,
-        epoch: view.epoch + 1
+        failedEpoch: epoch,
+        epoch: epoch + 1
       })
     },
     health: () => run(api.health.healthz({})),

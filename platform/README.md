@@ -1,7 +1,9 @@
-# platform
+# Platform adapters
 
-The packages state contracts and semantics: the log, the reconciler, the code thread, the agent, and the ports they leave open (EventLog, Router, Sandbox, Infer). A package depends on effect and on other packages, and on nothing else. That invariant is the line between the two trees.
+`platform/` contains runtime-specific adapters. `packages/core` defines actor contracts and execution rules. `packages/host` supplies shared hydration, delivery, and execution machinery. `packages/http` serves hosts over HTTP, and `packages/model` supplies model bindings and provider adapters.
 
-A platform binds one port to the world. A binding that delivers events also stamps the sending span's context onto each event it persists (one traceparent string, first stamp wins), or every cross-thread trace it serves arrives fragmented. Storage and delivery on Cloudflare, a model provider behind Infer, and a Bun process each live in one subdirectory with their own dependencies. `packages/host` stays a package by the same rule: the reference runtime is in-memory and dependency-free, and it is the executable contract a platform binding is tested against.
+`bun` stores each actor instance's directory in SQLite and gives each thread its own event log, workspace, runtime, and alarm state. Workspace SQL uses a separate database so model queries cannot alter the event log.
 
-`platform/model` binds Infer through the AI SDK. `platform/bun` stores an actor directory in SQLite and gives each thread its own SQLite event log, workspace, runtime, and alarm state. The workspace SQL verb uses another database where model queries cannot alter the log ([workspace](../docs/how-to/workspace.md)). [`platform/worker-loader`](worker-loader/README.md) binds Sandbox to fresh loaded Worker isolates on workerd and Celld. [`platform/cloudflare`](cloudflare/README.md) mounts each thread in its own SQLite Durable Object and drives it through an immediate pass with an alarm watchdog. Celld runs the same Worker binding through its compatible Durable Object surface.
+[`cloudflare`](cloudflare/README.md) mounts each thread in a SQLite Durable Object and schedules execution through immediate passes and alarm watchdogs. Celld runs this binding through its compatible Durable Object surface.
+
+[`worker-loader`](worker-loader/README.md) binds Sandbox to loaded Worker isolates on workerd and Celld.

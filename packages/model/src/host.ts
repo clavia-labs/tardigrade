@@ -1,6 +1,6 @@
 import { Effect, Layer } from "effect"
-import { Infer, intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef, type InferenceObserver } from "tardie/agent"
-import type { Action } from "tardie/log/events"
+import { Infer, intersectModelPolicies, modelAllowedBy, type ModelPolicy, type ModelRef, type InferenceObserver } from "@clavia/tardigrade-agent"
+import type { Action } from "@clavia/tardigrade-agent/log/events"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
 import type { ModelConfig, ModelCredentials } from "./config"
 import type { ModelCatalogState } from "./catalog"
@@ -27,7 +27,7 @@ interface SelectedModel {
   readonly region?: string
   readonly contextWindowTokens: number
   readonly maxOutputTokens?: number
-  readonly pricing?: import("tardie/inference/usage").ModelPricing
+  readonly pricing?: import("@clavia/tardigrade-agent/inference/usage").ModelPricing
   readonly catalogRevision: string
 }
 

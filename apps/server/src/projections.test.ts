@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import { replyId } from "@clavia/tardigrade-core/interaction/provider-message"
 import { childCreated, threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 
-import { statusOf, summaryOf, treeOf } from "./projections"
+import { summaryOf as summarize, treeOf as tree } from "./projections"
+const summaryOf = (id: string, events: ReadonlyArray<Event>, parent?: string) => summarize(id, events, () => "settled", parent)
+const treeOf = (logs: ReadonlyMap<string, ReadonlyArray<Event>>) => tree(logs, () => "running")
 
 // The projections are functions of an event array, so the fixtures are event arrays: the shapes
 // below are the ones an assembled thread writes (packages/agent/src/index.test.ts and
@@ -36,65 +37,8 @@ const dispatched = (execId: string): Event =>
 const called = (callId: string, name = "threads"): Event =>
   ({ type: "PackageCalled", callId, name, arguments: {}, at: at() }) as Event
 
-const blocked = (callId: string, awaiting: string): Event =>
-  ({ type: "BlockedOn", callId, awaiting, at: at() }) as Event
-
-const settledCode = (execId: string): Event =>
-  ({ type: "CodeSettled", execId, result: "ok", at: at() }) as Event
-
 const completed = (turn: string, output: string): Event =>
   ({ type: "TurnCompleted", turn, output, at: at() }) as Event
-
-const failed = (turn: string, error: string): Event =>
-  ({ type: "TurnFailed", turn, error, at: at() }) as Event
-
-const reply = (id: string, text = "done"): Event =>
-  ({ type: "MessageReceived", id: replyId(id), text, outcome: "completed", at: at() }) as Event
-
-describe("statusOf", () => {
-  test("an empty log is settled", () => {
-    expect(statusOf([])).toBe("settled")
-  })
-
-  test("a turn with a terminal is settled", () => {
-    const log = [inbound("m1"), dispatched("t1"), settledCode("t1"), completed("m1", "42")]
-    expect(statusOf(log)).toBe("settled")
-  })
-
-  test("a fresh turn is running", () => {
-    expect(statusOf([inbound("m1")])).toBe("running")
-  })
-
-  test("an unsettled execution that can move is running", () => {
-    expect(statusOf([inbound("m1"), dispatched("t1"), called("t1.0")])).toBe("running")
-  })
-
-  test("an open BlockedOn with the reply away is blocked", () => {
-    const log = [inbound("m1"), dispatched("t1"), called("t1.0"), blocked("t1.0", replyId("t1.0"))]
-    expect(statusOf(log)).toBe("blocked")
-  })
-
-  test("a landed reply unblocks the thread", () => {
-    const log = [
-      inbound("m1"),
-      dispatched("t1"),
-      called("t1.0"),
-      blocked("t1.0", replyId("t1.0")),
-      reply("t1.0")
-    ]
-    expect(statusOf(log)).toBe("running")
-  })
-
-  test("a failed last turn with nothing owed is failed", () => {
-    const log = [inbound("m1"), dispatched("t1"), settledCode("t1"), failed("m1", "the tool exploded")]
-    expect(statusOf(log)).toBe("failed")
-  })
-
-  test("a failed turn followed by a live one is running, not failed", () => {
-    const log = [inbound("m1"), failed("m1", "boom"), inbound("m2")]
-    expect(statusOf(log)).toBe("running")
-  })
-})
 
 describe("summaryOf", () => {
   test("a summary counts events and carries the last timestamp", () => {

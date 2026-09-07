@@ -12,11 +12,9 @@ import {
   layerStream,
   layerThreadsGroup,
   layerUnknownProjection,
-  ServerApi,
   type ApiOptions
 } from "./api"
-import { ServerConfig } from "./config"
-import { Api, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
+import { Api, apiOf, DOCS_PATH, OPENAPI_PATH, type Health } from "@clavia/tardigrade-client/contract"
 import { layerRequestProblems } from "./contract"
 import { DriverGauge } from "./driver-gauge"
 
@@ -58,9 +56,8 @@ const secretEquals = (a: string, b: string): boolean => {
 // The whole auth story for v1: TARDIGRADE_TOKEN absent leaves every route open, present makes a
 // matching bearer token required on everything but UNAUTHENTICATED_PATHS (apps-server-spec.md,
 // "Conventions"; http.test.ts, "a token closes the API and leaves healthz open").
-export const layerAuth = HttpRouter.middleware(
-  Effect.map(ServerConfig, (config) => (httpEffect) => {
-    const token = config.token
+export const layerAuth = (token?: string) => HttpRouter.middleware(
+  Effect.succeed((httpEffect) => {
     if (token === undefined) return httpEffect
     return Effect.flatMap(HttpServerRequest.HttpServerRequest, (request) => {
       if (UNAUTHENTICATED_PATHS.includes(pathOf(request.url))) return httpEffect
@@ -181,22 +178,23 @@ const scalarCss = `
 // The application: the declared API, the stream beside it, the document and the page derived from
 // the same declaration, plus the conventions that wrap them all. A route inherits the gate and the
 // error shape by being part of the same router.
-export const layerApp = (options: ApiOptions = {}) =>
-  Layer.mergeAll(
+export const layerApp = (options: ApiOptions = {}) => {
+  const api = apiOf(options.projections ?? {})
+  return Layer.mergeAll(
     Layer.provide(
-      Layer.provide(HttpApiBuilder.layer(ServerApi, { openapiPath: OPENAPI_PATH }), [
+      Layer.provide(HttpApiBuilder.layer(api, { openapiPath: OPENAPI_PATH }), [
         layerActorsGroup,
         layerDefinitionsGroup,
-        layerModelsGroup,
+        layerModelsGroup(options),
         layerRuntimeGroup,
         layerThreadsGroup(options),
         layerMethodsGroup,
-        layerProjectionsGroup,
+        layerProjectionsGroup(options.projections),
         layerHealthGroup
       ]),
       layerRequestProblems
     ),
-    HttpApiScalar.layer(ServerApi, {
+    HttpApiScalar.layer(api, {
       path: DOCS_PATH,
       scalar: {
         customCss: scalarCss,
@@ -206,11 +204,13 @@ export const layerApp = (options: ApiOptions = {}) =>
     }),
     layerStream(options),
     // layerUnknownProjection names the declared projections when a lookup misses.
-    layerUnknownProjection,
+    layerUnknownProjection(options.projections),
     layerNotFound,
     layerCors,
-    layerAuth
+    layerAuth(options.token)
   )
+
+}
 
 // serve starts the application on whichever HttpServer is provided, which is the only seam a
 // platform binding needs: Bun in main.ts, an ephemeral test server in http.test.ts. The request log

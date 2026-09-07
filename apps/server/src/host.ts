@@ -1,3 +1,4 @@
+import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
 import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
 import { modelLayer, modelIsConfigured, selectedModelFrom } from "@clavia/tardigrade-model/host"
 export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/host"
@@ -208,7 +209,7 @@ export const layerActorThreads = <R>(
       Effect.promise(() => mountedHost(definition, config, layerThread(config, catalog, options, adapters), options)),
       (host) => Effect.promise(host.close)
     )
-    return hostBackend(host).http
+    return bunHttpServices(host)
   }))
 
 const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
@@ -272,7 +273,7 @@ const make = (options: ThreadsOptions) =>
     const open = async (summary: ActorSummary, definition: Actor<ServerR>, database: string): Promise<LoadedActor> => {
       const host = await mountedHost(definition, config, thread, options, database)
       try {
-        const threads = await runRegistry(Context.get(hostBackend(host).http, Threads).ensure(summary.name))
+        const threads = await runRegistry(Context.get(bunHttpServices(host), Threads).ensure(summary.name))
         const loaded = { summary, host, threads }
         await runRegistry(registry.put(summary))
         runtimes.set(summary.name, loaded)
@@ -283,7 +284,7 @@ const make = (options: ThreadsOptions) =>
       Effect.promise(() => mountedHost(builtIn, config, thread, options)),
       (host) => Effect.promise(host.close)
     )
-    const builtInServices = hostBackend(builtInHost).http
+    const builtInServices = bunHttpServices(builtInHost)
     const builtInThreads = Context.get(builtInServices, Threads)
     const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: Actor<ServerR> }> => {
       const artifact = await manifestOf(directory)
@@ -412,7 +413,7 @@ const make = (options: ThreadsOptions) =>
       const host = target.actor === RESERVED_ACTOR ? builtInHost : runtimes.get(target.actor)?.host
       return host === undefined ? Effect.succeed(undefined as IngressActor | undefined) : hostBackend(host).resolve(target.actor === RESERVED_ACTOR ? target : { ...target, instance: host.actor })
     } })
-    const gauges = () => [builtInHost, ...[...runtimes.values()].map((loaded) => loaded.host)].map((host) => Context.get(hostBackend(host).http, DriverGauge))
+    const gauges = () => [builtInHost, ...[...runtimes.values()].map((loaded) => loaded.host)].map((host) => Context.get(bunHttpServices(host), DriverGauge))
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
       resting: Effect.suspend(() => Effect.map(Effect.all(gauges().map((gauge) => gauge.resting)), (values) => values.every(Boolean))),
       dirty: Effect.suspend(() => Effect.map(Effect.all(gauges().map((gauge) => gauge.dirty)), (values) => values.reduce((sum, value) => sum + value, 0)))

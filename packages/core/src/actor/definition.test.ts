@@ -5,7 +5,7 @@ import { component as defineComponent, legacyComponent } from "@clavia/tardigrad
 import { enabled } from "@clavia/tardigrade-core/runtime/reconciler"
 import { actorRuntimeOf } from "../runtime/actor"
 import { actor, defineActor, validateActor, type ActorDefinition } from "./definition"
-import { threadTarget } from "./reference"
+import { threadTarget } from "./target"
 import { actorMethod, actorMethodsOf } from "./method"
 import { legacyActorMethod } from "./method-compat"
 import { DEFAULT_CHILD_CANCELLATION_TIMEOUT_MS } from "../interaction/cancellation"

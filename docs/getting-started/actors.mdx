@@ -253,6 +253,8 @@ For Rick's instance, allocation records in the supervisor log can look like this
 
 A reference identifies a thread. The host resolves it to where that thread runs, so callers do not need to know its location. The receiving host is also responsible for access checks.
 
+<ThreadResolutionDiagram />
+
 For Rick's `main` thread, the Cloudflare host uses JSON arrays to name the actor instance and thread Durable Objects:
 
 ```ts
@@ -293,6 +295,12 @@ const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
     └── bGFi.sqlite            # lab
 ```
 
-<ThreadResolutionDiagram />
+## Next steps
+
+Create a starter project with the CLI, then follow the [Quickstart](/docs/quickstart) to run it:
+
+```sh
+tdg init tardie-agent --template quickstart
+```
 
 In a future guide, we'll be covering more about actor methods.

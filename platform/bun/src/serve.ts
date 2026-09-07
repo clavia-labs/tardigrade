@@ -1,12 +1,11 @@
+import { bunHttpServices } from "./http-threads"
 import { Layer, ManagedRuntime } from "effect"
 import { BunHttpServer } from "@effect/platform-bun"
 import { HttpServer } from "effect/unstable/http"
 import { serve as serveHttp } from "@clavia/tardigrade-http/http"
-import { layerConfig, readConfig, type ServerConfigValue } from "@clavia/tardigrade-http/config"
-import { ModelCatalogStore, type ModelCatalogState } from "@clavia/tardigrade-http/catalog"
 import type { ApiOptions } from "@clavia/tardigrade-http/api"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
-import { hostBackend, type Host } from "./create-host"
+import type { Host } from "./create-host"
 
 export const DEFAULT_HOST_IDLE_TIMEOUT_SECONDS = 10
 export const DEFAULT_HOST_PORT = 4242
@@ -17,20 +16,18 @@ export interface ServeOptions {
   readonly port?: number
   readonly hostname?: string
   readonly token?: string
-  readonly config?: ServerConfigValue
-  readonly catalog?: ModelCatalogState
-  readonly api?: ApiOptions
+  readonly api?: Omit<ApiOptions, "token">
   readonly disableLogger?: boolean
 }
 
 // serve exposes a Bun host through the shared Effect HTTP application.
 export const serve = async <Methods extends ActorMethods>(host: Host<Methods>, options: ServeOptions = {}) => {
-  const config = options.config ?? readConfig({})
-  const application = serveHttp({ disableLogger: options.disableLogger ?? true, disableListenLog: true, ...(options.api === undefined ? {} : { api: options.api }) }).pipe(
+  const application = serveHttp({ disableLogger: options.disableLogger ?? true, disableListenLog: true, api: {
+    token: options.token,
+    ...options.api
+  } }).pipe(
     Layer.provide([
-      Layer.succeedContext(hostBackend(host).http),
-      layerConfig({ ...config, ...(options.token === undefined ? {} : { token: options.token }) }),
-      Layer.succeed(ModelCatalogStore, options.catalog ?? {})
+      Layer.succeedContext(bunHttpServices(host))
     ]),
     Layer.provideMerge(BunHttpServer.layer({
       port: options.port ?? DEFAULT_HOST_PORT,

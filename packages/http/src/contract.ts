@@ -8,14 +8,11 @@ import {
   invalidRequest,
   missingField,
   RequestProblems,
-  TurnStatus,
-  TurnView,
   unacceptableField,
   UnknownThread,
   type Problem
 } from "@clavia/tardigrade-client/contract"
 
-import type * as Actor from "./agent-projections"
 import type * as Projections from "./projections"
 
 // This server's side of the contract. The declaration itself is a package
@@ -70,7 +67,5 @@ const asserts = <_ extends true>(): void => {}
 asserts<Same<Projections.ThreadStatus, ThreadStatus>>()
 asserts<Same<Projections.ThreadSummary, ThreadSummary>>()
 asserts<Same<Projections.ThreadNode, ThreadNode>>()
-asserts<Same<Actor.TurnStatus, TurnStatus>>()
-asserts<Same<Actor.TurnViewShape, TurnView>>()
 asserts<Extends<typeof UnknownThread.schema.Type, Problem>>()
 asserts<Extends<typeof InvalidRequest.schema.Type, Problem>>()

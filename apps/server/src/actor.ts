@@ -68,5 +68,3 @@ export const builtInActor = assemblyOf
 // package added above lands in the host's obligation and a host that binds nothing for it fails to
 // compile (host.ts, layerThread).
 export type ServerR = ReturnType<typeof assemblyOf> extends Actor<infer R> ? R : never
-
-export { agentProjections, type TurnStatus, type TurnViewShape } from "@clavia/tardigrade-http/agent-projections"

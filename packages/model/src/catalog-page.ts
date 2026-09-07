@@ -8,7 +8,7 @@ import type {
   ProviderCatalogPage
 } from "@clavia/tardigrade-client/contract"
 import { MODEL_PROVIDER_CONNECTIONS } from "./directory"
-import { DEFAULT_MODEL_POLICY, modelAllowedBy, modelPolicyScopeOf, type ModelPolicy } from "tardie"
+import { DEFAULT_MODEL_POLICY, modelAllowedBy, modelPolicyScopeOf, type ModelPolicy } from "@clavia/tardigrade-agent/inference/access"
 import {
   providerAvailabilityOf,
   type ProviderAvailabilities

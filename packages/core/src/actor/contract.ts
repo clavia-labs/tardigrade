@@ -1,4 +1,4 @@
-import { targetCoordinate, type ThreadTarget } from "./reference"
+import { targetCoordinate, type ThreadTarget } from "./target"
 import type { ActorMethodDeclaration, ActorMethods } from "./method"
 import type { Component } from "@clavia/tardigrade-core/component"
 

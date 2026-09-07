@@ -9,7 +9,7 @@
   "repository": {
     "type": "git",
     "url": "git+https://github.com/clavia-labs/tardigrade.git",
-    "directory": "platform/model"
+    "directory": "packages/model"
   },
   "bugs": {
     "url": "https://github.com/clavia-labs/tardigrade/issues"
@@ -29,14 +29,13 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@tanstack/ai": "0.46.0",
     "@tanstack/ai-anthropic": "0.16.7",
     "@tanstack/ai-openai": "0.20.0",
     "effect": "4.0.0-rc.110",
-    "tardie": "workspace:*",
-    "@clavia/tardigrade-client": "workspace:*"
+    "@clavia/tardigrade-client": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*"
   },
   "peerDependencies": {
     "@aws-sdk/client-bedrock-runtime": "^3.1079.0",

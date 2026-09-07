@@ -16,11 +16,11 @@ import type { Action } from "tardie/log/events"
 import { openStreams } from "./api"
 import { layerModelCatalogValue } from "./catalog"
 import { layerConfig, readConfig } from "./config"
-import { PROBLEM_TYPE_BASE, type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
+import { type EventRow, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { layerThreads, Threads, type ActorThreads } from "./host"
 import { PROBLEM_CONTENT_TYPE, serve } from "./http"
 import { layerGaugeResting } from "./driver-gauge"
-import type { TurnViewShape as TurnView } from "./actor"
+import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 import type { ThreadSummary, ThreadNode } from "./projections"
 import { makeInferenceStream } from "./inference-stream"
 
@@ -164,14 +164,9 @@ const put = (base: string, path: string, body: unknown) =>
     body: JSON.stringify(body)
   })
 
-// turnOf reads one turn through the actor's declared projection, narrowed by its `turn` query.
-// There is no route that reads a turn by id: the single lookup is this query (actor.ts,
-// agentProjections).
-const turnOf = async (base: string, thread: string, turn: string): Promise<TurnView | undefined> => {
-  const views = (await (await fetch(
-    `${base}/v1/actors/main/threads/${thread}/projections/turns?turn=${encodeURIComponent(turn)}`
-  )).json()) as ReadonlyArray<TurnView>
-  return views[0]
+const turnOf = async (base: string, thread: string, turn: string): Promise<ActorMethodState<string> | undefined> => {
+  const response = await fetch(`${base}/v1/actors/main/threads/${thread}/methods/message/calls/${encodeURIComponent(turn)}`)
+  return response.status === 404 ? undefined : await response.json() as ActorMethodState<string>
 }
 
 const birth = async (base: string, id: string, message: { id: string; text: string }) => {
@@ -574,7 +569,7 @@ describe("actor methods", () => {
 describe("appending", () => {
   test("an appended message births a thread and the server drives its turn to completed", async () => {
     const view = await serving((base) => birth(base, "alpha", { id: "m1", text: "hello" }))
-    expect(view).toEqual({ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" })
+    expect(view).toMatchObject({ status: "completed", output: "ok: hello" })
   })
 
   // `type` is the only field the platform requires, because an event is one fact and what its
@@ -751,9 +746,10 @@ describe("the event stream", () => {
     }]
     const waiters = new Set<(head: number) => void>()
     const actorThreads: ActorThreads = {
+      statusOf: () => "settled",
       allocateRoot: () => Effect.die(new Error("unexpected allocation")),
       methods: {},
-      sqlite: ":memory:",
+      storage: { kind: "memory" },
       append: () => Effect.void,
       events: () => Effect.succeed(rows.map((row) => row.event)),
       eventsPage: (_id, mark, limit) => Effect.sync(() => {
@@ -777,7 +773,7 @@ describe("the event stream", () => {
     }
     const threads = Layer.succeed(Threads)({
       methods: {},
-      sqlite: ":memory:",
+      storage: { kind: "memory" },
       actorName: "test",
       instances: Effect.succeed([{ id: "main", definition: "test" }]),
       ensure: () => Effect.succeed(actorThreads),
@@ -996,86 +992,13 @@ describe("the event stream", () => {
   })
 })
 
-// The projections the actor declares are mounted by name under a thread's projection namespace, and this build's actor
-// declares `turns` (actor.ts, agentProjections). The cases below are about the mounting: that a
-// declared name serves what the actor computes, that its own query reaches `run`, and that any
-// other name says what does exist.
-describe("projections", () => {
-  test("a declared projection serves what the actor computes", async () => {
-    const read = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const response = await fetch(`${base}/v1/actors/main/threads/alpha/projections/turns`)
-      return { status: response.status, body: await response.json() as ReadonlyArray<TurnView> }
-    })
-    expect(read.status).toBe(200)
-    expect(read.body).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
-  })
-
-  test("a name the actor never declared says what does exist", async () => {
-    const answers = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const read = async (path: string) => {
-        const response = await fetch(`${base}${path}`)
-        return {
-          status: response.status,
-          type: response.headers.get("content-type"),
-          body: await response.json() as Record<string, unknown>
-        }
-      }
-      return {
-        ghost: await read("/v1/actors/main/threads/alpha/projections/facts")
-      }
-    })
-    expect(answers.ghost.status).toBe(404)
-    expect(answers.ghost.type).toContain(PROBLEM_CONTENT_TYPE)
-    expect(answers.ghost.body).toMatchObject({
-      type: `${PROBLEM_TYPE_BASE}unknown-projection`,
-      title: "Unknown Projection"
-    })
-    // The detail lists what the actor does declare, so a caller who guessed a name learns the ones
-    // that exist rather than only that this one does not.
-    expect(String(answers.ghost.body["detail"])).toContain('"turns"')
-  })
-
-  test("the event log keeps its platform route", async () => {
-    const answers = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const events = await fetch(`${base}/v1/actors/main/threads/alpha/events`)
-      return { status: events.status, type: events.headers.get("content-type") }
-    })
-    expect(answers.status).toBe(200)
-    expect(answers.type).toContain("application/json")
-  })
-
-  test("`at` reads the log's prefix, which takes a completed turn back to pending", async () => {
-    const read = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
-      return {
-        now: await json("/v1/actors/main/threads/alpha/projections/turns"),
-        atTwo: await json("/v1/actors/main/threads/alpha/projections/turns?at=2")
-      }
-    })
-    expect(read.now).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
-    // Creation and the message stand before the cut, with nothing that answered the turn.
-    expect(read.atTwo).toEqual([{ turn: "m1", status: "pending", epoch: 0 }])
-  })
-
-  // The single lookup is the same projection with its `turn` query, which is why the platform keeps
-  // no turn-shaped route at all (actor.ts, agentProjections).
-  test("`turn` narrows the projection to one entry, and an unknown turn is an empty array", async () => {
-    const read = await serving(async (base) => {
-      await birth(base, "alpha", { id: "m1", text: "hello" })
-      const json = async (path: string) => (await (await fetch(`${base}${path}`)).json()) as ReadonlyArray<TurnView>
-      return {
-        one: await json("/v1/actors/main/threads/alpha/projections/turns?turn=m1"),
-        ghost: await json("/v1/actors/main/threads/alpha/projections/turns?turn=m9")
-      }
-    })
-    expect(read.one).toEqual([{ turn: "m1", status: "completed", epoch: 0, output: "ok: hello" }])
-    // A turn nobody was asked to serve matches nothing. It is not a failure: asking a projection
-    // about an id it has never seen is a question with an empty answer.
-    expect(read.ghost).toEqual([])
+test("the built-in actor exposes method state without extra agent views", async () => {
+  await serving(async (base) => {
+    await birth(base, "alpha", { id: "m1", text: "hello" })
+    expect(await turnOf(base, "alpha", "m1")).toMatchObject({ status: "completed", output: "ok: hello" })
+    expect(await turnOf(base, "alpha", "missing")).toBeUndefined()
+    const response = await fetch(`${base}/v1/actors/main/threads/alpha/projections/turns`)
+    expect(response.status).toBe(404)
   })
 })
 

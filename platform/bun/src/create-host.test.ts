@@ -79,6 +79,26 @@ test("local and HTTP references preserve allocations and results across restart"
   }
 }, 20000)
 
+test("HTTP reports a pending custom method as running without agent events", async () => {
+  const host = await createHost({ actor, storage: ":memory:" })
+  const server = await serve(host, { port: 0, token: "test" })
+  try {
+    await host.allocateRootThread({ instance: "rick", name: "main" })
+    const headers = { authorization: "Bearer test", "content-type": "application/json", "idempotency-key": "pending" }
+    const accepted = await fetch(new URL("v1/actors/rick/threads/main/methods/message", server.url), {
+      method: "POST", headers, body: JSON.stringify({ text: "hold" })
+    })
+    expect(accepted.status).toBe(202)
+    const response = await fetch(new URL("v1/actors/rick/threads", server.url), { headers })
+    expect(response.status).toBe(200)
+    const threads = await response.json() as ReadonlyArray<{ readonly id: string; readonly status: string }>
+    expect(threads.find((thread) => thread.id === "main")?.status).toBe("running")
+  } finally {
+    await server.close()
+    await host.close()
+  }
+})
+
 test("host rejects coordinates belonging to another actor", async () => {
   const host = await createHost({ actor, storage: ":memory:" })
   try {

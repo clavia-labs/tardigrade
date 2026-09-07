@@ -117,6 +117,7 @@ import { FetchHttpClient } from "effect/unstable/http"
 import { createHost, serve } from "tardie/bun"
 import { modelLayer } from "tardie/model/host"
 import { makeInferenceStream } from "tardie/http/inference-stream"
+import { catalogDiscoveryOf } from "tardie/http/models"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 import { ModelCatalogStore, layerModelCatalog } from "tardie/server/catalog"
@@ -153,7 +154,7 @@ const host = await createHost({
 })
 
 try {
-  const server = await serve(host, { port: config.port, config, catalog: snapshot, api: { inference }, ...(config.token === undefined ? {} : { token: config.token }) })
+  const server = await serve(host, { port: config.port, api: { inference, catalog: catalogDiscoveryOf(snapshot, config.model, config.modelCredentials) }, ...(config.token === undefined ? {} : { token: config.token }) })
   try {
     await new Promise<void>((resolve) => {
       const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }
