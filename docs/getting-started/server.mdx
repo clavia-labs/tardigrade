@@ -82,6 +82,20 @@ export default worker
 
 Call `createWorker` once per Worker module. The assembly serves one actor definition with many instances and threads. `layersFor` receives the Worker environment, instance, and thread. The platform owns the HTTP listener and Durable Object lifecycle. Follow the [Cloudflare guide](/docs/platforms/cloudflare) or [celld guide](/docs/platforms/celld) for bindings, storage, and deployment.
 
+Run the Worker locally with Cloudflare's development server:
+
+```sh
+bunx wrangler dev --port 4242
+```
+
+Or use celld with the generated `celld.jsonc` configuration:
+
+```sh
+celld dev celld.jsonc --port 4242
+```
+
+Run either command from the project directory. Both examples use port 4242 for the API calls below. [celld dev](https://github.com/denoland/celld/blob/main/docs/README.md#develop-an-application-locally) uses a local object store and preserves state between runs.
+
 ## Address an instance and thread
 
 Runtime paths start with `/v1/actors/{instance}`. Despite the word `actors` in the URL, this segment selects an instance of the mounted actor definition. For example, `/v1/actors/rick/threads/main` selects Rick's `main` thread.
