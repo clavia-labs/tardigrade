@@ -393,8 +393,9 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
-      const accepted = await run(api.methods.invoke({
-        params: { id: actor, thread, method: name, call: call.id },
+      const accepted = await run(api.methods.invokeMethod({
+        params: { id: actor, thread, method: name },
+        headers: { "idempotency-key": call.id },
         query: call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs },
         payload: call.input
       }))

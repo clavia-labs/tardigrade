@@ -215,8 +215,9 @@ describe("a declared actor method", () => {
       timeoutMs: 1_000
     })
     expect(accepted.id).toBe("m1")
-    expect(calls[0]?.method).toBe("PUT")
-    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message/calls/m1")
+    expect(calls[0]?.method).toBe("POST")
+    expect(calls[0]?.headers["idempotency-key"]).toBe("m1")
+    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message")
     expect(lastUrl().searchParams.get("timeoutMs")).toBe("1000")
     expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
   })
