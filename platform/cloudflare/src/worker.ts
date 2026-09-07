@@ -6,6 +6,8 @@ import { type CloudflareThreadStorePolicy } from "./storage"
 import { type CloudflareThreadEnv } from "./host"
 import type { Env } from "./env"
 import { CLOUDFLARE_CHILD_PLACEMENTS, DEFAULT_CLOUDFLARE_CHILD_PLACEMENT, DEFAULT_BACKGROUND_TASK_OWNER, type DefaultAssembly, deployedActor, directory, providerAvailabilityFrom, modelPolicyFrom, publicCatalog, methodsOf, type CloudflareWorkerLayerContext, type CloudflareWorkerArguments, mountActor } from "./assembly"
+import { ActorDO } from "./actor"
+import { ThreadDO } from "./thread"
 export { ActorDO, type ActorThreadNode } from "./actor"
 export { ThreadDO } from "./thread"
 export type { Env } from "./env"
@@ -57,3 +59,9 @@ export const cloudflareWorker = <
 }
 
 export default worker
+
+// createWorker assembles a Worker handler and its Durable Object classes for an actor.
+export const createWorker = <R, const Methods extends ActorMethods, WorkerEnv extends Env = Env>(
+  definition: Actor<R, Methods>,
+  ...options: CloudflareWorkerArguments<R, WorkerEnv>
+) => ({ worker: cloudflareWorker<R, Methods, WorkerEnv>(definition, ...options), ActorDO, ThreadDO })

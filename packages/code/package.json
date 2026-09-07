@@ -29,7 +29,8 @@
     "./execution/*": "./src/execution/*.ts",
     "./package/*": "./src/package/*.ts",
     "./sandbox/*": "./src/sandbox/*.ts",
-    "./storage/*": "./src/storage/*.ts"
+    "./storage/*": "./src/storage/*.ts",
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "@clavia/tardigrade-core": "workspace:*",

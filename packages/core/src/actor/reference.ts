@@ -9,11 +9,34 @@ import type { Router } from "../transport/router"
 import type { Self } from "../runtime/reconciler"
 
 // ThreadTarget pairs a thread coordinate with its method declarations.
-// Its address and method declarations carry no authority to access the target.
+// Its coordinate and method declarations carry no authority to access the target.
 // TODO: Add transferable capabilities beside coordinates, scoped to target and operation.
-export interface ThreadTarget<Methods extends ActorMethods = ActorMethods> {
-  readonly address: ThreadCoordinate
+export type ThreadTarget<Methods extends ActorMethods = ActorMethods> = {
   readonly methods: Methods
+} & ({
+  readonly coordinate: ThreadCoordinate
+  /** @deprecated Use coordinate. */
+  readonly address?: ThreadCoordinate
+} | {
+  readonly coordinate?: ThreadCoordinate
+  /** @deprecated Use coordinate. */
+  readonly address: ThreadCoordinate
+})
+
+// targetCoordinate resolves either spelling and rejects conflicting coordinates (reference.test.ts).
+export const targetCoordinate = (target: ThreadTarget): ThreadCoordinate => {
+  const coordinate = target.coordinate ?? target.address!
+  if (target.coordinate !== undefined && target.address !== undefined &&
+    (target.coordinate.actor !== target.address.actor || target.coordinate.instance !== target.address.instance || target.coordinate.thread !== target.address.thread)) {
+    throw new Error("thread target coordinate and address must agree")
+  }
+  return coordinate
+}
+
+type ResolvedThreadTarget<Methods extends ActorMethods> = ThreadTarget<Methods> & {
+  readonly coordinate: ThreadCoordinate
+  /** @deprecated Use coordinate. */
+  readonly address: ThreadCoordinate
 }
 
 // threadTarget pairs an actor's method declarations with a thread coordinate.
@@ -21,13 +44,13 @@ export const threadTarget = <Methods extends ActorMethods>(
   actor: Pick<ActorDefinition<Methods>, "name" | "methods">,
   instance: string,
   thread: string
-): ThreadTarget<Methods> => ({
-  address: threadCoordinateOf(actorCoordinateOf(actor.name, instance), thread),
-  methods: actor.methods
-})
+): ResolvedThreadTarget<Methods> => {
+  const coordinate = threadCoordinateOf(actorCoordinateOf(actor.name, instance), thread)
+  return { coordinate, address: coordinate, methods: actor.methods }
+}
 
 // ThreadRef exposes the actor's declared methods as callable Effects.
-export type ThreadRef<Methods extends ActorMethods> = ThreadTarget<Methods> & {
+export type ThreadRef<Methods extends ActorMethods> = ResolvedThreadTarget<Methods> & {
   readonly [Name in keyof Methods]: (
     input: ActorMethodInput<Methods[Name]>, options: InvocationOptions
   ) => Effect.Effect<ActorMethodOutput<Methods[Name]>, InvocationFailed | InvocationCancelled, InvocationScope | EventLog | Router | Self>
@@ -35,13 +58,14 @@ export type ThreadRef<Methods extends ActorMethods> = ThreadTarget<Methods> & {
 
 // bindThreadMethods exposes declared methods as replayable calls on a thread reference.
 export const bindThreadMethods = <Methods extends ActorMethods>(reference: ThreadTarget<Methods>, creationParent?: ThreadCoordinate): ThreadRef<Methods> => {
+  const coordinate = targetCoordinate(reference)
   const calls: Record<string, unknown> = Object.create(null)
   for (const name of Object.keys(reference.methods)) {
-    if (name === "address" || name === "methods" || name === "then") {
+    if (name === "coordinate" || name === "address" || name === "methods" || name === "then") {
       throw new Error(`method ${JSON.stringify(name)} conflicts with the thread reference surface`)
     }
     calls[name] = (input: ActorMethodInput<Methods[typeof name]>, options: InvocationOptions) =>
       invokeMethod(reference, name as Extract<keyof Methods, string>, input, options, creationParent)
   }
-  return { ...reference, ...calls } as ThreadRef<Methods>
+  return { ...reference, coordinate, address: coordinate, ...calls } as ThreadRef<Methods>
 }

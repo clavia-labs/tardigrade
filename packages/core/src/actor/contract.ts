@@ -1,4 +1,4 @@
-import type { ThreadTarget } from "./reference"
+import { targetCoordinate, type ThreadTarget } from "./reference"
 import type { ActorMethodDeclaration, ActorMethods } from "./method"
 import type { Component } from "@clavia/tardigrade-core/component"
 
@@ -186,7 +186,7 @@ export const actorContractErrors = (contract: ActorContract): ReadonlyArray<stri
     if (call.methodName === undefined) {
       errors.push(isCaller(call.target)
         ? "caller contract does not declare the called method"
-        : `actor ${JSON.stringify(call.target.address.actor)} does not declare the called method`)
+        : `actor ${JSON.stringify(targetCoordinate(call.target).actor)} does not declare the called method`)
     }
   }
   return errors

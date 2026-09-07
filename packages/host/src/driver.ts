@@ -124,3 +124,24 @@ export const createThreadDriver = (options: ThreadDriverOptions): ThreadDriver =
     work
   }
 }
+
+// hostDrive serializes drives and exposes scheduled failures to settled callers (platform/bun/src/host.test.ts).
+export const hostDrive = (run: () => Promise<void>) => {
+  let tail: Promise<void> = Promise.resolve()
+  let failure: { readonly cause: unknown } | undefined
+  const drive = (): Promise<void> => {
+    const next = tail.then(run)
+    tail = next.then(() => undefined, (cause: unknown) => { failure = { cause } })
+    return next
+  }
+  const settled = async (): Promise<void> => {
+    let pending: Promise<void>
+    do { pending = tail; await pending } while (pending !== tail)
+    if (failure !== undefined) {
+      const { cause } = failure
+      failure = undefined
+      throw cause
+    }
+  }
+  return { drive, settled, schedule: () => { void drive().catch(() => undefined) } }
+}

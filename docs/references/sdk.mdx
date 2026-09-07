@@ -13,25 +13,16 @@ order: 2
 bun add tardie
 ```
 
-Most applications can import their actor definition, agent components, policies, and public types from `tardie`:
+Most applications can import their actor definition, agent components, policies, and public types from `tardie/core` and `tardie/agent`:
 
 ```ts
-import {
-  actor,
-  agentMethods,
-  budget,
-  codeMode,
-  compaction,
-  infer,
-  nativeOutput,
-  system,
-  tool
-} from "tardie"
+import { actor } from "tardie/core"
+import { agentMethods, budget, codeMode, compaction, infer, nativeOutput, system, tool } from "tardie/agent"
 ```
 
 ## Core primitives
 
-The root entry point exports the common actor and component types. Lower-level integrations can import each primitive directly:
+The `tardie/core` entry point exports the common actor and component types. Lower-level integrations can import each primitive directly:
 
 <div className="sdk-reference-list">
   <div><code>tardie/core/event</code><span><code>Event</code></span></div>

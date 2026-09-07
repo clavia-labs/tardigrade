@@ -3,7 +3,7 @@ import { useId, type ReactElement } from "react"
 export const ThreadInvocationDiagram = (): ReactElement => {
   const arrow = useId()
   return (
-    <svg className="actor-instances-diagram" viewBox="0 0 400 300" role="img" aria-label="A caller uses rickRef to invoke message with the idempotency key portal-plan. Rick's main thread returns the result. Retrying the action with the same key reuses the same call.">
+    <svg className="actor-instances-diagram" viewBox="0 0 400 300" role="img" aria-label="A caller uses rickMain to invoke message with a text string and the idempotency key portal-plan. Rick's main thread returns the result. Retrying the action with the same key reuses the same call.">
       <defs>
         <marker id={arrow} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0 0L8 4L0 8Z" />
@@ -16,11 +16,12 @@ export const ThreadInvocationDiagram = (): ReactElement => {
       <g transform="translate(132 12)">
         <rect width="136" height="66" rx="6" />
         <text x="68" y="28">Caller</text>
-        <text className="actor-instances-label" x="68" y="49">holds rickRef</text>
+        <text className="actor-instances-label" x="68" y="49">holds rickMain</text>
       </g>
-      <text className="actor-instances-label" x="76" y="118">message</text>
-      <text className="actor-instances-label" x="76" y="140">idempotency key</text>
-      <text className="actor-instances-label" x="76" y="158">“portal-plan”</text>
+      <text className="actor-instances-label" x="76" y="108">message</text>
+      <text className="actor-instances-label" x="76" y="126">{"{ text: string }"}</text>
+      <text className="actor-instances-label" x="76" y="150">idempotency key</text>
+      <text className="actor-instances-label" x="76" y="168">“portal-plan”</text>
       <text className="actor-instances-label" x="300" y="138">result</text>
       <g transform="translate(132 192)">
         <rect width="136" height="66" rx="6" />

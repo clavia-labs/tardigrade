@@ -64,7 +64,9 @@ These notes explain what Tardigrade is doing behind the scenes. You can skip the
 Within `actor.ts`, you will see the following code:
 
 ```ts expanded
-import { Effect, actor, agentMessageMethod, infer, nativeOutput, system, tool } from "tardie"
+import { Effect } from "effect"
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, nativeOutput, system, tool } from "tardie/agent"
 
 const actorName = "my-agent"
 

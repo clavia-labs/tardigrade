@@ -1,3 +1,6 @@
+import { bunInstances } from "@clavia/tardigrade-bun/instances"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
+import { threadCreated, threadCreatedOf, childLineageOf } from "@clavia/tardigrade-core/interaction/relations"
 import { Clock, Context, Data, Effect, Layer } from "effect"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { FetchHttpClient } from "effect/unstable/http"
@@ -85,7 +88,7 @@ export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
 }> {}
 
 export interface ActorThreads {
-  readonly allocateRoot: (name?: string) => Effect.Effect<ThreadCoordinate>
+  readonly allocateRoot: (name?: string, options?: { readonly key?: string; readonly parent?: string }) => Effect.Effect<ThreadCoordinate>
   readonly methods: ActorMethods
   readonly sqlite: string
   readonly append: (id: string, event: Event) => Effect.Effect<void>
@@ -425,41 +428,8 @@ const runtimeOf = async <R>(
     driver: { maxConcurrentThreads },
     keyOf: actorRuntimeOf(actor).keyOf
   })
-  let driving: Promise<void> | undefined
-  let follow = false
-  let failure: unknown = undefined
-  const pump = async (): Promise<void> => {
-    try {
-      do {
-        follow = false
-        await host.drive()
-      } while (follow)
-    } catch (error) {
-      failure = error
-    } finally {
-      driving = undefined
-      follow = false
-    }
-  }
-  const request = (): Promise<void> => {
-    if (driving !== undefined) {
-      follow = true
-      return driving
-    }
-    driving = pump()
-    return driving
-  }
-  const settled = Effect.suspend(() =>
-    Effect.promise(() => driving ?? Promise.resolve()).pipe(
-      Effect.flatMap(() => {
-        if (failure === undefined) return Effect.void
-        const held = failure
-        failure = undefined
-        return Effect.die(held)
-      })
-    )
-  )
-  await host.recover()
+  const settled = Effect.promise(() => host.settled())
+  try { await host.recover() } catch (error) { await host.close(); throw error }
   const read = (id: string) => Effect.promise(() => host.read(id))
   const readPage = (id: string, mark: number, limit: number) =>
     Effect.promise(() => host.readPage(id, mark, limit))
@@ -488,18 +458,28 @@ const runtimeOf = async <R>(
       yield* Effect.promise(() => host.commit(placed))
     })
   const threads: ActorThreads = {
-    allocateRoot: (name) => Effect.promise(() => host.allocate({
-      kind: "root", coordinate: { actor: summary.name, instance: actorInstance, thread: name ?? "" },
-      // Unnamed HTTP requests create independent allocations.
-      // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
-      ...(name === undefined ? { key: crypto.randomUUID() } : {})
-    })),
+    allocateRoot: (name, options = {}) => Effect.gen(function* () {
+      const at = yield* Clock.currentTimeMillis
+      return yield* Effect.promise(async () => {
+        if (name !== undefined && options.key !== undefined) throw new Error("named allocations do not accept a separate key")
+        // Unnamed HTTP allocations use fresh request identities outside replay.
+        // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
+        const key = name === undefined ? { key: options.key ?? crypto.randomUUID() } : {}
+        if (options.parent === undefined) return host.allocate({ kind: "root", coordinate: { actor: summary.name, instance: actorInstance, thread: name ?? "" }, ...key })
+        const parent = threadCreatedOf(await host.read(options.parent))
+        if (parent === undefined) throw new Error("parent thread does not exist")
+        const target = await host.allocate({ kind: "child", parent: parent.address, child: childKeyOf(name ?? "unnamed"), ...key })
+        const lineage = childLineageOf(parent)
+        await host.commit({ link: { source: parent.address, target }, lineage, event: threadCreated(target, lineage, at) })
+        return target
+      })
+    }),
     methods: definition.methods,
     sqlite: database === ":memory:" ? database : resolve(database),
     append: (id, event) =>
       Effect.gen(function*() {
         yield* commitRoot(id, event)
-        request()
+        host.schedule()
       }),
     events: read,
     eventsPage: readPage,
@@ -522,7 +502,7 @@ const runtimeOf = async <R>(
       (thread) => commit({ ...delivery, link: { ...delivery.link, target: { ...delivery.link.target, thread } } })
     ),
     schedule: Effect.sync(() => {
-      request()
+      host.schedule()
     }),
     resting: () => host.resting(),
     dirty: host.work,
@@ -569,53 +549,14 @@ export const layerActorThreads = <R>(
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const summary: ActorSummary = { name: definition.name, builtIn: false }
     const thread = layerThread(config, catalog, options, adapters)
-    const runtimes = new Map<string, ActorRuntime>()
-    const opening = new Map<string, Promise<ActorRuntime>>()
-    const open = (id: string): Promise<ActorRuntime> => {
-      const current = runtimes.get(id)
-      if (current !== undefined) return Promise.resolve(current)
-      const pending = opening.get(id)
-      if (pending !== undefined) return pending
-      const created = runtimeOf(
-        summary,
-        id,
-        definition,
-        actorDatabasePath(config.db, id),
-        thread,
-        options.providers ?? [],
-        config.maxConcurrentThreads,
-        options.layersFor,
-        options.threadAllocator, options.allocation
-      ).then((runtime) => {
-        runtimes.set(id, runtime)
-        opening.delete(id)
-        return runtime
-      }, (cause) => {
-        opening.delete(id)
-        throw cause
-      })
-      opening.set(id, created)
-      return created
-    }
-    yield* Effect.acquireRelease(
-      Effect.promise(async () => {
-        if (config.db !== ":memory:") {
-          const directory = `${config.db}.actors`
-          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return []
-            throw error
-          })
-          for (const file of files) {
-            const id = actorIdFromDatabase(file)
-            if (id !== undefined) await open(id)
-          }
-        }
-      }),
-      () => Effect.promise(async () => {
-        await Promise.all(opening.values())
-        await Promise.all([...runtimes.values()].map((runtime) => runtime.close()))
-      })
-    )
+    const pool = bunInstances({ open: (id) => runtimeOf(
+      summary, id, definition, actorDatabasePath(config.db, id), thread,
+      options.providers ?? [], config.maxConcurrentThreads, options.layersFor,
+      options.threadAllocator, options.allocation
+    ) })
+    const { instances: runtimes, open } = pool
+    yield* Effect.acquireRelease(Effect.succeed(pool), () => Effect.promise(pool.close))
+    if (config.db !== ":memory:") yield* Effect.promise(() => pool.restore(`${config.db}.actors`, actorIdFromDatabase))
     const service: Context.Service.Shape<typeof Threads> = {
       methods: definition.methods,
       sqlite: config.db === ":memory:" ? config.db : resolve(config.db),
@@ -676,8 +617,6 @@ const make = (options: ThreadsOptions) =>
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const thread = layerThread(config, catalog, options, adapters)
     const runtimes = new Map<string, ActorRuntime>()
-    const instances = new Map<string, ActorRuntime>()
-    const openingInstances = new Map<string, Promise<ActorRuntime>>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
     const snapshot = catalog.snapshot
@@ -724,32 +663,13 @@ const make = (options: ThreadsOptions) =>
       await runRegistry(registry.put(summary))
       return runtime
     }
-    const openInstance = (id: string): Promise<ActorRuntime> => {
-      const current = instances.get(id)
-      if (current !== undefined) return Promise.resolve(current)
-      const pending = openingInstances.get(id)
-      if (pending !== undefined) return pending
-      const created = runtimeOf(
-        builtInSummary,
-        id,
-        builtIn,
-        actorDatabasePath(config.db, id),
-        thread,
-        options.providers ?? [],
-        config.maxConcurrentThreads,
-        undefined,
-        options.threadAllocator, options.allocation
-      ).then((runtime) => {
-        instances.set(id, runtime)
-        openingInstances.delete(id)
-        return runtime
-      }, (cause) => {
-        openingInstances.delete(id)
-        throw cause
-      })
-      openingInstances.set(id, created)
-      return created
-    }
+    const pool = bunInstances({ open: (id) => runtimeOf(
+      builtInSummary, id, builtIn, actorDatabasePath(config.db, id), thread,
+      options.providers ?? [], config.maxConcurrentThreads, undefined,
+      options.threadAllocator, options.allocation
+    ) })
+    const { instances, open: openInstance } = pool
+    yield* Effect.acquireRelease(Effect.succeed(pool), () => Effect.promise(pool.close))
     const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: Actor<ServerR> }> => {
       const artifact = await manifestOf(directory)
       if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
@@ -799,17 +719,7 @@ const make = (options: ThreadsOptions) =>
       Effect.promise(async () => {
         await runRegistry(registry.put(builtInSummary))
         await synchronize()
-        if (config.db !== ":memory:") {
-          const directory = `${config.db}.actors`
-          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return []
-            throw error
-          })
-          for (const file of files) {
-            const id = actorIdFromDatabase(file)
-            if (id !== undefined) await openInstance(id)
-          }
-        }
+        if (config.db !== ":memory:") await pool.restore(`${config.db}.actors`, actorIdFromDatabase)
         if (options.actorRefresh !== undefined) {
           const { debounceMillis } = options.actorRefresh
           if (!Number.isInteger(debounceMillis) || debounceMillis < 0) {
@@ -831,8 +741,7 @@ const make = (options: ThreadsOptions) =>
         watcher?.close()
         if (refreshTimer !== undefined) clearTimeout(refreshTimer)
         await mutations
-        await Promise.all(openingInstances.values())
-        await Promise.all([...opened.runtimes.values(), ...opened.instances.values()].map((runtime) => runtime.close()))
+        await Promise.all([...opened.runtimes.values()].map((runtime) => runtime.close()))
       })
     )
 

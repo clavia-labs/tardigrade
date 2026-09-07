@@ -1,20 +1,40 @@
+/**
+ * ActorAllocation exposes host-assigned root and child thread references (allocation.test.ts).
+ *
+ *   ActorAllocation (e.g., "tardie")
+ *     ├── allocateRootThread
+ *     │     ├── instance       actor instance, such as "rick"
+ *     │     ├── name?          caller-selected thread name, e.g., "main"
+ *     │     └── key?           unnamed allocation's retry identity
+ *     └── allocateChildThread
+ *           ├── parent         thread coordinate (tardie/rick/main)
+ *           │     ├── actor    actor definition's name, e.g., "tardie"
+ *           │     ├── instance parent's actor instance, e.g., "rick"
+ *           │     └── thread   parent thread's name, e.g., "main"
+ *           ├── name?          caller-selected child thread name, e.g., "lab"
+ *           └── key?           unnamed allocation's retry identity
+ *
+ * A name excludes a separate key.
+ * Unnamed allocations use an action-scoped key during replay or a fresh request key outside an action unless an explicit key is supplied (allocation.test.ts; ../runtime/reconciler.ts).
+ */
+
 import { Context, Effect, Option, Schema } from "effect"
 import { childKeyOf, type ChildKey, ThreadCoordinate, threadCoordinateOf, actorCoordinateOf } from "./coordinate"
 
 import type { ActorDefinition } from "./definition"
 import type { ActorMethods } from "./method"
-import { bindThreadMethods, type ThreadTarget, type ThreadRef } from "./reference"
+import { bindThreadMethods, targetCoordinate, type ThreadTarget, type ThreadRef } from "./reference"
 
 export interface RootThreadOptions {
-  readonly instance: string
-  readonly name?: string
-  readonly key?: string
+  readonly instance: string // instantiation of an actor definition
+  readonly name?: string // thread name
+  readonly key?: string // allocation key for idempotent thread creation
 }
 
 export interface ChildThreadOptions {
-  readonly parent: ThreadTarget
-  readonly name?: string
-  readonly key?: string
+  readonly parent: ThreadCoordinate | ThreadTarget
+  readonly name?: string // thread name
+  readonly key?: string // allocation key for idempotent thread creation
 }
 
 // ThreadAllocationScope identifies allocations within one replayed action.
@@ -46,11 +66,11 @@ export const allocateRootThread = <Methods extends ActorMethods>(
   options: RootThreadOptions
 ): Effect.Effect<ThreadRef<Methods>, never, ThreadAllocator> => Effect.gen(function* () {
   const identity = yield* allocationIdentity(options)
-  const address = yield* allocateThread({
+  const coordinate = yield* allocateThread({
     kind: "root", coordinate: threadCoordinateOf(actorCoordinateOf(actor.name, options.instance), identity.name),
     ...(identity.key === undefined ? {} : { key: identity.key })
   })
-  return bindThreadMethods({ address, methods: actor.methods })
+  return bindThreadMethods({ coordinate, methods: actor.methods })
 })
 
 // allocateChildThread assigns a parent-scoped name within the parent's actor instance.
@@ -58,16 +78,17 @@ export const allocateChildThread = <Methods extends ActorMethods>(
   actor: Pick<ActorDefinition<Methods>, "name" | "methods">,
   options: ChildThreadOptions
 ): Effect.Effect<ThreadRef<Methods>, never, ThreadAllocator> => Effect.gen(function* () {
-  if (options.parent.address.actor !== actor.name) {
+  const parent = "methods" in options.parent ? targetCoordinate(options.parent) : options.parent
+  if (parent.actor !== actor.name) {
     return yield* Effect.die(new Error("child allocation requires a parent from the same actor definition"))
   }
   const identity = yield* allocationIdentity(options)
-  const address = yield* allocateChildCoordinate({
-    parent: options.parent.address,
+  const coordinate = yield* allocateChildCoordinate({
+    parent,
     child: childKeyOf(identity.name || "unnamed"),
     ...(identity.key === undefined ? {} : { key: identity.key })
   })
-  return bindThreadMethods({ address, methods: actor.methods }, options.parent.address)
+  return bindThreadMethods({ coordinate, methods: actor.methods }, parent)
 })
 
 // ChildThreadRequest identifies a logical spawn within its parent's namespace.

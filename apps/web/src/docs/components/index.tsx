@@ -3,6 +3,7 @@ import { renderToString } from "katex"
 
 import { CheckIcon, CopyIcon, useCopy } from "../../ui/copy"
 import { ActorDiagram } from "./diagrams/ActorDiagram"
+import { PeopleTalkingDiagram } from "./diagrams/PeopleTalkingDiagram"
 import { ActorCommunicationDiagram } from "./diagrams/ActorCommunicationDiagram"
 import { ActorInstancesDiagram } from "./diagrams/ActorInstancesDiagram"
 import { ChildThreadsDiagram } from "./diagrams/ChildThreadsDiagram"
@@ -244,6 +245,7 @@ export const mdxComponents = {
   ActorDiagram,
   ActorInstancesDiagram,
   ActorCommunicationDiagram,
+  PeopleTalkingDiagram,
   ChildThreadsDiagram,
   ThreadInvocationDiagram,
   ThreadResolutionDiagram,

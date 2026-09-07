@@ -55,3 +55,9 @@ export const methodCancellationEvent = (
   request: cancellationRequestIdOf(invocation), invocation, cause: "requested",
   ...(reason === undefined ? {} : { reason }), at
 })
+
+// methodRequestLocation identifies the durable call returned by an HTTP invocation.
+export const methodRequestLocation = (reference: InvocationCoordinate): string => {
+  const { target, invocation } = reference
+  return `/v1/actors/${encodeURIComponent(target.instance)}/threads/${encodeURIComponent(target.thread)}/methods/${encodeURIComponent(invocation.method)}/calls/${encodeURIComponent(invocation.id)}?actor=${encodeURIComponent(target.actor)}&epoch=${invocation.epoch}`
+}

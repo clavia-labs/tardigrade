@@ -1,4 +1,6 @@
-import { Effect, actor, agentMessageMethod, infer, nativeOutput, system, tool } from "tardie"
+import { Effect } from "effect"
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, nativeOutput, system, tool } from "tardie/agent"
 
 const actorName = "weather-agent"
 

@@ -28,6 +28,7 @@ const option = (name: string) => {
 }
 
 const sources = [
+  { dir: "packages/tardie", namespace: "tardie" },
   { dir: "packages/agent", namespace: "agent" },
   { dir: "packages/core", namespace: "core" },
   { dir: "packages/code", namespace: "code" },
@@ -156,7 +157,7 @@ const rewriteSources = async (dir: string, rewrites: ReadonlyMap<string, string>
 }
 
 const packages = await Promise.all(sources.map(async (source) => ({ ...source, pkg: await readPkg(source.dir) })))
-const publicSource = packages.find((source) => source.namespace === "agent")!
+const publicSource = packages.find((source) => source.namespace === "tardie")!
 const optionalPeers = optionalPeerUnion(packages.map((source) => source.pkg))
 const version = option("--version") ?? (await readPkg(".")).version
 const sourceTree = option("--source-tree")
@@ -211,7 +212,7 @@ try {
 
   const rewrites = new Map(
     packages
-      .filter((source) => source.namespace !== "agent")
+      .filter((source) => source.namespace !== "tardie")
       .map((source) => [source.pkg.name, `${publicSource.pkg.name}/${source.namespace}`] as const)
   )
   await rewriteSources(join(stage, "src"), rewrites)
@@ -236,7 +237,11 @@ try {
     type: "module",
     bin: { [BIN_NAME]: BIN_ENTRY },
     exports: {
-      ".": "./src/agent/index.ts",
+      ".": "./src/tardie/index.ts",
+      "./agent": "./src/agent/index.ts",
+      "./agent/*": "./src/agent/*.ts",
+      "./core": "./src/core/index.ts",
+      "./code": "./src/code/index.ts",
       "./package.json": "./package.json",
       "./actor/*": "./src/agent/actor/*.ts",
       "./component/*": "./src/agent/component/*.ts",
@@ -280,6 +285,7 @@ try {
       "./channels/*": "./src/channels/*.ts",
       "./client": "./src/client/index.ts",
       "./client/*": "./src/client/*.ts",
+      "./bun": "./src/bun/index.ts",
       "./bun/*": "./src/bun/*.ts",
       "./worker-loader/*": "./src/worker-loader/*.ts",
       "./cloudflare": "./src/cloudflare/index.ts",
@@ -299,7 +305,7 @@ try {
   const stagedModules = join(stage, "node_modules")
   await symlink(join(root, "node_modules"), stagedModules, "dir")
   try {
-    await run([process.execPath, "-e", "await import('tardie')"], stage)
+    await run([process.execPath, "-e", "const root = await import('tardie'); const core = await import('tardie/core'); const agent = await import('tardie/agent'); const code = await import('tardie/code'); if (root.defineActor !== core.defineActor || root.infer !== agent.infer || root.definePackage !== code.definePackage) throw new Error('scoped export compatibility failed'); await import('tardie/bun'); await import('tardie/client')"], stage)
   } finally {
     await rm(stagedModules)
   }

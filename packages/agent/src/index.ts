@@ -1,22 +1,13 @@
 export { type AgentPolicy, type AgentR, receive } from "./runtime/turn"
-export { Effect } from "effect"
 export {
   ACTOR_ARTIFACT_VERSION,
   ACTOR_NAME_PATTERN,
   type ActorArtifactManifest
 } from "./actor/artifact"
-export { ACTOR_METHOD_NAME_PATTERN, DEFAULT_ACTOR_METHOD_TIMEOUT_MS, actorMethod, actorMethodTimeoutOf, actorMethodsOf, type ActorMethod, type ActorMethodCancellation, type ActorMethodDeclaration, type ActorMethodDefinition, type ActorMethodInput, type ActorMethodOutput, type ActorMethods } from "@clavia/tardigrade-core/actor/method"
-export { legacyActorMethod, type LegacyActorMethodDefinition } from "@clavia/tardigrade-core/actor/method-compat"
-export { type InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
-export { type ActorInvocation, type ActorMethodCall } from "@clavia/tardigrade-core/interaction/invocation"
-export { type ActorMethodCancellationState } from "@clavia/tardigrade-core/interaction/state"
-export { type ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 export { AgentMessageInput, agentMessageMethod } from "./actor/message"
 export { agentMethods } from "./actor/methods"
 export { BudgetRequestInput, BudgetDecision, requestBudgetMethod } from "./actor/budget"
 export { PermissionRequestInput, PermissionDecision, requestPermissionMethod } from "./actor/permission"
-
-// The parts a caller lists. An agent is components over one log; the inference machine remains reachable for a bespoke assembly.
 export {
   Infer,
   NativeOutputSupport,
@@ -59,11 +50,6 @@ export {
   modelPolicyScopeOf,
   ModelSelector
 } from "./inference/access"
-
-// The turn's declared final response: the contract a caller states, the profile a binding can
-// send unchanged, and the implementation that obtains it. `output` is the whole declarative
-// surface; everything else here is for an assembly that states its own implementation
-// (output.test.ts; output.types.test.ts).
 export {
   output,
   outputFrom,
@@ -143,13 +129,7 @@ export {
   type CostSource,
   type ModelPricing
 } from "./inference/usage"
-
-// Where a settle left a turn. A caller driving its own host reads the answer here, because a
-// boundary is a projection of the log rather than a value the driver returns (boundary.ts).
 export { boundaryOf, outputOf, type Boundary } from "./output/boundary"
-
-// The spawn package: a value with no thread in it, so the assembly that mounts it and the host
-// that binds Router and Self per thread cannot disagree about placement (packages/agents.ts).
 export {
   agentsPackage,
   INLINE_OUTPUT_NAME,
@@ -158,43 +138,6 @@ export {
   type AgentModelCatalogQuery,
   type SpawnOptions
 } from "./packages/agents"
-
-// The workspace the model reads its spilled values back through, and the optional SQL binding a
-// platform lights its third verb up with.
-export { workspacePackage, workspaceFor, WorkspaceSql, DEFAULT_WORKSPACE_POLICY, workspacePolicyOf, type WorkspacePolicy, type SqlRunner } from "@clavia/tardigrade-code/package/workspace"
-
-// The two packages that let an assembly reach past its own log: the files under one root, and HTTP
-// to any host. Both are built on Effect's platform services, so the host that mounts them binds a
-// FileSystem, a Path, and an HttpClient and nothing else changes (packages/code/src/package/files.ts,
-// packages/code/src/package/fetch.ts).
-export {
-  filesPackage,
-  filesPolicyOf,
-  defaultFilesRoot,
-  DEFAULT_FILES_READ_CHARS,
-  DEFAULT_FILES_MAX_ENTRIES,
-  DEFAULT_FILES_MAX_MATCHES,
-  DEFAULT_FILES_SKIP,
-  type FilesPolicy
-} from "@clavia/tardigrade-code/package/files"
-export {
-  fetchPackage,
-  fetchPolicyOf,
-  DEFAULT_FETCH_POLICY,
-  DEFAULT_FETCH_BODY_CHARS,
-  type FetchPolicy
-} from "@clavia/tardigrade-code/package/fetch"
-export {
-  CODE_VIEW_ALGEBRA,
-  definePackage,
-  type CodeComponent,
-  type CodeView,
-  type Package,
-  type PackageDefinition
-} from "@clavia/tardigrade-code/package/definition"
-
-// The component assembly: code mode is the default, and an agent measured against a fixed tool
-// list mounts its own (runtime/composition.ts).
 export {
   AGENT_VIEW_ALGEBRA,
   infer,
@@ -218,13 +161,6 @@ export {
   DEFAULT_CODE_SUMMARY_MAX_LENGTH,
   type CodeModeOptions
 } from "./component/code"
-export {
-  DEFAULT_PACKAGE_CALL_POLICY,
-  packageCallPolicyOf,
-  type CodePolicy,
-  type PackageCallFailure,
-  type PackageCallPolicy
-} from "@clavia/tardigrade-code/execution/reactor"
 export { system, type SystemProjection, type SystemText } from "./component/system"
 export { tool, toolList, type NativeTool } from "./component/tool"
 export {
@@ -258,6 +194,3 @@ export {
   type PermissionRequest
 } from "./component/permission-authority"
 export { compaction } from "./component/compaction"
-export { actor, defineActor, allocateRootThread, allocateChildThread, actorContractErrors, actorContractOf, bindThreadMethods, calls, composeComponents, externallyHandled, handles, inheritComponentContract, component, incrementalComponent, independentTransitions, legacyComponent, deriveComponent, cancelComponent, validateActor, type Actor, type ActorAllocation, type RootThreadOptions, type ChildThreadOptions, type ActorCallContract, type ActorContract, type ActorMethodContract, type ThreadRef, type Component, type ComponentMachine, type ComponentRequirements, type CompositionOptions, type ComponentOutput, type ComponentDefinition, type IncrementalComponentDefinition, type LegacyComponentDefinition, type TransitionReconciler, type ViewAlgebra } from "@clavia/tardigrade-core/actor"
-export { actorCall, type ActorCall, type ActorCallOptions } from "@clavia/tardigrade-core/interaction/invoke"
-export { InvocationScope, InvocationFailed, InvocationCancelled, type InvocationOptions } from "@clavia/tardigrade-core/interaction"

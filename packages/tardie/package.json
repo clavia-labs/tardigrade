@@ -1,0 +1,52 @@
+{
+  "name": "tardie",
+  "version": "0.0.1",
+  "license": "MIT",
+  "author": "Clavia, Inc.",
+  "description": "Actor, agent, client, and host APIs for Tardigrade.",
+  "homepage": "https://github.com/clavia-labs/tardigrade#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/clavia-labs/tardigrade.git",
+    "directory": "packages/tardie"
+  },
+  "bugs": {
+    "url": "https://github.com/clavia-labs/tardigrade/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "src",
+    "!src/**/*.test.ts"
+  ],
+  "engines": {
+    "bun": ">=1.4.0"
+  },
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./actor/*": "./src/actor/*.ts",
+    "./component/*": "./src/component/*.ts",
+    "./inference/*": "./src/inference/*.ts",
+    "./log/*": "./src/log/*.ts",
+    "./output/*": "./src/output/*.ts",
+    "./packages/*": "./src/packages/*.ts",
+    "./projection/*": "./src/projection/*.ts",
+    "./runtime/*": "./src/runtime/*.ts",
+    "./agent": "./src/agent.ts",
+    "./core": "./src/core.ts",
+    "./code": "./src/code.ts",
+    "./agent/*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-agent": "workspace:*",
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-code": "workspace:*",
+    "effect": "4.0.0-rc.110"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  }
+}

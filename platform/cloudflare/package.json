@@ -25,7 +25,6 @@
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "@clavia/tardigrade-server": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-do": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"

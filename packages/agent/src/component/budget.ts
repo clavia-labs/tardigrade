@@ -212,12 +212,12 @@ const authorityFor = (
   authority: BudgetAuthority | undefined
 ): ThreadTarget<BudgetAuthorityMethods> | undefined => {
   if (authority === undefined) return undefined
-  if ("address" in authority) return authority
+  if ("coordinate" in authority || "address" in authority) return authority
   const head = log.find((event) =>
     event.type === "MessageReceived" && String((event as { readonly id?: unknown }).id) === turn
   ) as { readonly link?: Link<unknown, ThreadAddress> } | undefined
   return isThreadAddress(head?.link?.source)
-    ? { address: head.link.source, methods: { requestBudget: requestBudgetMethod } }
+    ? { coordinate: head.link.source, methods: { requestBudget: requestBudgetMethod } }
     : undefined
 }
 

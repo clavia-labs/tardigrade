@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import {
+  hostDrive,
   createThreadDriver,
   DEFAULT_MAX_CONCURRENT_THREADS,
   driverPolicyOf
@@ -130,4 +131,37 @@ describe("thread driver", () => {
     expect(attempts).toBe(2)
     expect(driver.resting()).toBe(true)
   })
+})
+
+
+test("host drives serialize overlapping requests", async () => {
+  const release = Promise.withResolvers<void>()
+  let active = 0
+  let maximum = 0
+  let completed = 0
+  const queue = hostDrive(async () => {
+    maximum = Math.max(maximum, ++active)
+    await release.promise
+    active--
+    completed++
+  })
+  const first = queue.drive()
+  const second = queue.drive()
+  release.resolve()
+  await Promise.all([first, second, queue.settled()])
+  expect(maximum).toBe(1)
+  expect(completed).toBe(2)
+})
+
+test("scheduled failures are observed once without poisoning later drives", async () => {
+  const failure = new Error("drive failed")
+  let attempts = 0
+  const queue = hostDrive(async () => {
+    if (attempts++ === 0) throw failure
+  })
+  queue.schedule()
+  await expect(queue.settled()).rejects.toBe(failure)
+  await queue.drive()
+  await queue.settled()
+  expect(attempts).toBe(2)
 })

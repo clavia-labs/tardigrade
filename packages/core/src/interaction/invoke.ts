@@ -11,7 +11,7 @@ import { Router } from "../transport/router"
 import { type ThreadLineage, invocationLinked, type InvocationLinked } from "./relations"
 import { CANCELLATION_CONTROL_METHOD, cancellationMethodFor } from "./cancellation"
 
-import type { ThreadTarget } from "../actor/reference"
+import { targetCoordinate, type ThreadTarget } from "../actor/reference"
 import { decodeActorInvocationContext, type ActorInvocationContext, InvocationRef, sameInvocation, decodeInvocationCoordinate, invocationIdForKey, invocationCoordinateKey, invocationCoordinateOf, type InvocationCoordinate } from "./invocation"
 
 import type { ActorMethodCancellation, ActorMethodDeclaration, ActorMethodInput, ActorMethodOutput, ActorMethods } from "../actor/method"
@@ -67,7 +67,7 @@ export interface ActorCall<Output, R = never> {
   readonly method: string
   readonly invocation: InvocationRef
   readonly context?: ActorInvocationContext
-  readonly target: ThreadTarget["address"]
+  readonly target: ReturnType<typeof targetCoordinate>
   readonly state: ActorMethodState<Output>
   readonly transitions: ReadonlyArray<Transition<never, R>>
 }
@@ -126,14 +126,14 @@ export const actorCall = <
     ) as CallPlanned | CallDispatched | undefined
     if (recorded !== undefined) {
       const drift = firstMismatch(
-        [recorded.target !== formatThreadAddress(options.target.address), "target does not match the recorded call"],
+        [recorded.target !== formatThreadAddress(targetCoordinate(options.target)), "target does not match the recorded call"],
         [recorded.method !== options.method, "method does not match the recorded call"],
         [canonicalJson(recorded.input) !== canonicalJson(options.input), "input does not match the recorded call"]
       )
       if (drift !== undefined) throw new Error(`idempotency key ${JSON.stringify(request.key)} drifted: ${drift}`)
     }
   }
-  const target = formatThreadAddress(options.target.address)
+  const target = formatThreadAddress(targetCoordinate(options.target))
   const declaration = options.target.methods[options.method] as ActorMethodDeclaration
   const invocation: InvocationRef = {
     method: options.method,
@@ -141,7 +141,7 @@ export const actorCall = <
     epoch: options.epoch ?? 0
   }
   Schema.decodeSync(InvocationRef)(invocation)
-  const reference = invocationCoordinateOf(options.target.address, invocation)
+  const reference = invocationCoordinateOf(targetCoordinate(options.target), invocation)
   if (options.context !== undefined) {
     decodeActorInvocationContext(options.context)
   }
@@ -167,7 +167,7 @@ export const actorCall = <
     return result({
       id: options.id,
       method: options.method,
-      target: options.target.address,
+      target: targetCoordinate(options.target),
       state: invocationResultOf(response, declaration.output) as ActorMethodState<ActorMethodOutput<Methods[Name]>>,
       transitions: []
     })
@@ -192,7 +192,7 @@ export const actorCall = <
       [canonicalJson(sent.input) !== canonicalJson(options.input), "input does not match the recorded call"]
     )
     if (drift !== undefined) throw new Error(`actor call ${JSON.stringify(options.id)} drifted: ${drift}`)
-    return result({ id: options.id, method: options.method, target: options.target.address, state: { status: "pending" }, transitions: [] })
+    return result({ id: options.id, method: options.method, target: targetCoordinate(options.target), state: { status: "pending" }, transitions: [] })
   }
 
   const timeoutMs = invocationTimeoutOf(declaration, options.timeoutMs)
@@ -204,7 +204,7 @@ export const actorCall = <
     return result({
       id: options.id,
       method: options.method,
-      target: options.target.address,
+      target: targetCoordinate(options.target),
       state: { status: "pending" },
       transitions: [intent({
         key: `mplan:${invocationCoordinateKey(reference)}`,
@@ -220,7 +220,7 @@ export const actorCall = <
             reference,
             id: current.id,
             method: current.method,
-            target: formatThreadAddress(current.target.address),
+            target: formatThreadAddress(targetCoordinate(current.target)),
             input: current.input,
             context,
             timeoutMs,
@@ -265,7 +265,7 @@ export const actorCall = <
             ...outgoingReference(planned),
             id: current.id,
             method: current.method,
-            target: formatThreadAddress(current.target.address),
+            target: formatThreadAddress(targetCoordinate(current.target)),
             deadlineAt,
             at
           } satisfies CallSkipped,
@@ -274,14 +274,14 @@ export const actorCall = <
             ...outgoingReference(planned),
             call: current.id,
             method: current.method,
-            target: formatThreadAddress(current.target.address),
+            target: formatThreadAddress(targetCoordinate(current.target)),
             timeoutMs,
             deadlineAt,
             at
           } satisfies CallTimedOut
         ]
       }
-      yield* sendInvocation({ target: current.target.address, context: planned.context,
+      yield* sendInvocation({ target: targetCoordinate(current.target), context: planned.context,
         event: prepareInvocation({ reference, method: declaration, input: planned.input, at, context: planned.context }).event,
         ...(current.lineage === undefined ? {} : { lineage: current.lineage }) })
       const dispatched: CallDispatched = {
@@ -289,7 +289,7 @@ export const actorCall = <
         ...outgoingReference(planned),
         id: current.id,
         method: current.method,
-        target: formatThreadAddress(current.target.address),
+        target: formatThreadAddress(targetCoordinate(current.target)),
         input: current.input,
         ...(invocation.epoch === 0 ? {} : { epoch: invocation.epoch }),
         ...(planned.context.parent === undefined ? {} : { parent: planned.context.parent }),
@@ -300,7 +300,7 @@ export const actorCall = <
       return [dispatched]
     })
   })
-  return result({ id: options.id, method: options.method, target: options.target.address, state: { status: "pending" }, transitions: [transition] })
+  return result({ id: options.id, method: options.method, target: targetCoordinate(options.target), state: { status: "pending" }, transitions: [transition] })
 }
 
 // cancelInvocation projects the durable core control call paired with one target invocation.
@@ -312,7 +312,7 @@ export const cancelInvocation = <Methods extends ActorMethods>(
   return actorCall(log, {
     id: options.id,
     target: {
-      address: options.target.address,
+      coordinate: targetCoordinate(options.target),
       methods: { [CANCELLATION_CONTROL_METHOD]: method }
     },
     method: CANCELLATION_CONTROL_METHOD,

@@ -2,22 +2,26 @@
 title: Actors
 description: Understand actors, allocate root and child threads, and invoke typed methods.
 socialImage: /images/actors-social.png
-socialImageAlt: People and actors communicating through matching networks.
+socialImageAlt: Morty asks Rick for a portal code. Rick reveals C-137 from his private knowledge through a message.
 route: /docs/actors
 section: Getting Started
 sectionOrder: 2
 order: 3
 ---
 
-In Tardigrade, an actor is an addressable entity with private state and behavior. This builds on the [actor model](https://www.ijcai.org/Proceedings/73/Papers/027B.pdf), introduced by Carl Hewitt, Peter Bishop, and Richard Steiger in 1973. Related implementations include [Erlang/OTP](https://www.erlang.org/doc/system/ref_man_processes.html) and [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/overview).
+In Tardigrade, an actor is an addressable entity with private state and behavior. This builds on the [actor model](https://www.ijcai.org/Proceedings/73/Papers/027B.pdf), introduced in 1973. Related implementations include [Erlang/OTP](https://www.erlang.org/doc/system/ref_man_processes.html) and [Microsoft Orleans](https://learn.microsoft.com/en-us/dotnet/orleans/overview).
 
-A good analogy is to think of actors like regular people we interact with. People typically hold information that is only accessible to them. The only way to access this private information or elicit behaviors is by communicating with them.
+A good analogy is to think of actors like regular people we interact with. People typically hold information that is accessible only to them. Others access this private information or elicit behaviors from them through communication.
 
-Similarly, in Tardigrade, actors hold state that is private to them. Hosts and other actors access this information and elicit behaviors through communicating via typed methods. This will become clearer as you walk through the concepts below.
+<PeopleTalkingDiagram />
+
+Similarly, in Tardigrade, actors hold information that is private to them. This is the actor's event log. The rest of the world communicates with them and elicit behaviors via typed methods. This will become clearer as you walk through the concepts below.
 
 <ActorCommunicationDiagram />
 
-## Interface
+## Define an actor
+
+An actor definition describes its methods and behavior. Defining an actor does not start a runtime.
 
 ```ts
 interface Actor {
@@ -30,7 +34,7 @@ interface Actor {
 For example, an actor named `tardie` exposes a message method and uses components for inference and code execution with an MCP package.
 
 ```ts
-import { defineActor } from "tardie"
+import { defineActor } from "tardie/core"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
 import { mcpPackage } from "./packages"
@@ -42,25 +46,50 @@ const tardie = defineActor(
 )
 ```
 
-## Create an instance
+## Create a host
+
+A host runs the actor and owns its storage, threads, and message delivery. The Bun host can run inside a script or application.
+
+```ts
+import { defineActor } from "tardie/core"
+import { createHost } from "tardie/bun"
+import { infer, codeMode } from "./components"
+import { message } from "./methods"
+import { mcpPackage } from "./packages"
+
+const tardie = defineActor(
+  "tardie",
+  { message },
+  [infer, codeMode(mcpPackage)],
+)
+
+const host = await createHost({
+  actor: tardie,
+  storage: "./data",
+})
+```
+
+Use `host` to allocate threads and call methods from the surrounding application. Close the host with `await host.close()` when the application is finished using it.
+
+## Allocate threads
+
+The host returns references with callable methods. Repeating an allocation with the same scope and name returns a reference to the same logical thread.
+
+### Actor instances
 
 An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `tardie`. Morty can use the same actor definition with a different instance identity.
 
 <ActorInstancesDiagram />
-
-## Allocate threads
-
-`tardie.allocateRootThread(...)` and `tardie.allocateChildThread(...)` return Effects that use the same host allocator when run. Repeating an allocation with the same scope and name returns a reference to the same logical thread.
 
 ### Root threads
 
 The caller supplies a name within the actor instance. The host assigns the thread identity and returns a reference.
 
 ```ts
-const rickRef = yield* tardie.allocateRootThread({ instance: "rick", name: "main" })
-const rickLabRef = yield* tardie.allocateRootThread({ instance: "rick", name: "lab" })
-const mortyRef = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
-const mortyLabRef = yield* tardie.allocateRootThread({ instance: "morty", name: "lab" })
+const rickMain = await host.allocateRootThread({ instance: "rick", name: "main" })
+const rickLab = await host.allocateRootThread({ instance: "rick", name: "lab" })
+const mortyMain = await host.allocateRootThread({ instance: "morty", name: "main" })
+const mortyLab = await host.allocateRootThread({ instance: "morty", name: "lab" })
 ```
 
 Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these names because their instances provide separate scopes.
@@ -72,38 +101,139 @@ Rick and Morty each have two threads, `"main"` and `"lab"`. They can reuse these
 A thread can create another logical thread in the same actor instance. For example, Rick's `"main"` thread can create a `"researcher"` thread. It lives alongside `"main"` and `"lab"` as another thread in Rick's instance. The parent-child relationship determines its naming scope.
 
 ```ts
-const researcherRef = yield* tardie.allocateChildThread({
-  parent: rickRef,
+const researcher = await host.allocateChildThread({
+  parent: rickMain.coordinate,
   name: "researcher",
 })
+
+const meeseeks = await host.allocateChildThread({
+  parent: researcher.coordinate,
+  name: "meeseeks",
+})
 ```
+
+`researcher.coordinate` contains the actor, instance, and thread names:
+
+```json
+{ "actor": "tardie", "instance": "rick", "thread": "researcher" }
+```
+
+The [supervisor log](#supervisor-log) records each thread's parent and depth, so the host can reconstruct the hierarchy while each coordinate stays `actor/instance/thread`.
 
 <ChildThreadsDiagram />
 
 ### Generated names
 
-Omit `name` to let the host assign a name. By default, generated names are friendly slugs such as `quiet-fox-k7m2`, made from an adjective, a noun, and a short random token. The host checks for collisions, retries if a name is already taken, and stores the assignment for reuse.
+Omit `name` to let the host assign a name. By default, generated names are friendly slugs such as `quiet-fox-k7m2`, made from an adjective, a noun, and a short random token. The host can change the word lists and token length or supply its own name generator. It checks for collisions, retries if a name is already taken, and stores the assignment for reuse.
 
 ```ts
-const rootRef = yield* tardie.allocateRootThread({ instance: "rick" })
-const childRef = yield* tardie.allocateChildThread({ parent: rootRef })
+const root = await host.allocateRootThread({ instance: "rick" })
+const child = await host.allocateChildThread({ parent: root.coordinate })
 ```
 
-## Invoking a thread
+## Invoke a thread
 
-Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickRef` identifies Rick's `"main"` thread, where a caller can invoke `tardie`'s `message` method.
+Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickMain` identifies Rick's `"main"` thread, where a caller can invoke `tardie`'s `message` method.
 
 ```ts
-const response = yield* rickRef.message({
+const response = await rickMain.message({
   text: "Help me build a portal gun.",
 }, { key: "portal-plan" })
 ```
 
-Call methods from an actor action. The `key` acts as an idempotency key: retrying the action reuses the same call and its result.
+Calls through the host use ordinary `await` calls. The `key` identifies the invocation so a retry can reuse the same call and its result. Calls from inside an actor action use the runtime-aware API and `yield*` to participate in that action's replay history.
 
 <ThreadInvocationDiagram />
 
-### Resolving to a physical address
+## Serve over HTTP
+
+Expose the host to other processes with an HTTP server. The host continues to own execution and storage; the server provides network access.
+
+```ts
+import { serve } from "tardie/bun"
+
+const server = await serve(host, { port: 3000 })
+```
+
+Call Rick's `main` thread from another process:
+
+```sh
+curl -X POST 'http://localhost:3000/v1/actors/rick/threads/main/methods/message' \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: portal-code' \
+  -d '{"text":"What is the portal code?"}'
+```
+
+The `Idempotency-Key` header makes retries reuse the same call. The server returns `202 Accepted` with a receipt and a `Location` header. Send a `GET` request to that location to read the result.
+
+Remote applications connect through the Client SDK. A local script can use `host` directly. Stop the HTTP server with `await server.close()` before closing its host.
+
+## Complete example
+
+This script defines an actor, creates its host, invokes two threads, and closes the host when the work finishes. The imported components, methods, and packages belong to your application.
+
+```ts expanded
+import { defineActor } from "tardie/core"
+import { createHost } from "tardie/bun"
+import { infer, codeMode } from "./components"
+import { message } from "./methods"
+import { mcpPackage } from "./packages"
+
+const tardie = defineActor(
+  "tardie",
+  { message },
+  [infer, codeMode(mcpPackage)],
+)
+
+const host = await createHost({
+  actor: tardie,
+  storage: "./data",
+})
+
+try {
+  const rickMain = await host.allocateRootThread({ instance: "rick", name: "main" })
+  const rickLab = await host.allocateRootThread({ instance: "rick", name: "lab" })
+  const mortyMain = await host.allocateRootThread({ instance: "morty", name: "main" })
+  const mortyLab = await host.allocateRootThread({ instance: "morty", name: "lab" })
+
+  const rickResponse = await rickLab.message({
+    text: "Design an experiment to test the portal gun's power source.",
+  }, { key: "portal-experiment" })
+  const mortyResponse = await mortyMain.message({
+    text: "Help me plan my day around school and homework.",
+  }, { key: "school-plan" })
+
+  console.log({ rickResponse, mortyResponse })
+} finally {
+  await host.close()
+}
+```
+
+## How threads are stored
+
+### Supervisor log
+
+The host keeps an event log for each actor instance, called the supervisor log. It records which threads belong to the instance and how they relate. Each thread also has its own log for that thread's events.
+
+For Rick's instance, allocation records in the supervisor log can look like this. Allocation keys and timestamps are omitted:
+
+<div className="actor-event-table">
+  <table>
+    <thead>
+      <tr><th scope="col">Event</th><th scope="col">Thread</th><th scope="col">Parent thread</th><th scope="col">Depth</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><code>ThreadRequested</code></td><td><code>main</code></td><td>None</td><td>0</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>lab</code></td><td>None</td><td>0</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>researcher</code></td><td><code>main</code></td><td>1</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>meeseeks</code></td><td><code>researcher</code></td><td>2</td></tr>
+    </tbody>
+  </table>
+</div>
+
+`main` and `lab` are root threads at depth 0. `researcher` is a child of `main`, and `meeseeks` is a child of `researcher`. The host builds the instance's thread directory from these records.
+
+### Physical placement
 
 A reference identifies a thread. The host resolves it to where that thread runs, so callers do not need to know its location. The receiving host is also responsible for access checks.
 
@@ -148,35 +278,3 @@ const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
 ```
 
 <ThreadResolutionDiagram />
-
-## Complete example
-
-```ts expanded
-import { Effect } from "effect"
-import { defineActor } from "tardie"
-import { infer, codeMode } from "./components"
-import { message } from "./methods"
-import { mcpPackage } from "./packages"
-
-const tardie = defineActor(
-  "tardie",
-  { message },
-  [infer, codeMode(mcpPackage)],
-)
-
-const program = Effect.gen(function* () {
-  const rickRef = yield* tardie.allocateRootThread({ instance: "rick", name: "main" })
-  const rickLabRef = yield* tardie.allocateRootThread({ instance: "rick", name: "lab" })
-  const mortyRef = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
-  const mortyLabRef = yield* tardie.allocateRootThread({ instance: "morty", name: "lab" })
-
-  const rickResponse = yield* rickLabRef.message({
-    text: "Design an experiment to test the portal gun's power source.",
-  }, { key: "portal-experiment" })
-  const mortyResponse = yield* mortyRef.message({
-    text: "Help me plan my day around school and homework.",
-  }, { key: "school-plan" })
-
-  return { rickResponse, mortyResponse }
-})
-```

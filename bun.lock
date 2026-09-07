@@ -12,6 +12,7 @@
         "@effect/tsgo": "0.36.5",
         "@types/bun": "^1.3.4",
         "beautiful-mermaid": "^1.1.3",
+        "effect": "4.0.0-rc.110",
         "knip": "^6.15.0",
         "oxlint": "^1.69.0",
       },
@@ -143,7 +144,7 @@
       },
     },
     "packages/agent": {
-      "name": "tardie",
+      "name": "@clavia/tardigrade-agent",
       "version": "0.0.1",
       "dependencies": {
         "@cfworker/json-schema": "^4.1.1",
@@ -207,6 +208,16 @@
         "fast-check": "^4.9.0",
       },
     },
+    "packages/tardie": {
+      "name": "tardie",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-code": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+    },
     "packages/ui": {
       "name": "@clavia/tardigrade-ui",
       "version": "0.0.1",
@@ -231,7 +242,6 @@
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
-        "@clavia/tardigrade-server": "workspace:*",
         "@clavia/tardigrade-worker-loader": "workspace:*",
         "@effect/sql-sqlite-do": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
@@ -250,6 +260,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-bun": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@tanstack/ai": "0.46.0",
         "@tanstack/ai-anthropic": "0.16.7",
@@ -380,6 +391,8 @@
     "@base-ui/utils": ["@base-ui/utils@0.3.2", "", { "dependencies": { "@babel/runtime": "^7.29.2", "@floating-ui/utils": "^0.2.12", "reselect": "^5.2.0", "use-sync-external-store": "^1.6.0" }, "peerDependencies": { "@types/react": "^17 || ^18 || ^19", "react": "^17 || ^18 || ^19", "react-dom": "^17 || ^18 || ^19" }, "optionalPeers": ["@types/react"] }, "sha512-oWy1aq/I2GmYjpl4PhEAhzflF8VPGKgZeq0xAWTbfD5KBWyxcN0ZP2+WHSUm/5Z6lVMBDLReLcoXwSYoRc/zNQ=="],
 
     "@cfworker/json-schema": ["@cfworker/json-schema@4.1.1", "", {}, "sha512-gAmrUZSGtKc3AiBL71iNWxDsyUC5uMaKKGdvzYsBoTW/xi42JQHl7eKV2OYzCUqvc+D2RCcf7EXY2iCyFIk6og=="],
+
+    "@clavia/tardigrade-agent": ["@clavia/tardigrade-agent@workspace:packages/agent"],
 
     "@clavia/tardigrade-bun": ["@clavia/tardigrade-bun@workspace:platform/bun"],
 
@@ -1453,7 +1466,7 @@
 
     "supports-color": ["supports-color@10.2.2", "", {}, "sha512-SS+jx45GF1QjgEXQx4NJZV9ImqmO2NPz5FNsIHrsDjh2YsHnawpan7SNQ1o8NuhrbHZy9AZhIoCUiCeaW/C80g=="],
 
-    "tardie": ["tardie@workspace:packages/agent"],
+    "tardie": ["tardie@workspace:packages/tardie"],
 
     "tinybench": ["tinybench@2.9.0", "", {}, "sha512-0+DUvqWMValLmha6lr4kD8iAMK1HzV0/aKnCtWb9v9641TnP/MFb7Pc2bxoxQjTXAErryXVgUOfv2YqNllqGeg=="],
 

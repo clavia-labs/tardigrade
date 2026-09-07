@@ -1,8 +1,10 @@
+import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
 import { DurableObject } from "cloudflare:workers"
 import { Clock, Effect, ManagedRuntime, Schema } from "effect"
 import { SqliteClient } from "@effect/sql-sqlite-do"
-import { publicThreadId } from "@clavia/tardigrade-server/thread-compat"
+import { publicThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { EventLog, eventLogFrom } from "@clavia/tardigrade-core/log"
 import { type ActorEnvelope } from "@clavia/tardigrade-core/interaction/envelope"
@@ -201,12 +203,20 @@ export class ActorDO extends DurableObject<Env> {
     await this.synchronizeAlarm()
   }
 
-  async createThread(name?: string): Promise<ThreadAddress> {
+  async createThread(name?: string, options: { readonly key?: string; readonly parent?: string } = {}): Promise<ThreadAddress> {
     const identity = this.identity()
-    const target = await this.allocateThread({
-      kind: "root", coordinate: { ...identity, thread: name ?? "" },
-      ...(name === undefined ? { key: crypto.randomUUID() } : {})
-    })
+    if (name !== undefined && options.key !== undefined) throw new Error("named allocations do not accept a separate key")
+    const key = name === undefined ? { key: options.key ?? crypto.randomUUID() } : {}
+    if (options.parent !== undefined) {
+      const parent = (await this.threads()).find((entry) => entry.thread === options.parent && entry.state === "registered")
+      if (parent === undefined) throw new Error("parent thread does not exist")
+      const source = { ...identity, thread: options.parent }
+      const target = await this.allocateThread({ kind: "child", parent: source, child: childKeyOf(name ?? "unnamed"), ...key })
+      const lineage = { parent: source, depth: Number(parent.depth) + 1 }
+      await this.deliverChild({ link: { source, target }, lineage, event: threadCreated(target, lineage, Date.now()) })
+      return target
+    }
+    const target = await this.allocateThread({ kind: "root", coordinate: { ...identity, thread: name ?? "" }, ...key })
     await this.initializeRootThread(target.thread)
     return target
   }

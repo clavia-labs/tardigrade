@@ -29,10 +29,10 @@ export const ActorCommunicationDiagram = (): ReactElement => {
         { name: "E", x: 360, y: 197 },
       ].map(({ name, x, y }) => (
         <g key={name} transform={`translate(${x} ${y})`}>
-          {kind === "People" ? <>
-            <circle cy="-15" r="10" />
-            <path className="actor-communication-person" d="M-21 25V15C-21 6-12 0 0 0S21 6 21 15V25Z" />
-          </> : <>
+          {kind === "People" ? <g transform="translate(0 -7.2) scale(.6)">
+            <circle cy="-20" r="18" />
+            <path className="actor-communication-person" d="M-32 62V36C-32 16-16 4 0 4S32 16 32 36V62Z" />
+          </g> : <>
             <circle r="30" />
             <text y="5">{name}</text>
           </>}

@@ -298,6 +298,22 @@ describe("models", () => {
 })
 
 describe("actor methods", () => {
+  test("POST invocation uses its idempotency header and returns a readable Location", async () => {
+    await serving(async (base) => {
+      await callMessage(base, "alpha", "m1", "hello")
+      const path = "/v1/actors/main/threads/alpha/methods/message"
+      expect((await post(base, path, { text: "hello" })).status).toBe(400)
+      const response = await fetch(`${base}${path}`, {
+        method: "POST", headers: { "Content-Type": "application/json", "Idempotency-Key": "m1" },
+        body: JSON.stringify({ text: "retry" })
+      })
+      expect(response.status).toBe(202)
+      expect(response.headers.get("Location")).toContain("/calls/m1?")
+      const state = await get(base, response.headers.get("Location")!)
+      expect(await state.json()).toEqual({ status: "completed", output: "ok: hello" })
+    })
+  })
+
   test("the actor exposes its method schemas", async () => {
     const methods = await serving(async (base) =>
       await (await get(base, "/v1/methods")).json() as ReadonlyArray<{

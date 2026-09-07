@@ -1,5 +1,5 @@
 import { Effect, type Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
@@ -28,6 +28,7 @@ import {
   type ThreadSummary,
   type EventRow,
   type Health,
+  MethodState,
   type MethodAccepted,
   type MethodSummary,
   type ModelCatalogPage,
@@ -285,8 +286,33 @@ const problemErrorOf = (failure: unknown): Effect.Effect<ProblemError> => {
   )
 }
 
-const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-  Effect.runPromise(Effect.catch(effect, (failure) => Effect.flatMap(problemErrorOf(failure), Effect.fail)))
+const run = async <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal): Promise<A> => {
+  try { return await Effect.runPromise(Effect.catch(effect, (failure) => Effect.flatMap(problemErrorOf(failure), Effect.fail)), signal === undefined ? {} : { signal }) }
+  catch (error) { signal?.throwIfAborted(); throw error }
+}
+
+const transportOf = (options: ControlClientOptions): HttpClient.HttpClient => {
+  const transport = Effect.runSync(HttpClient.HttpClient.pipe(
+    Effect.provide(FetchHttpClient.layer),
+    options.fetch === undefined ? (self) => self : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
+  ))
+  return options.token === undefined ? transport : HttpClient.mapRequest(transport, HttpClientRequest.bearerToken(options.token))
+}
+
+// actorHttpClient shares endpoint codecs, transport configuration, and errors between client facades.
+export const actorHttpClient = <P extends Projections = {}>(options: ActorClientOptions<P> = {}) => {
+  const httpClient = transportOf(options)
+  const derived = HttpApiClient.makeWith(actorApiOf(options.projections ?? ({} as P)), { httpClient, baseUrl: options.baseUrl ?? DEFAULT_BASE_URL })
+  // derived has no requirements for concrete projection declarations.
+  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
+  const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
+  return {
+    api, run,
+    stateAt: (url: string, signal?: AbortSignal) => run(httpClient.get(url).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.flatMap(HttpClientResponse.schemaBodyJson(MethodState))
+    ), signal)
+  }
+}
 
 // The query the declaration accepts, with the fields a caller left out left out. A key carrying
 // `undefined` is not the same as an absent key to an optional Schema, so the object is built rather
@@ -318,25 +344,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   options: ActorClientOptions<P, M> = {}
 ): ActorClient<P, M> => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
-  const token = options.token
-  // The derivation's own requirement is `HttpClient`, which the layer below provides, plus whatever
-  // the API's middleware asks a client for. RequestProblems asks for nothing, so nothing is left to
-  // provide; the compiler proves that for a stated declaration and cannot for a generic one, which
-  // is what the annotation states here rather than at every call site.
-  const derived = HttpApiClient.make(actorApiOf(options.projections ?? ({} as P)), {
-    baseUrl,
-    ...(token === undefined
-      ? {}
-      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    options.fetch === undefined
-      ? (self) => self
-      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-  )
-  // derived has no requirements for every concrete declaration, which a generic P cannot reduce.
-  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-  const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
+  const { api } = actorHttpClient(options)
   const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
     run(api.threads.append({ params: { id: actor, thread }, payload: event }))
   const invocationState = (call: ActorCallRef | InvocationCoordinate) => {
@@ -383,7 +391,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
-    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ params: { id: actor }, payload: name === undefined ? {} : { name } })),
+    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invoke({
@@ -490,19 +498,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
 // makeControlClient builds the client for actor deployment and discovery at a hosting origin.
 export const makeControlClient = (options: ControlClientOptions = {}): ControlClient => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
-  const token = options.token
-  const derived = HttpApiClient.make(controlApi, {
-    baseUrl,
-    ...(token === undefined
-      ? {}
-      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    options.fetch === undefined
-      ? (self) => self
-      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-  )
-  const api = Effect.runSync(derived as Effect.Effect<DerivedControlApi>)
+  const api = Effect.runSync(HttpApiClient.makeWith(controlApi, { baseUrl, httpClient: transportOf(options) }) as Effect.Effect<DerivedControlApi>)
   return {
     baseUrl,
     definitions: () => run(api.definitions.definitions({})),

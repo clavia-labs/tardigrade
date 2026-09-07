@@ -42,6 +42,8 @@ test("allocation binds only declared method types and does not execute calls", a
   ))
   expect(typeof ref.research).toBe("function")
   expect(typeof ref.count).toBe("function")
+  expect(ref.coordinate).toEqual({ actor: "scientist", instance: "main", thread: "worker" })
+  expect(ref.address).toBe(ref.coordinate)
   expect(ref).not.toHaveProperty("message")
   const output: Effect.Success<ReturnType<typeof ref.count>> = 3
   expect(output).toBe(3)
@@ -55,7 +57,7 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
   const planned = planning.events(planning.input, 0)
   const run = (outcome: Record<string, unknown>) => {
     const events: Event[] = [...planned, {
-      type: "ResponseReceived", reference: call.reference, id: "reply", from: formatThreadAddress(reference.address),
+      type: "ResponseReceived", reference: call.reference, id: "reply", from: formatThreadAddress(reference.coordinate),
       method: "research", call: call.id, epoch: 0, at: 1, ...outcome
     }]
     return Effect.runPromise(reference.research({ topic: "energy" }, { key: "review" }).pipe(
@@ -78,7 +80,7 @@ test("completed, failed, and cancelled replies retain their typed outcomes", asy
 })
 
 test("reference metadata and promise assimilation names cannot be shadowed", () => {
-  for (const name of ["address", "methods", "then"]) {
-    expect(() => bindThreadMethods({ address: parent.target, methods: { [name]: research } })).toThrow("conflicts with the thread reference surface")
+  for (const name of ["coordinate", "address", "methods", "then"]) {
+    expect(() => bindThreadMethods({ coordinate: parent.target, methods: { [name]: research } })).toThrow("conflicts with the thread reference surface")
   }
 })

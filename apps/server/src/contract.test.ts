@@ -60,6 +60,7 @@ setDefaultTimeout(BOOT_MS)
 
 // Every route the server answers, as method and OpenAPI path. The stream is absent because it is not a declared endpoint (api.ts, layerStream). `turns` appears because this build's actor declares it (actor.ts, agentProjections).
 const ROUTES: ReadonlyArray<readonly [string, string]> = [
+  ["post", "/v1/actors/{id}/threads/{thread}/methods/{method}"],
   ["get", "/v1/providers"],
   ["get", "/v1/models"],
   ["get", "/v1/definitions"],

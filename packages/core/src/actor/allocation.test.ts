@@ -13,9 +13,9 @@ const allocator = () => {
       requests.push(request)
       if (request.kind === "root") return request.coordinate
       const key = JSON.stringify([request.parent, request.child])
-      const address = children.get(key) ?? { ...request.parent, thread: `assigned-${children.size}` }
-      children.set(key, address)
-      return address
+      const coordinate = children.get(key) ?? { ...request.parent, thread: `assigned-${children.size}` }
+      children.set(key, coordinate)
+      return coordinate
     })
   }
   return { requests, service }
@@ -29,13 +29,13 @@ test("allocation is lazy and both surfaces use the same host allocator", async (
   const run = <A>(effect: Effect.Effect<A, never, ThreadAllocator>) =>
     Effect.runPromise(effect.pipe(Effect.provideService(ThreadAllocator, host.service)))
   const rick = await run(root)
-  expect(rick.address).toEqual({ actor: "tardie", instance: "rick", thread: "main" })
+  expect(rick.coordinate).toEqual({ actor: "tardie", instance: "rick", thread: "main" })
   expect(rick.methods).toBe(tardie.methods)
   expect(await run(allocateRootThread(tardie, { instance: "rick", name: "main" }))).toEqual(rick)
-  const child = await run(tardie.allocateChildThread({ parent: rick, name: "researcher" }))
-  expect(child.address).toEqual({ actor: "tardie", instance: "rick", thread: "assigned-0" })
+  const child = await run(tardie.allocateChildThread({ parent: rick.coordinate, name: "researcher" }))
+  expect(child.coordinate).toEqual({ actor: "tardie", instance: "rick", thread: "assigned-0" })
   expect(child.methods).toBe(tardie.methods)
-  expect(await run(allocateChildThread(tardie, { parent: rick, name: "researcher" }))).toEqual(child)
+  expect(await run(allocateChildThread(tardie, { parent: rick.coordinate, name: "researcher" }))).toEqual(child)
   expect(host.requests.map((request) => request.kind)).toEqual(["root", "root", "child", "child"])
 })
 
@@ -43,7 +43,7 @@ test("a foreign actor parent is rejected before allocation", async () => {
   const host = allocator()
   const tardie = defineActor("tardie", {}, [])
   const effect = tardie.allocateChildThread({
-    parent: { address: { actor: "other", instance: "rick", thread: "main" }, methods: {} },
+    parent: { actor: "other", instance: "rick", thread: "main" },
     name: "researcher"
   })
   await expect(Effect.runPromise(effect.pipe(Effect.provideService(ThreadAllocator, host.service))))

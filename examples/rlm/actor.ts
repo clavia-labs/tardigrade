@@ -1,8 +1,6 @@
-import {
-  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
-  compaction, fetchPackage, infer,
-  outputValidateOnce, system, workspacePackage
-} from "tardie"
+import { actor } from "tardie/core"
+import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetchPackage, workspacePackage } from "tardie/code"
 
 const actorName = "researcher"
 

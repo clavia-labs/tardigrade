@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtemp, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 
@@ -14,6 +14,7 @@ afterEach(async () => {
 
 const build = async (source: string) => {
   root = await mkdtemp(join(tmpdir(), "tardigrade-template-test-"))
+  await symlink(new URL("../../../node_modules", import.meta.url).pathname, join(root, "node_modules"), "dir")
   const entry = join(root, "actor.ts")
   await writeFile(entry, source, "utf8")
   return buildActor(entry, { cwd: root, out: "output" })

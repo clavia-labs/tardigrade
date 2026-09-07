@@ -40,6 +40,7 @@ describe("actor", () => {
       components: [component]
     }
     expect(threadTarget(definition, "main", "shared")).toEqual({
+      coordinate: { actor: "release-analyst", instance: "main", thread: "shared" },
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })
@@ -58,6 +59,7 @@ describe("actor", () => {
     expect(actorRuntimeOf(definition).projection).toBeDefined()
     expect(actorRuntimeOf(definition)).toBe(actorRuntimeOf(definition))
     expect(threadTarget(definition, "main", "shared")).toEqual({
+      coordinate: { actor: "release-analyst", instance: "main", thread: "shared" },
       address: { actor: "release-analyst", instance: "main", thread: "shared" },
       methods
     })

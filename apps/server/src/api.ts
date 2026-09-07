@@ -6,7 +6,7 @@ import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
 import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
 import { invocationCoordinateOf } from "@clavia/tardigrade-core/interaction"
-import { existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-host/transport/http/method-request"
+import { methodRequestLocation, existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "@clavia/tardigrade-host/transport/http/method-request"
 
 import {
   Api,
@@ -421,9 +421,11 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
   const limit = options.limit ?? DEFAULT_EVENT_LIMIT
   return HttpApiBuilder.group(Api, "threads", (handlers) =>
     handlers
-      .handle("allocateRoot", ({ params, payload }) => Effect.gen(function* () {
-        const threads = yield* (yield* Threads).ensure(params.id)
-        return yield* threads.allocateRoot(payload.name)
+      .handle("allocateRoot", ({ params, payload, query }) => Effect.gen(function* () {
+        const service = yield* Threads
+        if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) return yield* Effect.fail(InvalidRequest.of("Allocation target actor does not match this deployment."))
+        const threads = yield* service.ensure(params.id)
+        return yield* threads.allocateRoot(payload.name, payload)
       }))
       // The body is the declared payload, decoded before this runs: a body that is not one is
       // refused by the declaration and rendered as a problem document (contract.ts,
@@ -493,21 +495,14 @@ const methodOf = (threads: ActorThreads, name: string) => {
     : Effect.succeed(method)
 }
 
-// layerMethodsGroup invokes and reads the method declarations carried by the mounted actor runtime.
-export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
-  handlers
-    .handle("methods", () =>
-      Effect.map(Threads, (threads) =>
-        Object.entries(threads.methods).map(([name, method]) => ({
-          name,
-          cancellable: method.cancellation !== undefined,
-          timeoutMs: method.timeoutMs,
-          inputSchema: jsonSchemaOf(method.input),
-          outputSchema: jsonSchemaOf(method.output)
-        }))))
-    .handle("invoke", ({ params, query, payload }) =>
+const invokeMethod = (
+  params: { readonly id: string; readonly thread: string; readonly method: string; readonly call: string },
+  query: { readonly actor?: string; readonly timeoutMs?: number },
+  payload: unknown
+) =>
       Effect.gen(function*() {
         const service = yield* Threads
+        if (query.actor !== undefined && query.actor !== (service.actorName ?? RESERVED_ACTOR)) return yield* Effect.fail(InvalidRequest.of("Invocation target actor does not match this deployment."))
         const threads = yield* actorOf(service, params.id)
         const method = yield* methodOf(threads, params.method)
         const events = yield* logOf(threads.events, params.thread)
@@ -525,7 +520,27 @@ export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (han
         })
         yield* threads.append(params.thread, prepared.event)
         return prepared.accepted
-      }))
+      })
+
+// layerMethodsGroup invokes and reads the method declarations carried by the mounted actor runtime.
+export const layerMethodsGroup = HttpApiBuilder.group(ServerApi, "methods", (handlers) =>
+  handlers
+    .handle("methods", () =>
+      Effect.map(Threads, (threads) =>
+        Object.entries(threads.methods).map(([name, method]) => ({
+          name,
+          cancellable: method.cancellation !== undefined,
+          timeoutMs: method.timeoutMs,
+          inputSchema: jsonSchemaOf(method.input),
+          outputSchema: jsonSchemaOf(method.output)
+        }))))
+    .handle("invoke", ({ params, query, payload }) => invokeMethod(params, query, payload))
+    .handle("invokeMethod", ({ params, query, payload, headers }) => Effect.gen(function* () {
+      const call = headers["idempotency-key"]
+      if (!call.trim()) return yield* Effect.fail(InvalidRequest.of("Idempotency-Key must be a nonempty header"))
+      const receipt = yield* invokeMethod({ ...params, call }, query, payload)
+      return HttpServerResponse.jsonUnsafe(receipt, { status: 202, headers: { location: methodRequestLocation(receipt.reference) } })
+    }))
     .handle("methodState", ({ params, query }) =>
       Effect.gen(function*() {
         const service = yield* Threads

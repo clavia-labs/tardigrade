@@ -8,7 +8,7 @@ import { effect } from "@clavia/tardigrade-core/effect"
 import {
   ActorDO,
   ThreadDO,
-  cloudflareWorker,
+  createWorker,
   modelScopeFrom,
   type CloudflareWorkerLayerContext,
   type Env
@@ -152,7 +152,7 @@ const echo = actorMethod({
   }
 })
 
-const worker = cloudflareWorker(actor({
+const { worker } = createWorker(actor({
   name: "echo",
   methods: { echo },
   components: [component({

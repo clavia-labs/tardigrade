@@ -2,6 +2,7 @@ export {
   ActorDO,
   ThreadDO,
   cloudflareWorker,
+  createWorker,
   modelCatalogForConfig,
   modelScopeFrom,
   BACKGROUND_TASK_OWNERS,

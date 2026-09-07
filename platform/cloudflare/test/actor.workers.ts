@@ -6,7 +6,7 @@ import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
+import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
@@ -1112,3 +1112,27 @@ describe("cloudflare actor", () => {
   })
 
 })
+
+
+test("HTTP allocation preserves unnamed keys and creates nested children", async () => {
+  await createThread("sdk-parent")
+  const allocate = async (input: { readonly name?: string; readonly key?: string; readonly parent?: string }) => {
+    const response = await SELF.fetch("http://test/v1/actors/main/threads", {
+      method: "POST", headers: { ...authorization, "content-type": "application/json" }, body: JSON.stringify(input)
+    })
+    expect(response.status).toBe(200)
+    return await response.json() as { readonly actor: string; readonly instance: string; readonly thread: string }
+  }
+  const first = await allocate({ key: "sdk-stable" })
+  expect(await allocate({ key: "sdk-stable" })).toEqual(first)
+  const child = await allocate({ name: "sdk-child", parent: "sdk-parent" })
+  const grandchild = await allocate({ name: "sdk-grandchild", parent: child.thread })
+  expect(await allocate({ name: "sdk-grandchild", parent: child.thread })).toEqual(grandchild)
+  const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${grandchild.thread}/methods/echo`, {
+    method: "POST", headers: { ...authorization, "content-type": "application/json", "Idempotency-Key": "sdk-nested" }, body: JSON.stringify({ text: "hello" })
+  })
+  expect(accepted.status).toBe(202)
+  expect(accepted.headers.get("Location")).toContain("/calls/sdk-nested?")
+  expect((await SELF.fetch(new URL(accepted.headers.get("Location")!, "http://test"), { headers: authorization })).status).toBe(200)
+  expect(await methodState(grandchild.thread, "sdk-nested")).toMatchObject({ status: "completed" })
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)

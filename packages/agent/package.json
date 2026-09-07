@@ -1,5 +1,5 @@
 {
-  "name": "tardie",
+  "name": "@clavia/tardigrade-agent",
   "version": "0.0.1",
   "license": "MIT",
   "author": "Clavia, Inc.",
@@ -12,9 +12,6 @@
   },
   "bugs": {
     "url": "https://github.com/clavia-labs/tardigrade/issues"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "src",
@@ -48,5 +45,6 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
-  }
+  },
+  "private": true
 }
