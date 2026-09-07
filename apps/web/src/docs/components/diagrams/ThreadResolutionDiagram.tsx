@@ -18,8 +18,8 @@ const basePoint = (x: number, y: number, drop = 0): string =>
   `${hingeX + x * widthX + y * depthX},${hingeY + x * widthY + y * depthY + drop}`
 
 export const ThreadResolutionDiagram = (): ReactElement => (
-  <svg className="thread-resolution-illustration" viewBox="0 0 400 390" role="img" aria-label="On the left, rickRef branches right to two alternative placements: an edge server above and a local laptop below. Each shows Rick's main thread inside its process.">
-    <text className="resolution-ref" x="60" y="180">rickRef</text>
+  <svg className="thread-resolution-illustration" viewBox="0 0 400 390" role="img" aria-label="On the left, rickMain branches right to two alternative placements: an edge server above and a local laptop below. Each shows Rick's main thread inside its process.">
+    <text className="resolution-ref" x="60" y="180">rickMain</text>
     <text className="resolution-caption" x="60" y="202">host resolves</text>
     <g className="resolution-routes" aria-hidden="true">
       <path d="M108 185H134C174 185 161 86 215 86" />

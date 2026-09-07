@@ -1,3 +1,4 @@
+import { targetCoordinate } from "@clavia/tardigrade-core/actor"
 import { createHash } from "node:crypto"
 import { mkdtemp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join, resolve } from "node:path"
@@ -97,7 +98,7 @@ export const loadBuiltActor = (built: BuiltActor): Promise<Actor<unknown>> =>
 export const tardiePlugin = (entry: string = TARDIE_ENTRY): Bun.BunPlugin => ({
   name: "tardie",
   setup(builder) {
-    builder.onResolve({ filter: /^tardie$/ }, () => ({ path: entry }))
+    builder.onResolve({ filter: /^tardie(?:\/.*)?$/ }, ({ path }) => ({ path: path === "tardie" ? entry : Bun.resolveSync(path, dirname(entry)) }))
   }
 })
 
@@ -141,7 +142,7 @@ export const lintActor = async (entry: string, options: Pick<BuildActorOptions, 
         method: call.methodName ?? "<undeclared>",
         target: "kind" in call.target
           ? "caller"
-          : `${call.target.address.actor}:${call.target.address.thread}`
+          : `${targetCoordinate(call.target).actor}:${targetCoordinate(call.target).thread}`
       }))
     }
   } finally {

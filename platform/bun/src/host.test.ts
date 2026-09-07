@@ -988,3 +988,15 @@ describe("the workspace sql surface", () => {
     await h.close()
   })
 })
+
+test("scheduled failures remain observable through settled", async () => {
+  const host = await createBunHost({
+    database: ":memory:",
+    actorFor: () => ({ projections: [completeTransitionProjection(() => { throw new Error("broken projection") })], keyOf })
+  })
+  try {
+    await host.commitRoot(host.self("root"), { type: "MessageReceived", id: "scheduled", at: 0 })
+    host.schedule()
+    await expect(host.settled()).rejects.toThrow("broken projection")
+  } finally { await host.close() }
+})

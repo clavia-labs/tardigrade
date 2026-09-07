@@ -42,7 +42,7 @@ test("the adapter translates public operations while preserving raw directory re
   const capture = (thread: string) => Effect.sync(() => { received.push(thread) })
   const raw: ActorThreads = {
     allocateRoot: () => Effect.die(new Error("unexpected allocation")),
-    methods: {}, sqlite: ":memory:",
+    methods: {}, statusOf: () => "settled", storage: { kind: "memory" },
     append: (thread) => capture(thread),
     events: (thread) => capture(thread).pipe(Effect.as([])),
     eventsPage: (thread) => capture(thread).pipe(Effect.as([])),

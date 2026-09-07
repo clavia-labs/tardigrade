@@ -232,7 +232,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
     const byKey = new Map(missions.map((mission) => [mission.key, mission]))
     const humanThread = "ag.president-morty"
     const human = {
-      address: threadAddressOf("mem", "main", humanThread),
+      coordinate: threadAddressOf("mem", "main", humanThread),
       methods: { requestPermission: requestPermissionMethod }
     }
     const assembled = validateActor(actor({
@@ -289,7 +289,7 @@ test("Rick and Morty survive generated portal, budget, permission, human, and sc
         return threads[choice % threads.length]!
       }
     })
-    await scenario.host.allocate({ kind: "root", coordinate: human.address })
+    await scenario.host.allocate({ kind: "root", coordinate: human.coordinate })
     const turn = await scenario.enqueue("Rick opens every portal")
     await scenario.drive()
     expect(scenario.host.resting()).toBe(true)
@@ -486,7 +486,7 @@ const cancelForegroundMortys = async ({ children, headroom, schedule }: {
           workspacePackage({ policy: {} })
         ])], {
           authority: {
-            address: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+            coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
             methods: { requestPermission: requestPermissionMethod }
           },
           request: () => undefined
@@ -614,7 +614,7 @@ test("Rick settles when a foreground Morty is cancelled", async () => {
         workspacePackage({ policy: {} })
       ])], {
         authority: {
-          address: threadAddressOf("mem", "main", "ag.council-of-ricks"),
+          coordinate: threadAddressOf("mem", "main", "ag.council-of-ricks"),
           methods: { requestPermission: requestPermissionMethod }
         },
         request: () => undefined

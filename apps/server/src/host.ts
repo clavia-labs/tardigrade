@@ -1,5 +1,9 @@
-import { Clock, Context, Data, Effect, Layer } from "effect"
-import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
+import { bunHttpServices } from "@clavia/tardigrade-bun/http-threads"
+import { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
+import { modelLayer, modelIsConfigured, selectedModelFrom } from "@clavia/tardigrade-model/host"
+export { selectedModelFrom, modelIsConfigured, MISSING_MODEL } from "@clavia/tardigrade-model/host"
+import { createHost, hostBackend, type HostOptions, type Host } from "@clavia/tardigrade-bun/create-host"
+import { Context, Effect, Layer } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { BunFileSystem, BunPath } from "@effect/platform-bun"
 import { createHash } from "node:crypto"
@@ -7,12 +11,7 @@ import { watch, type FSWatcher } from "node:fs"
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
-import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { ActorThreadRecord } from "@clavia/tardigrade-core/actor"
-import type { ThreadEventRow } from "@clavia/tardigrade-core/log"
-import type { Envelope } from "@clavia/tardigrade-core/interaction/envelope"
-import type { Directory } from "@clavia/tardigrade-core/transport/directory"
-import { Ingress, ingressFrom } from "@clavia/tardigrade-host/transport/ingress"
+import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-host/transport/ingress"
 import type { Provider } from "@clavia/tardigrade-host/transport/provider"
 import {
   applyModelPolicy,
@@ -20,36 +19,27 @@ import {
   ACTOR_NAME_PATTERN,
   Infer,
   actorMethodsOf,
-  intersectModelPolicies,
-  modelAllowedBy,
   type ActorMethods,
-  type ModelRef,
-  type ModelPolicy,
   type InferenceObserver,
   type ActorArtifactManifest,
   type Actor
 } from "tardie"
-import type { Action } from "tardie/log/events"
-import { createBunHost, type BunHost, type BunHostOptions } from "@clavia/tardigrade-bun/host"
+import { type BunHostOptions } from "@clavia/tardigrade-bun/host"
 import { ThreadAllocator } from "@clavia/tardigrade-core/actor/allocation"
-import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
 import { openBunActorRegistry } from "@clavia/tardigrade-bun/registry"
-import { infer } from "@clavia/tardigrade-model/model"
 import { modelAdapters, type ModelAdapter, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import {
   RESERVED_ACTOR,
   type ActorArtifact,
-  type ActorSummary,
-  type ModelCatalog
+  type ActorSummary
 } from "@clavia/tardigrade-client/contract"
 
 import { builtInActor, type ServerR } from "./actor"
-import { ServerConfig, type ModelConfig, type ModelCredentials, type ServerConfigValue } from "./config"
+import { ServerConfig, type ServerConfigValue } from "./config"
 import { ModelCatalogStore, type ModelCatalogState } from "./catalog"
 import { providerAvailabilitiesOf } from "./catalog-availability"
 import { modelsPageOf, providersPageOf } from "./catalog-page"
 import { DriverGauge } from "./driver-gauge"
-import { resolveThreadId, withLegacyThreadIds } from "./thread-compat"
 
 const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelAdapterRegistry> => {
   const protocols = new Set(Object.values(config.model.providers).map((provider) => provider.protocol))
@@ -79,238 +69,7 @@ const serverModelAdaptersFor = async (config: ServerConfigValue): Promise<ModelA
 // ActorPushRefused is why a pushed actor was not accepted, in the sentence the route prints. The
 // artifact checks and the swap both raise it, so a caller reads one failure rather than telling a
 // validation `Error` apart from a filesystem one by its message (api.ts, pushActor).
-export class ActorPushRefused extends Data.TaggedError("ActorPushRefused")<{
-  readonly message: string
-  readonly cause: unknown
-}> {}
-
-export interface ActorThreads {
-  readonly allocateRoot: (name?: string) => Effect.Effect<ThreadCoordinate>
-  readonly methods: ActorMethods
-  readonly sqlite: string
-  readonly append: (id: string, event: Event) => Effect.Effect<void>
-  readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
-  readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
-  readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
-  readonly actorEventsPage: (mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
-  readonly actorThreads: Effect.Effect<{
-    readonly cursor: number
-    readonly threads: ReadonlyArray<ActorThreadRecord>
-  }>
-  readonly actorThread: (thread: string) => Effect.Effect<ActorThreadRecord | undefined>
-  readonly awaitActorHead: (mark: number) => Effect.Effect<number>
-  readonly list: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>>
-  readonly settled: Effect.Effect<void>
-}
-
-// Threads exposes the mounted actor's method declarations beside its durable thread operations. Method meaning stays with the actor, while the service stores and returns its event log (packages/core/src/method/method.ts, ActorMethodDeclaration).
-export class Threads extends Context.Service<
-  Threads,
-  {
-    readonly methods: ActorThreads["methods"]
-    readonly sqlite: ActorThreads["sqlite"]
-    readonly actorName?: string
-    // settled resolves once the drive in flight, and the follow-up it coalesced, has finished. A
-    // client never waits on it (a delivery answers 202 and the client polls the turn); a test and
-    // a shutdown do (host.test.ts).
-    readonly instances: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly definition: string }>>
-    readonly ensure: (id: string) => Effect.Effect<ActorThreads>
-    readonly instance: (id: string) => Effect.Effect<ActorThreads | undefined>
-    readonly append: (actor: string, thread: string, event: Event) => Effect.Effect<void>
-    readonly events: (actor: string, thread: string) => Effect.Effect<ReadonlyArray<Event>>
-    readonly list: (actor: string) => ActorThreads["list"]
-    readonly settled: (actor: string) => Effect.Effect<void>
-    readonly definitions?: Effect.Effect<ReadonlyArray<ActorSummary>>
-    readonly definition?: (name: string) => Effect.Effect<ActorThreads | undefined>
-    readonly pushDefinition?: (artifact: ActorArtifact) => Effect.Effect<ActorSummary, ActorPushRefused>
-  }
->()("tardigrade/server/Threads") {}
-
-// The model binding the configured references name. An absent reference is not an endpoint this
-// server invents: every attempt fails with what is missing, so the process still boots, still
-// answers /healthz, and says why a turn cannot run (config.ts, ModelConfig).
-export const MISSING_MODEL = "no model provider is configured: run `tdg setup`"
-
-interface SelectedModel {
-  readonly model_id: string
-  readonly provider: string
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly protocol: ModelConfig["providers"][string]["protocol"]
-  readonly region?: string
-  readonly contextWindowTokens: number
-  readonly maxOutputTokens?: number
-  readonly pricing?: import("tardie/inference/usage").ModelPricing
-  readonly catalogRevision: string
-}
-
-interface ProviderConnection {
-  readonly baseUrl: string
-  readonly apiKey: string
-  readonly protocol: ModelConfig["providers"][string]["protocol"]
-  readonly region?: string
-}
-
-const connectionFrom = (
-  config: ModelConfig,
-  credentials: ModelCredentials,
-  selected: ModelRef
-): ProviderConnection => {
-  const provider = config.providers[selected.provider]
-  if (provider === undefined) {
-    const available = Object.keys(config.providers).sort()
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} is not configured for model ${JSON.stringify(selected.model_id)}; ` +
-      `run \`tdg setup\`${available.length === 0 ? "" : `; configured providers: ${available.join(", ")}`}`
-    )
-  }
-  const apiKey = provider.env.flatMap((name) => credentials[name] === undefined ? [] : [credentials[name]!])[0]
-  if (apiKey === undefined) {
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} needs a credential; set ${provider.env.join(" or ")} as a secret environment variable`
-    )
-  }
-  return {
-    baseUrl: provider.baseUrl,
-    apiKey,
-    protocol: provider.protocol,
-    ...(provider.region === undefined ? {} : { region: provider.region })
-  }
-}
-
-const catalogModelFrom = (
-  snapshot: ModelCatalog,
-  selected: ModelRef
-): ModelCatalog["providers"][number]["models"][number] => {
-  const provider = snapshot.providers.find((candidate) => candidate.id === selected.provider)
-  if (provider === undefined) {
-    throw new Error(
-      `provider ${JSON.stringify(selected.provider)} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
-    )
-  }
-  const model = provider.models.find((candidate) => candidate.id === selected.model_id)
-  if (model === undefined) {
-    throw new Error(
-      `model ${selected.provider}/${selected.model_id} is absent from model catalog revision ${JSON.stringify(snapshot.revision)}`
-    )
-  }
-  return model
-}
-
-// selectedModelFrom combines one private provider connection with public metadata from the
-// process catalog snapshot.
-export const selectedModelFrom = (
-  config: ModelConfig,
-  credentials: ModelCredentials,
-  catalog: ModelCatalogState,
-  reference?: ModelRef
-): SelectedModel => {
-  const selected = reference ?? config.default
-  if (selected === undefined) throw new Error("the built-in actor has no model reference; run `tdg setup`")
-  if (!modelAllowedBy(config, selected)) {
-    throw new Error(`model ${selected.provider}/${selected.model_id} is excluded by the host model policy`)
-  }
-  const provider = connectionFrom(config, credentials, selected)
-  if (catalog.snapshot === undefined) {
-    throw new Error(`model catalog metadata is unavailable for ${selected.provider}/${selected.model_id}; check the server startup logs`)
-  }
-  const catalogModel = catalogModelFrom(catalog.snapshot, selected)
-  const metadata = catalogModel.metadata
-  if (metadata.contextWindowTokens === undefined) {
-    throw new Error(`model catalog has no context window for ${selected.provider}/${selected.model_id}`)
-  }
-  return {
-    ...selected,
-    baseUrl: provider.baseUrl,
-    apiKey: provider.apiKey,
-    protocol: provider.protocol,
-    ...(provider.region === undefined ? {} : { region: provider.region }),
-    contextWindowTokens: metadata.contextWindowTokens,
-    ...(metadata.maxOutputTokens === undefined ? {} : { maxOutputTokens: metadata.maxOutputTokens }),
-    ...(metadata.pricing === undefined ? {} : { pricing: metadata.pricing }),
-    catalogRevision: catalog.snapshot.revision
-  }
-}
-
-// modelIsConfigured says whether a turn can reach a model at all. The command line reads it to say
-// so once on boot rather than letting every turn be the first news (apps/cli/src/commands.ts).
-export const modelIsConfigured = (config: ServerConfigValue): boolean =>
-  (() => {
-    try {
-      if (config.model.default === undefined) return false
-      if (!modelAllowedBy(config.model, config.model.default)) return false
-      connectionFrom(config.model, config.modelCredentials, config.model.default)
-      return true
-    } catch {
-      return false
-    }
-  })()
-
-const layerInferFrom = (
-  config: ServerConfigValue,
-  catalog: ModelCatalogState,
-  adapters: ModelAdapterRegistry,
-  observer?: InferenceObserver
-): Layer.Layer<Infer> => {
-  if (Object.keys(config.model.providers).length === 0) {
-    const failed: Action = { kind: "fail", error: MISSING_MODEL, failure: { cause: "inference_error", attempts: 1 } }
-    return Layer.succeed(Infer)({
-      resolve: () => { throw new Error(MISSING_MODEL) },
-      react: () => Effect.succeed(failed)
-    })
-  }
-  const availableModels = (): ModelPolicy => {
-    const snapshot = catalog.snapshot
-    if (snapshot === undefined) return { allow: [] }
-    const availability = providerAvailabilitiesOf(config.model, config.modelCredentials)
-    const configured: ModelPolicy = {
-      allow: snapshot.providers.flatMap((provider) =>
-        availability[provider.id]?.status === "available" && provider.models.length > 0
-          ? [{ provider: provider.id, model_ids: provider.models.map((model) => model.id) }]
-          : []
-      )
-    }
-    const authority = intersectModelPolicies([config.model, configured])
-    return { ...authority, ...(config.model.default === undefined ? {} : { default: config.model.default }) }
-  }
-  return Layer.succeed(Infer, {
-    resolve: (reference) => {
-      const selected = selectedModelFrom(config.model, config.modelCredentials, catalog, reference)
-      return {
-        model: { provider: selected.provider, model_id: selected.model_id },
-        models: availableModels(),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        catalogRevision: selected.catalogRevision
-      }
-    },
-    react: (request, key, signal) => Effect.suspend(() => {
-      let selected: SelectedModel
-      try {
-        selected = selectedModelFrom(config.model, config.modelCredentials, catalog, request.model)
-      } catch (error) {
-        return Effect.succeed<Action>({
-          kind: "fail",
-          error: error instanceof Error ? error.message : String(error),
-          failure: { cause: "inference_error", attempts: 0 }
-        })
-      }
-      const binding = infer({
-        baseUrl: selected.baseUrl,
-        apiKey: selected.apiKey,
-        model: selected.model_id,
-        protocol: selected.protocol,
-        provider: selected.provider,
-        ...(selected.region === undefined ? {} : { region: selected.region }),
-        contextWindowTokens: selected.contextWindowTokens,
-        ...(selected.maxOutputTokens === undefined ? {} : { maxOutputTokens: selected.maxOutputTokens }),
-        ...(selected.pricing === undefined ? {} : { pricing: selected.pricing })
-      }, adapters, observer === undefined ? {} : { observer })
-      return Effect.flatMap(Infer, (model) => model.react(request, key, signal)).pipe(Effect.provide(binding))
-    })
-  })
-}
-
+export { ActorPushRefused, Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
 // The thread environment: everything the assembly needs that the bun host does not bind. The model
 // binding is one of them, and so are the platform services the files and fetch packages reach
 // through, bound here to their bun implementations. The union comes off the assembly's own type
@@ -322,7 +81,7 @@ const layerThread = (
   adapters: ModelAdapterRegistry
 ) =>
   Layer.mergeAll(
-    options.infer ?? layerInferFrom(config, catalog, adapters, options.inferenceObserver),
+    options.infer ?? modelLayer(config, catalog, adapters, options.inferenceObserver),
     BunFileSystem.layer,
     BunPath.layer,
     FetchHttpClient.layer
@@ -349,14 +108,10 @@ export interface ThreadsOptions {
   } | undefined
 }
 
-interface ActorRuntime {
+interface LoadedActor {
   readonly summary: ActorSummary
+  readonly host: Host<ActorMethods>
   readonly threads: ActorThreads
-  readonly commit: (delivery: Envelope) => Effect.Effect<void>
-  readonly schedule: Effect.Effect<void>
-  readonly resting: () => Promise<boolean>
-  readonly dirty: () => number
-  readonly close: () => Promise<void>
 }
 
 const digestOf = (module: string): string =>
@@ -396,143 +151,6 @@ export type ActorThreadLayersFor<R> = (
   context: ActorThreadLayerContext
 ) => Layer.Layer<ActorApplicationRequirements<R>>
 
-const runtimeOf = async <R>(
-  summary: ActorSummary,
-  actorInstance: string,
-  definition: Actor<R>,
-  database: string,
-  thread: ReturnType<typeof layerThread>,
-  providers: ReadonlyArray<Provider>,
-  maxConcurrentThreads: number,
-  layersFor?: ActorThreadLayersFor<R>,
-  threadAllocator?: typeof ThreadAllocator.Service,
-  allocation?: BunHostOptions<never>["allocation"]
-): Promise<ActorRuntime> => {
-  const actor = definition
-  const environmentFor = ((candidate: string) => {
-    const application = layersFor?.({ actorInstance, thread: candidate })
-    return application === undefined ? thread : Layer.mergeAll(thread, application)
-  }) as NonNullable<BunHostOptions<R>["layersFor"]>
-  const host: BunHost = await createBunHost<R>({
-    ...(allocation === undefined ? {} : { allocation }),
-    ...(threadAllocator === undefined ? {} : { threadAllocator }),
-    database,
-    actorName: summary.name,
-    actorInstance,
-    actorFor: () => actor,
-    layersFor: environmentFor,
-    providers,
-    driver: { maxConcurrentThreads },
-    keyOf: actorRuntimeOf(actor).keyOf
-  })
-  let driving: Promise<void> | undefined
-  let follow = false
-  let failure: unknown = undefined
-  const pump = async (): Promise<void> => {
-    try {
-      do {
-        follow = false
-        await host.drive()
-      } while (follow)
-    } catch (error) {
-      failure = error
-    } finally {
-      driving = undefined
-      follow = false
-    }
-  }
-  const request = (): Promise<void> => {
-    if (driving !== undefined) {
-      follow = true
-      return driving
-    }
-    driving = pump()
-    return driving
-  }
-  const settled = Effect.suspend(() =>
-    Effect.promise(() => driving ?? Promise.resolve()).pipe(
-      Effect.flatMap(() => {
-        if (failure === undefined) return Effect.void
-        const held = failure
-        failure = undefined
-        return Effect.die(held)
-      })
-    )
-  )
-  await host.recover()
-  const read = (id: string) => Effect.promise(() => host.read(id))
-  const readPage = (id: string, mark: number, limit: number) =>
-    Effect.promise(() => host.readPage(id, mark, limit))
-  const awaitHead = (id: string, mark: number) =>
-    Effect.promise((signal) => host.awaitHead(id, mark, signal))
-  const awaitActorHead = (mark: number) => Effect.promise((signal) => host.awaitActorHead(mark, signal))
-  const commitRoot = (id: string, event: Event) =>
-    Effect.gen(function*() {
-      const at = yield* Clock.currentTimeMillis
-      const stamped = event.at === undefined ? { ...event, at } : event
-      yield* Effect.promise(() => host.commitRoot(host.self(id), stamped))
-    })
-  const commit = (delivery: Envelope) =>
-    Effect.gen(function*() {
-      const at = yield* Clock.currentTimeMillis
-      const event = delivery.event
-      const stamped = event.at === undefined ? { ...event, at } : event
-      const placed: Envelope = {
-        ...delivery,
-        link: {
-          source: delivery.link.source,
-          target: { actor: summary.name, instance: actorInstance, thread: delivery.link.target.thread }
-        },
-        event: stamped
-      }
-      yield* Effect.promise(() => host.commit(placed))
-    })
-  const threads: ActorThreads = {
-    allocateRoot: (name) => Effect.promise(() => host.allocate({
-      kind: "root", coordinate: { actor: summary.name, instance: actorInstance, thread: name ?? "" },
-      // Unnamed HTTP requests create independent allocations.
-      // @effect-diagnostics-next-line cryptoRandomUUIDInEffect:off
-      ...(name === undefined ? { key: crypto.randomUUID() } : {})
-    })),
-    methods: definition.methods,
-    sqlite: database === ":memory:" ? database : resolve(database),
-    append: (id, event) =>
-      Effect.gen(function*() {
-        yield* commitRoot(id, event)
-        request()
-      }),
-    events: read,
-    eventsPage: readPage,
-    awaitHead,
-    actorEventsPage: (mark, limit) => Effect.promise(() => host.readActorPage(mark, limit)),
-    actorThreads: Effect.promise(() => host.actorThreads()),
-    actorThread: (thread) => Effect.promise(() => host.actorThread(thread)),
-    awaitActorHead,
-    list: Effect.gen(function*() {
-      const threads = yield* Effect.promise(() => host.threads())
-      return yield* Effect.forEach(threads, (id) => Effect.map(read(id), (events) => ({ id, events })))
-    }),
-    settled
-  }
-  return {
-    summary,
-    threads: withLegacyThreadIds(threads),
-    commit: (delivery) => Effect.flatMap(
-      resolveThreadId(delivery.link.target.thread, (thread) => Effect.map(threads.actorThread(thread), (record) => record !== undefined)),
-      (thread) => commit({ ...delivery, link: { ...delivery.link, target: { ...delivery.link.target, thread } } })
-    ),
-    schedule: Effect.sync(() => {
-      request()
-    }),
-    resting: () => host.resting(),
-    dirty: host.work,
-    close: async () => {
-      await Effect.runPromise(settled)
-      await host.close()
-    }
-  }
-}
-
 type ActorThreadsBaseOptions = Pick<ThreadsOptions, "infer" | "inferenceObserver" | "modelAdapters" | "providers" | "threadAllocator" | "allocation">
 
 export type ActorThreadsOptions<R> = ActorThreadsBaseOptions & ([ActorApplicationRequirements<R>] extends [never]
@@ -557,7 +175,27 @@ const actorIdFromDatabase = (file: string): string | undefined => {
   }
 }
 
-// layerActorThreads mounts one deployed definition as the runtime.
+const mountedHost = async <R>(definition: Actor<R>, config: ServerConfigValue, thread: ReturnType<typeof layerThread>, options: ActorThreadsOptions<R>, database?: string) => {
+  const host = await createHost<R, ActorMethods>({
+    actor: definition,
+    storage: config.db === ":memory:" ? ":memory:" : database === undefined ? `${config.db}.actors` : config.actorData,
+    storageLayout: {
+      databaseFor: (instance) => database ?? actorDatabasePath(config.db, instance),
+      instanceFromFile: (file) => database === undefined ? actorIdFromDatabase(file) : file === `${definition.name}.sqlite` ? definition.name : undefined
+    },
+    providers: options.providers ?? [],
+    driver: { maxConcurrentThreads: config.maxConcurrentThreads },
+    ...(options.allocation === undefined ? {} : { allocation: options.allocation }),
+    ...(options.threadAllocator === undefined ? {} : { threadAllocator: options.threadAllocator }),
+    layersFor: (candidate: string, actorInstance: string) => {
+      const application = options.layersFor?.({ actorInstance, thread: candidate })
+      return application === undefined ? thread : Layer.mergeAll(thread, application)
+    }
+  } as HostOptions<R, ActorMethods>)
+  return host
+}
+
+// layerActorThreads mounts a hydrated host in the server scope.
 export const layerActorThreads = <R>(
   definition: Actor<R>,
   ...[options = {} as ActorThreadsOptions<R>]: ActorThreadsArguments<R>
@@ -567,85 +205,11 @@ export const layerActorThreads = <R>(
     const catalog = yield* ModelCatalogStore
     const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
-    const summary: ActorSummary = { name: definition.name, builtIn: false }
-    const thread = layerThread(config, catalog, options, adapters)
-    const runtimes = new Map<string, ActorRuntime>()
-    const opening = new Map<string, Promise<ActorRuntime>>()
-    const open = (id: string): Promise<ActorRuntime> => {
-      const current = runtimes.get(id)
-      if (current !== undefined) return Promise.resolve(current)
-      const pending = opening.get(id)
-      if (pending !== undefined) return pending
-      const created = runtimeOf(
-        summary,
-        id,
-        definition,
-        actorDatabasePath(config.db, id),
-        thread,
-        options.providers ?? [],
-        config.maxConcurrentThreads,
-        options.layersFor,
-        options.threadAllocator, options.allocation
-      ).then((runtime) => {
-        runtimes.set(id, runtime)
-        opening.delete(id)
-        return runtime
-      }, (cause) => {
-        opening.delete(id)
-        throw cause
-      })
-      opening.set(id, created)
-      return created
-    }
-    yield* Effect.acquireRelease(
-      Effect.promise(async () => {
-        if (config.db !== ":memory:") {
-          const directory = `${config.db}.actors`
-          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return []
-            throw error
-          })
-          for (const file of files) {
-            const id = actorIdFromDatabase(file)
-            if (id !== undefined) await open(id)
-          }
-        }
-      }),
-      () => Effect.promise(async () => {
-        await Promise.all(opening.values())
-        await Promise.all([...runtimes.values()].map((runtime) => runtime.close()))
-      })
+    const host = yield* Effect.acquireRelease(
+      Effect.promise(() => mountedHost(definition, config, layerThread(config, catalog, options, adapters), options)),
+      (host) => Effect.promise(host.close)
     )
-    const service: Context.Service.Shape<typeof Threads> = {
-      methods: definition.methods,
-      sqlite: config.db === ":memory:" ? config.db : resolve(config.db),
-      actorName: definition.name,
-      instances: Effect.sync(() => [...runtimes.keys()].sort().map((id) => ({ id, definition: definition.name }))),
-      ensure: (id) => Effect.promise(() => open(id)).pipe(Effect.map((runtime) => runtime.threads)),
-      instance: (id) => Effect.succeed(runtimes.get(id)?.threads),
-      append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => open(actor)), (runtime) => runtime.threads.append(thread, event)),
-      events: (actor, thread) => runtimes.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
-      list: (actor) => runtimes.get(actor)?.threads.list ?? Effect.succeed([]),
-      settled: (actor) => runtimes.get(actor)?.threads.settled ?? Effect.void
-    }
-    const directory: Directory<{ readonly actor: string; readonly instance: string }, {
-      readonly commit: ActorRuntime["commit"]
-      readonly schedule: ActorRuntime["schedule"]
-    }> = {
-      resolve: (id) => Effect.succeed(id.actor === definition.name
-        ? (() => {
-            const runtime = runtimes.get(id.instance)
-            return runtime === undefined ? undefined : { commit: runtime.commit, schedule: runtime.schedule }
-          })()
-        : undefined)
-    }
-    return Context.make(Threads, service).pipe(
-      Context.add(Ingress, ingressFrom(directory)),
-      Context.add(DriverGauge, {
-        resting: Effect.promise(async () => (await Promise.all([...runtimes.values()].map((runtime) => runtime.resting()))).every(Boolean)),
-        dirty: Effect.sync(() => [...runtimes.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
-      })
-    )
+    return bunHttpServices(host)
   }))
 
 const manifestOf = async (directory: string): Promise<{ readonly manifest: ActorArtifactManifest; readonly module: string }> => {
@@ -675,9 +239,7 @@ const make = (options: ThreadsOptions) =>
     const adapters = options.modelAdapters ?? (yield* Effect.promise(() => serverModelAdaptersFor(config)))
     for (const provider of Object.values(config.model.providers)) adapters.resolve(provider.protocol)
     const thread = layerThread(config, catalog, options, adapters)
-    const runtimes = new Map<string, ActorRuntime>()
-    const instances = new Map<string, ActorRuntime>()
-    const openingInstances = new Map<string, Promise<ActorRuntime>>()
+    const runtimes = new Map<string, LoadedActor>()
     const registry = yield* openBunActorRegistry<ActorSummary>({ file: config.db })
     const runRegistry = Effect.runPromiseWith(yield* Effect.context<never>())
     const snapshot = catalog.snapshot
@@ -708,48 +270,22 @@ const make = (options: ThreadsOptions) =>
       mutations = result.then(() => undefined, () => undefined)
       return result
     }
-    const open = async (summary: ActorSummary, definition: Actor<ServerR>, database: string): Promise<ActorRuntime> => {
-      const runtime = await runtimeOf(
-        summary,
-        summary.name,
-        definition,
-        database,
-        thread,
-        options.providers ?? [],
-        config.maxConcurrentThreads,
-        undefined,
-        options.threadAllocator, options.allocation
-      )
-      runtimes.set(summary.name, runtime)
-      await runRegistry(registry.put(summary))
-      return runtime
+    const open = async (summary: ActorSummary, definition: Actor<ServerR>, database: string): Promise<LoadedActor> => {
+      const host = await mountedHost(definition, config, thread, options, database)
+      try {
+        const threads = await runRegistry(Context.get(bunHttpServices(host), Threads).ensure(summary.name))
+        const loaded = { summary, host, threads }
+        await runRegistry(registry.put(summary))
+        runtimes.set(summary.name, loaded)
+        return loaded
+      } catch (error) { await host.close(); throw error }
     }
-    const openInstance = (id: string): Promise<ActorRuntime> => {
-      const current = instances.get(id)
-      if (current !== undefined) return Promise.resolve(current)
-      const pending = openingInstances.get(id)
-      if (pending !== undefined) return pending
-      const created = runtimeOf(
-        builtInSummary,
-        id,
-        builtIn,
-        actorDatabasePath(config.db, id),
-        thread,
-        options.providers ?? [],
-        config.maxConcurrentThreads,
-        undefined,
-        options.threadAllocator, options.allocation
-      ).then((runtime) => {
-        instances.set(id, runtime)
-        openingInstances.delete(id)
-        return runtime
-      }, (cause) => {
-        openingInstances.delete(id)
-        throw cause
-      })
-      openingInstances.set(id, created)
-      return created
-    }
+    const builtInHost = yield* Effect.acquireRelease(
+      Effect.promise(() => mountedHost(builtIn, config, thread, options)),
+      (host) => Effect.promise(host.close)
+    )
+    const builtInServices = bunHttpServices(builtInHost)
+    const builtInThreads = Context.get(builtInServices, Threads)
     const load = async (directory: string): Promise<{ readonly summary: ActorSummary; readonly definition: Actor<ServerR> }> => {
       const artifact = await manifestOf(directory)
       if (artifact.manifest.name === RESERVED_ACTOR) throw new Error(`${RESERVED_ACTOR} is reserved for the built-in actor`)
@@ -763,7 +299,7 @@ const make = (options: ThreadsOptions) =>
       const current = runtimes.get(summary.name)
       if (current?.summary.digest === summary.digest) return
       if (current !== undefined) {
-        await current.close()
+        await current.host.close()
         runtimes.delete(summary.name)
       }
       await open(summary, definition, join(resolve(config.actorData), `${summary.name}.sqlite`))
@@ -783,7 +319,7 @@ const make = (options: ThreadsOptions) =>
       }
       for (const [name, runtime] of runtimes) {
         if (name === RESERVED_ACTOR || found.has(name)) continue
-        await runtime.close()
+        await runtime.host.close()
         runtimes.delete(name)
         await runRegistry(registry.remove(name))
       }
@@ -795,46 +331,31 @@ const make = (options: ThreadsOptions) =>
     }
     let watcher: FSWatcher | undefined
     let refreshTimer: ReturnType<typeof setTimeout> | undefined
-    yield* Effect.acquireRelease(
-      Effect.promise(async () => {
-        await runRegistry(registry.put(builtInSummary))
-        await synchronize()
-        if (config.db !== ":memory:") {
-          const directory = `${config.db}.actors`
-          const files = await readdir(directory).catch((error: NodeJS.ErrnoException) => {
-            if (error.code === "ENOENT") return []
-            throw error
-          })
-          for (const file of files) {
-            const id = actorIdFromDatabase(file)
-            if (id !== undefined) await openInstance(id)
-          }
+    yield* Effect.addFinalizer(() => Effect.promise(async () => {
+      watcher?.close()
+      if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+      await mutations
+      await Promise.all([...runtimes.values()].map((runtime) => runtime.host.close()))
+    }))
+    yield* Effect.promise(async () => {
+      await runRegistry(registry.put(builtInSummary))
+      await synchronize()
+      if (options.actorRefresh !== undefined) {
+        const { debounceMillis } = options.actorRefresh
+        if (!Number.isInteger(debounceMillis) || debounceMillis < 0) {
+          throw new Error(`actor refresh debounce must be a non-negative integer, got ${debounceMillis}`)
         }
-        if (options.actorRefresh !== undefined) {
-          const { debounceMillis } = options.actorRefresh
-          if (!Number.isInteger(debounceMillis) || debounceMillis < 0) {
-            throw new Error(`actor refresh debounce must be a non-negative integer, got ${debounceMillis}`)
-          }
-          await mkdir(root, { recursive: true })
-          const report = options.actorRefresh.onError ?? ((error: Error) => console.error(`actor refresh failed: ${error.message}`))
-          watcher = watch(root, () => {
-            if (refreshTimer !== undefined) clearTimeout(refreshTimer)
-            refreshTimer = setTimeout(() => {
-              refreshTimer = undefined
-              void exclusive(synchronize).catch((error: unknown) => report(error instanceof Error ? error : new Error(String(error))))
-            }, debounceMillis)
-          })
-        }
-        return { runtimes, instances }
-      }),
-      (opened) => Effect.promise(async () => {
-        watcher?.close()
-        if (refreshTimer !== undefined) clearTimeout(refreshTimer)
-        await mutations
-        await Promise.all(openingInstances.values())
-        await Promise.all([...opened.runtimes.values(), ...opened.instances.values()].map((runtime) => runtime.close()))
-      })
-    )
+        await mkdir(root, { recursive: true })
+        const report = options.actorRefresh.onError ?? ((error: Error) => console.error(`actor refresh failed: ${error.message}`))
+        watcher = watch(root, () => {
+          if (refreshTimer !== undefined) clearTimeout(refreshTimer)
+          refreshTimer = setTimeout(() => {
+            refreshTimer = undefined
+            void exclusive(synchronize).catch((error: unknown) => report(error instanceof Error ? error : new Error(String(error))))
+          }, debounceMillis)
+        })
+      }
+    })
 
     const selected = (name: string): Effect.Effect<ActorThreads | undefined> =>
       registry.resolve(name).pipe(Effect.map((registration) => registration === undefined ? undefined : runtimes.get(name)?.threads))
@@ -860,7 +381,7 @@ const make = (options: ThreadsOptions) =>
           const definition = await definitionOf(join(temporary, manifest.module), manifest)
           const current = runtimes.get(manifest.name)
           if (current !== undefined) {
-            await current.close()
+            await current.host.close()
             runtimes.delete(manifest.name)
           }
           const summary: ActorSummary = { name: manifest.name, builtIn: false, digest: manifest.digest }
@@ -883,40 +404,19 @@ const make = (options: ThreadsOptions) =>
       })
 
     const service: Context.Service.Shape<typeof Threads> = {
-      methods: builtIn.methods,
-      sqlite: config.db === ":memory:" ? config.db : resolve(config.db),
-      actorName: builtIn.name,
-      instances: Effect.sync(() => [...instances.keys()].sort().map((id) => ({ id, definition: builtIn.name }))),
-      ensure: (id) => Effect.promise(() => openInstance(id)).pipe(Effect.map((runtime) => runtime.threads)),
-      instance: (id) => Effect.succeed(instances.get(id)?.threads),
-      append: (actor, thread, event) => Effect.flatMap(Effect.promise(() => openInstance(actor)), (runtime) => runtime.threads.append(thread, event)),
-      events: (actor, thread) => instances.get(actor)?.threads.events(thread) ?? Effect.succeed([]),
-      list: (actor) => instances.get(actor)?.threads.list ?? Effect.succeed([]),
-      settled: (actor) => instances.get(actor)?.threads.settled ?? Effect.void,
+      ...builtInThreads,
       definitions: registry.list,
       definition: selected,
       pushDefinition: push
     }
-    const directory: Directory<{ readonly actor: string; readonly instance: string }, {
-      readonly commit: ActorRuntime["commit"]
-      readonly schedule: ActorRuntime["schedule"]
-    }> = {
-      resolve: (id) => registry.resolve(id.actor).pipe(Effect.flatMap((registration) => {
-        if (registration === undefined) return Effect.as(Effect.void, undefined as undefined)
-        const runtime = registration.name === RESERVED_ACTOR
-          ? Effect.promise(() => openInstance(id.instance))
-          : Effect.succeed(runtimes.get(registration.name))
-        return Effect.map(runtime, (resolved) => resolved === undefined
-          ? undefined
-          : { commit: resolved.commit, schedule: resolved.schedule })
-      }))
-    }
-    const ingress = ingressFrom(directory)
+    const ingress = ingressFrom({ resolve: (target) => {
+      const host = target.actor === RESERVED_ACTOR ? builtInHost : runtimes.get(target.actor)?.host
+      return host === undefined ? Effect.succeed(undefined as IngressActor | undefined) : hostBackend(host).resolve(target.actor === RESERVED_ACTOR ? target : { ...target, instance: host.actor })
+    } })
+    const gauges = () => [builtInHost, ...[...runtimes.values()].map((loaded) => loaded.host)].map((host) => Context.get(bunHttpServices(host), DriverGauge))
     const gauge: Context.Service.Shape<typeof DriverGauge> = {
-      resting: Effect.promise(async () => (await Promise.all(
-        [...runtimes.values(), ...instances.values()].map((runtime) => runtime.resting())
-      )).every(Boolean)),
-      dirty: Effect.sync(() => [...runtimes.values(), ...instances.values()].reduce((total, runtime) => total + runtime.dirty(), 0))
+      resting: Effect.suspend(() => Effect.map(Effect.all(gauges().map((gauge) => gauge.resting)), (values) => values.every(Boolean))),
+      dirty: Effect.suspend(() => Effect.map(Effect.all(gauges().map((gauge) => gauge.dirty)), (values) => values.reduce((sum, value) => sum + value, 0)))
     }
     return Context.make(Threads, service).pipe(
       Context.add(Ingress, ingress),
@@ -924,7 +424,6 @@ const make = (options: ThreadsOptions) =>
     )
   })
 
-// layerThreads is the host, the assembly, and the driver: the Threads the routes consume and the
-// DriverGauge /healthz reads, built once and closed with the scope.
+// layerThreads loads actor definitions and exposes their hosts to HTTP (host.test.ts).
 export const layerThreads = (options: ThreadsOptions = {}): Layer.Layer<Threads | Ingress | DriverGauge, never, ServerConfig | ModelCatalogStore> =>
   Layer.effectContext(make(options))

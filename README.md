@@ -94,7 +94,8 @@ You can use `npm install tardie` instead. Install `tardie@next` to test a releas
 An agent is made of components. Each component owns a machine with `initial`, `step`, and `output`. Its state retains the information from prior events that can affect its future output. An agent view includes system fragments, tool bindings, and context policy. This component gives the model one tool and owes no autonomous work:
 
 ```ts
-import { component, type AgentComponent, type AgentView } from "tardie"
+import { component } from "tardie/core"
+import { type AgentComponent, type AgentView } from "tardie/agent"
 
 const deploys: AgentComponent = component<undefined, AgentView>({
   name: "deploys",
@@ -136,11 +137,9 @@ An offered tool follows this lifecycle:
 Mount the component beside the built-in parts that this task needs:
 
 ```ts
-import {
-  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
-  compaction, fetchPackage, filesPackage, infer,
-  outputValidateOnce, system, workspacePackage
-} from "tardie"
+import { actor } from "tardie/core"
+import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetchPackage, filesPackage, workspacePackage } from "tardie/code"
 
 const instructions = system(
   "You are a release analyst. Identify risky changes and recommend the safest next action."

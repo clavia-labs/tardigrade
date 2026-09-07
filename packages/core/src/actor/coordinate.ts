@@ -39,6 +39,32 @@ export type ThreadCoordinate = typeof ThreadCoordinate.Type
 export const threadCoordinateOf = (actor: ActorCoordinate, thread: string): ThreadCoordinate =>
   Schema.decodeSync(ThreadCoordinate)({ ...actor, thread })
 
+const CoordinateSegment = Schema.NonEmptyString.pipe(
+  Schema.check(Schema.makeFilter((value: string) => !value.includes("/"), {
+    title: "coordinate segment without /"
+  }))
+)
+
+const ReadableThreadCoordinate = Schema.Struct({
+  actor: CoordinateSegment,
+  instance: CoordinateSegment,
+  thread: CoordinateSegment
+})
+
+// formatThreadCoordinate formats three nonempty, slash-free segments as actor/instance/thread (coordinate.test.ts).
+export const formatThreadCoordinate = (coordinate: ThreadCoordinate): string => {
+  const { actor, instance, thread } = Schema.decodeSync(ReadableThreadCoordinate)(coordinate)
+  return `${actor}/${instance}/${thread}`
+}
+
+// parseThreadCoordinate validates actor/instance/thread without trimming or decoding its segments (coordinate.test.ts).
+export const parseThreadCoordinate = (text: string): ThreadCoordinate => {
+  const segments = Schema.decodeSync(Schema.String)(text).split("/")
+  if (segments.length !== 3) throw new Error("thread coordinate must contain exactly three segments: actor/instance/thread")
+  const [actor, instance, thread] = segments
+  return Schema.decodeUnknownSync(ReadableThreadCoordinate)({ actor, instance, thread })
+}
+
 // ChildKey identifies a child within its parent's thread namespace.
 export const ChildKey = Schema.NonEmptyString.pipe(Schema.brand("ChildKey"))
 export type ChildKey = typeof ChildKey.Type

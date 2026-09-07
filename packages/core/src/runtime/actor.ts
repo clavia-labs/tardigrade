@@ -1,4 +1,5 @@
-import { actorFromProjections, type Actor, type Self } from "./reconciler"
+import { actorFromProjections, type Actor } from "./definition"
+import type { Self } from "./context"
 import { transitionProjectionOf, type Component } from "../component/index"
 import { composeKeys } from "../log/index"
 import type { Router } from "../transport/router"

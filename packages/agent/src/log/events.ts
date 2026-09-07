@@ -25,7 +25,7 @@ export { cancellationRequested } from "@clavia/tardigrade-core/interaction/cance
 // `provider` and `model` are the configuration's own effective coordinates, so a replay reads
 // which model supplied a native guarantee even when no usage came back; `routedProvider` and
 // `routedModel` are the ones a router named on the wire, which supersede the configured pair as
-// the observed truth (platform/model/src/model.ts, endpointOf).
+// the observed truth (packages/model/src/model.ts, endpointOf).
 export const Endpoint = Schema.Struct({
   provider: Schema.optional(Schema.String),
   model: Schema.String,

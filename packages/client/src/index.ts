@@ -76,4 +76,5 @@ export type {
   TurnView
 } from "./contract"
 export type { Event } from "@clavia/tardigrade-core/log/event"
-export type { InferDelta } from "tardie"
+export type { InferDelta } from "@clavia/tardigrade-agent"
+export { connect, DEFAULT_CALL_POLL_INTERVAL_MS, type ConnectOptions, type ConnectedActor, type ClientThread, type CallOptions } from "./connect"

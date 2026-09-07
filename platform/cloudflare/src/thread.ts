@@ -5,7 +5,6 @@ import { Effect, Layer, Schema } from "effect"
 import { FetchHttpClient } from "effect/unstable/http"
 import { SqliteClient } from "@effect/sql-sqlite-do"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
-import { type ModelCatalogState } from "@clavia/tardigrade-server/catalog"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { directoryRoute } from "@clavia/tardigrade-core/transport/router"
@@ -119,7 +118,9 @@ export class ThreadDO extends DurableObject<Env> {
   }
 
   private async openHost(): Promise<CloudflareThreadHost> {
-    const modelConfig = modelConfigFrom(this.env)
+    const modelConfig = mountedActor !== undefined && mountedActor.modelScope === undefined
+      ? undefined
+      : modelConfigFrom(this.env)
     const deployedScope = mountedActor?.modelScope
     if (modelConfig !== undefined && deployedScope === undefined) {
       throw new Error("model configuration requires models.lock.json; run `tdg models lock`")
@@ -130,10 +131,9 @@ export class ThreadDO extends DurableObject<Env> {
     const models = modelsFrom(this.env, modelConfig)
     const adapters = mountedActor?.modelAdapters ?? modelAdapters()
     for (const provider of Object.values(models?.providers ?? {})) adapters.resolve(provider.protocol)
-    const catalog: ModelCatalogState = models === undefined ? { refreshError: "no model is configured" } : { snapshot: modelScope }
     const actorName = this.name()
     const actorInstance = this.instance()
-    const selectedAssembly = assemblyOf(actorName, this.env, models, modelScope, catalog)
+    const selectedAssembly = assemblyOf(actorName)
     if (selectedAssembly === undefined) throw new Error(`actor ${JSON.stringify(actorName)} is not deployed`)
     const currentThread = this.thread()
     const sandboxCpuMs = optionalNonNegativeInteger(this.env.TARDIGRADE_SANDBOX_CPU_MILLIS, "TARDIGRADE_SANDBOX_CPU_MILLIS")

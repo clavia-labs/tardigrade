@@ -1,8 +1,8 @@
+import { actor } from "@clavia/tardigrade-core/actor"
 import { expect, test } from "bun:test"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { legacyComponent, type Actor } from "@clavia/tardigrade-core/actor"
 import {
-  actor,
   infer,
   nativeOutput,
   outputRepair,

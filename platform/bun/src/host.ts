@@ -1,3 +1,5 @@
+import { threadExecutions } from "@clavia/tardigrade-host/execution"
+import { commitTracedDelivery } from "@clavia/tardigrade-host/delivery"
 import { Effect, Layer, ManagedRuntime, PubSub, Stream } from "effect"
 import { Database } from "bun:sqlite"
 import { mkdir, readdir } from "node:fs/promises"
@@ -11,7 +13,6 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
 import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
 import { instanceThreadAllocator, registeredThreadAllocator, initializingThreadAllocator, type ThreadAllocationPolicy } from "@clavia/tardigrade-host/allocation"
 import { sqlThreadDirectory } from "@clavia/tardigrade-host/allocation-sql"
@@ -20,24 +21,21 @@ import { formatThreadAddress, parseThreadAddress, type ThreadAddress, type Provi
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { actorEventKeyOf, actorThreadsOf, type ActorThreadRecord, type ThreadRegistered, type ThreadRequested } from "@clavia/tardigrade-core/actor"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
-import { methodIngressKeyOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
   EffectInterruptions,
   Self,
-  createActorReconciler,
-  actorRuntimeOf,
   effectInterruptionRegistry,
   restingActor,
   type ActorSource as Actor
 } from "@clavia/tardigrade-core/runtime"
-import { threadCreated, threadCreatedForDelivery, threadCreatedOf, threadKeys, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
+import { threadCreated, threadCreatedOf, type ThreadLineage, type ChildPlacement } from "@clavia/tardigrade-core/interaction/relations"
 import { deadlocks, victimOf, type EdgesOf } from "@clavia/tardigrade-host/deadlock"
 import type { HostPorts } from "@clavia/tardigrade-host/host"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/transport/provider"
-import { createThreadDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
+import { hostDrive, createThreadDriver, type DriverPolicy } from "@clavia/tardigrade-host/driver"
 import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
-import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
 import { assertSupportedBun } from "./runtime"
 import { bunWorkspace, bunWorkspaceSql, workspaceSqlFile } from "./workspace"
 import { bunSandboxFor, type BunSandboxPolicy } from "./sandbox"
@@ -58,6 +56,7 @@ export const BUN_CHILD_PLACEMENTS = ["colocated"] as const satisfies ReadonlyArr
 export const DEFAULT_BUN_CHILD_PLACEMENT: ChildPlacement = "colocated"
 
 export type BunHostOptions<R> = {
+  readonly signal?: AbortSignal
   readonly allocation?: ThreadAllocationPolicy
   readonly initializeRoot?: (target: ThreadAddress, at: number) => Promise<void>
   readonly threadAllocator?: typeof ThreadAllocator.Service
@@ -104,6 +103,8 @@ export interface BunHost {
   readonly initializeRoot: (target: ThreadAddress, at: number) => Promise<void>
   readonly wake: (thread: string) => Promise<void>
   readonly drive: () => Promise<void>
+  readonly schedule: () => void
+  readonly settled: () => Promise<void>
   readonly recover: () => Promise<void>
   readonly resting: () => Promise<boolean>
   readonly work: () => number
@@ -348,12 +349,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)
   )
   const storeKeyOf = (event: Event): string | undefined =>
-    methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
+    hostEventKeyOf(event, options.keyOf)
   const runtimes = new Map<string, Promise<BunThreadRuntime>>()
-  const reconciliations = new Map<string, {
-    readonly actor: Actor<R>
-    readonly reconciler: ReturnType<typeof createActorReconciler<R>>
-  }>()
+  const executionOf = threadExecutions<R>()
 
   const openThread = async (thread: string): Promise<BunThreadRuntime> => {
     const filename = pathOf(thread)
@@ -482,40 +480,12 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     call?: unknown,
     allocated = false
   ): Effect.Effect<void, never> => Effect.promise(async () => {
-    const address = formatThreadAddress(target)
-    if (lineage !== undefined && (
-      lineage.parent.actor !== target.actor || lineage.parent.instance !== target.instance
-    )) {
-      throw new Error("a child thread must inherit its actor instance")
-    }
-    if (!allocated && options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
-      throw new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
-    }
-    const thread = threadOf(address)
+    const thread = threadOf(formatThreadAddress(target))
     const threadRuntime = await runtimeOf(thread)
-    const result = await threadRuntime.runtime.runPromise(Effect.gen(function* () {
-      const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
-      const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
-        ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
-        : event
-      const current = yield* threadRuntime.store.read
-      const created = threadCreatedForDelivery(current, target, lineage, link?.source)
-      if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
-      const landed = receivedEventOf({ target, event: stamped, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
-      if (created === undefined && lineage === undefined && !allocated) {
-        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, rawAllocator))
-      }
-      if (landed.type === "MessageReceived") {
-        const id = String((landed as { id?: unknown }).id)
-        if (current.some((candidate) => candidate.type === "MessageReceived" && String((candidate as { id?: unknown }).id) === id)) {
-          return { appended: 0, head: yield* threadRuntime.store.head }
-        }
-      }
-      const at = (event as { readonly at?: unknown }).at
-      if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
-      return yield* threadRuntime.store.append(allocated ? (created === undefined ? [landed] : [])
-        : created === undefined ? [threadCreated(target, lineage, at as number), landed] : [landed])
-    }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } })))
+    const result = await threadRuntime.runtime.runPromise(commitTracedDelivery({ target, event, lineage, link, call, allocated, keyOf: options.keyOf }, {
+      ...threadRuntime.store,
+      reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, rawAllocator), Effect.asVoid)
+    }))
     if (result.appended > 0) {
       threadRuntime.interruptions.interrupt([event])
       if (isFirstAppend(result)) await register(thread, lineage)
@@ -614,16 +584,9 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       const actor = options.actorFor(thread)
       if (actor === undefined) return
       const threadRuntime = await runtimeOf(thread)
-      let reconciliation = reconciliations.get(thread)
-      if (reconciliation?.actor !== actor) {
-        reconciliation = {
-          actor,
-          reconciler: createActorReconciler(actorRuntimeOf(actor))
-        }
-        reconciliations.set(thread, reconciliation)
-      }
       await threadRuntime.runtime.runPromise(
-        reconciliation.reconciler.settle.pipe(Effect.provide(await layersOf(thread)))
+        executionOf(thread, actor).settle.pipe(Effect.provide(await layersOf(thread))),
+        options.signal === undefined ? {} : { signal: options.signal }
       )
       await synchronizeAlarm(thread)
     }
@@ -650,12 +613,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       await driver.drain()
     }
   }
-  let driveTail: Promise<void> = Promise.resolve()
-  const drive = (): Promise<void> => {
-    const next = driveTail.then(driveGraph)
-    driveTail = next.then(() => undefined, () => undefined)
-    return next
-  }
+  const { drive, settled, schedule } = hostDrive(driveGraph)
   const resting = async (): Promise<boolean> => {
     for (const [thread, events] of await logs()) {
       const actor = options.actorFor(thread)
@@ -722,6 +680,8 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     initializeRoot: (target, at) => Effect.runPromise(commitEffect(target, threadCreated(target, undefined, at), undefined, undefined, undefined, true)),
     wake: (thread) => { driver.mark(thread); return drive() },
     drive,
+    schedule,
+    settled,
     recover,
     resting,
     work: driver.work,

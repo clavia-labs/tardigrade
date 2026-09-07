@@ -50,7 +50,8 @@
     "./runtime/*": "./src/runtime/*.ts",
     "./transition": "./src/transition/index.ts",
     "./transition/*": "./src/transition/*.ts",
-    "./view": "./src/view.ts"
+    "./view": "./src/view.ts",
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "effect": "4.0.0-rc.110"

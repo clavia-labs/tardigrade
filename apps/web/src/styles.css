@@ -560,10 +560,18 @@ h1 span { display: block; white-space: nowrap; }
 }
 .actor-diagram { width: min(100%, 620px); height: auto; margin: 0 auto; overflow: visible; }
 .actor-instances-diagram { display: block; width: min(100%, 400px); height: auto; margin: 28px auto; }
+.child-threads-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; margin: 28px auto; max-width: 800px; }
+.child-threads-comparison figure { min-width: 0; margin: 0; }
+.child-threads-comparison figcaption { text-align: center; color: var(--ink-2); font-size: 14px; }
+.child-threads-comparison .actor-instances-diagram { width: 100%; margin: 12px auto 0; }
+@media (max-width: 640px) {
+  .child-threads-comparison { grid-template-columns: 1fr; max-width: 400px; }
+}
 .actor-communication-comparison { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; max-width: 760px; margin: 28px auto; }
 .actor-communication-comparison figure { margin: 0; min-width: 0; }
 .actor-communication-comparison figcaption { text-align: center; color: var(--ink-2); font-size: 13px; }
 .actor-communication-diagram { display: block; width: 100%; height: auto; }
+.people-talking-diagram { width: min(100%, 480px); margin: 28px auto; }
 .actor-communication-person { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
 .actor-communication-diagram circle { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; }
 .actor-communication-diagram text { fill: var(--ink); font-family: var(--mono); font-size: 14px; text-anchor: middle; }
@@ -935,3 +943,18 @@ h1 span { display: block; white-space: nowrap; }
   .brand:hover .mark path { animation: none; }
   .flow-overlay > path { stroke-dashoffset: 0; animation: none; }
 }
+
+.actor-event-table { overflow-x: auto; margin: 24px 0; }
+.actor-event-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
+.actor-event-table th, .actor-event-table td { padding: 12px 16px; border-bottom: 1px solid rgb(var(--accent-rgb) / 24%); white-space: nowrap; }
+.actor-event-table th { color: var(--ink-2); font-weight: 500; }
+
+.host-layers-diagram { display: block; width: min(100%, 480px); height: auto; margin: 20px auto; }
+.host-layer-top { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.host-layer-side { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.host-layers-diagram text { fill: var(--ink); font: 18px var(--mono); text-anchor: middle; }
+.host-layers-diagram .host-layer-label { fill: var(--ink-2); font: 13px var(--brand); }
+.host-layer-guides path { fill: none; stroke: rgb(var(--accent-rgb) / 35%); stroke-dasharray: 3 5; }
+.host-layer-callouts path { fill: none; stroke: var(--moss-ink); stroke-width: 1; }
+.host-layer-callouts text { fill: var(--ink-2); font: 13px var(--brand); text-anchor: start; }
+.host-layer-callouts .host-layer-code { fill: var(--moss-ink); font-family: var(--mono); }

@@ -1,3 +1,5 @@
+import { actorExecution } from "@clavia/tardigrade-host/execution"
+import { commitTracedDelivery } from "@clavia/tardigrade-host/delivery"
 import { Effect, Layer, ManagedRuntime } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
 import { SqliteClient } from "@effect/sql-sqlite-do"
@@ -7,29 +9,24 @@ import { mappedDirectory } from "@clavia/tardigrade-core/transport/directory"
 import { Router, directoryRoute, sendThrough, type TransportRoute } from "@clavia/tardigrade-core/transport/router"
 import type { Transport } from "@clavia/tardigrade-core/transport/transport"
 import { isActorEnvelope, isProviderEnvelope, type ActorEnvelope, type Envelope } from "@clavia/tardigrade-core/interaction/envelope"
-import { receivedEventOf } from "@clavia/tardigrade-core/interaction"
 import { ThreadAllocator, reserveRootThread } from "@clavia/tardigrade-core/actor/allocation"
 import { initializingThreadAllocator } from "@clavia/tardigrade-host/allocation"
 import { formatThreadAddress, type ThreadAddress, type ProviderEndpoint } from "@clavia/tardigrade-core/transport/endpoint"
 import type { Link } from "@clavia/tardigrade-core/transport/link"
 import { alarmFired, deadlineCancellationEventsAt, earliestDeadlineOf } from "@clavia/tardigrade-core/interaction/timeout"
-import { methodIngressKeyOf } from "@clavia/tardigrade-core/interaction/invocation"
+import { hostEventKeyOf } from "@clavia/tardigrade-host/event-key"
 import { type ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import {
   EffectInterruptions,
   Self,
-  createActorReconciler,
-  actorRuntimeOf,
   effectInterruptionRegistry,
-  restingActor,
   type ActorSource as Actor
 } from "@clavia/tardigrade-core/runtime"
-import { traceparentOf } from "@clavia/tardigrade-core/log/trace"
-import { sameThreadAddress, threadCreated, threadCreatedForDelivery, threadKeys, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
+import { sameThreadAddress, threadCreated, threadCreatedForDelivery, type ThreadLineage } from "@clavia/tardigrade-core/interaction/relations"
 import { providerTransportFrom, type Provider } from "@clavia/tardigrade-host/transport/provider"
-import { createThreadDriver } from "@clavia/tardigrade-host/driver"
+import { hostDrive, createThreadDriver } from "@clavia/tardigrade-host/driver"
 import { CommitDispatcher, type CommitObserver } from "@clavia/tardigrade-host/commit"
-import type { HostPorts } from "@clavia/tardigrade-host/host"
+import type { HostPorts } from "@clavia/tardigrade-host/ports"
 import { CloudflareEventStore, layerWorkspace, type CloudflareThreadStorePolicy } from "./storage"
 
 export type CloudflarePorts = HostPorts | KeyValueStore.KeyValueStore
@@ -93,7 +90,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   const workspace = Layer.succeed(KeyValueStore.KeyValueStore, workspaceStore)
   const providerTransport = providerTransportFrom(options.providers ?? [])
   const storeKeyOf = (event: Event): string | undefined =>
-    methodIngressKeyOf(event) ?? threadKeys.keyOf(event) ?? options.keyOf?.(event)
+    hostEventKeyOf(event, options.keyOf)
   const events = new CloudflareEventStore(sql, storeKeyOf, options.store?.codec, options.store?.indexKey)
   const interruptions = effectInterruptionRegistry()
   await Effect.runPromise(events.initialize())
@@ -124,42 +121,28 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
       if (!sameThreadAddress(target, identity)) {
         return yield* Effect.die(new Error(`delivery target ${address} does not match thread ${formatThreadAddress(identity)}`))
       }
-      if (!allocated && options.keyOf !== undefined && options.keyOf(event) === undefined && event.type !== "MessageReceived") {
-        return yield* Effect.die(
-          new Error(`unkeyed cross-thread event "${event.type}" to ${address}: every delivered event names its occurrence in its package's key fragment`)
-        )
-      }
-      const currentSpan = yield* Effect.currentSpan.pipe(Effect.option)
-      const stamped = currentSpan._tag === "Some" && (event as { readonly traceparent?: unknown }).traceparent === undefined
-        ? ({ ...event, traceparent: traceparentOf(currentSpan.value) } as Event)
-        : event
-      if (!creationLoaded) {
-        const first = yield* events.first
-        creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
-        creationLoaded = true
-      }
-      const created = threadCreatedForDelivery(creation === undefined ? [] : [creation], target, lineage, link?.source)
-      if (allocated && created?.parent !== undefined) return yield* Effect.die(new Error("a child thread cannot be recreated as a root"))
-      const landed = receivedEventOf({ target, event: stamped, ...(link === undefined ? {} : { link }), ...(call === undefined ? {} : { call }) })
-      if (created === undefined && lineage === undefined && !allocated) {
-        yield* reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator))
-      }
-      const at = (event as { readonly at?: unknown }).at
-      if (created === undefined && (typeof at !== "number" || !Number.isFinite(at))) {
-        return yield* Effect.die(new Error(`first thread event "${event.type}" must carry a finite at`))
-      }
-      const opened = created === undefined ? threadCreated(target, lineage, at as number) : undefined
-      const result = yield* events.append(allocated ? (created === undefined ? [landed] : [])
-        : opened === undefined ? [landed] : [opened, landed])
-      if (opened !== undefined) {
+      const result = yield* commitTracedDelivery({ target, event, lineage, link, call, allocated, keyOf: options.keyOf }, {
+        read: Effect.gen(function* () {
+          if (!creationLoaded) {
+            const first = yield* events.first
+            creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
+            creationLoaded = true
+          }
+          return creation === undefined ? [] : [creation]
+        }),
+        head: events.head,
+        append: (batch) => events.append(batch),
+        reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator), Effect.asVoid)
+      })
+      if (result.opened) {
         const first = yield* events.first
         creation = threadCreatedForDelivery(first === undefined ? [] : [first], target, lineage, link?.source)
       }
-      if (result.appended > 0) interruptions.interrupt([landed])
+      if (result.appended > 0) interruptions.interrupt([result.landed])
       if (result.appended > 0) driver.mark(options.thread)
       if (flush) yield* syncCommit(result)
       else if (result.appended > 0) stagedHead = Math.max(stagedHead, result.head)
-    }).pipe(Effect.withSpan("commit", { kind: "producer", attributes: { to: address, type: event.type } }))
+    })
   }
 
   const localTransport: Transport<ThreadAddress, ActorEnvelope> = {
@@ -208,21 +191,14 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   )
   const layers = (options.layers ?? Layer.empty as unknown as CloudflareThreadEnv<R>)
     .pipe(Layer.provideMerge(ports)) as Layer.Layer<R | EventLog>
-  const reconciler = createActorReconciler(actorRuntimeOf(options.actor))
-  let reconcilerSettled = false
+  const execution = actorExecution(options.actor)
   const driver = createThreadDriver({
     serve: async (thread) => {
       if (thread !== options.thread) throw new Error(`driver received foreign thread ${JSON.stringify(thread)}`)
-      await Effect.runPromise(reconciler.settle.pipe(Effect.provide(layers)))
-      reconcilerSettled = true
+      await Effect.runPromise(execution.settle.pipe(Effect.provide(layers)))
     }
   })
-  let tail: Promise<void> = Promise.resolve()
-  const drive = (): Promise<void> => {
-    const next = tail.then(() => driver.drain())
-    tail = next.then(() => undefined, () => undefined)
-    return next
-  }
+  const { drive } = hostDrive(() => driver.drain())
   const recover = async (): Promise<void> => {
     if ((await Effect.runPromise(events.head)) > 0) driver.mark(options.thread)
     await drive()
@@ -246,9 +222,7 @@ export async function createCloudflareThreadHost<R = never>(options: CloudflareT
   }
   const resting = async (): Promise<boolean> => {
     if (!driver.resting()) return false
-    return reconcilerSettled
-      ? reconciler.isResting()
-      : restingActor(options.actor, await Effect.runPromise(events.read))
+    return Effect.runPromise(execution.isResting(events.read))
   }
   return {
     identity,

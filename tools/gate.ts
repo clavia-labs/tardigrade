@@ -10,9 +10,9 @@ type Task = {
 
 const root = fileURLToPath(new URL("../", import.meta.url))
 const pkg = (name: string) => `${root}packages/${name}`
-const packages = ["core", "code", "agent", "host", "channels", "client"]
+const packages = ["tardie", "core", "code", "agent", "host", "channels", "client", "http", "model"]
 const platformPkg = (name: string) => `${root}platform/${name}`
-const platforms = ["model", "bun", "worker-loader", "cloudflare"]
+const platforms = ["bun", "worker-loader", "cloudflare"]
 const appPkg = (name: string) => `${root}apps/${name}`
 const apps = ["cli", "server", "voyager"]
 const typecheckedApps = [...apps, "web"]
@@ -60,6 +60,8 @@ const effectLint = (project: string): ReadonlyArray<string> => [
 ]
 
 const tasks: ReadonlyArray<Task> = [
+  { id: "lint:boundaries", cmd: ["bun", "run", "tools/code-graph.ts", "--check"] },
+  { id: "test:code-graph", cmd: ["bun", "test", "tools/code-graph/analyze.test.ts"] },
   { id: "lint", cmd: ["bun", "--bun", "node_modules/.bin/oxlint"] },
   // Prose carries house rules the code linter does not know, so it has its own check.
   { id: "lint:docs", cmd: ["bun", "run", "tools/docs-lint.ts"] },

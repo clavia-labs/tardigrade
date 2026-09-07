@@ -19,7 +19,7 @@ const inspect = legacyActorMethod({
 
 const source = threadAddressOf("caller", "main", "root")
 const target = {
-  address: threadAddressOf("inspector", "main", "shared"),
+  coordinate: threadAddressOf("inspector", "main", "shared"),
   methods: { inspect }
 }
 
@@ -40,7 +40,7 @@ const cancellableInspect = legacyActorMethod({
 })
 
 const cancellableTarget = {
-  address: target.address,
+  coordinate: target.coordinate,
   methods: { inspect: cancellableInspect }
 }
 
@@ -77,14 +77,16 @@ describe("actorCall", () => {
     const pending = [...plan, ...dispatched]
     expect(actorCall(pending, options).transitions).toEqual([])
     const completed: Event[] = [...pending, {
-      type: "ResponseReceived", reference: initial.reference, id: "reply", from: formatThreadAddress(target.address),
+      type: "ResponseReceived", reference: initial.reference, id: "reply", from: formatThreadAddress(target.coordinate),
       method: "inspect", call: initial.id, epoch: 0, status: "completed", output: "approved", at: Date.now()
     }]
     expect(actorCall(completed, options).state).toEqual({ status: "completed", output: "approved" })
+    expect(actorCall(completed, { ...options, target: { address: target.coordinate, methods: target.methods } }).state)
+      .toEqual({ status: "completed", output: "approved" })
     expect(actorCall(completed, options).transitions).toEqual([])
     for (const log of [plan, pending, completed]) {
       expect(() => actorCall(log, { ...options, input: { value: "changed" } })).toThrow("input does not match")
-      expect(() => actorCall(log, { ...options, target: { ...target, address: { ...target.address, thread: "other" } } })).toThrow("target does not match")
+      expect(() => actorCall(log, { ...options, target: { ...target, coordinate: { ...target.coordinate, thread: "other" } } })).toThrow("target does not match")
       expect(() => actorCall(log, { ...options, target: { ...target, methods: { other: inspect } }, method: "other" })).toThrow("method does not match")
     }
     expect(actorCall(completed, { ...options, key: "second-review" }).reference).not.toEqual(initial.reference)
@@ -185,7 +187,7 @@ describe("actorCall", () => {
     ))))
 
     expect(sent).toEqual([expect.objectContaining({
-      link: { source, target: target.address },
+      link: { source, target: target.coordinate },
       call: {
         invocation: { method: "inspect", id: "inspect-1", epoch: 0 },
         deadlineAt: expect.any(Number)

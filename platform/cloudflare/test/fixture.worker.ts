@@ -1,15 +1,12 @@
 import { Context, Effect, Encoding, Layer, Schema } from "effect"
-import { actor, actorMethod, component } from "tardie"
+import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
 import { allocateRootThread } from "@clavia/tardigrade-core/actor"
-import { modelAdapters } from "@clavia/tardigrade-model/adapter"
-import { openAICompatibleAdapter } from "@clavia/tardigrade-model/openai"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { effect } from "@clavia/tardigrade-core/effect"
 import {
   ActorDO,
   ThreadDO,
-  cloudflareWorker,
-  modelScopeFrom,
+  createWorker,
   type CloudflareWorkerLayerContext,
   type Env
 } from "../src/worker"
@@ -152,7 +149,7 @@ const echo = actorMethod({
   }
 })
 
-const worker = cloudflareWorker(actor({
+const { worker } = createWorker(actor({
   name: "echo",
   methods: { echo },
   components: [component({
@@ -192,23 +189,6 @@ const worker = cloudflareWorker(actor({
     })
   })]
 }), {
-  modelAdapters: modelAdapters(openAICompatibleAdapter),
-  modelScope: modelScopeFrom({
-    schema: 1,
-    configDigest: "sha256:24490b510114acf10f5305913084ebe8ee0b0aea03ddf37529a4d4da3fa81ffa",
-    catalog: {
-      source: "models.dev",
-      revision: "workers-bundled-test",
-      refreshedAt: 1,
-      status: "cached",
-      providers: [{
-        id: "openai",
-        name: "OpenAI",
-        env: ["OPENAI_API_KEY"],
-        models: [{ id: "gpt-test", metadata: { contextWindowTokens: 128_000 } }]
-      }]
-    }
-  }),
   layersFor: ({ env, thread }: CloudflareWorkerLayerContext<FixtureEnv>) =>
     Layer.succeed(ThreadApplication, { prefix: env.APPLICATION_PREFIX, thread, calls: 0 }),
   storeFor: ({ thread }) => thread === "sealed"

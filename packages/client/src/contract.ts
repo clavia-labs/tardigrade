@@ -465,7 +465,8 @@ export const runtimeGroup = HttpApiGroup.make("runtime").add(
 export const threadsGroup = HttpApiGroup.make("threads").add(
   HttpApiEndpoint.post("allocateRoot", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
-    payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString) }),
+    query: { actor: Schema.optionalKey(Schema.String) },
+    payload: Schema.Struct({ name: Schema.optionalKey(Schema.NonEmptyString), key: Schema.optionalKey(Schema.NonEmptyString), parent: Schema.optionalKey(Schema.NonEmptyString) }),
     success: ThreadCoordinate,
     error: [InvalidRequest.schema]
   }),
@@ -498,9 +499,17 @@ export const methodsGroup = HttpApiGroup.make("methods").add(
   HttpApiEndpoint.get("methods", "/v1/methods", {
     success: Schema.Array(MethodSummary)
   }),
+  HttpApiEndpoint.post("invokeMethod", "/v1/actors/:id/threads/:thread/methods/:method", {
+    params: { ...RuntimeThreadParams, method: Schema.String },
+    headers: { "idempotency-key": Schema.NonEmptyString },
+    query: { timeoutMs: Schema.optionalKey(Seq), actor: Schema.optionalKey(Schema.String) },
+    payload: Schema.Unknown,
+    success: MethodAccepted,
+    error: [InvalidRequest.schema, UnknownMethod.schema, UnknownActor.schema, UnknownThread.schema]
+  }),
   HttpApiEndpoint.put("invoke", "/v1/actors/:id/threads/:thread/methods/:method/calls/:call", {
     params: RuntimeMethodCallParams,
-    query: { timeoutMs: Schema.optionalKey(Seq) },
+    query: { timeoutMs: Schema.optionalKey(Seq), actor: Schema.optionalKey(Schema.String) },
     payload: Schema.Unknown,
     success: MethodAccepted,
     error: [InvalidRequest.schema, UnknownMethod.schema, UnknownActor.schema, UnknownThread.schema]

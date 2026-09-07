@@ -1,22 +1,16 @@
-import { Clock, Context, Data, Effect } from "effect"
+import { Clock, Data, Effect } from "effect"
 import { EventLog } from "../log"
-import { Self } from "../runtime/reconciler"
+import { Self } from "../runtime/context"
 import { actorCall } from "./invoke"
-import type { ActorInvocationContext, InvocationCoordinate } from "./invocation"
+import type { InvocationCoordinate } from "./invocation"
 import type { ActorMethods, ActorMethodInput, ActorMethodOutput } from "../actor/method"
-import type { ThreadTarget } from "../actor/reference"
+import type { ThreadTarget } from "../actor/target"
 
 import type { ThreadCoordinate } from "../actor/coordinate"
 import { childLineageOf, sameThreadAddress, threadCreatedOf } from "./relations"
 
-// InvocationScope supplies the accepted caller context and interruption signal for replayable work.
-export class InvocationScope extends Context.Service<InvocationScope, {
-  readonly context: ActorInvocationContext
-  readonly signal: AbortSignal
-}>()("tardigrade/InvocationScope") {}
-
-// InvocationSuspended marks a pending call for the reconciler.
-export class InvocationSuspended extends Error {}
+export { InvocationScope, InvocationSuspended } from "../runtime/context"
+import { InvocationScope, InvocationSuspended } from "../runtime/context"
 
 export class InvocationFailed extends Data.TaggedError("InvocationFailed")<{
   readonly reference: InvocationCoordinate

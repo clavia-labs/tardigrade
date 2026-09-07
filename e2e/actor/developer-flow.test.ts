@@ -45,26 +45,26 @@ test.each(["memory", "sqlite"] as const)("the developer flow allocates scoped th
     const mortyRef = yield* tardie.allocateRootThread({ instance: "morty", name: "main" })
     const mortyLabRef = yield* tardie.allocateRootThread({ instance: "morty", name: "lab" })
     const roots = [rickRef, rickLabRef, mortyRef, mortyLabRef]
-    expect(new Set(roots.map((ref) => JSON.stringify(ref.address))).size).toBe(4)
-    expect((yield* tardie.allocateRootThread({ instance: "rick", name: "main" })).address).toEqual(rickRef.address)
+    expect(new Set(roots.map((ref) => JSON.stringify(ref.coordinate))).size).toBe(4)
+    expect((yield* tardie.allocateRootThread({ instance: "rick", name: "main" })).coordinate).toEqual(rickRef.coordinate)
 
-    const researcherRef = yield* tardie.allocateChildThread({ parent: rickRef, name: "researcher" })
-    const labResearcherRef = yield* tardie.allocateChildThread({ parent: rickLabRef, name: "lab-researcher" })
-    const mortyResearcherRef = yield* tardie.allocateChildThread({ parent: mortyRef, name: "researcher" })
+    const researcherRef = yield* tardie.allocateChildThread({ parent: rickRef.coordinate, name: "researcher" })
+    const labResearcherRef = yield* tardie.allocateChildThread({ parent: rickLabRef.coordinate, name: "lab-researcher" })
+    const mortyResearcherRef = yield* tardie.allocateChildThread({ parent: mortyRef.coordinate, name: "researcher" })
     const children = [researcherRef, labResearcherRef, mortyResearcherRef]
-    expect(children.map((ref) => ref.address.thread)).toEqual(["researcher", "lab-researcher", "researcher"])
-    expect(new Set(children.map((ref) => JSON.stringify(ref.address))).size).toBe(3)
-    expect((yield* tardie.allocateChildThread({ parent: rickRef, name: "researcher" })).address).toEqual(researcherRef.address)
-    expect(researcherRef.address.instance).toBe("rick")
-    expect(mortyResearcherRef.address.instance).toBe("morty")
+    expect(children.map((ref) => ref.coordinate.thread)).toEqual(["researcher", "lab-researcher", "researcher"])
+    expect(new Set(children.map((ref) => JSON.stringify(ref.coordinate))).size).toBe(3)
+    expect((yield* tardie.allocateChildThread({ parent: rickRef.coordinate, name: "researcher" })).coordinate).toEqual(researcherRef.coordinate)
+    expect(researcherRef.coordinate.instance).toBe("rick")
+    expect(mortyResearcherRef.coordinate.instance).toBe("morty")
     const generatedRoot = yield* tardie.allocateRootThread({ instance: "rick" })
-    const generatedChild = yield* tardie.allocateChildThread({ parent: rickRef })
-    const secondChild = yield* tardie.allocateChildThread({ parent: rickRef })
-    const generated: ReadonlyArray<ThreadAddress> = [generatedRoot.address, generatedChild.address, secondChild.address]
+    const generatedChild = yield* tardie.allocateChildThread({ parent: rickRef.coordinate })
+    const secondChild = yield* tardie.allocateChildThread({ parent: rickRef.coordinate })
+    const generated: ReadonlyArray<ThreadAddress> = [generatedRoot.coordinate, generatedChild.coordinate, secondChild.coordinate]
     if (unnamed === undefined) unnamed = generated
     else expect(generated).toEqual(unnamed)
-    expect(new Set(generated.map((address) => address.thread)).size).toBe(3)
-    for (const address of generated) expect(address.thread).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
+    expect(new Set(generated.map((coordinate) => coordinate.thread)).size).toBe(3)
+    for (const coordinate of generated) expect(coordinate.thread).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
     expect(yield* generatedRoot.message({ text: "generated root" }, { key: "generated-root" })).toBe("generated root")
 
     const rickResponse = yield* rickLabRef.message({

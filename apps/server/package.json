@@ -25,12 +25,13 @@
     "tardie": "workspace:*",
     "@clavia/tardigrade-bun": "workspace:*",
     "@clavia/tardigrade-client": "workspace:*",
-    "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
     "@effect/platform-bun": "4.0.0-rc.110",
-    "effect": "4.0.0-rc.110"
+    "effect": "4.0.0-rc.110",
+    "@clavia/tardigrade-http": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

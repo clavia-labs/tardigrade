@@ -1,6 +1,6 @@
 import { Effect } from "effect"
 import type { Event } from "../event"
-import { Self } from "../runtime/reconciler"
+import { Self } from "../runtime/context"
 import { Router } from "../transport/router"
 import type { ThreadAddress } from "../transport/endpoint"
 import { linkOf } from "../transport/link"
