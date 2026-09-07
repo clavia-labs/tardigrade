@@ -30,8 +30,8 @@ test("unnamed allocation positions separate actions and invocation coordinates a
         const second = yield* tardie.allocateRootThread({ instance: "main" })
         const explicit = yield* tardie.allocateRootThread({ instance: "main", key: "chosen" })
         const repeated = yield* tardie.allocateRootThread({ instance: "main", key: "chosen" })
-        expect(repeated.address).toEqual(explicit.address)
-        return [{ type: "Allocated", key, threads: [first.address.thread, second.address.thread, explicit.address.thread] }]
+        expect(repeated.coordinate).toEqual(explicit.coordinate)
+        return [{ type: "Allocated", key, threads: [first.coordinate.thread, second.coordinate.thread, explicit.coordinate.thread] }]
       }) })
     }) })
   })
@@ -88,9 +88,9 @@ for (const placement of ["existing", "child", "root"] as const) test(`typed call
           const ref = placement === "existing" ? worker : placement === "root"
             ? yield* allocateRootThread({ name: "test", methods }, { instance: "main", name: "worker" })
             : yield* allocateChildThread({ name: "test", methods }, {
-            parent: threadTarget({ name: "test", methods }, "main", "root"), name: "worker"
+            parent: threadTarget({ name: "test", methods }, "main", "root").coordinate, name: "worker"
           })
-          workerThread = ref.address.thread
+          workerThread = ref.coordinate.thread
           const first = yield* ref.research({ topic: "energy" }, { key: "first" })
           const second = yield* ref.research({ topic: "safety" }, { key: "second" })
           return [{ type: "SummaryCompleted", id: request.id, output: `${first}; ${second}` }]

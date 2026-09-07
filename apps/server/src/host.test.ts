@@ -380,7 +380,7 @@ describe("the threads service", () => {
   })
 
   // The service appends whatever fact it is handed and reads none of its fields: what an event
-  // means is the actor's knowledge (actor.ts, agentProjections). An append that carries its own
+  // means is the actor's knowledge (actor.ts, builtInActor). An append that carries its own
   // `at` keeps it, so a replayed fact keeps the time it happened.
   test("an appended event keeps the time it states", async () => {
     const stamps = await running((threads) =>

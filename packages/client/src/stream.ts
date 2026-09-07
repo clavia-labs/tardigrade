@@ -1,5 +1,5 @@
 import type { Event } from "@clavia/tardigrade-core/log/event"
-import type { InferDelta } from "tardie"
+import type { InferDelta } from "@clavia/tardigrade-agent"
 
 import { V1_PREFIX, type ActorThreadsEvent, type ActorThreadsEventRow, type EventRow } from "./contract"
 import { NO_ANSWER, ProblemError } from "./problem"

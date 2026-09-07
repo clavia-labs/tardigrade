@@ -1,8 +1,6 @@
-import {
-  actor, agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode,
-  compaction, fetchPackage, infer,
-  outputValidateOnce, system, workspacePackage
-} from "tardie"
+import { defineActor } from "tardie/core"
+import { agentMethods, agentsPackage, budget, budgetAuthority, caller, codeMode, compaction, infer, outputValidateOnce, system } from "tardie/agent"
+import { fetchPackage, workspacePackage } from "tardie/code"
 
 const actorName = "researcher"
 
@@ -15,10 +13,10 @@ Delegate independent research when it helps.
 Return a concise answer with concrete findings.
 `.trim()
 
-export default actor({
-  name: actorName,
-  methods: agentMethods,
-  components: [
+export default defineActor(
+  actorName,
+  agentMethods,
+  [
     infer([
       system(actorInstructions),
       budget([
@@ -31,4 +29,4 @@ export default actor({
     ]),
     budgetAuthority()
   ]
-})
+)

@@ -25,15 +25,15 @@ First, install the [Tardie CLI](/docs/cli).
 bun add -g tardie@latest
 ```
 
-Now, use the [Tardie CLI](/docs/cli) to create a new `my-agent` directory and configure a language model provider.
+Now, use the [Tardie CLI](/docs/cli) to create a new `tardie-agent` directory and configure a language model provider.
 
 ```bash variant="single"
-tdg init my-agent --template quickstart
+tdg init tardie-agent --template quickstart
 ```
 
 After the setup, you should see the following files:
 
-<Filesystem root="my-agent/">
+<Filesystem root="tardie-agent/">
   - `actor.ts` Actor, model, and components
   - `server.ts` Bun server entry
   - `worker.ts` Cloudflare and Celld Worker entry
@@ -46,7 +46,7 @@ After the setup, you should see the following files:
 Move into the new project directory:
 
 ```bash variant="single"
-cd my-agent
+cd tardie-agent
 ```
 
 ### Define your first actor
@@ -64,9 +64,11 @@ These notes explain what Tardigrade is doing behind the scenes. You can skip the
 Within `actor.ts`, you will see the following code:
 
 ```ts expanded
-import { Effect, actor, agentMessageMethod, infer, nativeOutput, system, tool } from "tardie"
+import { Effect } from "effect"
+import { actor } from "tardie/core"
+import { agentMessageMethod, infer, nativeOutput, system, tool } from "tardie/agent"
 
-const actorName = "my-agent"
+const actorName = "tardie-agent"
 
 const actorInstructions = `
 Answer questions about the weather.

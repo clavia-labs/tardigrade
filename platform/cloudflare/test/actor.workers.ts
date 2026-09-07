@@ -1,15 +1,18 @@
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
-import { actor, actorMethod, component } from "tardie"
+import { actor, actorMethod, component } from "@clavia/tardigrade-core/actor"
+import { Infer } from "@clavia/tardigrade-agent"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { beforeAll, describe, expect, test } from "vitest"
 import { makeActorClient } from "@clavia/tardigrade-client"
 import type { ModelCatalog } from "@clavia/tardigrade-client/contract"
-import { ModelCatalogRepository } from "@clavia/tardigrade-server/catalog-store"
+import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
+  createWorker,
+  cloudflareWorker,
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
   modelCatalogForConfig,
@@ -17,6 +20,8 @@ import {
   retainBackgroundTask,
   type Env
 } from "../src/worker"
+import { modelAdapters } from "@clavia/tardigrade-model/adapter"
+import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
@@ -142,7 +147,7 @@ describe("cloudflare actor", () => {
         revision: "bundled",
         refreshedAt: 1,
         status: "cached",
-        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: {} }] }]
+        providers: [{ id: "openai", name: "OpenAI", env: [], models: [{ id: "gpt-test", metadata: { contextWindowTokens: 32000, maxOutputTokens: 4000 } }] }]
       }
     })
     const config = {
@@ -161,6 +166,21 @@ describe("cloudflare actor", () => {
       .rejects.toThrow("does not match model configuration")
     expect(() => modelScopeFrom({ schema: 1, catalog: scope.catalog })).toThrow("models.lock.json is invalid")
     expect(() => modelScopeFrom({ schema: 2, catalog: {} })).toThrow("models.lock.json is invalid")
+    const binding = await Effect.runPromise(Infer.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, config), scope.catalog, modelAdapters())
+    )))
+    expect(binding.resolve()).toMatchObject({
+      model: config.default,
+      catalogRevision: "bundled",
+      contextWindowTokens: 32000,
+      maxOutputTokens: 4000,
+      models: { allow: [{ provider: "openai", model_ids: ["gpt-test"] }] }
+    })
+    expect(() => binding.resolve({ provider: "openai", model_id: "outside-lock" })).toThrow("absent from model catalog")
+    const restricted = await Effect.runPromise(Infer.pipe(Effect.provide(
+      modelLayer(modelsFrom(env as Env, { ...config, allow: [] }), scope.catalog, modelAdapters())
+    )))
+    expect(() => restricted.resolve()).toThrow("excluded by the host model policy")
   })
 
   test("root and staged creation await the host allocator before persistence", async () => {
@@ -693,6 +713,26 @@ describe("cloudflare actor", () => {
       })
     expect(await client.state(handle.reference))
       .toEqual({ status: "completed", output: "workers:root:1:Run in workerd." })
+    const methodUrl = "http://test/v1/actors/main/threads/root/methods/echo"
+    const retried = await SELF.fetch(methodUrl, {
+      method: "POST",
+      headers: { ...authorization, "content-type": "application/json", "Idempotency-Key": "workers-smoke" },
+      body: JSON.stringify({ text: "Run in workerd." })
+    })
+    expect(retried.status).toBe(202)
+    expect(retried.headers.get("location")).toContain("/calls/workers-smoke")
+    for (const [headers, input, status] of [
+      [{ ...authorization }, { text: "missing key" }, 400],
+      [{ ...authorization, "Idempotency-Key": "invalid" }, { text: 42 }, 400],
+      [{ authorization: "Bearer wrong", "Idempotency-Key": "invalid" }, { text: "unauthorized" }, 401]
+    ] as const) {
+      const refused = await SELF.fetch(methodUrl, {
+        method: "POST", headers: { ...headers, "content-type": "application/json" }, body: JSON.stringify(input)
+      })
+      expect(refused.status).toBe(status)
+    }
+    const badEpoch = await SELF.fetch(`${methodUrl}/calls/workers-smoke?epoch=-1`, { headers: authorization })
+    expect(badEpoch.status).toBe(400)
     const events = await SELF.fetch("http://test/v1/actors/main/threads/root/events", { headers: authorization })
     expect((await events.json() as ReadonlyArray<{ readonly event: { readonly type: string } }>).map((row) => row.event.type)).toEqual([
       "ThreadCreated",
@@ -1111,4 +1151,40 @@ describe("cloudflare actor", () => {
     expect(await alarm("timeout")).toBeNull()
   })
 
+})
+
+
+test("HTTP allocation preserves unnamed keys and creates nested children", async () => {
+  await createThread("sdk-parent")
+  const allocate = async (input: { readonly name?: string; readonly key?: string; readonly parent?: string }) => {
+    const response = await SELF.fetch("http://test/v1/actors/main/threads", {
+      method: "POST", headers: { ...authorization, "content-type": "application/json" }, body: JSON.stringify(input)
+    })
+    expect(response.status).toBe(200)
+    return await response.json() as { readonly actor: string; readonly instance: string; readonly thread: string }
+  }
+  const first = await allocate({ key: "sdk-stable" })
+  expect(await allocate({ key: "sdk-stable" })).toEqual(first)
+  const child = await allocate({ name: "sdk-child", parent: "sdk-parent" })
+  const grandchild = await allocate({ name: "sdk-grandchild", parent: child.thread })
+  expect(await allocate({ name: "sdk-grandchild", parent: child.thread })).toEqual(grandchild)
+  const accepted = await SELF.fetch(`http://test/v1/actors/main/threads/${grandchild.thread}/methods/echo`, {
+    method: "POST", headers: { ...authorization, "content-type": "application/json", "Idempotency-Key": "sdk-nested" }, body: JSON.stringify({ text: "hello" })
+  })
+  expect(accepted.status).toBe(202)
+  expect(accepted.headers.get("Location")).toContain("/calls/sdk-nested?")
+  expect((await SELF.fetch(new URL(accepted.headers.get("Location")!, "http://test"), { headers: authorization })).status).toBe(200)
+  expect(await methodState(grandchild.thread, "sdk-nested")).toMatchObject({ status: "completed" })
+}, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+
+test("rejects remounting without replacing the actor", () => {
+  const original = mountedActor
+  expect(original).toBeDefined()
+  for (const name of ["echo", "other"]) {
+    const definition = actor({ name, methods: {}, components: [] })
+    expect(() => createWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
+    expect(() => cloudflareWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
+    expect(mountedActor).toBe(original)
+  }
 })

@@ -150,7 +150,7 @@ describe("modelRequest tool and prompt policy", () => {
 
   // A mounted fallback is a policy for a call native output cannot serve, and it stays dormant
   // otherwise: its instruction rides the output request rather than the base prompt, so the
-  // binding decides whether the model ever reads it (platform/model/src/output/contract.ts, outputSystemFor).
+  // binding decides whether the model ever reads it (packages/model/src/output/contract.ts, outputSystemFor).
   test("a mounted fallback rides the request, and adds nothing to the base prompt", () => {
     const bare = modelRequest(head([], true), CODE)
     const repaired = renderOf([codeMode(), outputRepairFor({ attempts: 1 })], head([], true))
@@ -194,7 +194,7 @@ describe("modelRequest tool and prompt policy", () => {
 
   // A declaration nobody can serve rides the request as a verdict rather than as an absence: a
   // request with no output reads as a turn that wanted prose, and this one wanted something else
-  // (output.ts, DeclaredOutput; platform/model/src/output/contract.ts, outputPreflight).
+  // (output.ts, DeclaredOutput; packages/model/src/output/contract.ts, outputPreflight).
   test("an output declaration that is not a contract rides the request as invalid", () => {
     const raw: Event[] = [{ type: "MessageReceived", id: "m1", text: "go", output: { type: "object" }, at: 0 }]
     const req = modelRequest(raw, CODE)

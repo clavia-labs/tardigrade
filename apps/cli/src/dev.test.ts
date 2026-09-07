@@ -271,9 +271,9 @@ describe("tdg dev", () => {
       expect((await fetch(`${baseUrl}/v1/actors/main/threads`, {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "root" })
       })).status).toBe(200)
-      const accepted = await fetch(`${baseUrl}/v1/actors/main/threads/root/methods/greet/calls/layer-test`, {
-        method: "PUT",
-        headers: { "content-type": "application/json" },
+      const accepted = await fetch(`${baseUrl}/v1/actors/main/threads/root/methods/greet`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "idempotency-key": "layer-test" },
         body: JSON.stringify({ text: "hello" })
       })
       expect(accepted.status).toBe(202)

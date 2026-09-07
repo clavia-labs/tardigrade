@@ -519,7 +519,7 @@ describe("infer component", () => {
     expect(echoTable.machine).toBeDefined()
     expect(permissions([echoTable], {
       authority: {
-        address: parseThreadAddress("permission:main:root"),
+        coordinate: parseThreadAddress("permission:main:root"),
         methods: { requestPermission: requestPermissionMethod }
       },
       request: () => undefined

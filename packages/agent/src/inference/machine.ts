@@ -115,7 +115,7 @@ const completionOf = (action: Action & { readonly kind: "complete" }, usage: unk
   // A declared contract is obtained in a mode the binding chose, and every consequence records
   // which. A binding that answers a declared turn without stating one has broken its own
   // contract, and guessing a mode here would put a fact in the log nobody established
-  // (Infer above; platform/model/src/output/contract.ts, outputModeOf).
+  // (Infer above; packages/model/src/output/contract.ts, outputModeOf).
   if (mode === undefined) {
     return {
       type: "TurnFailed",

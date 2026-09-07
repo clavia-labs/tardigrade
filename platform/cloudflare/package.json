@@ -19,13 +19,13 @@
     "./*": "./src/*.ts"
   },
   "dependencies": {
-    "tardie": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*",
     "@clavia/tardigrade-client": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-host": "workspace:*",
+    "@clavia/tardigrade-http": "workspace:*",
     "@clavia/tardigrade-model": "workspace:*",
-    "@clavia/tardigrade-server": "workspace:*",
     "@clavia/tardigrade-worker-loader": "workspace:*",
     "@effect/sql-sqlite-do": "4.0.0-rc.110",
     "effect": "4.0.0-rc.110"
@@ -39,7 +39,6 @@
   },
   "scripts": {
     "bundle": "wrangler deploy --dry-run --outdir .wrangler/bundle",
-    "deploy": "wrangler deploy",
     "typecheck": "tsc --noEmit",
     "test": "bun test",
     "test:workers": "vitest run --config vitest.config.ts"

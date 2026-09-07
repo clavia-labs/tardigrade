@@ -1,3 +1,4 @@
+import { actor } from "@clavia/tardigrade-core/actor"
 import { describe, expect, test } from "bun:test"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { Clock, Effect, Layer, Ref } from "effect"
@@ -19,7 +20,6 @@ import { turnFailed } from "../log/events"
 import type { AgentComponent } from "./composition"
 import type { OutputFallback } from "../output/contract"
 import {
-  actor,
   budget,
   codeMode,
   compaction,

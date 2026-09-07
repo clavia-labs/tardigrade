@@ -132,7 +132,7 @@ The observer queue drops new deltas when it is full. Each accepted delivery has 
 `tardie/client` is generated from the same declaration this server implements, so `/openapi.json` and the client cannot drift from it.
 
 ```ts
-import { agentMethods } from "tardie"
+import { agentMethods } from "tardie/agent"
 import { makeActorClient } from "tardie/client"
 
 const client = makeActorClient({ baseUrl: "http://localhost:4242", methods: agentMethods })

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test } from "bun:test"
 import { Schema } from "effect"
-import { ACTOR_ARTIFACT_VERSION, agentMethods, type ActorMethodState } from "tardie"
+import { ACTOR_ARTIFACT_VERSION, agentMethods } from "@clavia/tardigrade-agent"
+import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 
 import { makeActorClient, makeControlClient, SERVER_ERROR_DETAIL, SERVER_ERROR_TITLE, UNEXPECTED_RESPONSE_TITLE } from "./client"
 import { PROBLEM_CONTENT_TYPE, PROBLEM_TYPE_BASE, projection, projectionsOf } from "./contract"
@@ -214,8 +215,9 @@ describe("a declared actor method", () => {
       timeoutMs: 1_000
     })
     expect(accepted.id).toBe("m1")
-    expect(calls[0]?.method).toBe("PUT")
-    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message/calls/m1")
+    expect(calls[0]?.method).toBe("POST")
+    expect(calls[0]?.headers["idempotency-key"]).toBe("m1")
+    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/methods/message")
     expect(lastUrl().searchParams.get("timeoutMs")).toBe("1000")
     expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ text: "hello" })
   })
@@ -379,99 +381,71 @@ describe("a declared projection", () => {
   })
 })
 
-// A resume is an appended TurnResumed and nothing else. The platform has no resume route, so the
-// guard and the epoch arithmetic are the SDK's, and both read the actor's turns projection.
 describe("resuming a turn", () => {
-  // A resume is two exchanges: the projection it reads, then the append it makes. The stand-in
-  // answers by method, because both go to the same server.
-  const accepting = (view: unknown) => {
-    let read = false
-    return () => {
-      if (read) {
-        return new Response(JSON.stringify({ actor: "main", thread: "root" }), {
-          status: 202,
-          headers: { "content-type": "application/json" }
-        })
-      }
-      read = true
-      return new Response(JSON.stringify(view === undefined ? [] : [view]), {
-        status: 200,
-        headers: { "content-type": "application/json" }
-      })
-    }
+  const accepting = (events: ReadonlyArray<Record<string, unknown>>, pageSize = events.length || 1) => () => {
+    if (calls.at(-1)!.method === "POST") return new Response(JSON.stringify({ actor: "main", thread: "root" }), {
+      status: 202, headers: { "content-type": "application/json" }
+    })
+    const after = Number(lastUrl().searchParams.get("after") ?? 0)
+    return new Response(JSON.stringify(events.slice(after, after + pageSize).map((event, index) => ({ seq: after + index + 1, event }))), {
+      status: 200, headers: { "content-type": "application/json" }
+    })
   }
+  const message = { type: "MessageReceived", id: "m1" }
+  const failed = { type: "TurnFailed", turn: "m1", error: "boom" }
+  const client = () => makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
 
-  const projections = projectionsOf({
-    turns: projection({
-      params: { at: Schema.optionalKey(Schema.Int), turn: Schema.optionalKey(Schema.String) },
-      result: Schema.Array(
-        Schema.Struct({
-          turn: Schema.String,
-          status: Schema.Literals(["pending", "completed", "failed", "parked"]),
-          epoch: Schema.Finite,
-          output: Schema.optionalKey(Schema.String),
-          error: Schema.optionalKey(Schema.String)
-        })
-      ),
-      run: () => []
-    })
+  test("a failed turn resumes without a turns projection", async () => {
+    answer = accepting([message, failed])
+    expect(await client().resume("main", "root", "m1")).toEqual({ actor: "main", thread: "root" })
+    expect(calls).toHaveLength(3)
+    expect(calls.every((call) => new URL(call.url).pathname === "/v1/actors/main/threads/root/events")).toBe(true)
+    expect(JSON.parse(calls.at(-1)!.body!)).toEqual({ type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1 })
   })
 
-  const client = () => makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub, projections })
-
-  test("a failed turn appends the TurnResumed its reactors interpret", async () => {
-    answer = accepting({ turn: "m1", status: "failed", epoch: 0, error: "boom" })
-    const accepted = await client().resume("main", "root", "m1")
-    expect(accepted).toEqual({ actor: "main", thread: "root" })
-    // Two calls: the projection it read, then the append it made.
-    expect(calls).toHaveLength(2)
-    const read = new URL(calls[0]!.url)
-    expect(read.pathname).toBe("/v1/actors/main/threads/root/projections/turns")
-    expect(read.searchParams.get("turn")).toBe("m1")
-    const appended = new URL(calls[1]!.url)
-    expect(appended.pathname).toBe("/v1/actors/main/threads/root/events")
-    expect(JSON.parse(calls[1]!.body ?? "")).toEqual({
-      type: "TurnResumed",
-      turn: "m1",
-      failedEpoch: 0,
-      epoch: 1
-    })
-  })
-
-  // The epoch is read rather than assumed, so resuming an already-resumed turn starts the next one
-  // rather than restating the last (packages/agent/src/runtime/resume.ts, resumeTurn).
-  test("the appended epoch is the one after the turn's active attempt", async () => {
-    answer = accepting({ turn: "m1", status: "failed", epoch: 2, error: "boom" })
+  test("resume follows every event page", async () => {
+    answer = accepting([
+      message, failed,
+      { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1 },
+      { ...failed, epoch: 1 },
+      { type: "TurnResumed", turn: "m1", failedEpoch: 1, epoch: 2 },
+      { ...failed, epoch: 2 }
+    ], 2)
     await client().resume("main", "root", "m1")
-    expect(JSON.parse(calls[1]!.body ?? "")).toMatchObject({ failedEpoch: 2, epoch: 3 })
+    expect(calls.filter((call) => call.method === "GET").map((call) => new URL(call.url).searchParams.get("after"))).toEqual(["0", "2", "4", "6"])
+    expect(JSON.parse(calls.at(-1)!.body!)).toMatchObject({ failedEpoch: 2, epoch: 3 })
   })
 
-  test("a turn that did not fail is refused, and nothing is appended", async () => {
-    answer = accepting({ turn: "m1", status: "completed", epoch: 0, output: "done" })
-    const failure = await client().resume("main", "root", "m1").then(() => undefined, (error: unknown) => error)
+  test.each([
+    ["completed", [{ type: "TurnCompleted", turn: "m1", output: "done" }]],
+    ["pending", []],
+    ["pending", [failed, { type: "TurnResumed", turn: "m1", failedEpoch: 0, epoch: 1 }]],
+    ["cancelled", [{ type: "TurnCancelled", turn: "m1", cause: "requested" }]],
+    ["parked", [{ type: "BudgetRequested", turn: "m1", callId: "budget", amount: 1 }]]
+  ] as const)("refuses a %s active epoch", async (status, events) => {
+    answer = accepting([message, ...events])
+    const failure = await client().resume("main", "root", "m1").catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(ProblemError)
-    expect((failure as ProblemError).title).toBe("Resume Refused")
     expect((failure as ProblemError).status).toBe(409)
-    expect((failure as ProblemError).detail).toContain("its active epoch is completed")
-    expect(calls).toHaveLength(1)
+    expect((failure as ProblemError).detail).toContain(`its active epoch is ${status}`)
+    expect(calls.every((call) => call.method === "GET")).toBe(true)
   })
 
-  test("a turn nobody was asked to serve is refused too", async () => {
-    answer = accepting(undefined)
-    const failure = await client().resume("main", "root", "m9").then(() => undefined, (error: unknown) => error)
+  test("a nonadvancing event page is refused without appending", async () => {
+    answer = () => new Response(JSON.stringify([{ seq: 1, event: message }]), {
+      headers: { "content-type": "application/json" }
+    })
+    const failure = await client().resume("main", "root", "m1").catch((error: unknown) => error)
+    expect(failure).toBeInstanceOf(ProblemError)
+    expect((failure as ProblemError).detail).toContain("did not advance")
+    expect(calls).toHaveLength(2)
+  })
+
+  test("a turn nobody was asked to serve is refused", async () => {
+    answer = accepting([])
+    const failure = await client().resume("main", "root", "m9").catch((error: unknown) => error)
     expect(failure).toBeInstanceOf(ProblemError)
     expect((failure as ProblemError).detail).toContain('No turn named "m9"')
     expect(calls).toHaveLength(1)
-  })
-
-  // `resume` is on every client, and the declaration it needs is not, so a client that reads the
-  // log alone says why rather than failing on an undefined call.
-  test("a client built with no turns projection says so", async () => {
-    const failure = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
-      .resume("main", "root", "m1")
-      .then(() => undefined, (error: unknown) => error)
-    expect(failure).toBeInstanceOf(ProblemError)
-    expect((failure as ProblemError).detail).toContain("without a `turns` projection")
-    expect(calls).toHaveLength(0)
   })
 })

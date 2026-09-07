@@ -1,11 +1,13 @@
 import definition from "./actor"
-import { ActorDO, ThreadDO, cloudflareWorker, modelScopeFrom } from "tardie/cloudflare"
+import { createWorker, modelScopeFrom } from "tardie/worker"
 import { modelAdapters } from "tardie/model/adapter"
 import { openAICompatibleAdapter } from "tardie/model/openai"
 import modelLock from "./models.lock.json"
 
-export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition, {
+const { worker, ActorDO, ThreadDO } = createWorker(definition, {
   modelAdapters: modelAdapters(openAICompatibleAdapter),
   modelScope: modelScopeFrom(modelLock)
 })
+
+export { ActorDO, ThreadDO }
+export default worker

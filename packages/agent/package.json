@@ -1,5 +1,5 @@
 {
-  "name": "tardie",
+  "name": "@clavia/tardigrade-agent",
   "version": "0.0.1",
   "license": "MIT",
   "author": "Clavia, Inc.",
@@ -12,9 +12,6 @@
   },
   "bugs": {
     "url": "https://github.com/clavia-labs/tardigrade/issues"
-  },
-  "publishConfig": {
-    "access": "public"
   },
   "files": [
     "src",
@@ -39,14 +36,15 @@
     "@clavia/tardigrade-core": "workspace:*",
     "@clavia/tardigrade-code": "workspace:*",
     "@cfworker/json-schema": "^4.1.1",
-    "effect": "4.0.0-rc.110",
-    "@clavia/tardigrade-host": "workspace:*"
+    "effect": "4.0.0-rc.110"
   },
   "devDependencies": {
-    "fast-check": "^4.9.0"
+    "fast-check": "^4.9.0",
+    "@clavia/tardigrade-host": "workspace:*"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "bun test"
-  }
+  },
+  "private": true
 }

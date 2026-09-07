@@ -1,0 +1,24 @@
+{
+  "name": "@clavia/tardigrade-http",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@clavia/tardigrade-core": "workspace:*",
+    "@clavia/tardigrade-host": "workspace:*",
+    "@clavia/tardigrade-client": "workspace:*",
+    "@clavia/tardigrade-agent": "workspace:*",
+    "@clavia/tardigrade-model": "workspace:*",
+    "effect": "4.0.0-rc.110"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@effect/platform-bun": "4.0.0-rc.110"
+  }
+}

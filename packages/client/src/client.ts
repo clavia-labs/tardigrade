@@ -1,5 +1,9 @@
+import type { Event } from "@clavia/tardigrade-core/log/event"
+import { REPLY_SUFFIX } from "@clavia/tardigrade-core/interaction/provider-message"
+import { boundaryOf } from "@clavia/tardigrade-agent/output/boundary"
+import { turnEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { Effect, type Schema } from "effect"
-import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/unstable/http"
+import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http"
 import { HttpApiClient, type HttpApi } from "effect/unstable/httpapi"
 import type { InvocationCoordinate } from "@clavia/tardigrade-core/interaction"
 import type { ThreadCoordinate } from "@clavia/tardigrade-core/actor/coordinate"
@@ -8,9 +12,9 @@ import type {
   ActorMethodCancellation,
   ActorMethodInput,
   ActorMethodOutput,
-  ActorMethods,
-  ActorMethodState
-} from "tardie"
+  ActorMethods
+} from "@clavia/tardigrade-core/actor/method"
+import type { ActorMethodState } from "@clavia/tardigrade-core/interaction/state"
 
 import {
   actorApiOf,
@@ -28,6 +32,7 @@ import {
   type ThreadSummary,
   type EventRow,
   type Health,
+  MethodState,
   type MethodAccepted,
   type MethodSummary,
   type ModelCatalogPage,
@@ -35,8 +40,7 @@ import {
   type ModelCatalogSortOrder,
   type ModelCatalogUnpricedOrder,
   type ProviderCatalogPage,
-  type Projections,
-  type TurnView
+  type Projections
 } from "./contract"
 import { isProblem, NO_ANSWER, problemOf, ProblemError } from "./problem"
 import { actorThreadsStream, inferenceStream, stream, type ActorThreadsStreamOptions, type InferenceStreamOptions, type OpenEventSource, type StreamOptions } from "./stream"
@@ -285,8 +289,33 @@ const problemErrorOf = (failure: unknown): Effect.Effect<ProblemError> => {
   )
 }
 
-const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
-  Effect.runPromise(Effect.catch(effect, (failure) => Effect.flatMap(problemErrorOf(failure), Effect.fail)))
+const run = async <A, E>(effect: Effect.Effect<A, E>, signal?: AbortSignal): Promise<A> => {
+  try { return await Effect.runPromise(Effect.catch(effect, (failure) => Effect.flatMap(problemErrorOf(failure), Effect.fail)), signal === undefined ? {} : { signal }) }
+  catch (error) { signal?.throwIfAborted(); throw error }
+}
+
+const transportOf = (options: ControlClientOptions): HttpClient.HttpClient => {
+  const transport = Effect.runSync(HttpClient.HttpClient.pipe(
+    Effect.provide(FetchHttpClient.layer),
+    options.fetch === undefined ? (self) => self : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
+  ))
+  return options.token === undefined ? transport : HttpClient.mapRequest(transport, HttpClientRequest.bearerToken(options.token))
+}
+
+// actorHttpClient shares endpoint codecs, transport configuration, and errors between client facades.
+export const actorHttpClient = <P extends Projections = {}>(options: ActorClientOptions<P> = {}) => {
+  const httpClient = transportOf(options)
+  const derived = HttpApiClient.makeWith(actorApiOf(options.projections ?? ({} as P)), { httpClient, baseUrl: options.baseUrl ?? DEFAULT_BASE_URL })
+  // derived has no requirements for concrete projection declarations.
+  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
+  const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
+  return {
+    api, run,
+    stateAt: (url: string, signal?: AbortSignal) => run(httpClient.get(url).pipe(
+      Effect.flatMap(HttpClientResponse.filterStatusOk), Effect.flatMap(HttpClientResponse.schemaBodyJson(MethodState))
+    ), signal)
+  }
+}
 
 // The query the declaration accepts, with the fields a caller left out left out. A key carrying
 // `undefined` is not the same as an absent key to an optional Schema, so the object is built rather
@@ -318,25 +347,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
   options: ActorClientOptions<P, M> = {}
 ): ActorClient<P, M> => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
-  const token = options.token
-  // The derivation's own requirement is `HttpClient`, which the layer below provides, plus whatever
-  // the API's middleware asks a client for. RequestProblems asks for nothing, so nothing is left to
-  // provide; the compiler proves that for a stated declaration and cannot for a generic one, which
-  // is what the annotation states here rather than at every call site.
-  const derived = HttpApiClient.make(actorApiOf(options.projections ?? ({} as P)), {
-    baseUrl,
-    ...(token === undefined
-      ? {}
-      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    options.fetch === undefined
-      ? (self) => self
-      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-  )
-  // derived has no requirements for every concrete declaration, which a generic P cannot reduce.
-  // @effect-diagnostics-next-line unsafeEffectTypeAssertion:off
-  const api = Effect.runSync(derived as Effect.Effect<DerivedActorApi<P>>)
+  const { api } = actorHttpClient(options)
   const append = (actor: string, thread: string, event: Append): Promise<Accepted> =>
     run(api.threads.append({ params: { id: actor, thread }, payload: event }))
   const invocationState = (call: ActorCallRef | InvocationCoordinate) => {
@@ -352,22 +363,18 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     }))
   }
 
-  // turnsOf reads the `turns` projection through the derivation, which is where the resume
-  // convenience gets the epoch it has to stamp. It is spelled by name rather than through
-  // `projection` because `resume` is on every client while the declaration is not: a client built
-  // for an actor that declares no `turns` says so instead of failing on an undefined call.
-  const turnsOf = async (actor: string, thread: string, turn: string): Promise<ReadonlyArray<TurnView>> => {
-    const call = (api.projections as Record<string, ProjectionCall | undefined>)["turns"]
-    if (call === undefined) {
-      throw new ProblemError({
-        ...ResumeRefused.of(
-          "This client was built without a `turns` projection, so it cannot tell whether a turn failed."
-        )
-      })
+  // logOf follows server-sized pages until exhaustion (client.test.ts, "resume follows every event page").
+  const logOf = async (actor: string, thread: string): Promise<ReadonlyArray<Event>> => {
+    const log: Event[] = []
+    let after = 0
+    for (;;) {
+      const page = await run(api.threads.events({ params: { id: actor, thread }, query: { after } }))
+      if (page.length === 0) return log
+      const next = page[page.length - 1]!.seq
+      if (next <= after) throw new ProblemError({ title: UNREADABLE_EXCHANGE_TITLE, status: NO_ANSWER, detail: "Event page did not advance its cursor." })
+      log.push(...page.map((row) => row.event))
+      after = next
     }
-    // call erases the selected endpoint failure before run converts it to ProblemError.
-    // @effect-diagnostics-next-line anyUnknownInErrorContext:off
-    return await run(call({ params: { id: actor, thread }, query: { turn } })) as ReadonlyArray<TurnView>
   }
 
   return {
@@ -383,11 +390,12 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     events: (actor, thread, events = {}) =>
       run(api.threads.events({ params: { id: actor, thread }, query: eventsQuery(events) })),
     append,
-    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ params: { id: actor }, payload: name === undefined ? {} : { name } })),
+    allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),
     call: async (actor, thread, name, call) => {
-      const accepted = await run(api.methods.invoke({
-        params: { id: actor, thread, method: name, call: call.id },
+      const accepted = await run(api.methods.invokeMethod({
+        params: { id: actor, thread, method: name },
+        headers: { "idempotency-key": call.id },
         query: call.timeoutMs === undefined ? {} : { timeoutMs: call.timeoutMs },
         payload: call.input
       }))
@@ -420,34 +428,36 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
       }))
     },
     // A resume is an append, so the platform has no route for it and no guard over it. The check
-    // below is advisory: it reads the turns projection to refuse the obvious mistake early and to
+    // below is advisory: it reads the event log to refuse the obvious mistake early and to
     // learn the epoch to stamp. A turn that fails between the read and the append still gets a
     // TurnResumed, and a TurnResumed for a turn that is not failed derives nothing, so a race costs
     // an inert event rather than a wrong outcome. A duplicate costs nothing either: the assembly
     // keys TurnResumed by turn and epoch, so a second one absorbs (packages/agent/src/log/events.ts,
     // agentKeys).
     resume: async (actor, thread, turn) => {
-      const views = await turnsOf(actor, thread, turn)
-      const view = views.find((candidate) => candidate.turn === turn)
-      if (view === undefined) {
+      const log = await logOf(actor, thread)
+      if (turn.endsWith(REPLY_SUFFIX) || !log.some((event) => event.type === "MessageReceived" && String((event as { id?: unknown }).id ?? "") === turn)) {
         throw new ProblemError({
           ...ResumeRefused.of(`No turn named ${JSON.stringify(turn)} has been served on this thread.`)
         })
       }
-      if (view.status !== "failed") {
+      const boundary = boundaryOf(log, turn)
+      const status = boundary?.kind === "requesting" ? "parked" : boundary?.kind ?? "pending"
+      if (status !== "failed") {
         throw new ProblemError({
           ...ResumeRefused.of(
-            `turn ${JSON.stringify(turn)} cannot resume because its active epoch is ${view.status}`
+            `turn ${JSON.stringify(turn)} cannot resume because its active epoch is ${status}`
           )
         })
       }
       // The next execution epoch, stamped the way the library stamps it
       // (packages/agent/src/runtime/resume.ts, resumeTurn).
+      const epoch = turnEpochOf(log, turn)
       return append(actor, thread, {
         type: "TurnResumed",
         turn,
-        failedEpoch: view.epoch,
-        epoch: view.epoch + 1
+        failedEpoch: epoch,
+        epoch: epoch + 1
       })
     },
     health: () => run(api.health.healthz({})),
@@ -490,19 +500,7 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
 // makeControlClient builds the client for actor deployment and discovery at a hosting origin.
 export const makeControlClient = (options: ControlClientOptions = {}): ControlClient => {
   const baseUrl = options.baseUrl ?? DEFAULT_BASE_URL
-  const token = options.token
-  const derived = HttpApiClient.make(controlApi, {
-    baseUrl,
-    ...(token === undefined
-      ? {}
-      : { transformClient: (client: HttpClient.HttpClient) => HttpClient.mapRequest(client, HttpClientRequest.bearerToken(token)) })
-  }).pipe(
-    Effect.provide(FetchHttpClient.layer),
-    options.fetch === undefined
-      ? (self) => self
-      : Effect.provideService(FetchHttpClient.Fetch, options.fetch)
-  )
-  const api = Effect.runSync(derived as Effect.Effect<DerivedControlApi>)
+  const api = Effect.runSync(HttpApiClient.makeWith(controlApi, { baseUrl, httpClient: transportOf(options) }) as Effect.Effect<DerivedControlApi>)
   return {
     baseUrl,
     definitions: () => run(api.definitions.definitions({})),

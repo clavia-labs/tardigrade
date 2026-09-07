@@ -2,7 +2,7 @@ import { type ActorMethodResponse, type ResponseDelivered, type ResponseReceived
 import { Clock, Effect, Schema } from "effect"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { Self } from "@clavia/tardigrade-core/runtime/reconciler"
+import { Self } from "../runtime/context"
 import type { CompleteTransitionDerivation } from "@clavia/tardigrade-core/transition"
 import type { KeyFragment } from "../log/index"
 import { Router } from "../transport/router"

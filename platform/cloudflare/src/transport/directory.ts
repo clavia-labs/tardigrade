@@ -1,5 +1,5 @@
 import { Effect } from "effect"
-import { resolveThreadId } from "@clavia/tardigrade-server/thread-compat"
+import { resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
 import type { ActorDO } from "../actor"
 import type { ThreadDO } from "../thread"
 import type { Env } from "../env"
