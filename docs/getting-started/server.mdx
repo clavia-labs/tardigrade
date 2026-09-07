@@ -1,0 +1,304 @@
+---
+title: Server
+description: Host an actor and use its HTTP API.
+route: /docs/server
+section: Getting Started
+sectionOrder: 2
+order: 4
+---
+
+A host runs an actor and owns its storage, threads, and execution. A server gives other processes HTTP access to that host. One actor definition can have many instances, each with its own threads.
+
+## Start a server
+
+After defining your [actor](/docs/actors), create a Bun host and serve it:
+
+```ts
+import { createHost, serve } from "tardie/bun"
+import { actor } from "./actor"
+import { layersFor } from "./layers"
+
+const host = await createHost({
+  actor,
+  storage: "./data",
+  layersFor,
+})
+
+const server = await serve(host, {
+  hostname: "127.0.0.1",
+  port: 4242,
+})
+
+console.log(server.url.href)
+```
+
+Here, `actor` is your exported actor definition, and `layersFor` supplies its application services. The host owns those services. HTTP requests use the host's allocation and invocation capabilities.
+
+Run the file with `bun run server.ts`. For a generated project with model configuration and application layers, follow the [Quickstart](/docs/quickstart).
+
+### Server options
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Option</th><th>Default</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>hostname</code></td><td><code>"127.0.0.1"</code></td><td>Address to listen on. Use <code>"0.0.0.0"</code> to accept connections on other interfaces.</td></tr>
+      <tr><td><code>port</code></td><td><code>4242</code></td><td>HTTP port. Use <code>0</code> to request an available port.</td></tr>
+      <tr><td><code>token</code></td><td>Unset</td><td>Require a bearer token on protected routes.</td></tr>
+      <tr><td><code>idleTimeoutSeconds</code></td><td><code>10</code></td><td>Idle connection timeout.</td></tr>
+      <tr><td><code>disableLogger</code></td><td><code>true</code></td><td>Disable the HTTP request logger.</td></tr>
+      <tr><td><code>api</code></td><td><code>&#123;&#125;</code></td><td>Configure event page size, streams, custom projections, and catalog discovery.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+`server.url` and `server.port` report the bound address. To shut down, close the server before its host:
+
+```ts
+await server.close()
+await host.close()
+```
+
+Closing the HTTP server ends network access. Closing the host interrupts active work and releases its storage resources.
+
+## Address an instance and thread
+
+Runtime paths start with `/v1/actors/{instance}`. Despite the word `actors` in the URL, this segment selects an instance of the mounted actor definition. For example, `/v1/actors/rick/threads/main` selects Rick's `main` thread.
+
+A thread coordinate contains all three identities:
+
+```json
+{ "actor": "tardie", "instance": "rick", "thread": "main" }
+```
+
+Encode each path segment when constructing URLs. Allocation and method routes accept an optional `actor` query parameter to identify the definition explicitly. A definition that does not match the host is rejected.
+
+## Discover the API
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /healthz</code></td><td>Host health. Bun reports <code>resting</code> or <code>driving</code>, plus the number of dirty threads.</td></tr>
+      <tr><td><code>GET /v1/metadata</code></td><td>Mounted actor name and storage metadata.</td></tr>
+      <tr><td><code>GET /v1/methods</code></td><td>Method names, input and output JSON Schemas, timeout defaults, and cancellation support.</td></tr>
+      <tr><td><code>GET /openapi.json</code></td><td>OpenAPI document for the server's declared JSON routes.</td></tr>
+      <tr><td><code>GET /docs</code></td><td>Interactive API reference.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+```sh
+curl http://localhost:4242/v1/methods
+```
+
+Use the method schema to construct its request body. The examples below assume an actor with a `message` method accepting `{ text: string }`.
+
+## Create instances and threads
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/actors</code></td><td>List known instances.</td></tr>
+      <tr><td><code>PUT /v1/actors/&#123;instance&#125;</code></td><td>Ensure an instance exists.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;</code></td><td>Read an instance summary.</td></tr>
+      <tr><td><code>POST /v1/actors/&#123;instance&#125;/threads</code></td><td>Allocate a root or child thread.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads</code></td><td>List thread summaries.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/tree</code></td><td>Read the thread's descendant tree.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+Allocate a named root thread:
+
+```sh
+curl -X POST http://localhost:4242/v1/actors/rick/threads \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"main"}'
+```
+
+The response is the assigned coordinate. Repeating a named allocation in the same scope returns the same thread. Omit `name` for a host-generated name. Supply `key` for a retryable allocation with a generated name.
+
+For a child, include the parent thread ID from its coordinate:
+
+```sh
+curl -X POST http://localhost:4242/v1/actors/rick/threads \
+  -H 'Content-Type: application/json' \
+  -d '{"parent":"main","name":"researcher"}'
+```
+
+The host assigns the child's identity. Use the returned `thread` field in later requests. Thread summaries describe execution state; read a method call's state to learn its result.
+
+## Call a method
+
+Send the method input as JSON and a caller-chosen key in `Idempotency-Key`:
+
+```sh
+curl -i -X POST http://localhost:4242/v1/actors/rick/threads/main/methods/message \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: portal-plan' \
+  -d '{"text":"Help me plan an experiment."}'
+```
+
+The server returns `202 Accepted`, a receipt containing the invocation reference and deadline, and a `Location` header for its state. Acceptance means the call was recorded; execution can still be pending.
+
+Retries with the same invocation identity reuse the recorded call and deadline. Use a fresh key for new work. A retry does not replace the recorded input.
+
+Add `?timeoutMs=30000` to request a call timeout. Otherwise, the method's declared timeout applies. Follow the returned `Location` to preserve its actor and epoch selectors:
+
+```sh
+curl 'http://localhost:4242/v1/actors/rick/threads/main/methods/message/calls/portal-plan?actor=tardie&epoch=0'
+```
+
+Call state can be `pending`, `completed`, `failed`, or `cancelled`. A completed call includes `output`; failed and cancelled states include their failure or cancellation details. Without an `epoch` query, a state lookup selects the call's current epoch.
+
+The server also accepts `PUT /v1/actors/{instance}/threads/{thread}/methods/{method}/calls/{call}` with the key in the path. Use POST with `Idempotency-Key` for new clients.
+
+### Cancel a call
+
+For a method that declares cancellation support:
+
+```sh
+curl -X PUT 'http://localhost:4242/v1/actors/rick/threads/main/methods/message/calls/portal-plan/cancellation?actor=tardie&epoch=0' \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"No longer needed"}'
+```
+
+The response reports whether cancellation was requested or already completed. Continue reading call state to observe completion. A settled invocation can return a conflict. Check `cancellable` in method discovery before offering cancellation in a client.
+
+### Use the typed client
+
+`connect` exposes allocation and callable thread references over HTTP. It follows the accepted call until it has a result:
+
+```ts
+import { connect } from "tardie/client"
+import { actor } from "./actor"
+
+const client = connect({ actor, url: "http://localhost:4242" })
+const main = await client.allocateRootThread({ instance: "rick", name: "main" })
+const output = await main.methods.message(
+  { text: "Help me plan an experiment." },
+  { key: "portal-plan" },
+)
+```
+
+The client needs the actor's name and method declarations. `token`, `fetch`, and `pollIntervalMs` configure authentication, transport, and polling. The default polling interval is 100 milliseconds. A call can also supply `timeoutMs` and an abort `signal`. Aborting a client wait does not issue a durable cancellation request.
+
+`makeActorClient` provides broader inspection operations such as event reads, streams, thread trees, method state, and cancellation. See the [SDK reference](/docs/sdk).
+
+## Read and append events
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/events</code></td><td>Read durable events.</td></tr>
+      <tr><td><code>POST /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/events</code></td><td>Append an event through the host.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+```sh
+curl 'http://localhost:4242/v1/actors/rick/threads/main/events?after=0&limit=200'
+```
+
+Each row contains its `seq` and `event`. `after` is an exclusive cursor. Use the last returned sequence as the next page's cursor. `limit` defaults to 200 and can be set per request; `serve(host, { api: { limit } })` sets the Bun server default. `types` accepts comma-separated event type names.
+
+Appending accepts a JSON event with a nonempty `type` and actor-defined fields. This is a lower-level operation for event ingress. Normal application calls should use methods so their declared input schemas and invocation lifecycle apply.
+
+### Follow streams
+
+Bun exposes three server-sent event streams:
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/events/stream</code></td><td>Follow durable thread events.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/stream</code></td><td>Follow instance thread activity.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/inference/stream</code></td><td>Follow transient inference updates when an inference stream is configured.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+```sh
+curl -N 'http://localhost:4242/v1/actors/rick/threads/main/events/stream?after=0'
+```
+
+Durable streams resume with `Last-Event-ID`, which takes precedence over `after`. Inference updates are transient and do not provide durable history replay. Read the event log for persisted results.
+
+`api.heartbeat` defaults to five seconds. `api.inference` supplies the inference stream, and `api.inferenceBufferCapacity` defaults to 64 unread frames per connection. Browser-native `EventSource` cannot set an Authorization header; use a transport that can supply it when connecting to a protected stream.
+
+## Read custom projections
+
+A projection is a read over a thread's event log. Bun mounts projections supplied through `serve(host, { api: { projections } })` at:
+
+```text
+GET /v1/actors/{instance}/threads/{thread}/projections/{name}
+```
+
+Each declaration defines its query parameters, output schema, and computation. The server includes those routes in OpenAPI. No agent-specific projections are installed by default. An `at` query has meaning only if the projection declares and implements it.
+
+## Discover models and providers
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Query parameters</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/providers</code></td><td><code>search</code>, <code>cursor</code>, <code>limit</code>, <code>availability</code></td></tr>
+      <tr><td><code>GET /v1/models</code></td><td>Provider parameters plus <code>provider</code>, <code>sort</code>, <code>order</code>, <code>unpriced</code></td></tr>
+    </tbody>
+  </table>
+</div>
+
+Responses include catalog revision, freshness, model policy, page items, and a continuation cursor when more items remain. `availability` accepts `all` or `available`. Model price sorting supports `promptUsdPerToken`, `completionUsdPerToken`, `cachedPromptUsdPerToken`, and `cacheWritePromptUsdPerToken`; `order` is `asc` or `desc`, and `unpriced` is `first` or `last`.
+
+Bun accepts a catalog discovery service through `api.catalog`. A server without configured catalog discovery can report catalog unavailability. Provider discovery reports credential requirements and availability without returning secrets.
+
+## Manage definitions
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/definitions</code></td><td>List definitions known to the server.</td></tr>
+      <tr><td><code>PUT /v1/definitions</code></td><td>Push an actor artifact when the host supports it.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+Definition management depends on the host. A Bun host created with `createHost({ actor })` serves that actor and refuses definition pushes. A server with an artifact registry can accept a payload containing `manifest` and `module`. Use the [CLI](/docs/cli) to build and push artifacts.
+
+## Authentication and errors
+
+Set `token` in Bun's `serve` options to protect actor routes. Send it as `Authorization: Bearer <token>`. A missing token returns 401; an incorrect token returns 403. Without a configured token, Bun permits unauthenticated requests.
+
+Bun keeps `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs` public. Its CORS middleware permits cross-origin requests and exposes `Location` so browser clients can follow call receipts.
+
+Request failures use `application/problem+json` with `type`, `title`, `status`, and `detail`. Input or query validation returns 400, missing resources return 404, and a settled-invocation cancellation can return 409. Unexpected server failures return 500. Inspect the response body for the specific failure.
+
+## Cloudflare Workers
+
+Cloudflare assembles the actor and Worker handler together:
+
+```ts
+import { createWorker } from "tardie/worker"
+import { actor } from "./actor"
+import { layersFor } from "./worker-layers"
+
+const { worker, ActorDO, ThreadDO } = createWorker(actor, { layersFor })
+
+export { ActorDO, ThreadDO }
+export default worker
+```
+
+Call `createWorker` once per Worker module. The assembly serves one actor definition with many instances and threads. `layersFor` receives the Worker environment, instance, and thread. Follow the [Cloudflare guide](/docs/platforms/cloudflare) for bindings, storage, and deployment.
+
+Cloudflare exposes method discovery, POST and PUT invocation, call state, cancellation, provider and model discovery, metadata, instance ensure/read, thread allocation/listing, and event append/read. It does not currently expose Bun's instance collection, definition registry, thread tree, SSE streams, custom projections, or interactive API documentation.
+
+Set `TARDIGRADE_TOKEN` for protected Worker routes. Missing authentication configuration returns 503; an absent or incorrect bearer token returns 401. Health and model/provider discovery remain public. Some Worker routes return `{ error }` bodies, so clients should inspect the response content type rather than assume every Worker error is a problem document. Worker health reports `ready` and the actor name.
+
+## Next steps
+
+Use the [Quickstart](/docs/quickstart) for a runnable project, [Actors](/docs/actors) for thread allocation and method calls, and the [CLI reference](/docs/cli) for local development and deployment commands.

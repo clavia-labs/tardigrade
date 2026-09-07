@@ -1,3 +1,4 @@
+import server from "@docs/getting-started/server.mdx?doc-source"
 import cli from "@docs/references/cli.mdx?doc-source"
 import concepts from "@docs/getting-started/concepts.mdx?doc-source"
 import actors from "@docs/getting-started/actors.mdx?doc-source"
@@ -14,6 +15,7 @@ const sources: Readonly<Record<string, string>> = {
   "references/cli.mdx": cli,
   "getting-started/concepts.mdx": concepts,
   "getting-started/actors.mdx": actors,
+  "getting-started/server.mdx": server,
   "examples/rlm.mdx": rlm,
   "platforms/bun.mdx": bun,
   "platforms/celld.mdx": celld,
