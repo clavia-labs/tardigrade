@@ -96,7 +96,7 @@ celld dev celld.jsonc --port 4242
 
 Run either command from the project directory. Both examples use port 4242 for the API calls below. [celld dev](https://github.com/denoland/celld/blob/main/docs/README.md#develop-an-application-locally) uses a local object store and preserves state between runs.
 
-## Address an instance and thread
+## Create a thread
 
 Runtime paths start with `/v1/actors/{instance}`. Despite the word `actors` in the URL, this segment selects an instance of the mounted actor definition. For example, `/v1/actors/rick/threads/main` selects Rick's `main` thread.
 
@@ -108,43 +108,6 @@ A thread coordinate contains all three identities:
 
 Encode each path segment when constructing URLs. Allocation and method routes accept an optional `actor` query parameter to identify the definition explicitly. A definition that does not match the host is rejected.
 
-## Discover the API
-
-<div className="docs-api-table">
-  <table>
-    <thead><tr><th>Request</th><th>Result</th></tr></thead>
-    <tbody>
-      <tr><td><code>GET /healthz</code></td><td>Host health. Bun reports <code>resting</code> or <code>driving</code>, plus the number of dirty threads.</td></tr>
-      <tr><td><code>GET /v1/metadata</code></td><td>Mounted actor name and storage metadata.</td></tr>
-      <tr><td><code>GET /v1/methods</code></td><td>Method names, input and output JSON Schemas, timeout defaults, and cancellation support.</td></tr>
-      <tr><td><code>GET /openapi.json</code></td><td>OpenAPI document for the server's declared JSON routes.</td></tr>
-      <tr><td><code>GET /docs</code></td><td>Interactive API reference.</td></tr>
-    </tbody>
-  </table>
-</div>
-
-```sh
-curl http://localhost:4242/v1/methods
-```
-
-Use the method schema to construct its request body. The examples below assume an actor with a `message` method accepting `{ text: string }`.
-
-## Create instances and threads
-
-<div className="docs-api-table">
-  <table>
-    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
-    <tbody>
-      <tr><td><code>GET /v1/actors</code></td><td>List known instances.</td></tr>
-      <tr><td><code>PUT /v1/actors/&#123;instance&#125;</code></td><td>Ensure an instance exists.</td></tr>
-      <tr><td><code>GET /v1/actors/&#123;instance&#125;</code></td><td>Read an instance summary.</td></tr>
-      <tr><td><code>POST /v1/actors/&#123;instance&#125;/threads</code></td><td>Allocate a root or child thread.</td></tr>
-      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads</code></td><td>List thread summaries.</td></tr>
-      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/tree</code></td><td>Read the thread's descendant tree.</td></tr>
-    </tbody>
-  </table>
-</div>
-
 Allocate a named root thread:
 
 ```sh
@@ -155,17 +118,17 @@ curl -X POST http://localhost:4242/v1/actors/rick/threads \
 
 The response is the assigned coordinate. Repeating a named allocation in the same scope returns the same thread. Omit `name` for a host-generated name. Supply `key` for a retryable allocation with a generated name.
 
-For a child, include the parent thread ID from its coordinate:
+## Discover methods
+
+Read the actor's method names, input and output JSON Schemas, timeout defaults, and cancellation support:
 
 ```sh
-curl -X POST http://localhost:4242/v1/actors/rick/threads \
-  -H 'Content-Type: application/json' \
-  -d '{"parent":"main","name":"researcher"}'
+curl http://localhost:4242/v1/methods
 ```
 
-The host assigns the child's identity. Use the returned `thread` field in later requests. Thread summaries describe execution state; read a method call's state to learn its result.
+Use the method schema to construct its request body. The examples below assume an actor with a `message` method accepting `{ text: string }`.
 
-## Call a method
+## Invoke a method
 
 Send the method input as JSON and a caller-chosen key in `Idempotency-Key`:
 
@@ -222,7 +185,37 @@ The client needs the actor's name and method declarations. `token`, `fetch`, and
 
 `makeActorClient` provides broader inspection operations such as event reads, streams, thread trees, method state, and cancellation. See the [SDK reference](/docs/sdk).
 
-## Read and append events
+## Manage threads
+
+List instances and threads, inspect their lineage, or allocate more threads as your application grows. Thread summaries describe execution state; method call state gives you the result of a call.
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Purpose</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /v1/actors</code></td><td>List known instances.</td></tr>
+      <tr><td><code>PUT /v1/actors/&#123;instance&#125;</code></td><td>Ensure an instance exists.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;</code></td><td>Read an instance summary.</td></tr>
+      <tr><td><code>POST /v1/actors/&#123;instance&#125;/threads</code></td><td>Allocate a root or child thread.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads</code></td><td>List thread summaries.</td></tr>
+      <tr><td><code>GET /v1/actors/&#123;instance&#125;/threads/&#123;thread&#125;/tree</code></td><td>Read the thread's descendant tree.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+### Create a child thread
+
+For a child, include the parent thread ID from its coordinate:
+
+```sh
+curl -X POST http://localhost:4242/v1/actors/rick/threads \
+  -H 'Content-Type: application/json' \
+  -d '{"parent":"main","name":"researcher"}'
+```
+
+The host assigns the child's identity. Use the returned `thread` field in later requests.
+
+### Read and append events
 
 <div className="docs-api-table">
   <table>
@@ -265,7 +258,7 @@ Durable streams resume with `Last-Event-ID`, which takes precedence over `after`
 
 `api.heartbeat` defaults to five seconds. `api.inference` supplies the inference stream, and `api.inferenceBufferCapacity` defaults to 64 unread frames per connection. Browser-native `EventSource` cannot set an Authorization header; use a transport that can supply it when connecting to a protected stream.
 
-## Read custom projections
+### Read custom projections
 
 A projection is a read over a thread's event log. Bun mounts projections supplied through `serve(host, { api: { projections } })` at:
 
@@ -274,6 +267,20 @@ GET /v1/actors/{instance}/threads/{thread}/projections/{name}
 ```
 
 Each declaration defines its query parameters, output schema, and computation. The server includes those routes in OpenAPI. No agent-specific projections are installed by default. An `at` query has meaning only if the projection declares and implements it.
+
+## Inspect the server
+
+<div className="docs-api-table">
+  <table>
+    <thead><tr><th>Request</th><th>Result</th></tr></thead>
+    <tbody>
+      <tr><td><code>GET /healthz</code></td><td>Host health. Bun reports <code>resting</code> or <code>driving</code>, plus the number of dirty threads.</td></tr>
+      <tr><td><code>GET /v1/metadata</code></td><td>Mounted actor name and storage metadata.</td></tr>
+      <tr><td><code>GET /openapi.json</code></td><td>OpenAPI document for the server's declared JSON routes.</td></tr>
+      <tr><td><code>GET /docs</code></td><td>Interactive API reference.</td></tr>
+    </tbody>
+  </table>
+</div>
 
 ## Discover models and providers
 
