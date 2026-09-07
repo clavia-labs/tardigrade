@@ -39,7 +39,7 @@ const actor = defineActor("tardie", { message }, [responder])
 test("local and HTTP references preserve allocations and results across restart", async () => {
   const storage = await mkdtemp(join(tmpdir(), "tardie-sdk-"))
   let host = await createHost({ actor, storage })
-  let server: ReturnType<typeof serve> | undefined
+  let server: Awaited<ReturnType<typeof serve>> | undefined
   try {
     const rick = await host.allocateRootThread({ instance: "rick", name: "main" })
     const morty = await host.allocateRootThread({ instance: "morty", name: "main" })
@@ -48,7 +48,7 @@ test("local and HTTP references preserve allocations and results across restart"
     expect(await rick.message({ text: "relay" }, { key: "relay" })).toBe("relayed")
     const researcher = await host.allocateChildThread({ parent: rick.coordinate, name: "researcher" })
     expect(await researcher.message({ text: "research" }, { key: "work" })).toBe("research")
-    server = serve(host, { port: 0, token: "test" })
+    server = await serve(host, { port: 0, token: "test" })
     const endpoint = new URL("v1/actors/rick/threads/main/methods/message", server.url)
     const headers = { authorization: "Bearer test", "Content-Type": "application/json" }
     expect((await fetch(endpoint, { method: "POST", headers, body: JSON.stringify({ text: "missing key" }) })).status).toBe(400)
@@ -95,3 +95,26 @@ test("closing a host interrupts active actor work", async () => {
   await host.close()
   expect(await result).toBeInstanceOf(Error)
 }, 2000)
+
+test("a host reopens an existing server instance database without moving it", async () => {
+  const storage = await mkdtemp(join(tmpdir(), "tardie-legacy-layout-"))
+  const database = join(storage, "cmljaw.sqlite")
+  const { createBunHost } = await import("./host")
+  const legacy = await createBunHost({ database, actorName: actor.name, actorInstance: "rick", actorFor: () => actor })
+  try {
+    const coordinate = await legacy.allocate({ kind: "root", coordinate: { actor: actor.name, instance: "rick", thread: "main" } })
+    await legacy.commitRoot(legacy.self(coordinate.thread), { type: "MessageRequested", id: "existing", text: "saved", at: 1 })
+    await legacy.drive()
+  } finally { await legacy.close() }
+  const host = await createHost({ actor, storage, storageLayout: {
+    databaseFor: (instance) => join(storage, `${Buffer.from(instance).toString("base64url")}.sqlite`),
+    instanceFromFile: (file) => file.endsWith(".sqlite") ? Buffer.from(file.slice(0, -7), "base64url").toString("utf8") : undefined
+  } })
+  try {
+    expect(await host.thread({ actor: actor.name, instance: "rick", thread: "main" }).message({ text: "replacement" }, { key: "existing" })).toBe("saved")
+    expect(await Bun.file(database).exists()).toBe(true)
+  } finally {
+    await host.close()
+    await rm(storage, { recursive: true, force: true })
+  }
+})

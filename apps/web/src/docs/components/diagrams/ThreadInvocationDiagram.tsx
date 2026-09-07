@@ -25,7 +25,7 @@ export const ThreadInvocationDiagram = (): ReactElement => {
       <text className="actor-instances-label" x="300" y="138">result</text>
       <g transform="translate(132 192)">
         <rect width="136" height="66" rx="6" />
-        <text className="actor-instances-label" x="68" y="24">tardie / rick</text>
+        <text className="actor-instances-label" x="68" y="24">meeseeks / rick</text>
         <text x="68" y="48">main</text>
       </g>
       <text className="actor-instances-label" x="200" y="286">Retry with the same key, reuse the same call</text>

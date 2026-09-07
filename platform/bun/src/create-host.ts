@@ -1,5 +1,11 @@
+import { Ingress, ingressFrom, type IngressActor } from "@clavia/tardigrade-host/transport/ingress"
+import type { Directory } from "@clavia/tardigrade-core/transport/directory"
+import { resolveThreadId } from "@clavia/tardigrade-host/thread-compat"
+import { Threads, type ActorThreads } from "@clavia/tardigrade-http/threads"
+import { DriverGauge } from "@clavia/tardigrade-http/driver-gauge"
+import { bunHttpThreads } from "./http-threads"
 import { actorRuntimeOf } from "@clavia/tardigrade-core/runtime/actor"
-import { Effect } from "effect"
+import { Clock, Context, Effect } from "effect"
 import { join } from "node:path"
 import type { Actor } from "@clavia/tardigrade-core/actor/definition"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
@@ -16,9 +22,18 @@ import { existingMethodRequest, prepareMethodRequest } from "@clavia/tardigrade-
 import { bunInstances } from "./instances"
 import { createBunHost, type BunHost, type BunHostOptions } from "./host"
 
-export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "initializeRoot" | "threadAllocator" | "signal"> & {
+export type HostOptions<R, Methods extends ActorMethods> = Omit<BunHostOptions<R>, "database" | "actorName" | "actorInstance" | "actorFor" | "initializeRoot" | "layersFor" | "signal"> & {
   readonly actor: Actor<R, Methods>
   readonly storage: string
+  readonly storageLayout?: HostStorageLayout
+} & {
+  [K in keyof Pick<BunHostOptions<R>, "layersFor">]: (thread: string, instance: string) => ReturnType<NonNullable<BunHostOptions<R>["layersFor"]>>
+}
+
+// HostStorageLayout preserves existing instance database names when a host mounts stored actors.
+export interface HostStorageLayout {
+  readonly databaseFor: (instance: string) => string
+  readonly instanceFromFile: (file: string) => string | undefined
 }
 
 export interface Host<Methods extends ActorMethods> extends ActorClient<Methods> {
@@ -27,6 +42,8 @@ export interface Host<Methods extends ActorMethods> extends ActorClient<Methods>
 }
 
 export interface HostBackend {
+  readonly http: Context.Context<Threads | DriverGauge | Ingress>
+  readonly resolve: Directory<ThreadCoordinate, IngressActor>["resolve"]
   readonly allocate: (request: ThreadAllocation) => Promise<ThreadCoordinate>
   readonly submit: (coordinate: ThreadCoordinate, name: string, input: unknown, call: CallOptions) => Promise<ReturnType<typeof prepareMethodRequest>["accepted"]>
   readonly state: (reference: InvocationCoordinate) => Promise<ActorMethodState<unknown> | undefined>
@@ -52,9 +69,10 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
     open: (instance, signal) => createBunHost<R>({
       ...options, signal,
       keyOf: options.keyOf ?? actorRuntimeOf(options.actor).keyOf,
-      database: options.storage === ":memory:" ? ":memory:" : join(options.storage, Buffer.from(JSON.stringify([options.actor.name, instance])).toString("base64url") + ".sqlite"),
+      layersFor: options.layersFor === undefined ? undefined : (thread: string) => options.layersFor!(thread, instance),
+      database: options.storageLayout?.databaseFor(instance) ?? (options.storage === ":memory:" ? ":memory:" : join(options.storage, Buffer.from(JSON.stringify([options.actor.name, instance])).toString("base64url") + ".sqlite")),
       actorName: options.actor.name, actorInstance: instance, actorFor: () => options.actor,
-      threadAllocator: { allocate: (request) => Effect.promise(async () => {
+      threadAllocator: options.threadAllocator ?? { allocate: (request) => Effect.promise(async () => {
         const target = request.kind === "root" ? request.coordinate : request.parent
         return (await instanceOf(target.actor, target.instance)).assignThread(request)
       }) },
@@ -84,7 +102,42 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
     await host.commit({ link: { source: request.parent, target }, lineage, event: threadCreated(target, lineage, Date.now()) })
     return target
   }
+  const httpThreads = (instance: string, runtime: BunHost): ActorThreads => bunHttpThreads(runtime, {
+    actor: options.actor.name, instance, methods: options.actor.methods, sqlite: options.storage, allocate
+  })
+  const ensure = (id: string) => Effect.promise(async () => httpThreads(id, await instanceOf(options.actor.name, id)))
+  const resolve: HostBackend["resolve"] = (target) => target.actor !== options.actor.name
+    ? Effect.succeed(undefined as IngressActor | undefined)
+    : Effect.map(Effect.promise(() => instanceOf(target.actor, target.instance)), (runtime) => ({
+      commit: (envelope) => Effect.gen(function*() {
+        const thread = yield* resolveThreadId(envelope.link.target.thread, (id) => Effect.promise(async () => (await runtime.actorThread(id)) !== undefined))
+        const at = yield* Clock.currentTimeMillis
+        yield* Effect.promise(() => runtime.commit({
+          ...envelope, link: { ...envelope.link, target: { ...target, thread } },
+          event: envelope.event.at === undefined ? { ...envelope.event, at } : envelope.event
+        }))
+      }),
+      schedule: Effect.sync(() => { for (const instance of pool.instances.values()) instance.schedule() })
+    }))
+  const http = Context.make(Threads, {
+    methods: options.actor.methods,
+    sqlite: options.storage,
+    actorName: options.actor.name,
+    definitions: Effect.succeed([{ name: options.actor.name, builtIn: false }]),
+    instances: Effect.sync(() => [...pool.instances.keys()].sort().map((id) => ({ id, definition: options.actor.name }))),
+    ensure,
+    instance: (id) => Effect.sync(() => { const runtime = pool.instances.get(id); return runtime === undefined ? undefined : httpThreads(id, runtime) }),
+    append: (instance, thread, event) => Effect.flatMap(ensure(instance), (threads) => threads.append(thread, event)),
+    events: (instance, thread) => Effect.flatMap(ensure(instance), (threads) => threads.events(thread)),
+    list: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.list),
+    settled: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.settled)
+  }).pipe(Context.add(DriverGauge, {
+    resting: Effect.promise(async () => (await Promise.all([...pool.instances.values()].map((runtime) => runtime.resting()))).every(Boolean)),
+    dirty: Effect.sync(() => [...pool.instances.values()].reduce((total, runtime) => total + runtime.work(), 0))
+  }))
   const backend: HostBackend = {
+    http: Context.add(http, Ingress, ingressFrom({ resolve })),
+    resolve,
     allocate,
     submit: async (coordinate, name, input, call) => {
       active()
@@ -142,12 +195,12 @@ export const createHost = async <R, const Methods extends ActorMethods>(options:
     ...client, actor: options.actor.name,
     close: pool.close
   }
-  if (options.storage !== ":memory:") await pool.restore(options.storage, (file) => {
+  if (options.storage !== ":memory:") await pool.restore(options.storage, options.storageLayout?.instanceFromFile ?? ((file) => {
     if (!file.endsWith(".sqlite")) return undefined
     let identity: unknown
     try { identity = JSON.parse(Buffer.from(file.slice(0, -7), "base64url").toString("utf8")) } catch { return undefined }
     return Array.isArray(identity) && identity.length === 2 && identity[0] === options.actor.name && typeof identity[1] === "string" ? identity[1] : undefined
-  })
+  }))
   backends.set(host, backend)
   return host
 }

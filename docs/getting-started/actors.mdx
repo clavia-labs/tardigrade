@@ -31,7 +31,7 @@ interface Actor {
 }
 ```
 
-For example, an actor named `tardie` exposes a message method and uses components for inference and code execution with an MCP package.
+For example, an actor named `meeseeks` exposes a message method and uses components for inference and code execution with an MCP package.
 
 ```ts
 import { defineActor } from "tardie/core"
@@ -39,8 +39,8 @@ import { infer, codeMode } from "./components"
 import { message } from "./methods"
 import { mcpPackage } from "./packages"
 
-const tardie = defineActor(
-  "tardie",
+const meeseeks = defineActor(
+  "meeseeks",
   { message },
   [infer, codeMode(mcpPackage)],
 )
@@ -53,23 +53,37 @@ A host runs the actor and owns its storage, threads, and message delivery. The B
 ```ts
 import { defineActor } from "tardie/core"
 import { createHost } from "tardie/bun"
+import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
 import { mcpPackage } from "./packages"
 
-const tardie = defineActor(
-  "tardie",
+const meeseeks = defineActor(
+  "meeseeks",
   { message },
   [infer, codeMode(mcpPackage)],
 )
 
 const host = await createHost({
-  actor: tardie,
+  actor: meeseeks,
   storage: "./data",
+  layersFor,
 })
 ```
 
 Use `host` to allocate threads and call methods from the surrounding application. Close the host with `await host.close()` when the application is finished using it.
+
+### Supply component requirements
+
+`layersFor(thread)` returns an Effect layer supplying services your components need, such as `Infer` for model calls. Bun supplies the log, routing, thread identity, allocation, and workspace storage. TypeScript requires `layersFor` only when additional services are needed.
+
+```ts
+import { modelLayer } from "./model"
+
+export const layersFor = (_thread: string) => modelLayer
+```
+
+<HostLayersDiagram />
 
 ## Allocate threads
 
@@ -77,7 +91,7 @@ The host returns references with callable methods. Repeating an allocation with 
 
 ### Actor instances
 
-An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `tardie`. Morty can use the same actor definition with a different instance identity.
+An instance scopes the actor's threads. For example, `"rick"` can identify Rick's instance of `meeseeks`. Morty can use the same actor definition with a different instance identity.
 
 <ActorInstancesDiagram />
 
@@ -106,16 +120,16 @@ const researcher = await host.allocateChildThread({
   name: "researcher",
 })
 
-const meeseeks = await host.allocateChildThread({
+const factChecker = await host.allocateChildThread({
   parent: researcher.coordinate,
-  name: "meeseeks",
+  name: "fact-checker",
 })
 ```
 
 `researcher.coordinate` contains the actor, instance, and thread names:
 
 ```json
-{ "actor": "tardie", "instance": "rick", "thread": "researcher" }
+{ "actor": "meeseeks", "instance": "rick", "thread": "researcher" }
 ```
 
 The [supervisor log](#supervisor-log) records each thread's parent and depth, so the host can reconstruct the hierarchy while each coordinate stays `actor/instance/thread`.
@@ -133,7 +147,7 @@ const child = await host.allocateChildThread({ parent: root.coordinate })
 
 ## Invoke a thread
 
-Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickMain` identifies Rick's `"main"` thread, where a caller can invoke `tardie`'s `message` method.
+Once a thread is allocated, a caller can use its reference to invoke a method defined by the actor. For example, `rickMain` identifies Rick's `"main"` thread, where a caller can invoke `meeseeks`'s `message` method.
 
 ```ts
 const response = await rickMain.message({
@@ -141,7 +155,7 @@ const response = await rickMain.message({
 }, { key: "portal-plan" })
 ```
 
-Calls through the host use ordinary `await` calls. The `key` identifies the invocation so a retry can reuse the same call and its result. Calls from inside an actor action use the runtime-aware API and `yield*` to participate in that action's replay history.
+Calls through the host use ordinary `await` calls. The `key` identifies the invocation so a retry can reuse the same call and its result.
 
 <ThreadInvocationDiagram />
 
@@ -152,13 +166,13 @@ Expose the host to other processes with an HTTP server. The host continues to ow
 ```ts
 import { serve } from "tardie/bun"
 
-const server = await serve(host, { port: 3000 })
+const server = await serve(host, { port: 4242 })
 ```
 
 Call Rick's `main` thread from another process:
 
 ```sh
-curl -X POST 'http://localhost:3000/v1/actors/rick/threads/main/methods/message' \
+curl -X POST 'http://localhost:4242/v1/actors/rick/threads/main/methods/message' \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: portal-code' \
   -d '{"text":"What is the portal code?"}'
@@ -175,19 +189,21 @@ This script defines an actor, creates its host, invokes two threads, and closes 
 ```ts expanded
 import { defineActor } from "tardie/core"
 import { createHost } from "tardie/bun"
+import { layersFor } from "./layers"
 import { infer, codeMode } from "./components"
 import { message } from "./methods"
 import { mcpPackage } from "./packages"
 
-const tardie = defineActor(
-  "tardie",
+const meeseeks = defineActor(
+  "meeseeks",
   { message },
   [infer, codeMode(mcpPackage)],
 )
 
 const host = await createHost({
-  actor: tardie,
+  actor: meeseeks,
   storage: "./data",
+  layersFor,
 })
 
 try {
@@ -226,12 +242,12 @@ For Rick's instance, allocation records in the supervisor log can look like this
       <tr><td><code>ThreadRequested</code></td><td><code>main</code></td><td>None</td><td>0</td></tr>
       <tr><td><code>ThreadRequested</code></td><td><code>lab</code></td><td>None</td><td>0</td></tr>
       <tr><td><code>ThreadRequested</code></td><td><code>researcher</code></td><td><code>main</code></td><td>1</td></tr>
-      <tr><td><code>ThreadRequested</code></td><td><code>meeseeks</code></td><td><code>researcher</code></td><td>2</td></tr>
+      <tr><td><code>ThreadRequested</code></td><td><code>fact-checker</code></td><td><code>researcher</code></td><td>2</td></tr>
     </tbody>
   </table>
 </div>
 
-`main` and `lab` are root threads at depth 0. `researcher` is a child of `main`, and `meeseeks` is a child of `researcher`. The host builds the instance's thread directory from these records.
+`main` and `lab` are root threads at depth 0. `researcher` is a child of `main`, and `fact-checker` is a child of `researcher`. The host builds the instance's thread directory from these records.
 
 ### Physical placement
 
@@ -240,7 +256,7 @@ A reference identifies a thread. The host resolves it to where that thread runs,
 For Rick's `main` thread, the Cloudflare host uses JSON arrays to name the actor instance and thread Durable Objects:
 
 ```ts
-const actor = "tardie"
+const actor = "meeseeks"
 const instance = "rick"
 const thread = "main"
 
@@ -251,10 +267,10 @@ const target = env.THREADS.getByName(JSON.stringify([actor, instance, thread]))
 ```text
 Durable Object namespaces
 ├── ACTORS
-│   └── ["tardie","rick"]          # Rick's instance
+│   └── ["meeseeks","rick"]          # Rick's instance
 └── THREADS
-    ├── ["tardie","rick","main"]   # main
-    └── ["tardie","rick","lab"]    # lab
+    ├── ["meeseeks","rick","main"]   # main
+    └── ["meeseeks","rick","lab"]    # lab
 ```
 
 The Bun host stores each thread beside its actor instance's database. It encodes the thread ID as a base64url filename:
@@ -263,7 +279,7 @@ The Bun host stores each thread beside its actor instance's database. It encodes
 import { Buffer } from "node:buffer"
 import { join } from "node:path"
 
-const actorDatabase = "/data/tardie-rick.sqlite"
+const actorDatabase = "/data/meeseeks-rick.sqlite"
 const thread = "main"
 const filename = Buffer.from(thread, "utf8").toString("base64url")
 const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
@@ -271,10 +287,12 @@ const target = join(`${actorDatabase}.threads`, `${filename}.sqlite`)
 
 ```text
 /data/
-├── tardie-rick.sqlite          # Rick's instance database
-└── tardie-rick.sqlite.threads/
+├── meeseeks-rick.sqlite          # Rick's instance database
+└── meeseeks-rick.sqlite.threads/
     ├── bWFpbg.sqlite          # main
     └── bGFi.sqlite            # lab
 ```
 
 <ThreadResolutionDiagram />
+
+In a future guide, we'll be covering more about actor methods.

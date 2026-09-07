@@ -3,7 +3,7 @@ import { useId, type ReactElement } from "react"
 export const ActorInstancesDiagram = ({ threads = false }: { threads?: boolean }): ReactElement => {
   const arrow = useId()
   return (
-    <svg className="actor-instances-diagram" viewBox={`0 0 320 ${threads ? 330 : 220}`} role="img" aria-label={threads ? "The tardie actor definition has two instances. Rick and Morty each have their own main and lab threads." : "The tardie actor definition has two separate instances: Rick and Morty."}>
+    <svg className="actor-instances-diagram" viewBox={`0 0 320 ${threads ? 330 : 220}`} role="img" aria-label={threads ? "The meeseeks actor definition has two instances. Rick and Morty each have their own main and lab threads." : "The meeseeks actor definition has two separate instances: Rick and Morty."}>
       <defs>
         <marker id={arrow} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
           <path d="M0 0L8 4L0 8Z" />
@@ -22,7 +22,7 @@ export const ActorInstancesDiagram = ({ threads = false }: { threads?: boolean }
       <g transform="translate(92 12)">
         <rect width="136" height="66" rx="6" />
         <text className="actor-instances-label" x="68" y="24">Actor definition</text>
-        <text x="68" y="48">tardie</text>
+        <text x="68" y="48">meeseeks</text>
       </g>
       <g transform="translate(8 138)">
         <rect width="136" height="66" rx="6" />

@@ -948,3 +948,13 @@ h1 span { display: block; white-space: nowrap; }
 .actor-event-table table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
 .actor-event-table th, .actor-event-table td { padding: 12px 16px; border-bottom: 1px solid rgb(var(--accent-rgb) / 24%); white-space: nowrap; }
 .actor-event-table th { color: var(--ink-2); font-weight: 500; }
+
+.host-layers-diagram { display: block; width: min(100%, 480px); height: auto; margin: 20px auto; }
+.host-layer-top { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.host-layer-side { fill: var(--moss-wash); stroke: var(--moss-ink); stroke-width: 1.25; stroke-linejoin: round; }
+.host-layers-diagram text { fill: var(--ink); font: 18px var(--mono); text-anchor: middle; }
+.host-layers-diagram .host-layer-label { fill: var(--ink-2); font: 13px var(--brand); }
+.host-layer-guides path { fill: none; stroke: rgb(var(--accent-rgb) / 35%); stroke-dasharray: 3 5; }
+.host-layer-callouts path { fill: none; stroke: var(--moss-ink); stroke-width: 1; }
+.host-layer-callouts text { fill: var(--ink-2); font: 13px var(--brand); text-anchor: start; }
+.host-layer-callouts .host-layer-code { fill: var(--moss-ink); font-family: var(--mono); }

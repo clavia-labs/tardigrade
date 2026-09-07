@@ -14,7 +14,7 @@ import {
   readConfig,
   type ServerConfigValue
 } from "./config"
-import { Threads, type ActorThreads } from "./host"
+import { Threads, type ActorThreads } from "./threads"
 import { layerModelCatalogUnavailable } from "./catalog"
 import { ALLOWED_HEADERS, serve, PROBLEM_CONTENT_TYPE, type Health } from "./http"
 import { DriverGauge, layerGaugeResting } from "./driver-gauge"

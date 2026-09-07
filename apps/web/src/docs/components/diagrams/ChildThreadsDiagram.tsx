@@ -8,12 +8,12 @@ export const ChildThreadsDiagram = (): ReactElement => {
         const logical = view === "Logical"
         const marker = `${arrow}-${view}`
         const threads = logical
-          ? [{ x: 48, y: 130, width: 136, name: "main" }, { x: 296, y: 130, width: 136, name: "lab" }, { x: 48, y: 234, width: 136, name: "researcher" }, { x: 48, y: 338, width: 136, name: "meeseeks" }]
-          : [{ x: 4, y: 130, width: 108, name: "main" }, { x: 128, y: 130, width: 108, name: "researcher" }, { x: 252, y: 130, width: 108, name: "meeseeks" }, { x: 376, y: 130, width: 108, name: "lab" }]
+          ? [{ x: 48, y: 130, width: 136, name: "main" }, { x: 296, y: 130, width: 136, name: "lab" }, { x: 48, y: 234, width: 136, name: "researcher" }, { x: 48, y: 338, width: 136, name: "fact-checker" }]
+          : [{ x: 4, y: 130, width: 108, name: "main" }, { x: 128, y: 130, width: 108, name: "researcher" }, { x: 252, y: 130, width: 108, name: "fact-checker" }, { x: 376, y: 130, width: 108, name: "lab" }]
         return (
           <figure key={view}>
             <figcaption>{view}</figcaption>
-            <svg className="actor-instances-diagram" viewBox="0 0 488 424" role="img" aria-label={logical ? "Logical hierarchy: Rick's instance has main and lab threads. Researcher is a child of main, and Meeseeks is a child of researcher." : "Physical layout: main, researcher, meeseeks, and lab are separate threads in Rick's instance. Main creates researcher, and researcher creates meeseeks."}>
+            <svg className="actor-instances-diagram" viewBox="0 0 488 424" role="img" aria-label={logical ? "Logical hierarchy: Rick's instance has main and lab threads. Researcher is a child of main, and Fact-checker is a child of researcher." : "Physical layout: main, researcher, fact-checker, and lab are separate threads in Rick's instance. Main creates researcher, and researcher creates fact-checker."}>
               <defs>
                 <marker id={marker} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto">
                   <path d="M0 0L8 4L0 8Z" />
@@ -47,7 +47,7 @@ export const ChildThreadsDiagram = (): ReactElement => {
                 <g key={name} transform={`translate(${x} ${y})`}>
                   <rect width={width} height="66" rx="6" />
                   <text className="actor-instances-label" x={width / 2} y="24">Thread</text>
-                  <text x={width / 2} y="48">{name}</text>
+                  <text x={width / 2} y="48" style={{ fontSize: name.length > 10 ? 13 : 16 }}>{name}</text>
                 </g>
               ))}
             </svg>

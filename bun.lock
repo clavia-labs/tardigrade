@@ -39,9 +39,9 @@
       "dependencies": {
         "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-client": "workspace:*",
-        "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
+        "@clavia/tardigrade-http": "workspace:*",
         "@clavia/tardigrade-model": "workspace:*",
         "@effect/platform-bun": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
@@ -213,6 +213,7 @@
       "version": "0.0.1",
       "dependencies": {
         "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-bun": "workspace:*",
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "effect": "4.0.0-rc.110",
@@ -229,6 +230,8 @@
         "@clavia/tardigrade-code": "workspace:*",
         "@clavia/tardigrade-core": "workspace:*",
         "@clavia/tardigrade-host": "workspace:*",
+        "@clavia/tardigrade-http": "workspace:*",
+        "@effect/platform-bun": "4.0.0-rc.110",
         "@effect/sql-sqlite-bun": "4.0.0-rc.110",
         "effect": "4.0.0-rc.110",
       },
@@ -253,6 +256,22 @@
         "fast-check": "^4.9.0",
         "vitest": "^4.1.10",
         "wrangler": "^4.119.0",
+      },
+    },
+    "platform/http": {
+      "name": "@clavia/tardigrade-http",
+      "version": "0.0.1",
+      "dependencies": {
+        "@clavia/tardigrade-agent": "workspace:*",
+        "@clavia/tardigrade-client": "workspace:*",
+        "@clavia/tardigrade-code": "workspace:*",
+        "@clavia/tardigrade-core": "workspace:*",
+        "@clavia/tardigrade-host": "workspace:*",
+        "@clavia/tardigrade-model": "workspace:*",
+        "effect": "4.0.0-rc.110",
+      },
+      "devDependencies": {
+        "@effect/platform-bun": "4.0.0-rc.110",
       },
     },
     "platform/model": {
@@ -411,6 +430,8 @@
     "@clavia/tardigrade-e2e": ["@clavia/tardigrade-e2e@workspace:e2e"],
 
     "@clavia/tardigrade-host": ["@clavia/tardigrade-host@workspace:packages/host"],
+
+    "@clavia/tardigrade-http": ["@clavia/tardigrade-http@workspace:platform/http"],
 
     "@clavia/tardigrade-model": ["@clavia/tardigrade-model@workspace:platform/model"],
 

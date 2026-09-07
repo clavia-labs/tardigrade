@@ -94,32 +94,35 @@ const adapterFor = (protocol: ModelProtocol): { readonly name: string; readonly 
 const workerTemplate = (protocol: ModelProtocol): string => {
   const adapter = adapterFor(protocol)
   return `import definition from "./actor"
-import { ActorDO, ThreadDO, cloudflareWorker, modelScopeFrom } from "tardie/cloudflare"
+import { createWorker, modelScopeFrom } from "tardie/worker"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 import modelLock from "./models.lock.json"
 
-export { ActorDO, ThreadDO }
-export default cloudflareWorker(definition, {
+const { worker, ActorDO, ThreadDO } = createWorker(definition, {
   modelAdapters: modelAdapters(${adapter.name}),
   modelScope: modelScopeFrom(modelLock)
 })
+
+export { ActorDO, ThreadDO }
+export default worker
 `
 }
 
-const serverTemplate = (): string => `import { Layer } from "effect"
-import { BunFileSystem, BunHttpServer, BunRuntime } from "@effect/platform-bun"
-import { assertSupportedBun } from "tardie/bun/runtime"
-import { layerModelCatalog } from "tardie/server/catalog"
+const serverTemplate = (protocol: ModelProtocol): string => {
+  const adapter = adapterFor(protocol)
+  return `import { Effect, Layer } from "effect"
+import { BunFileSystem, BunPath } from "@effect/platform-bun"
+import { FetchHttpClient } from "effect/unstable/http"
+import { createHost, serve } from "tardie/bun"
+import { modelLayer } from "tardie/model/host"
+import { makeInferenceStream } from "tardie/http/inference-stream"
+import { modelAdapters } from "tardie/model/adapter"
+import { ${adapter.name} } from "${adapter.source}"
+import { ModelCatalogStore, layerModelCatalog } from "tardie/server/catalog"
 import { layerFileModelCatalogRepository } from "tardie/server/catalog-repository"
 import { layerConfig, projectConfigOf, projectConfigPathOf, readConfig } from "tardie/server/config"
-import { layerActorThreads } from "tardie/server/host"
-import { serve } from "tardie/server/http"
-import { makeInferenceStream } from "tardie/server/inference-stream"
-
 import definition from "./actor"
-
-assertSupportedBun()
 
 const projectPath = projectConfigPathOf(process.env)
 const projectFile = Bun.file(projectPath)
@@ -134,18 +137,37 @@ const catalogRepository = layerFileModelCatalogRepository(config.catalog.cachePa
   Layer.provide(BunFileSystem.layer)
 )
 const catalog = Layer.provide(layerModelCatalog(), [configLayer, catalogRepository])
+const snapshot = await Effect.runPromise(ModelCatalogStore.pipe(Effect.provide(catalog)))
 const inference = makeInferenceStream()
-const threads = Layer.provide(
-  layerActorThreads(definition, { inferenceObserver: inference.observer }),
-  [configLayer, catalog]
+const layers = Layer.mergeAll(
+  modelLayer(config, snapshot, modelAdapters(${adapter.name}), inference.observer),
+  BunFileSystem.layer,
+  BunPath.layer,
+  FetchHttpClient.layer
 )
-const application = Layer.provide(
-  serve({ api: { inference } }),
-  [BunHttpServer.layer({ port: config.port }), configLayer, threads, catalog]
-)
+const host = await createHost({
+  actor: definition,
+  storage: config.actorData,
+  driver: { maxConcurrentThreads: config.maxConcurrentThreads },
+  layersFor: () => layers
+})
 
-BunRuntime.runMain(Layer.launch(application))
+try {
+  const server = await serve(host, { port: config.port, config, catalog: snapshot, api: { inference }, ...(config.token === undefined ? {} : { token: config.token }) })
+  try {
+    await new Promise<void>((resolve) => {
+      const stop = () => { process.off("SIGINT", stop); process.off("SIGTERM", stop); resolve() }
+      process.once("SIGINT", stop)
+      process.once("SIGTERM", stop)
+    })
+  } finally {
+    await server.close()
+  }
+} finally {
+  await host.close()
+}
 `
+}
 
 const packageTemplate = (
   version: string,
@@ -196,7 +218,7 @@ export const initActor = async (name: string, options: InitActorOptions): Promis
 
   try {
     await writeFile(entry, source, "utf8")
-    await writeFile(server, serverTemplate(), "utf8")
+    await writeFile(server, serverTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
     await writeFile(worker, workerTemplate(options.modelProtocol ?? "openai-chat-completions"), "utf8")
     await writeFile(manifest, manifestSource, "utf8")
     await writeFile(celldManifest, celldConfigOf(manifestSource, manifest).source, "utf8")

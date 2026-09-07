@@ -21,7 +21,7 @@ const exists = async (path: string): Promise<boolean> => {
 }
 
 const workerSource = (adapter: { readonly name: string; readonly source: string }): string => `import { actor } from "tardie"
-import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/cloudflare"
+import { ActorDO, ThreadDO, cloudflareWorker } from "tardie/worker"
 import { modelAdapters } from "tardie/model/adapter"
 import { ${adapter.name} } from "${adapter.source}"
 

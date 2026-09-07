@@ -39,6 +39,7 @@ const sources = [
   { dir: "platform/worker-loader", namespace: "worker-loader" },
   { dir: "platform/cloudflare", namespace: "cloudflare" },
   { dir: "platform/model", namespace: "model" },
+  { dir: "platform/http", namespace: "http" },
   { dir: "apps/server", namespace: "server" },
   { dir: "apps/cli", namespace: "cli" }
 ] as const
@@ -288,8 +289,11 @@ try {
       "./bun": "./src/bun/index.ts",
       "./bun/*": "./src/bun/*.ts",
       "./worker-loader/*": "./src/worker-loader/*.ts",
+      "./worker": "./src/cloudflare/index.ts",
+      "./worker/*": "./src/cloudflare/*.ts",
       "./cloudflare": "./src/cloudflare/index.ts",
       "./cloudflare/*": "./src/cloudflare/*.ts",
+      "./http/*": "./src/http/*.ts",
       "./server/*": "./src/server/*.ts",
       "./cli/*": "./src/cli/*.ts",
       "./model": "./src/model/model.ts",

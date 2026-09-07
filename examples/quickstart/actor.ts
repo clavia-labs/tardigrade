@@ -1,6 +1,6 @@
 import { Effect } from "effect"
-import { actor } from "tardie/core"
-import { agentMessageMethod, infer, nativeOutput, system, tool } from "tardie/agent"
+import { defineActor } from "tardie/core"
+import { agentMessageMethod, infer, outputValidateOnce, system, tool } from "tardie/agent"
 
 const actorName = "weather-agent"
 
@@ -18,12 +18,12 @@ const weather = tool({
   run: () => Effect.succeed({ temperature: 21 })
 })
 
-export default actor({
-  name: actorName,
-  methods: { message: agentMessageMethod },
-  components: [infer([
+export default defineActor(
+  actorName,
+  { message: agentMessageMethod },
+  [infer([
     system(actorInstructions),
     weather,
-    nativeOutput
+    outputValidateOnce
   ])]
-})
+)
