@@ -1,3 +1,4 @@
+import { transitionKeyOf } from "../transition/transition"
 import type { Event } from "@clavia/tardigrade-core/event"
 
 /**
@@ -27,6 +28,8 @@ export const composeKeys = (...fragments: ReadonlyArray<KeyFragment>): ((e: Even
     }
   })
   return (e) => {
+    const key = transitionKeyOf(e)
+    if (key !== undefined) return key
     for (const fragment of fragments) {
       const key = fragment.keyOf(e)
       if (key !== undefined) return key

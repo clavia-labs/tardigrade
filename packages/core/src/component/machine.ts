@@ -1,3 +1,5 @@
+import type { Event } from "../event"
+import { bindTransitionContext, validateTransitions, TRANSITION_COMPONENT_IDS, type TransitionContext } from "../transition/transition"
 import {
   materializeProjection,
   type MaterializedProjectionState,
@@ -9,6 +11,8 @@ import { COMPONENT_CONTRACT, type ComponentContract } from "../actor/contract"
 import type { InvocationCancellation } from "../interaction/events"
 import type { Component } from "./component"
 import type { ComponentOutput } from "./output"
+
+export type { TransitionContext } from "../transition/transition"
 
 export type { InvocationCancellation } from "../interaction/events"
 
@@ -33,13 +37,14 @@ export interface ComponentMachine<View, Requirements = never>
 
 // ComponentDefinition is the typed author surface for a component machine.
 export interface ComponentDefinition<State, View, Requirements = never>
-  extends Projection<State, ComponentOutput<View, Requirements>> {
+  extends Omit<Projection<State, ComponentOutput<View, Requirements>>, "step"> {
   readonly name: string
+  readonly step: (state: State, event: Event, context: TransitionContext) => State
   readonly cancelState?: (
     state: State,
     cancellation: InvocationCancellation
   ) => ReadonlyArray<Transition<never, Requirements>>
-  readonly keys?: KeyFragment
+  readonly keys?: KeyFragment | "runtime"
   readonly [COMPONENT_CONTRACT]?: ComponentContract
 }
 
@@ -49,8 +54,12 @@ const eraseMachine = <State, View, Requirements>(
   const cancelState = definition.cancelState
   const projection = materializeProjection<State, ComponentOutput<View, Requirements>>({
     initial: definition.initial,
-    step: definition.step,
-    output: definition.output
+    step: (state, event) => definition.step(state, event, bindTransitionContext(event, definition.name, definition.keys === "runtime")),
+    output: (state) => {
+      const output = definition.output(state)
+      validateTransitions(output.transitions)
+      return output
+    }
   })
   type CachedState = MaterializedProjectionState<State, ComponentOutput<View, Requirements>>
   return {
@@ -79,10 +88,12 @@ export const component = <State, View, Requirements = never>(
       `component "${definition.name}" requires initial, step, and output; use legacyComponent for derive(log) definitions`
     )
   }
+  if (definition.keys === "runtime" && definition.name.length === 0) throw new Error("runtime-keyed components require a nonempty name")
   return {
     name: definition.name,
+    ...(definition.keys === "runtime" ? { [TRANSITION_COMPONENT_IDS]: [definition.name] } : {}),
     machine: eraseMachine(definition),
-    ...(definition.keys === undefined ? {} : { keys: definition.keys }),
+    ...(definition.keys === undefined || definition.keys === "runtime" ? {} : { keys: definition.keys }),
     ...(definition[COMPONENT_CONTRACT] === undefined ? {} : { [COMPONENT_CONTRACT]: definition[COMPONENT_CONTRACT] })
   }
 }

@@ -1,3 +1,4 @@
+import { TRANSITION_COMPONENT_IDS, transitionComponentIds } from "../transition/transition"
 import { Chunk } from "effect"
 import type { Event } from "@clavia/tardigrade-core/event"
 import { materializeProjection, type MaterializedProjectionState } from "@clavia/tardigrade-core/projection"
@@ -74,6 +75,7 @@ export const composeComponents = <
   }
 
   const members = components as ReadonlyArray<Component<View, Requirements>>
+  const componentIds = transitionComponentIds(members)
   const fragments = members.flatMap((component) => component.keys === undefined ? [] : [component.keys])
   const keys = fragments.length === 0
     ? undefined
@@ -102,7 +104,7 @@ export const composeComponents = <
     return [...cancel(state, node.left, cancellation), ...cancel(state, node.right, cancellation)]
   }
 
-  return component<CompositionState, View, Requirements>({
+  const composed = component<CompositionState, View, Requirements>({
     name,
     ...(keys === undefined ? {} : { keys }),
     [COMPONENT_CONTRACT]: mergeComponentContracts(members),
@@ -149,4 +151,5 @@ export const composeComponents = <
     output: (state) => state.output,
     cancelState: (state: CompositionState, cancellation: InvocationCancellation) => cancel(state, state.root, cancellation)
   })
+  return { ...composed, [TRANSITION_COMPONENT_IDS]: componentIds }
 }

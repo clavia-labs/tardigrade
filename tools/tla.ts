@@ -40,6 +40,12 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("runtime", "TransitionIdentity", "TransitionIdentity.cfg"),
+  pass("runtime", "TransitionIdentity", "TransitionIdentityLive.cfg"),
+  counterexample("runtime", "TransitionIdentity", "TransitionIdentityNoOwner.cfg", "Invariant ExactResolution is violated"),
+  counterexample("runtime", "TransitionIdentity", "TransitionIdentityNoComponent.cfg", "Invariant ExactResolution is violated"),
+  counterexample("runtime", "TransitionIdentity", "TransitionIdentityNoTag.cfg", "Invariant ExactResolution is violated"),
+  counterexample("runtime", "TransitionIdentity", "TransitionIdentityUnfair.cfg", "AllResolved was violated"),
   pass("host", "Identity", "Identity.cfg"),
   pass("host", "Identity", "IdentityKey.cfg"),
   pass("host", "Identity", "IdentityLive.cfg"),

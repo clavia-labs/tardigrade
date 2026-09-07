@@ -1,7 +1,7 @@
 import { Effect as EffectRuntime } from "effect"
 import type { InvocationRef } from "@clavia/tardigrade-core/interaction/invocation"
 import type { Event } from "@clavia/tardigrade-core/event"
-import { EventLog } from "@clavia/tardigrade-core/log"
+import type { EventLog } from "@clavia/tardigrade-core/log"
 
 /**
  * ExternalEffect is one keyed unit of work outside the event log. Its action may use required services, append evidence, and return events (tla/runtime/Reconcile.tla, CommitOne).
