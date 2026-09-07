@@ -5,7 +5,7 @@ import { Infer, type InferenceObserver, type ModelPolicy, type ModelRef } from "
 import type { Actor, ActorMethods } from "@clavia/tardigrade-core/actor"
 import { ModelCatalog as ModelCatalogSchema, type ModelCatalog } from "@clavia/tardigrade-client/contract"
 import { modelLayer as hostModelLayer } from "@clavia/tardigrade-model/host"
-import type { ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
+import { modelAdapters, type ModelAdapterRegistry } from "@clavia/tardigrade-model/adapter"
 import { DEFAULT_MODEL_CATALOG_URL } from "@clavia/tardigrade-model/metadata"
 import { loadModelCatalog, type ModelCatalogLoadPolicy, type ModelCatalogState } from "@clavia/tardigrade-model/catalog"
 import { providerAvailabilitiesOf } from "@clavia/tardigrade-model/catalog-availability"
@@ -47,18 +47,9 @@ export const retainBackgroundTask = (
   if (owner === "request") scope.waitUntil(task)
 }
 
-interface MountedActor {
-  readonly allocation?: ThreadAllocationPolicy
-  readonly threadAllocator?: typeof ThreadAllocator.Service
-  readonly name: string
+type MountedActor = CloudflareWorkerOptions<never> & {
   readonly actor: Actor<never>
-  readonly methods: ActorMethods
   readonly modelAdapters: ModelAdapterRegistry
-  readonly modelScope?: DeploymentModelScope
-  readonly inferenceObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => InferenceObserver
-  readonly commitObserverFor?: (context: CloudflareWorkerLayerContext<Env>) => CommitObserver
-  readonly layersFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadEnv<never>
-  readonly storeFor?: (context: CloudflareWorkerLayerContext<Env>) => CloudflareThreadStorePolicy
   readonly defaultChildPlacement: ChildPlacement
   readonly backgroundTaskOwner: BackgroundTaskOwner
 }
@@ -116,7 +107,7 @@ export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_TIMEOUT_MILLIS = 10_000
 // DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY refreshes the interpreter catalog once per Thread DO activation.
 export const DEFAULT_CLOUDFLARE_MODEL_CATALOG_LOAD_POLICY: ModelCatalogLoadPolicy = "refresh"
 
-export const deployed = (name: string): boolean => mountedActor?.name === name
+export const deployed = (name: string): boolean => mountedActor?.actor.name === name
 export const directory = cloudflareDirectory(deployed)
 
 interface CloudflareProvider extends ModelProviderConfig {
@@ -250,10 +241,10 @@ export const sandboxTransportOf = (raw: string | undefined): WorkerLoaderSandbox
 }
 
 export const assemblyOf = (name: string): Actor<never> | undefined =>
-  mountedActor?.name === name ? mountedActor.actor : undefined
+  mountedActor?.actor.name === name ? mountedActor.actor : undefined
 
 export const methodsOf = (name: string): ActorMethods | undefined =>
-  mountedActor?.name === name ? mountedActor.methods : undefined
+  mountedActor?.actor.name === name ? mountedActor.actor.methods : undefined
 
 type CloudflareWorkerProvided = CloudflarePorts | Infer | HttpClient.HttpClient
 type CloudflareApplicationRequirements<R> = Exclude<R, CloudflareWorkerProvided>
@@ -295,7 +286,23 @@ export type CloudflareWorkerArguments<R, WorkerEnv extends Env> =
     ? [options?: CloudflareWorkerOptions<R, WorkerEnv>]
     : [options: CloudflareWorkerOptions<R, WorkerEnv>]
 
-// mountActor installs the assembly shared by the HTTP entry point and Durable Objects.
-export const mountActor = (value: MountedActor): void => {
-  mountedActor = value
+// mountActor rejects a second assembly in the Worker module (test/actor.workers.ts, "rejects remounting without replacing the actor").
+export const mountActor = <R, const Methods extends ActorMethods, WorkerEnv extends Env = Env>(
+  definition: Actor<R, Methods>,
+  ...[options]: CloudflareWorkerArguments<R, WorkerEnv>
+): void => {
+  if (mountedActor !== undefined) {
+    throw new Error(`Worker already hosts actor ${JSON.stringify(mountedActor.actor.name)}; call createWorker once per module`)
+  }
+  const defaultChildPlacement = options?.defaultChildPlacement ?? DEFAULT_CLOUDFLARE_CHILD_PLACEMENT
+  if (!CLOUDFLARE_CHILD_PLACEMENTS.includes(defaultChildPlacement as "independent")) {
+    throw new Error(`Cloudflare Durable Object host does not support ${JSON.stringify(defaultChildPlacement)} thread placement`)
+  }
+  mountedActor = {
+    ...options,
+    actor: definition,
+    modelAdapters: options?.modelAdapters ?? modelAdapters(),
+    defaultChildPlacement,
+    backgroundTaskOwner: options?.backgroundTaskOwner ?? DEFAULT_BACKGROUND_TASK_OWNER
+  } as unknown as MountedActor
 }

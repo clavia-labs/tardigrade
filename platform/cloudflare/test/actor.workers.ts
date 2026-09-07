@@ -11,6 +11,8 @@ import { ModelCatalogRepository } from "@clavia/tardigrade-model/catalog-store"
 import { actorFromProjections, actorRuntimeOf } from "@clavia/tardigrade-core/runtime"
 import { deadlineCancellationEventsAt } from "@clavia/tardigrade-core/interaction/timeout"
 import {
+  createWorker,
+  cloudflareWorker,
   backgroundTaskOwnerOf,
   DEFAULT_BACKGROUND_TASK_OWNER,
   modelCatalogForConfig,
@@ -19,7 +21,7 @@ import {
   type Env
 } from "../src/worker"
 import { modelAdapters } from "@clavia/tardigrade-model/adapter"
-import { modelLayer, modelsFrom } from "../src/assembly"
+import { modelLayer, modelsFrom, mountedActor } from "../src/assembly"
 import { layerCloudflareModelCatalogRepository } from "../src/catalog"
 import { createCloudflareThreadHost } from "../src/host"
 import { plaintextEventCodec } from "../src/storage"
@@ -1174,3 +1176,15 @@ test("HTTP allocation preserves unnamed keys and creates nested children", async
   expect((await SELF.fetch(new URL(accepted.headers.get("Location")!, "http://test"), { headers: authorization })).status).toBe(200)
   expect(await methodState(grandchild.thread, "sdk-nested")).toMatchObject({ status: "completed" })
 }, WORKER_INTEGRATION_TIMEOUT_MILLIS)
+
+
+test("rejects remounting without replacing the actor", () => {
+  const original = mountedActor
+  expect(original).toBeDefined()
+  for (const name of ["echo", "other"]) {
+    const definition = actor({ name, methods: {}, components: [] })
+    expect(() => createWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
+    expect(() => cloudflareWorker(definition)).toThrow('Worker already hosts actor "echo"; call createWorker once per module')
+    expect(mountedActor).toBe(original)
+  }
+})
