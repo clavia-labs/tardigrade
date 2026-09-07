@@ -11,7 +11,11 @@ A host runs an actor and owns its storage, threads, and execution. A server give
 
 ## Start a server
 
-After defining your [actor](/docs/actors), create a Bun host and serve it:
+After defining your [actor](/docs/actors), choose Bun or a Worker deployment on Cloudflare or celld.
+
+### Bun
+
+Create a host and serve it over HTTP:
 
 ```ts
 import { createHost, serve } from "tardie/bun"
@@ -36,7 +40,7 @@ Here, `actor` is your exported actor definition, and `layersFor` supplies its ap
 
 Run the file with `bun run server.ts`. For a generated project with model configuration and application layers, follow the [Quickstart](/docs/quickstart).
 
-### Server options
+#### Bun server options
 
 <div className="docs-api-table">
   <table>
@@ -60,6 +64,23 @@ await host.close()
 ```
 
 Closing the HTTP server ends network access. Closing the host interrupts active work and releases its storage resources.
+
+### Workers (Cloudflare and celld)
+
+Cloudflare and celld use the same Worker entry point:
+
+```ts
+import { createWorker } from "tardie/worker"
+import { actor } from "./actor"
+import { layersFor } from "./worker-layers"
+
+const { worker, ActorDO, ThreadDO } = createWorker(actor, { layersFor })
+
+export { ActorDO, ThreadDO }
+export default worker
+```
+
+Call `createWorker` once per Worker module. The assembly serves one actor definition with many instances and threads. `layersFor` receives the Worker environment, instance, and thread. The platform owns the HTTP listener and Durable Object lifecycle. Follow the [Cloudflare guide](/docs/platforms/cloudflare) or [celld guide](/docs/platforms/celld) for bindings, storage, and deployment.
 
 ## Address an instance and thread
 
@@ -278,24 +299,9 @@ Bun keeps `/healthz`, `/v1/providers`, `/v1/models`, `/openapi.json`, and `/docs
 
 Request failures use `application/problem+json` with `type`, `title`, `status`, and `detail`. Input or query validation returns 400, missing resources return 404, and a settled-invocation cancellation can return 409. Unexpected server failures return 500. Inspect the response body for the specific failure.
 
-## Cloudflare Workers
+## Worker API support
 
-Cloudflare assembles the actor and Worker handler together:
-
-```ts
-import { createWorker } from "tardie/worker"
-import { actor } from "./actor"
-import { layersFor } from "./worker-layers"
-
-const { worker, ActorDO, ThreadDO } = createWorker(actor, { layersFor })
-
-export { ActorDO, ThreadDO }
-export default worker
-```
-
-Call `createWorker` once per Worker module. The assembly serves one actor definition with many instances and threads. `layersFor` receives the Worker environment, instance, and thread. Follow the [Cloudflare guide](/docs/platforms/cloudflare) for bindings, storage, and deployment.
-
-Cloudflare exposes method discovery, POST and PUT invocation, call state, cancellation, provider and model discovery, metadata, instance ensure/read, thread allocation/listing, and event append/read. It does not currently expose Bun's instance collection, definition registry, thread tree, SSE streams, custom projections, or interactive API documentation.
+Workers on Cloudflare and celld expose method discovery, POST and PUT invocation, call state, cancellation, provider and model discovery, metadata, instance ensure/read, thread allocation/listing, and event append/read. The Worker API does not currently expose Bun's instance collection, definition registry, thread tree, SSE streams, custom projections, or interactive API documentation.
 
 Set `TARDIGRADE_TOKEN` for protected Worker routes. Missing authentication configuration returns 503; an absent or incorrect bearer token returns 401. Health and model/provider discovery remain public. Some Worker routes return `{ error }` bodies, so clients should inspect the response content type rather than assume every Worker error is a problem document. Worker health reports `ready` and the actor name.
 
