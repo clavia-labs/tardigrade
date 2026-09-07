@@ -295,7 +295,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
     `.pipe(
       Effect.map((rows) => ({
         cursor: Number(rows.at(-1)?.seq ?? 0),
-        threads: actorThreadsOf(rows.map((row) => JSON.parse(row.event) as Event)).filter((record) => record.state !== "allocated")
+        threads: actorThreadsOf(rows.map((row) => JSON.parse(row.event) as Event))
       })),
       Effect.orDie
     ))
@@ -342,7 +342,7 @@ export const createBunHost = async <R = never>(options: BunHostOptions<R>): Prom
       }),
       at
     } satisfies ThreadRequested)
-    await appendActorEvent({ type: "ThreadRegistered", thread, at } satisfies ThreadRegistered)
+    await appendActorEvent({ type: "ThreadRegistered", thread, ...(lineage?.placement === undefined ? {} : { placement: lineage.placement }), at } satisfies ThreadRegistered)
   }
   const threads = (): Promise<ReadonlyArray<string>> => directoryRuntime.runPromise(
     directorySql<{ thread: string }>`SELECT thread FROM thread_directory ORDER BY thread`.pipe(Effect.map((rows) => rows.map((row) => row.thread)), Effect.orDie)

@@ -102,7 +102,7 @@ const legacyChild = (callId: string): Event => ({
 const expectedThread = async (turn: string, call: string) => (await Effect.runPromise(testAllocator.allocate({
   kind: "child",
   parent: parseThreadAddress("mem:main:ag.root"),
-  child: childKeyOf(JSON.stringify([turn, call]))
+  child: childKeyOf("unnamed"), key: JSON.stringify([turn, call])
 }))).thread
 
 describe("agentsPackage", () => {
@@ -115,7 +115,7 @@ describe("agentsPackage", () => {
     const invoke = () => agentsPackage().methods.run!({ text: "work", background: true }, { callId: "call" }).pipe(
       Effect.provideService(ThreadAllocator, { allocate: (request) => Effect.sync(() => {
         allocations++
-        expect(request).toEqual({ kind: "child", parent, child: childKeyOf(JSON.stringify(["turn", "call"])) })
+        expect(request).toEqual({ kind: "child", parent, child: childKeyOf("unnamed"), key: JSON.stringify(["turn", "call"]) })
         if (allocations > 1) throw new Error("replay must use its recorded coordinate")
         return target
       }) }),

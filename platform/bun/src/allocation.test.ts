@@ -23,16 +23,17 @@ test("the actor directory retains root and child assignments across restarts", a
     const spawn = { kind: "child" as const, parent: root, child: childKeyOf("researcher") }
     const children = await Promise.all(Array.from({ length: 10 }, () => host.allocate(spawn)))
     expect(new Set(children.map((child) => child.thread)).size).toBe(1)
-    expect(children[0]!.thread).not.toBe(root.thread)
+    expect(children[0]!.thread).toBe("researcher")
+    await expect(host.assignThread({ kind: "root", coordinate: { ...root, thread: "researcher" } })).rejects.toThrow("already taken")
     let retries = 0
     generate = () => retries++ === 0 ? children[0]!.thread : "calm-otter-cccc"
-    const siblingRequest = { ...spawn, child: childKeyOf("writer") }
+    const siblingRequest = { ...spawn, child: childKeyOf("unnamed"), key: "writer" }
     const sibling = await host.assignThread(siblingRequest)
     expect(sibling.thread).toBe("calm-otter-cccc")
     expect(retries).toBe(2)
     const allocated = actorThreadsOf((await host.readActorPage(0, 100)).map((row) => row.event))
     expect(allocated).toHaveLength(3)
-    expect(allocated.find((record) => record.thread === root.thread)).toMatchObject({ allocationKey: threadAllocationKey(request), state: "allocated" })
+    expect(allocated.find((record) => record.thread === root.thread)).toMatchObject({ allocationKey: threadAllocationKey(request), state: "requested" })
     await expect(host.assignThread({ ...request, coordinate: { ...request.coordinate, instance: "morty" } })).rejects.toThrow("owning actor directory")
     await host.close()
     host = await createBunHost({ ...options, allocation: { generate: () => { throw new Error("must read persisted assignment") } } })

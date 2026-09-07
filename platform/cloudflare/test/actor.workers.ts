@@ -1,3 +1,4 @@
+import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { env, runInDurableObject, SELF } from "cloudflare:test"
 import { Effect, ManagedRuntime, Schema } from "effect"
 import { actor, actorMethod, component } from "tardie"
@@ -716,9 +717,12 @@ describe("cloudflare actor", () => {
     expect(results[0]!.thread).toMatch(/^[a-z]+-[a-z]+-[a-z2-7]{4}$/)
     expect(await directory.allocateThread(request)).toEqual(results[0])
     const rows = await runInDurableObject(directory, (_instance, state) =>
-      state.storage.sql.exec<{ thread: string }>("SELECT json_extract(event, '$.thread') AS thread FROM events WHERE json_extract(event, '$.type') = 'ThreadAllocated'").toArray())
+      state.storage.sql.exec<{ thread: string }>("SELECT json_extract(event, '$.thread') AS thread FROM events WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.allocationKey') IS NOT NULL").toArray())
     expect(rows.map((row) => row.thread)).toContain(results[0]!.thread)
     expect(rows.filter((row) => row.thread === results[0]!.thread)).toHaveLength(1)
+    expect(await runInDurableObject(directory, (_instance, state) => state.storage.getAlarm())).not.toBeNull()
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect((await directory.threadTree()).some((node) => node.id === results[0]!.thread)).toBe(true)
     const tables = await runInDurableObject(directory, (_instance, state) =>
       state.storage.sql.exec<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table'").toArray())
     expect(tables.map((row) => row.name)).not.toContain("thread_assignments")
@@ -890,6 +894,33 @@ describe("cloudflare actor", () => {
     expect((await native.events(target.thread))[0]).toMatchObject({ address: target })
   })
 
+  test("a child request reserves its name and registers after delivery with its placement", async () => {
+    const directory = controlStub()
+    await directory.init("echo", "main")
+    const parent = await directory.createThread("requested-parent")
+    const request = { kind: "child" as const, parent, child: childKeyOf("requested-child") }
+    const target = await directory.allocateThread(request)
+    expect(target.thread).toBe("requested-child")
+    await runInDurableObject(directory, (instance) => instance.alarm())
+    expect((await directory.threadTree()).find((node) => node.id === parent.thread)?.children).toEqual([])
+    await directory.createThread("requested-unrelated")
+    await directory.deliverChild({
+      link: { source: parent, target },
+      event: { type: "MessageReceived", id: "requested-brief", text: "hello", at: 1 },
+      lineage: { parent, depth: 1, placement: "independent" }
+    })
+    expect(await directory.allocateThread(request)).toEqual(target)
+    expect((await directory.threadTree()).find((node) => node.id === parent.thread)?.children).toEqual([
+      expect.objectContaining({ id: target.thread, parent: parent.thread, depth: 1, placement: "independent" })
+    ])
+    const rows = await runInDurableObject(directory, (_instance, state) =>
+      state.storage.sql.exec<{ event: string }>("SELECT event FROM events WHERE json_extract(event, '$.thread') = 'requested-child' ORDER BY seq").toArray())
+    expect(rows.map((row) => JSON.parse(row.event))).toEqual([
+      expect.objectContaining({ type: "ThreadRequested", allocationKey: expect.any(String), thread: target.thread }),
+      expect.objectContaining({ type: "ThreadRegistered", placement: "independent", thread: target.thread })
+    ])
+  })
+
   test("actor supervisor creates a child after durable acceptance", async () => {
     const directory = controlStub()
     await directory.init("echo", "main")
@@ -961,7 +992,6 @@ describe("cloudflare actor", () => {
       .map((row) => JSON.parse(row.event) as { readonly type: string; readonly thread: string })
       .filter((event) => event.thread.startsWith("ag.directory-"))
       .map((event) => event.type)).toEqual([
-      "ThreadAllocated",
       "ThreadRequested",
       "ThreadRegistered",
       "ThreadRequested",

@@ -49,9 +49,10 @@ test.each(["memory", "sqlite"] as const)("the developer flow allocates scoped th
     expect((yield* tardie.allocateRootThread({ instance: "rick", name: "main" })).address).toEqual(rickRef.address)
 
     const researcherRef = yield* tardie.allocateChildThread({ parent: rickRef, name: "researcher" })
-    const labResearcherRef = yield* tardie.allocateChildThread({ parent: rickLabRef, name: "researcher" })
+    const labResearcherRef = yield* tardie.allocateChildThread({ parent: rickLabRef, name: "lab-researcher" })
     const mortyResearcherRef = yield* tardie.allocateChildThread({ parent: mortyRef, name: "researcher" })
     const children = [researcherRef, labResearcherRef, mortyResearcherRef]
+    expect(children.map((ref) => ref.address.thread)).toEqual(["researcher", "lab-researcher", "researcher"])
     expect(new Set(children.map((ref) => JSON.stringify(ref.address))).size).toBe(3)
     expect((yield* tardie.allocateChildThread({ parent: rickRef, name: "researcher" })).address).toEqual(researcherRef.address)
     expect(researcherRef.address.instance).toBe("rick")

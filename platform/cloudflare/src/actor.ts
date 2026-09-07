@@ -44,17 +44,18 @@ const actorSupervisorOf = (
         key: registeredKeyOf(event.thread),
         input: event,
         act: (request) => Effect.gen(function* () {
-          yield* Effect.promise(async () => {
+          const registration = yield* Effect.promise(async () => {
             const stub = env.THREADS.getByName(threadObjectNameOf(identity.actor, identity.instance, request.thread))
             if (request.parentThread === undefined) {
-              if (!(await stub.exists(identity.actor, identity.instance, request.thread))) {
-                throw new Error(`root thread ${JSON.stringify(request.thread)} has no durable host`)
-              }
-            } else {
-              await stub.commitCreation()
+              await stub.init(identity.actor, identity.instance, request.thread)
+              await stub.initializeRoot()
+              return {}
             }
+            const created = await stub.commitCreation()
+            return created === undefined ? undefined : created.placement === undefined ? {} : { placement: created.placement }
           })
-          return [{ type: "ThreadRegistered", thread: request.thread, at: yield* Clock.currentTimeMillis }]
+          if (registration === undefined) return []
+          return [{ type: "ThreadRegistered", thread: request.thread, ...registration, at: yield* Clock.currentTimeMillis }]
         })
       })]
     })
@@ -220,12 +221,15 @@ export class ActorDO extends DurableObject<Env> {
         WHERE json_extract(event, '$.type') = 'ThreadRequested' AND json_extract(event, '$.thread') = ${target.thread}`.pipe(
         Effect.map((rows) => rows.length > 0 && (!existingRoot || rows.some((row) => row.parent !== null))), Effect.orDie
       ))
-    return Effect.runPromise(allocateThread(request).pipe(Effect.provideService(
+    const target = await Effect.runPromise(allocateThread(request).pipe(Effect.provideService(
       ThreadAllocator, mountedActor?.threadAllocator ?? registeredThreadAllocator({
         get: (key) => Effect.promise(() => this.database.runPromise(store.get(key))),
         claim: (key, target, existingRoot, request) => Effect.promise(() => this.database.runPromise(store.claim(key, target, existingRoot, request)))
       }, mountedActor?.allocation)
     )))
+    const at = armAt(await this.ctx.storage.getAlarm(), Date.now(), this.alarmPolicy.recoveryDelayMillis)
+    if (at !== null) await this.ctx.storage.setAlarm(at)
+    return target
   }
 
   async initializeRootThread(thread: string): Promise<void> {
@@ -261,7 +265,7 @@ export class ActorDO extends DurableObject<Env> {
     if (existing !== undefined && (
       existing.parentThread !== lineage.parent.thread ||
       Number(existing.depth) !== lineage.depth ||
-      (existing.state !== "allocated" && existing.placement !== placement)
+      ((existing.state === "registered" || existing.placement !== undefined) && (existing.placement ?? null) !== placement)
     )) {
       throw new Error("a child thread already has different lineage")
     }

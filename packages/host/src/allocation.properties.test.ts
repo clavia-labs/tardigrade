@@ -56,6 +56,13 @@ const verify = (model: Model) => {
 const allocate = async (model: Model, real: Real, intent: Intent) => {
   const expected = model.entries.find((entry) => sameIntent(entry.intent, intent))
   const request = requestOf(model, intent)
+  const occupied = intent.mode === "name" && model.entries.some(({ target }) =>
+    target.actor === intent.actor && target.instance === intent.instance && target.thread === intent.local)
+  if (expected === undefined && occupied) {
+    await expect(Effect.runPromise(real.allocator.allocate(request))).rejects.toThrow("already taken")
+    verify(model)
+    return
+  }
   const targets = await Promise.all(Array.from({ length: 3 }, () => Effect.runPromise(real.allocator.allocate(request))))
   for (const target of targets) expect(target).toEqual(expected?.target ?? targets[0]!)
   if (expected === undefined) model.entries.push({ intent, target: targets[0]! })
@@ -161,6 +168,7 @@ test("allocation histories preserve thread and invocation identity across claims
     await allocate(model, real, { ...root, mode: "key" })
     await allocate(model, real, { ...root, parent: 0 })
     await allocate(model, real, { ...root, parent: 1 })
+    await allocate(model, real, { ...root, parent: 0, local: "researcher" })
     await allocate(model, real, { ...root, parent: 2 })
     await allocate(model, real, { ...root, instance: "morty" })
     await allocate(model, real, { ...root, actor: "other" })
