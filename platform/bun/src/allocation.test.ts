@@ -55,28 +55,3 @@ test("the actor directory retains root and child assignments across restarts", a
     await rm(directory, { recursive: true, force: true })
   }
 })
-
-test("legacy allocation records preserve retries and reserve their names after reopen", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "tardigrade-legacy-allocation-"))
-  const options = { database: join(directory, "rick.sqlite"), actorName: "tardie", actorInstance: "rick", actorFor: () => undefined, workspaceSql: false as const,
-    allocation: { generate: () => { throw new Error("must recover legacy assignment") } } }
-  const parent = { actor: "tardie", instance: "rick", thread: "main" }
-  const request = { kind: "child" as const, parent, child: childKeyOf("researcher") }
-  let host = await createBunHost(options)
-  try {
-    await host.close()
-    const database = new Database(options.database)
-    try {
-      database.query("INSERT INTO actor_events (seq, key, event) VALUES (1, ?, ?)").run("thread:allocated:old-child", JSON.stringify({
-        type: "ThreadAllocated", thread: "old-child", allocationKey: threadAllocationKey(request), parentThread: "main", depth: 1, at: 1
-      }))
-    } finally { database.close() }
-    host = await createBunHost(options)
-    expect(await host.assignThread(request)).toEqual({ ...parent, thread: "old-child" })
-    await expect(host.assignThread({ ...request, child: childKeyOf("old-child") })).rejects.toThrow("already taken")
-    expect(await host.actorHead()).toBe(1)
-  } finally {
-    await host.close()
-    await rm(directory, { recursive: true, force: true })
-  }
-})

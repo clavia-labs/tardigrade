@@ -38,7 +38,6 @@ export const actorEventKeyOf = (event: Event): string | undefined => {
 export const actorEventsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ActorEvent> =>
   events.flatMap((event): ReadonlyArray<ActorEvent> => {
     if (typeof event.thread !== "string") return []
-    if (event.type === "ThreadAllocated") return [{ ...event, type: "ThreadRequested" } as ThreadRequested]
     return event.type === "ThreadRequested" || event.type === "ThreadRegistered" ? [event as ActorEvent] : []
   })
 
@@ -47,15 +46,13 @@ export const actorThreadsOf = (events: ReadonlyArray<Event>): ReadonlyArray<Acto
   for (const event of actorEventsOf(events)) {
     const current = entries.get(event.thread)
     if (event.type === "ThreadRequested") {
-      const allocationKey = event.allocationKey ?? current?.allocationKey
       entries.set(event.thread, {
-        ...current,
-        ...(allocationKey === undefined ? {} : { allocationKey }),
+        ...(event.allocationKey === undefined ? {} : { allocationKey: event.allocationKey }),
         thread: event.thread,
         ...(event.parentThread === undefined ? {} : { parentThread: event.parentThread }),
         depth: event.depth,
         ...(event.placement === undefined ? {} : { placement: event.placement }),
-        state: current?.state ?? "requested"
+        state: "requested"
       })
       continue
     }

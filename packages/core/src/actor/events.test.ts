@@ -15,18 +15,6 @@ describe("actor events", () => {
     expect(actorEventKeyOf(requested)).toBe("thread:requested:quiet-fox-abcd")
   })
 
-  test("legacy allocations retain their identity and registration metadata", () => {
-    const allocated: Event = { type: "ThreadAllocated", thread: "old-child", allocationKey: "spawn", parentThread: "main", depth: 1, at: 0 }
-    const requested: Event = { type: "ThreadRequested", thread: "old-child", parentThread: "main", depth: 1, placement: "independent", at: 1 }
-    const registered: Event = { type: "ThreadRegistered", thread: "old-child", at: 2 }
-    expect(actorThreadsOf([allocated])[0]).toMatchObject({ allocationKey: "spawn", state: "requested" })
-    for (const events of [[allocated, requested, registered], [requested, registered, allocated]]) {
-      expect(actorThreadsOf(events)).toEqual([{
-        allocationKey: "spawn", thread: "old-child", parentThread: "main", depth: 1, placement: "independent", state: "registered"
-      }])
-    }
-  })
-
   test("projects thread registration", () => {
     const events: ReadonlyArray<Event> = [
       { type: "ThreadRequested", thread: "child", parentThread: "root", depth: 1, at: 1 },
