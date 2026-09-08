@@ -101,7 +101,9 @@ const readArg = (name: string) => {
 }
 const only = readArg("only")?.split(",").map((s) => s.trim()).filter(Boolean) ?? []
 const selected = tasks.filter((t) => only.length === 0 || only.some((p) => t.id === p || t.id.startsWith(`${p}:`)))
-const jobs = Math.min(Math.max(availableParallelism(), 2), 8)
+export const DEFAULT_GATE_JOBS = Math.min(Math.max(availableParallelism(), 2), 8)
+const jobs = Number(readArg("jobs") ?? DEFAULT_GATE_JOBS)
+if (!Number.isSafeInteger(jobs) || jobs < 1) throw new Error("gate --jobs must be a positive integer")
 
 if (args.includes("--list")) {
   for (const task of tasks) console.log(task.id)
