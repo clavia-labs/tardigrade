@@ -19,25 +19,17 @@ const treeBoundsOf = (
   request: HttpServerRequest.HttpServerRequest
 ): { readonly bounds: TreeBounds } | { readonly error: string } => {
   const query = new URL(request.url, "http://worker").searchParams
-  const boundOf = (name: string, minimum: 0 | 1): { readonly value?: number } | { readonly error: string } => {
+  const bounds = { root: query.get("root") ?? undefined, maxDepth: undefined as number | undefined, maxNodes: undefined as number | undefined }
+  for (const [name, minimum] of [["maxDepth", 0], ["maxNodes", 1]] as const) {
     const raw = query.get(name)
-    if (raw === null) return {}
+    if (raw === null) continue
     const value = Number(raw)
-    return Number.isSafeInteger(value) && value >= minimum
-      ? { value }
-      : { error: `${name} must be ${minimum === 0 ? "a non-negative" : "a positive"} integer` }
-  }
-  const depth = boundOf("maxDepth", 0)
-  if ("error" in depth) return depth
-  const nodes = boundOf("maxNodes", 1)
-  if ("error" in nodes) return nodes
-  return {
-    bounds: {
-      root: query.get("root") ?? undefined,
-      maxDepth: depth.value,
-      maxNodes: nodes.value
+    if (!Number.isSafeInteger(value) || value < minimum) {
+      return { error: `${name} must be ${minimum === 0 ? "a non-negative" : "a positive"} integer` }
     }
+    bounds[name] = value
   }
+  return { bounds }
 }
 
 export const DEFAULT_CLOUDFLARE_EVENT_LIMIT = 200

@@ -100,22 +100,21 @@ const threadTreeOf = (
     built += 1
     visited.add(id)
     const next = new Set(ancestors).add(id)
-    const descendants: ActorThreadNode[] = []
-    if ((maxDepth === undefined || level < maxDepth) && (maxNodes === undefined || built < maxNodes)) {
-      for (const child of [...children.get(id) ?? []].sort()) {
-        const result = node(child, next, level + 1)
-        if (result === undefined) break
-        descendants.push(result)
-      }
-    }
+    const descendants = (maxDepth === undefined || level < maxDepth) && (maxNodes === undefined || built < maxNodes)
+      ? nodes([...children.get(id) ?? []].sort(), next, level + 1)
+      : []
     return { ...entry, children: descendants }
   }
-  const tree: ActorThreadNode[] = []
-  for (const start of root === undefined ? roots.sort() : [root]) {
-    const result = node(start, new Set(), 0)
-    if (result === undefined) break
-    tree.push(result)
+  const nodes = (ids: ReadonlyArray<string>, ancestors: ReadonlySet<string>, level: number): ActorThreadNode[] => {
+    const tree: ActorThreadNode[] = []
+    for (const id of ids) {
+      const result = node(id, ancestors, level)
+      if (result === undefined) break
+      tree.push(result)
+    }
+    return tree
   }
+  const tree = nodes(root === undefined ? roots.sort() : [root], new Set(), 0)
   // Partial reads cannot establish whether the full roster is connected (test/actor.workers.ts).
   if (root === undefined && maxDepth === undefined && maxNodes === undefined && visited.size !== entries.size) {
     throw new Error("thread tree contains an orphan or cycle")

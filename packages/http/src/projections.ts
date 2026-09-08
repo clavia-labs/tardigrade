@@ -100,24 +100,19 @@ export const treeOf = (
     walked.add(id)
     if (remaining !== undefined) remaining -= 1
     const events = createdLogs.get(id) ?? []
-    const children: ThreadNode[] = []
-    if ((bounds.maxDepth === undefined || level < bounds.maxDepth) && remaining !== 0) {
-      for (const child of (childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order)) {
-        const built = node(child, id, level + 1)
-        if (built === undefined) break
-        children.push(built)
-      }
-    }
+    const children = (bounds.maxDepth === undefined || level < bounds.maxDepth) && remaining !== 0
+      ? nodes((childrenOf.get(id) ?? []).filter((child) => !walked.has(child)).sort(order), level + 1)
+      : []
     return { ...summaryOf(id, events, statusOf, parent), children }
   }
-  const starts = root === undefined
-    ? [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order)
-    : [root]
-  const tree: ThreadNode[] = []
-  for (const id of starts) {
-    const built = node(id, parents.get(id), 0)
-    if (built === undefined) break
-    tree.push(built)
+  const nodes = (ids: ReadonlyArray<string>, level: number): ThreadNode[] => {
+    const tree: ThreadNode[] = []
+    for (const id of ids) {
+      const built = node(id, parents.get(id), level)
+      if (built === undefined) break
+      tree.push(built)
+    }
+    return tree
   }
-  return tree
+  return nodes(root === undefined ? [...createdLogs.keys()].filter((id) => !parents.has(id)).sort(order) : [root], 0)
 }
