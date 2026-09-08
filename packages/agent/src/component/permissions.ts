@@ -35,7 +35,7 @@ const permissionCallId = (turn: string, callId: string): string =>
   `permission/${turn}/${callId}`
 
 const guardedTool = <R>(tool: AgentTool<R>, options: PermissionsOptions): AgentTool<R | Router | Self> => ({
-  spec: tool.spec,
+  ...tool,
   serve: (pending, log, answer): ReadonlyArray<Transition<never, R | Router | Self>> => {
     const subject = options.request({
       callId: pending.callId,

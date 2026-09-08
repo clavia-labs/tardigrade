@@ -4,9 +4,11 @@ import type { Event } from "@clavia/tardigrade-core/log/event"
 import { toolReturned } from "../log/events"
 import type { ToolSpec } from "../inference/request"
 import type { AgentComponent, AgentTool } from "../runtime/composition"
+import { toolConcurrencyOf, type ToolConcurrency } from "../runtime/tools"
 
 // NativeTool describes one named tool whose effect returns its model-visible result.
 export interface NativeTool<R = never> {
+  readonly concurrency?: ToolConcurrency
   readonly spec: ToolSpec
   readonly run: (input: unknown, context: { readonly callId: string; readonly turn?: string; readonly signal: AbortSignal }) => Effect.Effect<unknown, never, R>
 }
@@ -28,10 +30,12 @@ export const tool = <R = never>(
         ],
         tools: tools.map((tool): AgentTool<R> => ({
           spec: tool.spec,
+          concurrency: toolConcurrencyOf(tool.concurrency),
           serve: (call) => {
             const stamp = call.turn === undefined ? {} : { turn: call.turn }
             return [
               call.context.effect("answer", {
+                concurrent: true,
                 ...(call.turn === undefined
                   ? {}
                   : { invocation: { method: "message", id: call.turn, epoch: call.epoch ?? 0 } }),

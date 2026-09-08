@@ -72,6 +72,23 @@ const messagesFrom = (
   )
   if (openHead !== -1 && openHead < from) messages.push(userMessageOf(projected[openHead]!, resolved))
   if (checkpoint.summary !== "") messages.push({ role: "user", content: `Summary of earlier work:\n${checkpoint.summary}` })
+  const batchKey = (event: Event): string | undefined => event.batchId === undefined
+    ? undefined
+    : JSON.stringify([event.turn ?? null, event.epoch ?? 0, event.batchId])
+  const batches = new Map<string, AgentToolCall[]>()
+  const callOf = (event: Event): AgentToolCall => ({
+    id: String(event.callId),
+    name: String(event.name),
+    arguments: JSON.stringify(event.arguments ?? {})
+  })
+  for (const event of projected.slice(from)) {
+    const key = batchKey(event)
+    if (event.type !== "ToolCalled" || key === undefined) continue
+    const calls = batches.get(key) ?? []
+    calls.push(callOf(event))
+    batches.set(key, calls)
+  }
+  const emitted = new Set<string>()
   let pendingText: string | null = null
   for (const event of projected.slice(from)) {
     const value = event as Record<string, unknown>
@@ -82,18 +99,18 @@ const messagesFrom = (
       case "TextReturned":
         pendingText = String(value.text ?? "")
         break
-      case "ToolCalled":
+      case "ToolCalled": {
+        const key = batchKey(event)
+        if (key !== undefined && emitted.has(key)) break
+        if (key !== undefined) emitted.add(key)
         messages.push({
           role: "assistant",
           content: pendingText,
-          toolCalls: [{
-            id: String(value.callId),
-            name: String(value.name),
-            arguments: JSON.stringify(value.arguments ?? {})
-          }]
+          toolCalls: key === undefined ? [callOf(event)] : batches.get(key)!
         })
         pendingText = null
         break
+      }
       case "ToolReturned": {
         const body = JSON.stringify(value.result ?? null)
         messages.push({

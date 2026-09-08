@@ -131,6 +131,12 @@ const weather = tool({
 ```
 
 When the model selects `get_weather`, Tardigrade records `ToolCalled`. The inference component finds the handler in the current view, runs its Effect, and records `ToolReturned`. The next model request includes the result.
+
+A model response can request several tools. Tardigrade records every call before dispatch, runs native tools concurrently by default, and waits for every result before the next model request. Each call has its own result. The response contributes usage once. Replay reuses committed results and retries unfinished work.
+
+`DEFAULT_TOOL_CONCURRENCY` is `"unbounded"`. Set `infer(components, { toolConcurrency: 4 })` to admit at most four pending calls at a time. Additional calls wait in recorded order. Set `concurrency: 1` on a native tool binding to serialize calls to that tool. These limits appear in the model instructions or tool description.
+
+Code mode defaults to `DEFAULT_CODE_TOOL_CONCURRENCY`, which is `1`. Set `codeMode(components, { toolConcurrency })` to control admission of `execute` calls. Code execution follows the code scheduler. Custom `Infer` bindings return `{ kind: "calls", calls: [...] }` for a batch, with a nonempty array of `{ callId, name, arguments }` entries. Single calls use `{ kind: "call", callId, name, arguments }`.
 </Tip>
 
 ### Running it locally
