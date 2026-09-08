@@ -22,9 +22,13 @@ export interface ServeOptions {
 
 // serve exposes a Bun host through the shared Effect HTTP application.
 export const serve = async <Methods extends ActorMethods>(host: Host<Methods>, options: ServeOptions = {}) => {
+  const streams = new AbortController()
   const application = serveHttp({ disableLogger: options.disableLogger ?? true, disableListenLog: true, api: {
     token: options.token,
-    ...options.api
+    ...options.api,
+    streamShutdownSignal: options.api?.streamShutdownSignal === undefined
+      ? streams.signal
+      : AbortSignal.any([streams.signal, options.api.streamShutdownSignal])
   } }).pipe(
     Layer.provide([
       Layer.succeedContext(bunHttpServices(host))
@@ -40,7 +44,7 @@ export const serve = async <Methods extends ActorMethods>(host: Host<Methods>, o
     const server = await runtime.runPromise(HttpServer.HttpServer)
     const address = server.address
     if (address._tag !== "TcpAddress") throw new Error("Bun HTTP server did not bind a TCP address")
-    return { url: new URL(`http://${address.hostname}:${address.port}`), port: address.port, close: () => runtime.dispose() }
+    return { url: new URL(`http://${address.hostname}:${address.port}`), port: address.port, close: () => { streams.abort(); return runtime.dispose() } }
   } catch (error) {
     await runtime.dispose()
     throw error
