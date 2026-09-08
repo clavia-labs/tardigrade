@@ -1,3 +1,4 @@
+import type { OwnerRef } from "../runtime/context"
 import { Schema } from "effect"
 import { formatThreadAddress, isThreadAddress, ThreadAddress, type ThreadAddress as ThreadAddressType } from "../transport/endpoint"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -157,6 +158,7 @@ export const threadKeys: KeyFragment = {
 export interface InvocationLinked extends Event {
   readonly type: "InvocationLinked"
   readonly parent: InvocationRef
+  readonly owner: OwnerRef
   readonly child: ActorInvocationContext
   readonly target: string
   readonly lineage?: ThreadLineage
@@ -165,8 +167,9 @@ export interface InvocationLinked extends Event {
 
 export const invocationLinked = (fields: {
   readonly parent: InvocationRef
+  readonly owner?: OwnerRef
   readonly child: ActorInvocationContext
   readonly target: string
   readonly lineage?: ThreadLineage
   readonly at: number
-}): InvocationLinked => ({ type: "InvocationLinked", ...fields })
+}): InvocationLinked => ({ type: "InvocationLinked", ...fields, owner: fields.owner ?? { type: "invocation", ref: fields.parent } })

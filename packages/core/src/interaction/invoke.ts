@@ -1,3 +1,4 @@
+import { ownerKey, type OwnerRef } from "../runtime/context"
 import type { CallDispatched, CallPlanned, CallSkipped, CancellationResult, CallTimedOut } from "./events"
 import { Clock, Effect, Schema } from "effect"
 import { effect } from "@clavia/tardigrade-core/effect"
@@ -53,6 +54,7 @@ export type ActorCallOptions<
   readonly target: ThreadTarget<Methods>
   readonly method: Name
   readonly input: ActorMethodInput<Methods[Name]>
+  readonly owner?: OwnerRef
   readonly context?: ActorInvocationContext
   readonly timeoutMs?: number
   readonly lineage?: ThreadLineage
@@ -116,7 +118,8 @@ export const actorCall = <
   const parent = request.parent === undefined ? undefined : decodeInvocationCoordinate(request.parent)
   const options = parent === undefined ? { ...request, id: request.id! } : {
     ...request,
-    id: invocationIdForKey(parent, request.key!),
+    id: invocationIdForKey(parent, request.owner?.type === "transition"
+      ? JSON.stringify([ownerKey(request.owner), request.key!]) : request.key!),
     context: request.context ?? { invocation: parent.invocation }
   }
   if (parent !== undefined) {
@@ -242,6 +245,7 @@ export const actorCall = <
             ? [plan]
             : [plan, invocationLinked({
                 parent: current.context.invocation,
+                owner: current.owner ?? { type: "invocation", ref: current.context.invocation },
                 child: context,
                 target,
                 ...(current.lineage === undefined ? {} : { lineage: current.lineage }),

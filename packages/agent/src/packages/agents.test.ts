@@ -698,7 +698,7 @@ describe("a child is named by its parent address, run, and call", () => {
     expect(sent).toHaveLength(0)
   })
 
-  test("a background child inherits the owning turn deadline without a parent link", async () => {
+  test("a background child retains its invocation owner without waiting for its response", async () => {
     const events: Event[] = [
       threadCreated(parseThreadAddress("mem:main:ag.root"), undefined, 0),
       turnWithDeadline("m1", 86_400_002),
@@ -710,7 +710,11 @@ describe("a child is named by its parent address, run, and call", () => {
       invocation: { method: "message", id: "bg-1", epoch: 0 },
       deadlineAt: 86_400_002
     })
-    expect(events.some((event) => event.type === "InvocationLinked")).toBe(false)
+    const linked = events.find((event) => event.type === "InvocationLinked")
+    expect(linked).toMatchObject({
+      parent: { method: "message", id: "m1", epoch: 0 },
+      child: { invocation: { method: "message", id: "bg-1", epoch: 0 } }
+    })
   })
 
   test("a run with no parent turn dies rather than naming a child", async () => {

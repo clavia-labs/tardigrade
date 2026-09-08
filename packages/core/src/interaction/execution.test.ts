@@ -90,3 +90,20 @@ test("method namespaces preserve metadata and promise assimilation", async () =>
     expect(Object.hasOwn(ref, "then")).toBe(false)
   }
 })
+
+test("sibling transition owners isolate the same nested invocation key", () => {
+  const firstOwner = { type: "transition" as const, ref: { seq: 12, component: "weather", tag: "fetch" } }
+  const secondOwner = { type: "transition" as const, ref: { seq: 19, component: "weather", tag: "fetch" } }
+  const call = (owner: typeof firstOwner) => actorCall([], {
+    target: reference, method: "research", input: { topic: "weather" },
+    parent, context: { invocation: parent.invocation }, key: "lookup", owner
+  })
+  const first = call(firstOwner)
+  const second = call(secondOwner)
+  expect(first.reference).not.toEqual(second.reference)
+  expect(call(firstOwner).reference).toEqual(first.reference)
+  const plan = first.transitions[0]!
+  if (plan.kind !== "intent") throw new Error("expected invocation plan")
+  expect(plan.events(plan.input, 1).find((event) => event.type === "InvocationLinked"))
+    .toMatchObject({ owner: firstOwner, parent: parent.invocation })
+})

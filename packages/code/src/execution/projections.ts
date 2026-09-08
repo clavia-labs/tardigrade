@@ -1,3 +1,4 @@
+import { executionKeyOf, executionRefOf, packageKeyOf } from "./events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { turnTerminalOf } from "./turns"
 
@@ -33,11 +34,12 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
   const calls = new Set<string>()
   const returned = new Set<string>()
   const replies = new Set<string>()
+  const owners = new Map<string, string>()
   for (const e of events) {
     const v = e as { execId?: unknown; callId?: unknown; id?: unknown; at?: unknown; awaiting?: unknown; turn?: unknown }
     switch (e.type) {
       case "CodeDispatched": {
-        const id = str(v.execId)
+        const id = executionKeyOf(e)
         const at = typeof v.at === "number" ? v.at : 0
         const prior = dispatched.get(id)
         if (prior === undefined || at < prior.at) {
@@ -46,16 +48,17 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
         break
       }
       case "CodeSettled":
-        settled.add(str(v.execId))
+        settled.add(executionKeyOf(e))
         break
       case "PackageCalled":
-        calls.add(str(v.callId))
+        calls.add(packageKeyOf(e))
+        if (executionRefOf(e) !== undefined) owners.set(packageKeyOf(e), executionKeyOf(e))
         break
       case "BlockedOn":
-        awaiting.set(str(v.callId), str(v.awaiting))
+        awaiting.set(packageKeyOf(e), str(v.awaiting))
         break
       case "PackageReturned":
-        returned.add(str(v.callId))
+        returned.add(packageKeyOf(e))
         break
       case "MessageReceived":
       case "ResponseReceived":
@@ -68,6 +71,8 @@ export const factsOf = (events: ReadonlyArray<Event>): ReadonlyArray<ExecFacts> 
   // an attribute the event carries, never from log position.
   const execIds = [...dispatched.keys()]
   const ownerOf = (callId: string): string => {
+    const explicit = owners.get(callId)
+    if (explicit !== undefined) return explicit
     let owner = ""
     for (const execId of execIds) {
       if (callId.startsWith(`${execId}.`) && execId.length > owner.length) owner = execId

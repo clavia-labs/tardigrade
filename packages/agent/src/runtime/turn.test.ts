@@ -186,6 +186,7 @@ describe("the agent with execute as the only tool", () => {
       { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: "return await docs.read()", turn: "m1", at: 3 },
       {
         type: "CodeSettled",
+        executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" },
         execId: "t1",
         tmp: "t1.result",
         size: big.length,
@@ -219,8 +220,8 @@ describe("the agent with execute as the only tool", () => {
       { type: "MessageReceived", id: "m1", text: "add the JD and search candidates", at: 1 },
       { type: "ToolCalled", callId: "t1", name: "execute", arguments: { code: CODE }, turn: "m1", at: 2 },
       { type: "CodeDispatched", transitionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, execId: "t1", code: CODE, turn: "m1", at: 3 },
-      { type: "PackageCalled", callId: "t1.0", name: "zohorecruit.insert_record", arguments: { title: "IC design lead" }, turn: "m1", at: 4 },
-      { type: "PackageReturned", callId: "t1.0", result: { id: "jd-91" }, turn: "m1", at: 5 }
+      { type: "PackageCalled", executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, ordinal: 0, callId: "t1.0", name: "zohorecruit.insert_record", arguments: { title: "IC design lead" }, turn: "m1", at: 4 },
+      { type: "PackageReturned", executionRef: { seq: 2, component: "agent.tools", tag: "dispatch" }, ordinal: 0, callId: "t1.0", result: { id: "jd-91" }, turn: "m1", at: 5 }
     ]
     const count = { calls: 0 }
     const spies = { insert: 0, search: 0 }

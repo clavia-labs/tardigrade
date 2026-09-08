@@ -1,3 +1,5 @@
+import type { OwnerRef } from "@clavia/tardigrade-core/runtime/context"
+import { TransitionRef } from "@clavia/tardigrade-core/transition/transition"
 import { Schema } from "effect"
 import type { KeyFragment } from "@clavia/tardigrade-core/log"
 import type { Event } from "@clavia/tardigrade-core/log/event"
@@ -77,17 +79,16 @@ export type CodeEvent = typeof CodeEvent.Type
 export const codeKeys: KeyFragment = {
   prefixes: ["cd:", "cs:", "pr:", "bk:"],
   keyOf: (e) => {
-    const v = e as Record<string, unknown>
     switch (e.type) {
       case "CodeDispatched":
-        return `cd:${String(v.execId)}`
+        return `cd:${executionKeyOf(e)}`
       case "CodeSettled":
-        return `cs:${String(v.execId)}`
+        return `cs:${executionKeyOf(e)}`
       case "PackageReturned":
-        return `pr:${String(v.callId)}`
+        return `pr:${packageKeyOf(e)}`
       case "BlockedOn":
         // One row per blocked call: a re-parking attempt redelivers the same key and absorbs.
-        return `bk:${String(v.callId)}`
+        return `bk:${packageKeyOf(e)}`
       default:
         return undefined
     }
@@ -101,7 +102,7 @@ export const codeKeys: KeyFragment = {
 // Event, so nothing downstream changes. `at` is a parameter, never a clock read, so an
 // emission stays a pure function of the log and the timestamp the runtime hands it.
 
-type Stamped = { readonly turn?: string; readonly epoch?: number; readonly at: number }
+type Stamped = { readonly ownerRef?: OwnerRef; readonly executionRef?: TransitionRef; readonly ordinal?: number; readonly turn?: string; readonly epoch?: number; readonly at: number }
 
 export const codeDispatched = (fields: { readonly execId: string; readonly code: string } & Stamped): Event =>
   ({ type: "CodeDispatched", ...fields }) as Event
@@ -132,3 +133,23 @@ export const packageReturned = (
 
 export const blockedOn = (fields: { readonly callId: string; readonly awaiting: string } & Stamped): Event =>
   ({ type: "BlockedOn", ...fields }) as Event
+
+// executionRefOf reads the recorded dispatch identity (projections.test.ts).
+export const executionRefOf = (event: Event): TransitionRef | undefined => {
+  const candidate = event.type === "CodeDispatched" ? event.transitionRef : event.executionRef
+  return candidate === undefined ? undefined : Schema.decodeUnknownSync(TransitionRef)(candidate)
+}
+
+// executionKeyOf scopes execution facts to their dispatch reference, retaining unstamped log identities (projections.test.ts).
+export const executionKeyOf = (event: Event): string => {
+  const ref = executionRefOf(event)
+  return ref === undefined ? String(event.execId ?? "") : JSON.stringify([ref.seq, ref.component, ref.tag])
+}
+
+// packageKeyOf scopes a positional call to its recorded execution (reactor.test.ts).
+export const packageKeyOf = (event: Event): string => {
+  const ref = executionRefOf(event)
+  if (ref === undefined) return String(event.callId ?? "")
+  if (!Number.isSafeInteger(event.ordinal) || Number(event.ordinal) < 0) throw new Error("package call needs a non-negative ordinal")
+  return JSON.stringify([ref.seq, ref.component, ref.tag, event.ordinal])
+}
