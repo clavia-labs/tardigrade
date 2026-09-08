@@ -423,6 +423,86 @@ describe("actor methods", () => {
     expect(read.state).toEqual({ status: "completed", output: "ok: hello" })
   })
 
+  test("PUT admission retries preserve their receipt after sealing", async () => {
+    const result = await serving(async (base) => {
+      await post(base, "/v1/actors/main/threads", { name: "alpha" })
+      const path = "/v1/actors/main/threads/alpha/methods/message/calls/m1"
+      const first = await put(base, path, { text: "hello" })
+      expect(first.status).toBe(202)
+      const receipt = await first.json()
+      const sealed = await put(
+        base,
+        "/v1/actors/main/threads/alpha/deletion-seal",
+        { method: "message", reason: "deleted" }
+      )
+      const repeated = await put(base, path, { text: "different" })
+      const refused = await put(
+        base,
+        "/v1/actors/main/threads/alpha/methods/message/calls/m2",
+        { text: "too late" }
+      )
+      return {
+        receipt,
+        sealStatus: sealed.status,
+        repeated: { status: repeated.status, body: await repeated.json() },
+        refused: { status: refused.status, body: await refused.json() }
+      }
+    })
+    expect([200, 202]).toContain(result.sealStatus)
+    expect(result.repeated).toEqual({ status: 202, body: result.receipt })
+    expect(result.refused).toEqual({
+      status: 409,
+      body: {
+        type: "https://tardigrade.dev/problems/method-sealed",
+        title: "Method Sealed",
+        status: 409,
+        detail: "Method \"message\" is permanently sealed on this thread."
+      }
+    })
+  })
+
+  test("POST admission retries preserve their receipt after sealing", async () => {
+    const result = await serving(async (base) => {
+      await post(base, "/v1/actors/main/threads", { name: "alpha" })
+      const path = `${base}/v1/actors/main/threads/alpha/methods/message`
+      const invoke = (call: string, text: string) => fetch(path, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "idempotency-key": call
+        },
+        body: JSON.stringify({ text })
+      })
+      const first = await invoke("m1", "hello")
+      expect(first.status).toBe(202)
+      const receipt = await first.json()
+      const sealed = await put(
+        base,
+        "/v1/actors/main/threads/alpha/deletion-seal",
+        { method: "message", reason: "deleted" }
+      )
+      const repeated = await invoke("m1", "different")
+      const refused = await invoke("m2", "too late")
+      return {
+        receipt,
+        sealStatus: sealed.status,
+        repeated: { status: repeated.status, body: await repeated.json() },
+        refused: { status: refused.status, body: await refused.json() }
+      }
+    })
+    expect([200, 202]).toContain(result.sealStatus)
+    expect(result.repeated).toEqual({ status: 202, body: result.receipt })
+    expect(result.refused).toEqual({
+      status: 409,
+      body: {
+        type: "https://tardigrade.dev/problems/method-sealed",
+        title: "Method Sealed",
+        status: 409,
+        detail: "Method \"message\" is permanently sealed on this thread."
+      }
+    })
+  })
+
   test("reference reads pin the epoch and reject another deployed actor", async () => {
     await serving(async (base) => {
       await callMessage(base, "alpha", "m1", "hello")

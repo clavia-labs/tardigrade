@@ -80,17 +80,17 @@ const invokeMethod = <R>(
     const threads = yield* actorOf(service, params.id)
     const method = yield* methodOf(threads, params.method)
     const events = yield* logOf(threads.events, params.thread)
-    if (methodIsSealed(events, params.method)) {
-      return yield* Effect.fail(MethodSealedProblem.of(
-        `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
-      ))
-    }
     const reference = invocationCoordinateOf(
       threadCreatedOf(events)?.address ?? { actor: service.actorName ?? RESERVED_ACTOR, instance: params.id, thread: params.thread },
       { method: params.method, id: params.call, epoch: 0 }
     )
     const existing = existingMethodRequest(events, reference)
     if (existing !== undefined) return existing
+    if (methodIsSealed(events, params.method)) {
+      return yield* Effect.fail(MethodSealedProblem.of(
+        `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
+      ))
+    }
     const at = yield* Clock.currentTimeMillis
     const prepared = yield* Effect.try({
       try: () => prepareMethodRequest({ reference, method, input: payload, at,
