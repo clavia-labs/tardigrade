@@ -5,3 +5,12 @@ export { type ActorMethodCancellationState } from "./interaction/state"
 export { type ActorMethodState } from "./interaction/state"
 export { actorCall, type ActorCall, type ActorCallOptions } from "./interaction/invoke"
 export { InvocationScope, InvocationFailed, InvocationCancelled, type InvocationOptions } from "./interaction"
+export {
+  METHOD_SEALED_EVENT_TYPE,
+  methodIsSealed,
+  methodSealKey,
+  methodSealKeys,
+  methodSealOf,
+  methodSealed,
+  type MethodSealed
+} from "./interaction/seal"

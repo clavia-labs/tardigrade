@@ -19,6 +19,7 @@ export interface ActorThreads {
   readonly storage: ActorMetadata["storage"]
   readonly statusOf: ThreadStatusOf
   readonly append: (id: string, event: Event) => Effect.Effect<void>
+  readonly appendUnlessKeyPresent: (id: string, event: Event, key: string) => Effect.Effect<boolean>
   readonly events: (id: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly eventsPage: (id: string, mark: number, limit: number) => Effect.Effect<ReadonlyArray<ThreadEventRow>>
   readonly awaitHead: (id: string, mark: number) => Effect.Effect<number>
@@ -47,6 +48,12 @@ export class Threads extends Context.Service<
     readonly ensure: (id: string) => Effect.Effect<ActorThreads>
     readonly instance: (id: string) => Effect.Effect<ActorThreads | undefined>
     readonly append: (actor: string, thread: string, event: Event) => Effect.Effect<void>
+    readonly appendUnlessKeyPresent: (
+      actor: string,
+      thread: string,
+      event: Event,
+      key: string
+    ) => Effect.Effect<boolean>
     readonly events: (actor: string, thread: string) => Effect.Effect<ReadonlyArray<Event>>
     readonly list: (actor: string) => ActorThreads["list"]
     readonly settled: (actor: string) => Effect.Effect<void>

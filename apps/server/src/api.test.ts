@@ -746,6 +746,7 @@ describe("the event stream", () => {
       methods: {},
       storage: { kind: "memory" },
       append: () => Effect.void,
+      appendUnlessKeyPresent: () => Effect.succeed(false),
       events: () => Effect.succeed(rows.map((row) => row.event)),
       eventsPage: (_id, mark, limit) => Effect.sync(() => {
         pageReads += 1
@@ -774,6 +775,7 @@ describe("the event stream", () => {
       ensure: () => Effect.succeed(actorThreads),
       instance: (id) => Effect.succeed(id === "main" ? actorThreads : undefined),
       append: () => Effect.void,
+      appendUnlessKeyPresent: () => Effect.succeed(false),
       events: () => Effect.succeed(rows.map((row) => row.event)),
       list: () => Effect.succeed([]),
       settled: () => Effect.void

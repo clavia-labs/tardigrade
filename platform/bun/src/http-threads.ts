@@ -36,6 +36,13 @@ export const bunHttpThreads = (host: BunHost, options: {
     await host.commitRoot(host.self(thread), event.at === undefined ? { ...event, at } : event)
     host.schedule()
   })),
+  appendUnlessKeyPresent: (thread, event, key) =>
+    Effect.flatMap(Clock.currentTimeMillis, (at) => Effect.promise(async () => {
+      const stamped = event.at === undefined ? { ...event, at } : event
+      const appended = await host.commitRootUnlessKeyPresent(host.self(thread), stamped, key)
+      if (appended) host.schedule()
+      return appended
+    })),
   events: (thread) => Effect.promise(() => host.read(thread)),
   eventsPage: (thread, mark, limit) => Effect.promise(() => host.readPage(thread, mark, limit)),
   awaitHead: (thread, mark) => Effect.promise((signal) => host.awaitHead(thread, mark, signal)),
@@ -65,6 +72,8 @@ export const bunHttpServices = (host: object) => {
     ensure,
     instance: (id) => Effect.sync(() => { const runtime = backend.instances.get(id); return runtime === undefined ? undefined : threadsFor(id, runtime) }),
     append: (instance, thread, event) => Effect.flatMap(ensure(instance), (threads) => threads.append(thread, event)),
+    appendUnlessKeyPresent: (instance, thread, event, key) =>
+      Effect.flatMap(ensure(instance), (threads) => threads.appendUnlessKeyPresent(thread, event, key)),
     events: (instance, thread) => Effect.flatMap(ensure(instance), (threads) => threads.events(thread)),
     list: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.list),
     settled: (instance) => Effect.flatMap(ensure(instance), (threads) => threads.settled)

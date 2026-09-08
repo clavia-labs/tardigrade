@@ -4,14 +4,24 @@ import { HttpApi, HttpApiBuilder } from "effect/unstable/httpapi"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import type { ActorMethods } from "@clavia/tardigrade-core/actor/method"
 import { threadCreatedOf } from "@clavia/tardigrade-core/interaction/relations"
-import { invocationCoordinateOf } from "@clavia/tardigrade-core/interaction"
+import { actorInvocationContextFrom, invocationCoordinateOf, invocationKey } from "@clavia/tardigrade-core/interaction/invocation"
+import {
+  cancellationDispositionOf,
+  unsettledInvocationParentsOf
+} from "@clavia/tardigrade-core/interaction/cancellation"
+import { methodIsSealed, methodSealKey, methodSealed } from "@clavia/tardigrade-core/interaction/seal"
 import { methodRequestLocation, existingMethodRequest, prepareMethodRequest, methodRequestState, methodCancellationRequest, methodCancellationEvent } from "./method-request"
-import { InvalidRequest, InvocationSettled, RESERVED_ACTOR, UnknownMethod, UnknownMethodCall, UnknownActor, UnknownThread, methodsGroup, RequestProblems } from "@clavia/tardigrade-client/contract"
+import { InvalidRequest, InvocationSettled, MethodSealed as MethodSealedProblem, RESERVED_ACTOR, UnknownMethod, UnknownMethodCall, UnknownActor, UnknownThread, methodsGroup, RequestProblems } from "@clavia/tardigrade-client/contract"
 
 export interface MethodThreads {
   readonly methods: ActorMethods
   readonly events: (thread: string) => Effect.Effect<ReadonlyArray<Event>>
   readonly append: (thread: string, event: Event) => Effect.Effect<void, typeof UnknownThread.schema.Type>
+  readonly appendUnlessKeyPresent: (
+    thread: string,
+    event: Event,
+    key: string
+  ) => Effect.Effect<boolean, typeof UnknownThread.schema.Type>
 }
 
 // MethodRuntime supplies method declarations and durable logs to HTTP handlers.
@@ -70,6 +80,11 @@ const invokeMethod = <R>(
     const threads = yield* actorOf(service, params.id)
     const method = yield* methodOf(threads, params.method)
     const events = yield* logOf(threads.events, params.thread)
+    if (methodIsSealed(events, params.method)) {
+      return yield* Effect.fail(MethodSealedProblem.of(
+        `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
+      ))
+    }
     const reference = invocationCoordinateOf(
       threadCreatedOf(events)?.address ?? { actor: service.actorName ?? RESERVED_ACTOR, instance: params.id, thread: params.thread },
       { method: params.method, id: params.call, epoch: 0 }
@@ -82,7 +97,16 @@ const invokeMethod = <R>(
         ...(query.timeoutMs === undefined ? {} : { timeoutMs: query.timeoutMs }) }),
       catch: (failure) => InvalidRequest.of(failureMessage(failure))
     })
-    yield* threads.append(params.thread, prepared.event)
+    const appended = yield* threads.appendUnlessKeyPresent(
+      params.thread,
+      prepared.event,
+      methodSealKey(params.method)
+    )
+    if (!appended) {
+      return yield* Effect.fail(MethodSealedProblem.of(
+        `Method ${JSON.stringify(params.method)} is permanently sealed on this thread.`
+      ))
+    }
     return prepared.accepted
   })
 
@@ -167,6 +191,75 @@ export const methodHandlers = <R>(runtime: Effect.Effect<typeof MethodRuntime.Se
           method: params.method,
           call: params.call,
           status: "requested" as const
+        }
+      }))
+    .handle("sealMethod", ({ params, payload }) =>
+      Effect.gen(function*() {
+        const threads = yield* actorOf(yield* runtime, params.id)
+        const sealedMethod = yield* methodOf(threads, payload.method)
+        if (sealedMethod.cancellation === undefined) {
+          return yield* Effect.fail(InvalidRequest.of(
+            `Method ${JSON.stringify(payload.method)} does not declare cancellation.`
+          ))
+        }
+        const before = yield* logOf(threads.events, params.thread)
+        const at = yield* Clock.currentTimeMillis
+        if (!methodIsSealed(before, payload.method)) {
+          yield* threads.appendUnlessKeyPresent(
+            params.thread,
+            methodSealed({
+              method: payload.method,
+              ...(payload.reason === undefined ? {} : { reason: payload.reason }),
+              at
+            }),
+            methodSealKey(payload.method)
+          )
+        }
+        const log = yield* logOf(threads.events, params.thread)
+        const directIds = [...new Set(log.flatMap((event) => {
+          const context = actorInvocationContextFrom(event)
+          return context?.invocation.method === payload.method ? [context.invocation.id] : []
+        }))]
+        const direct = directIds.map((id) => ({
+          method: payload.method,
+          id,
+          epoch: sealedMethod.currentEpoch(log, id)
+        }))
+        const linked = unsettledInvocationParentsOf(log)
+        const linkedPending = new Set(linked.map(invocationKey))
+        const seen = new Set<string>()
+        let pending = false
+        for (const candidate of [...direct, ...linked]) {
+          const method = yield* methodOf(threads, candidate.method)
+          if (method.cancellation === undefined) {
+            return yield* Effect.fail(InvalidRequest.of(
+              `Method ${JSON.stringify(candidate.method)} does not declare cancellation.`
+            ))
+          }
+          const invocation = candidate
+          const key = invocationKey(invocation)
+          if (seen.has(key)) continue
+          seen.add(key)
+          const disposition = cancellationDispositionOf(log, method, invocation)
+          if (disposition === "requested") {
+            pending = true
+            continue
+          }
+          if (disposition === "requestable") {
+            pending = true
+            yield* threads.append(
+              params.thread,
+              methodCancellationEvent(invocation, at, payload.reason)
+            )
+            continue
+          }
+          if (linkedPending.has(invocationKey(candidate))) pending = true
+        }
+        return {
+          actor: params.id,
+          thread: params.thread,
+          method: payload.method,
+          status: pending ? "pending" as const : "drained" as const
         }
       })))
 

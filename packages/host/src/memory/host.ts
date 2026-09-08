@@ -84,6 +84,7 @@ export interface Host {
   readonly commit: (envelope: Envelope<unknown, Event, ThreadAddress>) => Promise<void>
   // commitRoot injects an unlinked root event and marks its thread owed a visit.
   readonly commitRoot: (address: string, event: Event) => Promise<void>
+  readonly commitRootUnlessKeyPresent: (address: string, event: Event, key: string) => Promise<boolean>
   // wake marks a thread owed a visit and drives: what a binding's backup
   // alarm does, and what tests do after seeding a thread by hand.
   readonly wake: (thread: string) => Promise<void>
@@ -189,6 +190,37 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
   const commitRoot = (address: string, event: Event): Promise<void> =>
     commitAt(parseThreadAddress(address), event, undefined)
 
+  const commitRootUnlessKeyPresent = async (
+    address: string,
+    event: Event,
+    key: string
+  ): Promise<boolean> => {
+    const target = parseThreadAddress(address)
+    const thread = threadOf(address)
+    let blocked = false
+    const result = await Effect.runPromise(commitDelivery({
+      target,
+      event,
+      lineage: undefined,
+      keyOf: options.keyOf
+    }, {
+      read: Effect.sync(() => read(thread)),
+      head: Effect.sync(() => read(thread).length),
+      append: (batch) => Effect.sync(() => {
+        const current = read(thread)
+        if (current.some((candidate) => storeKeyOf(candidate) === key)) {
+          blocked = true
+          return { appended: 0, head: current.length }
+        }
+        append(thread, batch)
+        return { appended: read(thread).length - current.length, head: read(thread).length }
+      }),
+      reserveRoot: reserveRootThread(target).pipe(Effect.provideService(ThreadAllocator, allocator), Effect.asVoid)
+    }))
+    if (result.appended > 0) driver.mark(thread)
+    return !blocked
+  }
+
   const localTransport: Transport<ThreadAddress, ActorEnvelope> = {
     name: "local",
     send: (_destination, envelope) => Effect.promise(() => commit(envelope))
@@ -289,7 +321,19 @@ export const createHost = <R = never>(options: HostOptions<R>): Host => {
     return drive()
   }
 
-  return { seed, read, commit, commitRoot, initializeRoot, drive, wake, resting, router, self,
+  return {
+    seed,
+    read,
+    commit,
+    commitRoot,
+    commitRootUnlessKeyPresent,
+    initializeRoot,
+    drive,
+    wake,
+    resting,
+    router,
+    self,
     allocate: (request) => Effect.runPromise(initializedAllocator.allocate(request)),
-    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request)) }
+    assignThread: (request) => Effect.runPromise(localAllocator.allocate(request))
+  }
 }
