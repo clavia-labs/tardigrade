@@ -35,6 +35,7 @@ import {
   MethodState,
   type MethodAccepted,
   type MethodSummary,
+  type MethodSealResult,
   type ModelCatalogPage,
   type ModelCatalogPriceSort,
   type ModelCatalogSortOrder,
@@ -200,6 +201,13 @@ export interface ActorClient<P extends Projections = {}, M extends ActorMethods 
   readonly allocateRoot: (actor: string, name?: string) => Promise<ThreadCoordinate>
   // methods lists the mounted actor's callable interface and JSON Schema documents.
   readonly methods: () => Promise<ReadonlyArray<MethodSummary>>
+  // sealMethod closes new admission for one method on a thread.
+  readonly sealMethod: (
+    actor: string,
+    thread: string,
+    method: string,
+    reason?: string
+  ) => Promise<MethodSealResult>
   // call commits one declared method call and returns its durable handle.
   readonly call: <const Name extends keyof M & string>(
     actor: string,
@@ -404,6 +412,11 @@ export const makeActorClient = <const P extends Projections = {}, const M extend
     append,
     allocateRoot: (actor, name) => run(api.threads.allocateRoot({ query: {}, params: { id: actor }, payload: name === undefined ? {} : { name } })),
     methods: () => run(api.methods.methods({})),
+    sealMethod: (actor, thread, method, reason) =>
+      run(api.methods.sealMethod({
+        params: { id: actor, thread },
+        payload: reason === undefined ? { method } : { method, reason }
+      })),
     call: async (actor, thread, name, call) => {
       const accepted = await run(api.methods.invokeMethod({
         params: { id: actor, thread, method: name },

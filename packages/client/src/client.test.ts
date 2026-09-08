@@ -216,6 +216,47 @@ describe("a declared actor method", () => {
     expect(lastUrl().pathname).toBe("/v1/methods")
   })
 
+  test("seals method admission with its reason and decodes a pending result", async () => {
+    answer = () => Response.json({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      status: "pending"
+    }, { status: 202 })
+    const result = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
+      .sealMethod("main", "root", "message", "thread is being deleted")
+    expect(result).toEqual({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      status: "pending"
+    })
+    expect(calls[0]?.method).toBe("PUT")
+    expect(lastUrl().pathname).toBe("/v1/actors/main/threads/root/deletion-seal")
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({
+      method: "message",
+      reason: "thread is being deleted"
+    })
+  })
+
+  test("omits an absent seal reason and decodes a drained result", async () => {
+    answer = () => Response.json({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      status: "drained"
+    })
+    const result = await makeActorClient({ baseUrl: "http://localhost:4111", fetch: stub })
+      .sealMethod("main", "root", "message")
+    expect(result).toEqual({
+      actor: "main",
+      thread: "root",
+      method: "message",
+      status: "drained"
+    })
+    expect(JSON.parse(calls[0]!.body ?? "")).toEqual({ method: "message" })
+  })
+
   test("invokes the selected method with its typed input", async () => {
     answer = () => new Response(JSON.stringify({
       actor: "main",
