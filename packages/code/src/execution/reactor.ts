@@ -1,4 +1,6 @@
-import { bindTransitionContext } from "@clavia/tardigrade-core/transition/transition"
+import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
+import { eventPositionOf } from "@clavia/tardigrade-core/event"
+import { bindTransitionContext, type TransitionRef } from "@clavia/tardigrade-core/transition/transition"
 import { Clock, Deferred, Effect, Fiber } from "effect"
 import type { KeyValueStore } from "effect/unstable/persistence"
 import { EventLog } from "@clavia/tardigrade-core/log"
@@ -24,7 +26,7 @@ import {
   type SpillPolicy
 } from "../storage/store"
 import { callId as callIdOf } from "./ids"
-import { blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
+import { executionKeyOf, executionRefOf, packageKeyOf, blockedOn, codeSettled, packageCalled, packageReturned } from "./events"
 
 // The code reactor: durable execution of one body (tla/runtime/Reconcile.tla is the model;
 // ./projections.ts derives the owed work). An attempt re-runs the body from the top; committed
@@ -98,10 +100,12 @@ const executeRecorded = <R = never>(
   packages: ReadonlyArray<Package<R>>,
   turn?: string,
   epoch = 0,
-  dispatchedAt?: number
+  dispatchedAt?: number,
+  executionRef?: TransitionRef
 ): Effect.Effect<ReadonlyArray<Event>, never, EventLog | KeyValueStore.KeyValueStore | R> =>
   Effect.gen(function* () {
-    const stamp = turn === undefined ? {} : { turn, ...(epoch === 0 ? {} : { epoch }) }
+    const scope = yield* Effect.serviceOption(OperationScope)
+    const stamp = { ...(scope._tag === "Some" ? { ownerRef: scope.value } : {}), ...(executionRef === undefined ? {} : { executionRef }), ...(turn === undefined ? {} : { turn, ...(epoch === 0 ? {} : { epoch }) }) }
     const log = yield* EventLog
     const events = yield* log.read
     // The shadow reading rides the turn's own brief, folded once here: it never changes
@@ -123,7 +127,7 @@ const executeRecorded = <R = never>(
     // The calls one attempt observed blocked, with what they await: returned as BlockedOn
     // evidence when the attempt closes, so the derivation reads the awaited ids from the log
     // (no method table; the raiser carries `awaiting` on Park).
-    const blocked: Array<{ readonly callId: string; readonly awaiting?: string }> = []
+    const blocked: Array<{ readonly callId: string; readonly ordinal: number; readonly awaiting?: string }> = []
     const parkGate = yield* Deferred.make<void>()
     // finishCall releases a mixed attempt after every host-side call has completed. The call
     // scope guarantees it as a finalizer because the last call may return or park
@@ -137,7 +141,9 @@ const executeRecorded = <R = never>(
       const methods: Record<string, SandboxCall> = {}
       for (const [method, fn] of Object.entries(pkg.methods)) {
         methods[method] = (args: unknown, ordinal: number) => {
-          const callId = callIdOf(execId, ordinal)
+          const callId = callIdOf(executionKeyOf({ type: "CodeSettled", execId, ...stamp }), ordinal)
+          const callStamp = { ...stamp, ordinal }
+          const callKey = packageKeyOf({ type: "PackageCalled", callId, ...callStamp })
           inFlight++
           return Effect.runPromiseWith(context)(
             Effect.gen(function* () {
@@ -148,7 +154,7 @@ const executeRecorded = <R = never>(
               // instead (tla/runtime/Replay.tla: Trusting fails RightAnswer, Guarded holds it and
               // refusal is drift's only reachable outcome).
               const sent = events.find(
-                (e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === callId
+                (e) => e.type === "PackageCalled" && packageKeyOf(e) === callKey
               ) as { name?: unknown; arguments?: unknown } | undefined
               if (sent !== undefined) {
                 const askedName = `${pkg.name}.${method}`
@@ -168,7 +174,7 @@ const executeRecorded = <R = never>(
                 }
               }
               const recorded = events.find(
-                (e) => e.type === "PackageReturned" && (e as { callId?: unknown }).callId === callId
+                (e) => e.type === "PackageReturned" && packageKeyOf(e) === callKey
               )
               if (recorded) {
                 const r = recorded as { result?: unknown; tmp?: unknown }
@@ -186,12 +192,12 @@ const executeRecorded = <R = never>(
               // here: this attempt still asks the method again, because only the method knows
               // whether the answer has landed, but the log never grows a second send for it.
               const alreadySent = events.some(
-                (e) => e.type === "PackageCalled" && (e as { callId?: unknown }).callId === callId
+                (e) => e.type === "PackageCalled" && packageKeyOf(e) === callKey
               )
               if (!alreadySent) {
                 const askedAt = yield* Clock.currentTimeMillis
                 yield* log.append([
-                  packageCalled({ callId, name: `${pkg.name}.${method}`, arguments: args, ...stamp, at: askedAt })
+                  packageCalled({ callId, name: `${pkg.name}.${method}`, arguments: args, ...callStamp, at: askedAt })
                 ])
               }
               // The shadow rule, over the method's own annotation: a read runs (live reads are
@@ -206,7 +212,7 @@ const executeRecorded = <R = never>(
               if (refused) {
                 const result = { error: `shadow run: ${pkg.name}.${method} is an open-world write and does not execute in a shadow run` }
                 const answeredAt = yield* Clock.currentTimeMillis
-                yield* log.append([packageReturned({ callId, result, ...stamp, at: answeredAt })])
+                yield* log.append([packageReturned({ callId, result, ...callStamp, at: answeredAt })])
                 return { parked: false, result }
               }
               // The contract gate: a declared input schema is checked at this funnel, after the
@@ -224,14 +230,14 @@ const executeRecorded = <R = never>(
                     error: `${pkg.name}.${method}: ${issues.join("; ")}. Signature: ${renderSignature(method, declared)}`
                   }
                   const answeredAt = yield* Clock.currentTimeMillis
-                  yield* log.append([packageReturned({ callId, result, ...stamp, at: answeredAt })])
+                  yield* log.append([packageReturned({ callId, result, ...callStamp, at: answeredAt })])
                   return { parked: false, result }
                 }
               }
               const parkOut = (awaiting?: string): Effect.Effect<CallOutcome, never, never> =>
                 Effect.gen(function* () {
                   parked = true
-                  blocked.push({ callId, ...(awaiting === undefined ? {} : { awaiting }) })
+                  blocked.push({ callId, ordinal, ...(awaiting === undefined ? {} : { awaiting }) })
                   return { parked: true }
                 })
               // A transient defect or timeout retries inside the recorded call. Exhaustion is a
@@ -239,6 +245,11 @@ const executeRecorded = <R = never>(
               // its actor-wait meaning and never consumes the infrastructure retry schedule
               // (reactor.test.ts, "a transiently failing call retries before the body sees an
               // answer"; "a hanging call exhausts its deadline and backoff as one durable error").
+              const recordedEvents = yield* log.read
+              const recordedIndex = recordedEvents.findIndex((event) => event.type === "PackageCalled" && packageKeyOf(event) === callKey)
+              const seq = recordedIndex < 0 ? undefined : eventPositionOf(recordedEvents[recordedIndex]!) ?? recordedIndex + 1
+              if (seq === undefined) throw new Error("package execution requires a recorded call position")
+              const owner = { type: "transition" as const, ref: { seq, component: "code.packages", tag: "invoke" } }
               const invoke = (attemptIndex: number): Effect.Effect<CallOutcome, never, R> => {
                 const fail = (reason: string): Effect.Effect<CallOutcome, never, R> => {
                   const delay = callPolicy.retryDelaysMs[attemptIndex]
@@ -254,6 +265,7 @@ const executeRecorded = <R = never>(
                   })
                 }
                 return fn(args, { callId }).pipe(
+                  Effect.provideService(OperationScope, owner),
                   Effect.timeout(callPolicy.attemptTimeoutMs),
                   Effect.map((result): CallOutcome => ({ parked: false, result })),
                   Effect.catchTags({
@@ -270,17 +282,17 @@ const executeRecorded = <R = never>(
               const answeredAt = yield* Clock.currentTimeMillis
               const json = JSON.stringify(attempt.result ?? null)
               if (json.length > spill.spillBytes) {
-                yield* Effect.orDie(spillTo(callId, json))
+                yield* Effect.orDie(spillTo(callKey, json))
                 yield* log.append([
                   packageReturned({
                     callId,
-                    ...spillPointer(callId, json.length, json.slice(0, spill.previewChars), spill.note),
-                    ...stamp,
+                    ...spillPointer(callKey, json.length, json.slice(0, spill.previewChars), spill.note),
+                    ...callStamp,
                     at: answeredAt
                   })
                 ])
               } else {
-                yield* log.append([packageReturned({ callId, result: attempt.result, ...stamp, at: answeredAt })])
+                yield* log.append([packageReturned({ callId, result: attempt.result, ...callStamp, at: answeredAt })])
               }
               return attempt
             }).pipe(
@@ -331,7 +343,7 @@ const executeRecorded = <R = never>(
       // and records nothing; the alarm re-drives it.
       return blocked
         .filter((b) => b.awaiting !== undefined)
-        .map((b) => blockedOn({ callId: b.callId, awaiting: b.awaiting!, ...stamp, at }))
+        .map((b) => blockedOn({ callId: b.callId, ordinal: b.ordinal, awaiting: b.awaiting!, ...stamp, at }))
     }
     const outcome = yield* Fiber.join(fiber)
     // Console output rides the settle, capped by the sandbox: the model reads it beside the
@@ -342,7 +354,7 @@ const executeRecorded = <R = never>(
       // carries the pointer, so no result can nuke the turn context.
       const json = JSON.stringify(outcome.result ?? null)
       if (json.length > spill.spillBytes) {
-        const ref = `${execId}.result`
+        const ref = `${executionKeyOf({ type: "CodeSettled", execId, ...stamp })}.result`
         yield* Effect.orDie(spillTo(ref, json))
         return [
           codeSettled({
@@ -442,21 +454,21 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
       const replies = new Set(state.replies)
       const value = event as { readonly execId?: unknown; readonly callId?: unknown; readonly awaiting?: unknown; readonly id?: unknown; readonly at?: unknown }
       if (event.type === "CodeDispatched") {
-        const execId = String(value.execId ?? "")
+        const execId = executionKeyOf(event)
         const prior = dispatches.get(execId) as { readonly at?: unknown } | undefined
         if (prior === undefined || Number(value.at ?? 0) < Number(prior.at ?? 0)) dispatches.set(execId, event)
       }
-      if (event.type === "CodeSettled") settled.add(String(value.execId ?? ""))
+      if (event.type === "CodeSettled") settled.add(executionKeyOf(event))
       if (event.type === "PackageCalled") {
-        const callId = String(value.callId ?? "")
-        calls.set(callId, { execId: ownerOf(dispatches, callId) })
+        const callId = packageKeyOf(event)
+        calls.set(callId, { execId: (executionRefOf(event) === undefined ? ownerOf(dispatches, callId) : executionKeyOf(event)) })
       }
       if (event.type === "BlockedOn") {
-        const callId = String(value.callId ?? "")
+        const callId = packageKeyOf(event)
         const prior = calls.get(callId)
-        calls.set(callId, { execId: prior?.execId ?? ownerOf(dispatches, callId), awaiting: String(value.awaiting ?? "") })
+        calls.set(callId, { execId: prior?.execId ?? (executionRefOf(event) === undefined ? ownerOf(dispatches, callId) : executionKeyOf(event)), awaiting: String(value.awaiting ?? "") })
       }
-      if (event.type === "PackageReturned") returned.add(String(value.callId ?? ""))
+      if (event.type === "PackageReturned") returned.add(packageKeyOf(event))
       if (event.type === "MessageReceived" || event.type === "ResponseReceived") replies.add(String(value.id ?? ""))
       return {
         turns: reduceTurnProjection(state.turns, event),
@@ -483,20 +495,21 @@ export const codeReactorFor = <const P extends ReadonlyArray<Package<never>> | R
         break
       }
       if (selected === undefined) return []
-      const { execId, dispatch } = selected
+      const { dispatch } = selected
       const turn = turnOf(dispatch)
       const epoch = eventEpochOf(dispatch)
       return [bindTransitionContext(dispatch, "code").effect("execute", {
         ...(turn === undefined ? {} : { invocation: { method: "message", id: turn, epoch } }),
         input: {
-          execId,
+          execId: String(dispatch.execId ?? ""),
+          executionRef: executionRefOf(dispatch),
           code: String(dispatch.code ?? ""),
           turn,
           epoch,
           at: typeof dispatch.at === "number" ? dispatch.at : undefined
         },
         act: (input) => Effect.gen(function* () {
-          const result = yield* executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at)
+          const result = yield* executeRecorded<R>(input.execId, input.code, spill, callPolicy, mounted, input.turn, input.epoch, input.at, input.executionRef)
           if (result.some((event) => event.type === "CodeSettled")) return result
           const log = yield* EventLog
           if (result.length > 0) yield* log.append(result)

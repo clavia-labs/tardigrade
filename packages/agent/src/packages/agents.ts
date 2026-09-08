@@ -1,3 +1,4 @@
+import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
 import { Clock, Effect, Schema } from "effect"
 import { Router } from "@clavia/tardigrade-core/transport/router"
 import { Self } from "@clavia/tardigrade-core/runtime"
@@ -478,8 +479,9 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
           const actor = actorNameOf()
           const shadow = shadowOf()
           const world = worldOf()
-          // owner supplies the deadline for both dispatch modes (agents.test.ts, "a background child inherits the owning turn deadline without a parent link").
+          // owner retains cancellation ownership in both dispatch modes (agents.test.ts, "a background child retains its invocation owner without waiting for its response").
           const owner = { method: "message", id: parentRun.turn, epoch: parentRun.epoch }
+          const operation = yield* Effect.serviceOption(OperationScope)
           const parent = a?.background === true ? undefined : owner
           const parentDeadline = events.find((event) => {
             const context = (event as { readonly call?: unknown }).call as Partial<ActorInvocationContext> | undefined
@@ -501,8 +503,9 @@ export const agentsPackage = (options: SpawnOptions = {}): Package<Router | Self
             const records: Event[] = recordedChild === undefined
               ? [childCreated(ctx.callId, target, lineage, at, parentRun.turn, reference.invocation)]
               : []
-            if (childContext.parent !== undefined) records.push(invocationLinked({
-              parent: childContext.parent, child: childContext, target: formatThreadAddress(target), lineage, at
+            records.push(invocationLinked({
+              parent: owner,
+              owner: operation._tag === "Some" ? operation.value : { type: "invocation", ref: owner }, child: childContext, target: formatThreadAddress(target), lineage, at
             }))
             if (records.length > 0) yield* log.append(records)
             yield* sendInvocation({ target, context: childContext, lineage, event: {

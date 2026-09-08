@@ -1,3 +1,4 @@
+import { OperationScope } from "../runtime/context"
 import { Effect, Schema } from "effect"
 import { effect, type ExternalEffect } from "../effect"
 import { intent, type Intent } from "../intent"
@@ -106,7 +107,9 @@ export const bindTransitionContext = (event: Event, component: string): Transiti
         ...(invocation === undefined ? {} : { invocation }),
         ...(options.concurrent === undefined ? {} : { concurrent: options.concurrent }),
         ...(options.interrupts === undefined ? {} : { interrupts: options.interrupts }),
-        act: (input: Input, signal: AbortSignal) => Effect.map(options.act(input, { signal }), (result) => complete(ref, invocation, result))
+        act: (input: Input, signal: AbortSignal) => Effect.map(options.act(input, { signal }), (result) => complete(ref, invocation, result)).pipe(
+          Effect.provideService(OperationScope, { type: "transition", ref })
+        )
       }))
       references.set(transition, ref)
       return transition

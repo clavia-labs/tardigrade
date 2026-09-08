@@ -318,3 +318,37 @@ describe("actor cancellation", () => {
     expect(cancellationTransitionsOf([unsupported, missing], { work }, [], () => undefined)).toBeUndefined()
   })
 })
+
+test("a completed owner remains cancellable while its background child is open", () => {
+  const parent = { method: "work", id: "parent", epoch: 0 }
+  const history: Event[] = [
+    { type: "WorkStarted", id: "parent", at: 1 },
+    { type: "InvocationLinked", parent,
+      owner: { type: "transition", ref: { seq: 1, component: "work", tag: "spawn" } },
+      child: { invocation: { method: "work", id: "child", epoch: 0 } },
+      target: "worker:main:child", at: 2 },
+    { type: "WorkCompleted", id: "parent", at: 3 }
+  ]
+  expect(cancellationDispositionOf(history, work, parent)).toBe("requestable")
+  const cancel = cancellationMethodFor({ work })
+  const request = cancel.event({
+    invocation: { method: "$cancel", id: "cancel-parent", epoch: 0 },
+    input: { invocation: parent }, at: 4
+  })
+  history.push(request)
+  expect(cancel.state(history, { method: "$cancel", id: "cancel-parent", epoch: 0 })).toEqual({ status: "pending" })
+  const transitions = cancellationTransitionsOf(history, { work }, [], cancellationKeys.keyOf)
+  expect(transitions).toHaveLength(1)
+  expect(transitions?.[0]?.kind).toBe("effect")
+  expect(transitions?.[0]?.key).toBe(JSON.stringify([2, "actor.cancellations", "cancel"]))
+  history.push({
+    type: "ResponseReceived",
+    reference: { target: { actor: "worker", instance: "main", thread: "child" }, invocation: { method: "work", id: "child", epoch: 0 } },
+    id: "child-reply", from: "worker:main:child", method: "work", call: "child", epoch: 0,
+    status: "completed", output: "done", at: 5
+  })
+  expect(cancellationDispositionOf(history, work, parent)).toBe("settled")
+  expect(cancel.state(history, { method: "$cancel", id: "cancel-parent", epoch: 0 }))
+    .toEqual({ status: "completed", output: { cancelled: false } })
+  expect(cancellationTransitionsOf(history, { work }, [], cancellationKeys.keyOf)).toBeUndefined()
+})

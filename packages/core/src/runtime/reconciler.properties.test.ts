@@ -10,7 +10,7 @@ import {
 } from "./index"
 import { component, cancelComponent, composeComponents, deriveComponent, transitionProjectionOf, type Component, type TransitionContext } from "../component"
 import { actorRuntimeOf } from "./actor"
-import { InvocationScope } from "./context"
+import { InvocationScope, OperationScope } from "./context"
 import { EffectInterruptions, effectInterruptionRegistry } from "./reconciler"
 import { effect } from "@clavia/tardigrade-core/effect"
 import type { Event } from "@clavia/tardigrade-core/event"
@@ -568,6 +568,9 @@ test("tagged transitions inherit invocation ownership through completions and re
         act: () => Effect.gen(function* () {
           const scope = yield* Effect.serviceOption(InvocationScope)
           observed.push(Option.isSome(scope) ? scope.value.context : undefined)
+          expect(Option.getOrUndefined(yield* Effect.serviceOption(OperationScope))).toEqual({
+            type: "transition", ref: { seq: 2, component: "worker", tag: "execute" }
+          })
           return { type: "Completed" }
         })
       })]

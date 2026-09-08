@@ -6,7 +6,7 @@ import { composeComponents, inheritComponentContract, component as defineCompone
 import { type InvocationCancellation } from "@clavia/tardigrade-core/interaction/events"
 import type { Event } from "@clavia/tardigrade-core/log/event"
 import { composeKeys, type KeyFragment } from "@clavia/tardigrade-core/log"
-import { codeDispatched, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"
+import { executionKeyOf, executionRefOf, codeDispatched, codeKeys, codeSettled } from "@clavia/tardigrade-code/execution/events"
 import { eventEpochOf } from "@clavia/tardigrade-code/execution/turns"
 import { codeReactorFor, type CodePolicy, type CodeProjectionState } from "@clavia/tardigrade-code/execution/reactor"
 import { renderShape, renderSignature } from "@clavia/tardigrade-code/execution/contract"
@@ -61,7 +61,7 @@ const settleFor = (
   log: ReadonlyArray<Event>,
   callId: string
 ): { result?: unknown; error?: string; logs?: ReadonlyArray<string> } | undefined => {
-  const settle = log.find((e) => e.type === "CodeSettled" && String((e as { execId?: unknown }).execId) === callId) as
+  const settle = log.find((e) => e.type === "CodeSettled" && executionKeyOf(e) === callId) as
     | { result?: unknown; error?: unknown; logs?: ReadonlyArray<string>; tmp?: unknown; size?: unknown; preview?: unknown; note?: unknown }
     | undefined
   if (settle === undefined) return undefined
@@ -80,7 +80,7 @@ const serveCode = (log: ReadonlyArray<Event>, call: PendingCall, answer: Answer)
   }
   const dispatched = log.find((event) => event.type === "CodeDispatched" && call.context.matches("dispatch", event))
   if (dispatched !== undefined) {
-    const outcome = settleFor(log, String(dispatched.execId))
+    const outcome = settleFor(log, executionKeyOf(dispatched))
     return outcome === undefined ? [] : [answer(outcome)]
   }
   const code = String((call.arguments as { code?: unknown } | undefined)?.code ?? "")
@@ -115,6 +115,7 @@ const codeCancellationTransition = <R>(
   dispatch: Event,
   cancellation: InvocationCancellation
 ): ReadonlyArray<Transition<never, R>> => [bindTransitionContext(dispatch, "code").intent("execute", (at) => codeSettled({
+  ...(executionRefOf(dispatch) === undefined ? {} : { executionRef: executionRefOf(dispatch)! }),
   execId: String(dispatch.execId),
   error: cancellation.reason === undefined ? "cancelled" : `cancelled: ${cancellation.reason}`,
   turn: cancellation.invocation.id,

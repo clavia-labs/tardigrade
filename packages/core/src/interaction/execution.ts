@@ -1,6 +1,6 @@
-import { Clock, Data, Effect } from "effect"
+import { Clock, Data, Effect, Option } from "effect"
 import { EventLog } from "../log"
-import { Self } from "../runtime/context"
+import { Self, OperationScope } from "../runtime/context"
 import { actorCall } from "./invoke"
 import type { InvocationCoordinate } from "./invocation"
 import type { ActorMethods, ActorMethodInput, ActorMethodOutput } from "../actor/method"
@@ -38,6 +38,7 @@ export const invokeMethod = <Methods extends ActorMethods, Name extends Extract<
   creationParent?: ThreadCoordinate
 ) => Effect.gen(function* () {
   const scope = yield* InvocationScope
+  const operation = yield* Effect.serviceOption(OperationScope)
   const self = yield* Self
   const log = yield* EventLog
   const events = yield* log.read
@@ -48,6 +49,7 @@ export const invokeMethod = <Methods extends ActorMethods, Name extends Extract<
     target, method, input,
     parent: { target: self, invocation: scope.context.invocation },
     context: scope.context,
+    owner: Option.isSome(operation) ? operation.value : { type: "invocation", ref: scope.context.invocation },
     key: options.key,
     ...(lineage === undefined ? {} : { lineage }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs })

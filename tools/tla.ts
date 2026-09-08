@@ -40,6 +40,11 @@ const counterexample = (
 ): CounterexampleCheck => ({ directory, module, config, outcome: "counterexample", evidence })
 
 export const checks: ReadonlyArray<Check> = [
+  pass("runtime", "OperationOwnership", "OperationOwnership.cfg"),
+  pass("runtime", "OperationOwnership", "OperationOwnershipLive.cfg"),
+  counterexample("runtime", "OperationOwnership", "OperationOwnershipBareIds.cfg", "Invariant ExactResolution is violated"),
+  counterexample("runtime", "OperationOwnership", "OperationOwnershipDroppedOwner.cfg", "Invariant OwnershipComplete is violated"),
+  counterexample("runtime", "OperationOwnership", "OperationOwnershipCompletedParent.cfg", "Invariant CancellationClosure is violated"),
   pass("runtime", "OperationGraph", "OperationGraph.cfg"),
   pass("runtime", "OperationGraph", "OperationGraphLive.cfg"),
   counterexample("runtime", "OperationGraph", "OperationGraphPremature.cfg", "Invariant NoPrematureStart is violated"),

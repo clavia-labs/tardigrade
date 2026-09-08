@@ -1,3 +1,4 @@
+import { OperationScope } from "@clavia/tardigrade-core/runtime/context"
 import { describe, expect, expectTypeOf, test } from "bun:test"
 import { Context, Effect, Layer, Ref } from "effect"
 import { KeyValueStore } from "effect/unstable/persistence"
@@ -448,4 +449,41 @@ describe("a package's requirements ride its type", () => {
       'package "ticker" declared twice'
     )
   })
+})
+
+test("execution refs isolate package replay and spill storage when payload IDs repeat", async () => {
+  let calls = 0
+  const owners: unknown[] = []
+  const pkg = definePackage({
+    name: "counter",
+    description: "records calls",
+    methods: { read: () => Effect.gen(function* () {
+      owners.push(yield* Effect.serviceOption(OperationScope))
+      return { value: ++calls, padding: "x".repeat(100) }
+    }) }
+  })
+  const history: Event[] = [
+    { type: "MessageReceived", id: "turn", text: "go", at: 1 },
+    { type: "CodeDispatched", execId: "same", code: "return (await counter.read({})).value", turn: "turn", at: 2,
+      transitionRef: { seq: 12, component: "agent.code", tag: "dispatch" } },
+    { type: "CodeDispatched", execId: "same", code: "return (await counter.read({})).value", turn: "turn", at: 3,
+      transitionRef: { seq: 19, component: "agent.code", tag: "dispatch" } }
+  ]
+  const events = await Effect.runPromise(Effect.gen(function* () {
+    const definition = { projections: [codeReactorFor({ spill: { spillBytes: 10, previewChars: 4 } }, [pkg])], keyOf: composeKeys(messageKeys, codeKeys) }
+    yield* settleActor(definition)
+    yield* settleActor(definition)
+    return yield* Effect.flatMap(EventLog, (log) => log.read)
+  }).pipe(Effect.provide(Layer.mergeAll(memoryLog(history), jsSandbox, KeyValueStore.layerMemory))) as Effect.Effect<ReadonlyArray<Event>>)
+  expect(calls).toBe(2)
+  expect(events.filter((event) => event.type === "CodeSettled").map((event) => event.result)).toEqual([
+    1, 2
+  ])
+  const returned = events.filter((event) => event.type === "PackageReturned")
+  expect(returned).toHaveLength(2)
+  expect(returned[0]!.tmp).not.toBe(returned[1]!.tmp)
+  expect(owners).toMatchObject([
+    { _tag: "Some", value: { type: "transition", ref: { seq: 4, component: "code.packages", tag: "invoke" } } },
+    { _tag: "Some", value: { type: "transition", ref: { seq: 7, component: "code.packages", tag: "invoke" } } }
+  ])
 })
