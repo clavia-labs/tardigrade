@@ -1039,4 +1039,55 @@ describe("the tree", () => {
     expect(read.listed.find((summary) => summary.id === child.id)!.parent).toBe("root")
     expect(read.ghost).toBe(404)
   })
+
+  test("bounds limit what a tree or roster read builds", async () => {
+    const read = await serving(async (base) => {
+      await birth(base, "root", { id: "m1", text: "spawn call-1" })
+      await until("the driver rests", async () => {
+        const health = (await (await fetch(`${base}/healthz`)).json()) as { status: string }
+        return health.status === "resting" ? health : undefined
+      })
+      const listed = async (query: string) =>
+        (await (await fetch(`${base}/v1/actors/main/threads${query}`)).json())
+      return {
+        depth: (await listed("?maxDepth=0")) as ReadonlyArray<ThreadSummary>,
+        rosterRoot: (await listed("?root=root")) as ReadonlyArray<ThreadSummary>,
+        childRootStatus: (await fetch(`${base}/v1/actors/main/threads?root=ghost`)).status,
+        treeNodes: (await (await fetch(`${base}/v1/actors/main/threads/root/tree?maxNodes=1`)).json()) as ThreadNode,
+        refused: (await fetch(`${base}/v1/actors/main/threads?maxNodes=0`)).status
+      }
+    })
+    // maxDepth zero keeps the roster to the roots: the child is never built.
+    expect(read.depth.map((summary) => summary.id)).toEqual(["root"])
+    // A stated root lists only its own subtree.
+    expect(read.rosterRoot.length).toBe(2)
+    // An unknown root is the unknown thread of the roster route.
+    expect(read.childRootStatus).toBe(404)
+    // maxNodes one builds the start and stops, so the tree carries no children.
+    expect(read.treeNodes.children).toEqual([])
+    // The node count is positive, so zero is a problem document, not an empty answer.
+    expect(read.refused).toBe(400)
+  })
+
+  test("a legacy stored address reads under its public name through the bounds", async () => {
+    const read = await serving(async (base) => {
+      // The events route stores a supplied root address verbatim (api.ts, append), so a caller
+      // that names its thread with the legacy prefix writes the legacy stored address, the shape
+      // every pre-contract database holds (thread-compat.ts, withLegacyThreadIds).
+      await birth(base, "ag.legacy", { id: "m1", text: "hello" })
+      const listed = async (query: string) =>
+        (await (await fetch(`${base}/v1/actors/main/threads${query}`)).json())
+      return {
+        roster: (await listed("?root=legacy&maxDepth=0")) as ReadonlyArray<ThreadSummary>,
+        tree: (await (await fetch(`${base}/v1/actors/main/threads/legacy/tree`)).json()) as ThreadNode,
+        stored: (await fetch(`${base}/v1/actors/main/threads?root=ag.legacy`)).status
+      }
+    })
+    // The listing keys logs by the public name, so the legacy address scopes and builds under it
+    // and the bounds hold on the keyed walk (thread-compat.ts, publicThreadId).
+    expect(read.roster.map((summary) => summary.id)).toEqual(["legacy"])
+    expect(read.tree.id).toBe("legacy")
+    // The stored address is not the public name, so a root that states it names no public thread.
+    expect(read.stored).toBe(404)
+  })
 })

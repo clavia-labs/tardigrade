@@ -20,7 +20,7 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 | `GET /v1/models` | Search and page public model metadata. The page reports the host model policy and default. `availability`, `provider`, `search`, `sort`, `order`, `unpriced`, `cursor`, `limit` |
 | `GET /v1/metadata` | Read the mounted actor name and storage metadata |
 | `GET /v1/methods` | List methods with standalone input and output schemas |
-| `GET /v1/threads` | List threads |
+| `GET /v1/threads` | List threads. `root`, `maxDepth`, `maxNodes` bound what the listing builds |
 | `PUT /v1/threads/{id}/methods/{method}/calls/{call}` | Call a method with its input as the body |
 | `GET /v1/threads/{id}/methods/{method}/calls/{call}` | Read a method call's derived state |
 | `POST /v1/threads/{id}/events` | Append an event, creating the thread if new |
@@ -28,7 +28,7 @@ Base path `/v1`. Runtime routes address the actor mounted at the server origin. 
 | `GET /v1/threads/{id}/events/stream` | Follow the log. Server-sent events resume from `Last-Event-ID` |
 | `GET /v1/actors/{actor}/threads/{id}/inference/stream` | Follow transient model text produced after the connection opens |
 | `GET /v1/threads/{id}/projections/{projection}` | Read a projection the mounted actor declares |
-| `GET /v1/threads/{id}/tree` | Read the spawn family |
+| `GET /v1/threads/{id}/tree` | Read the spawn family. `maxDepth`, `maxNodes` bound what the tree builds |
 | `GET /v1/actors` | List actors available to the host |
 | `PUT /v1/actors` | Push an actor artifact to the host |
 | `GET /healthz` `GET /openapi.json` `GET /docs` | Unversioned |

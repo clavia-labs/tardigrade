@@ -1,3 +1,4 @@
+import type { TreeBounds } from "@clavia/tardigrade-client/contract"
 import { threadCreated } from "@clavia/tardigrade-core/interaction/relations"
 import { childKeyOf } from "@clavia/tardigrade-core/actor/coordinate"
 import { threadObjectNameOf } from "./transport/directory"
@@ -66,7 +67,11 @@ const actorSupervisorOf = (
   keyOf: actorEventKeyOf
 })
 
-const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<ActorThreadNode> => {
+// threadTreeOf builds registered threads within the requested bounds; an unknown root returns undefined (test/actor.workers.ts).
+const threadTreeOf = (
+  rows: ReadonlyArray<ActorThreadRecord>,
+  bounds: TreeBounds = {}
+): ReadonlyArray<ActorThreadNode> | undefined => {
   const entries = new Map<string, Omit<ActorThreadNode, "children">>()
   const children = new Map<string, string[]>()
   const roots: string[] = []
@@ -83,20 +88,37 @@ const threadTreeOf = (rows: ReadonlyArray<ActorThreadRecord>): ReadonlyArray<Act
     if (parent === undefined) roots.push(id)
     else children.set(parent, [...children.get(parent) ?? [], id])
   }
+  const { root, maxDepth, maxNodes } = bounds
+  if (root !== undefined && !entries.has(root)) return undefined
   const visited = new Set<string>()
-  const node = (id: string, ancestors: ReadonlySet<string>): ActorThreadNode => {
+  let built = 0
+  const node = (id: string, ancestors: ReadonlySet<string>, level: number): ActorThreadNode | undefined => {
+    if (maxNodes !== undefined && built >= maxNodes) return undefined
     if (ancestors.has(id)) throw new Error(`thread tree contains a cycle at ${JSON.stringify(id)}`)
     const entry = entries.get(id)
     if (entry === undefined) throw new Error(`thread tree is missing ${JSON.stringify(id)}`)
+    built += 1
     visited.add(id)
     const next = new Set(ancestors).add(id)
-    return {
-      ...entry,
-      children: [...children.get(id) ?? []].sort().map((child) => node(child, next))
-    }
+    const descendants = (maxDepth === undefined || level < maxDepth) && (maxNodes === undefined || built < maxNodes)
+      ? nodes([...children.get(id) ?? []].sort(), next, level + 1)
+      : []
+    return { ...entry, children: descendants }
   }
-  const tree = roots.sort().map((root) => node(root, new Set()))
-  if (visited.size !== entries.size) throw new Error("thread tree contains an orphan or cycle")
+  const nodes = (ids: ReadonlyArray<string>, ancestors: ReadonlySet<string>, level: number): ActorThreadNode[] => {
+    const tree: ActorThreadNode[] = []
+    for (const id of ids) {
+      const result = node(id, ancestors, level)
+      if (result === undefined) break
+      tree.push(result)
+    }
+    return tree
+  }
+  const tree = nodes(root === undefined ? roots.sort() : [root], new Set(), 0)
+  // Partial reads cannot establish whether the full roster is connected (test/actor.workers.ts).
+  if (root === undefined && maxDepth === undefined && maxNodes === undefined && visited.size !== entries.size) {
+    throw new Error("thread tree contains an orphan or cycle")
+  }
   return tree
 }
 
@@ -300,9 +322,9 @@ export class ActorDO extends DurableObject<Env> {
     })
   }
 
-  async threadTree(): Promise<ReadonlyArray<ActorThreadNode>> {
+  async threadTree(bounds: TreeBounds = {}): Promise<ReadonlyArray<ActorThreadNode> | undefined> {
     const entries = (await this.threads()).filter((entry) => entry.state === "registered")
-    return threadTreeOf(entries)
+    return threadTreeOf(entries, bounds)
   }
 
   async alarm(): Promise<void> {

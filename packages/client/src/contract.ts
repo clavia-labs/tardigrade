@@ -157,6 +157,13 @@ export const ThreadNode = Schema.Struct({
   children: Schema.Array(Schema.suspend((): Schema.Codec<ThreadNode> => ThreadNode))
 }).annotate({ identifier: "ThreadNode" })
 
+// TreeBounds selects a subtree and caps its depth below each start and total node count (apps/server/src/projections.test.ts).
+export interface TreeBounds {
+  readonly root?: string | undefined
+  readonly maxDepth?: number | undefined
+  readonly maxNodes?: number | undefined
+}
+
 export const TurnStatus = Schema.Literals(["pending", "completed", "failed", "cancelled", "parked"])
 
 export type TurnStatus = typeof TurnStatus.Type
@@ -450,6 +457,14 @@ export const Seq = Schema.Int.pipe(
 
 const SeqQuery = Schema.optionalKey(Seq)
 
+// TreeDepth counts levels below the start; zero excludes children (apps/server/src/projections.test.ts).
+const TreeDepth = Seq
+
+// TreeNodeCount includes the start node and must be positive (apps/server/src/api.test.ts).
+const TreeNodeCount = Schema.Int.pipe(
+  Schema.check(Schema.makeFilter((value: number) => value > 0, { title: "above zero" }))
+)
+
 const RuntimeActorParams = { id: ActorInstanceId }
 
 const RuntimeThreadParams = { ...RuntimeActorParams, thread: Schema.String }
@@ -478,8 +493,13 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   }),
   HttpApiEndpoint.get("list", "/v1/actors/:id/threads", {
     params: RuntimeActorParams,
+    query: {
+      root: Schema.optionalKey(Schema.String),
+      maxDepth: Schema.optionalKey(TreeDepth),
+      maxNodes: Schema.optionalKey(TreeNodeCount)
+    },
     success: Schema.Array(ThreadSummary),
-    error: [UnknownActor.schema]
+    error: [UnknownActor.schema, UnknownThread.schema]
   }),
   HttpApiEndpoint.get("events", "/v1/actors/:id/threads/:thread/events", {
     params: RuntimeThreadParams,
@@ -489,6 +509,7 @@ export const threadsGroup = HttpApiGroup.make("threads").add(
   }),
   HttpApiEndpoint.get("tree", "/v1/actors/:id/threads/:thread/tree", {
     params: RuntimeThreadParams,
+    query: { maxDepth: Schema.optionalKey(TreeDepth), maxNodes: Schema.optionalKey(TreeNodeCount) },
     success: ThreadNode,
     error: [UnknownActor.schema, UnknownThread.schema]
   })

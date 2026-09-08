@@ -98,20 +98,8 @@ const logOf = (read: (id: string) => Effect.Effect<ReadonlyArray<Event>>, id: st
 const flatten = (nodes: ReadonlyArray<ThreadNode>): ReadonlyArray<ThreadSummary> =>
   nodes.flatMap(({ children, ...summary }) => [summary, ...flatten(children)])
 
-const findNode = (nodes: ReadonlyArray<ThreadNode>, id: string): ThreadNode | undefined => {
-  for (const node of nodes) {
-    if (node.id === id) return node
-    const found = findNode(node.children, id)
-    if (found !== undefined) return found
-  }
-  return undefined
-}
-
 const logsOf = (entries: ReadonlyArray<{ readonly id: string; readonly events: ReadonlyArray<Event> }>) =>
   new Map(entries.map((entry) => [entry.id, entry.events] as const))
-
-const rosterOf = (threads: ActorThreads) =>
-  Effect.map(threads.list, (entries) => flatten(treeOf(logsOf(entries), threads.statusOf)))
 
 const frameOf = (seq: number, event: unknown): string => `id: ${seq}\ndata: ${JSON.stringify(event)}\n\n`
 
@@ -409,10 +397,17 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
           yield* threads.append(params.thread, payload)
           return { actor: params.id, thread: params.thread }
         }))
-      .handle("list", ({ params }) =>
+      .handle("list", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          return yield* rosterOf(threads)
+          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, query)
+          if (tree === undefined) {
+            if (query.root === undefined) {
+              return yield* Effect.die(new Error("a roster read without a root cannot be absent"))
+            }
+            return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(query.root)))
+          }
+          return flatten(tree)
         }))
       .handle("events", ({ params, query }) =>
         Effect.gen(function*() {
@@ -427,12 +422,11 @@ export const layerThreadsGroup = (options: ApiOptions = {}) => {
             .filter((row) => row.seq > (after ?? 0) && (types === undefined || types.includes(row.event.type)))
             .slice(0, page ?? limit)
         }))
-      .handle("tree", ({ params }) =>
+      .handle("tree", ({ params, query }) =>
         Effect.gen(function*() {
           const threads = yield* actorOf(yield* Threads, params.id)
-          // The forest is built over every log because parentage is a claim in the PARENT's log; a
-          // subtree cannot be derived from the subtree's own events (projections.ts, treeOf).
-          const node = findNode(treeOf(logsOf(yield* threads.list), threads.statusOf), params.thread)
+          const tree = treeOf(logsOf(yield* threads.list), threads.statusOf, { ...query, root: params.thread })
+          const node = tree?.[0]
           if (node === undefined) {
             return yield* Effect.fail(UnknownThread.of(unknownThreadDetail(params.thread)))
           }
